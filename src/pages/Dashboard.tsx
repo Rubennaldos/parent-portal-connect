@@ -58,7 +58,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchUserModules();
-  }, [user]);
+  }, [user, role]); // Agregar role como dependencia
 
   const fetchUserModules = async () => {
     if (!user) return;
@@ -66,99 +66,97 @@ const Dashboard = () => {
     try {
       setLoading(true);
 
-      // Admin General (dueño del negocio) tiene todos los módulos
+      // Definir todos los módulos disponibles
+      const allModules = [
+        {
+          id: '1',
+          code: 'pos',
+          name: 'Punto de Venta',
+          description: 'Sistema de cobro y ventas',
+          icon: 'ShoppingCart',
+          color: 'green',
+          route: '/pos',
+          is_active: true,
+          is_enabled: false, // Se habilitará según el rol
+          status: 'functional' as const,
+        },
+        {
+          id: '2',
+          code: 'cobranzas',
+          name: 'Cobranzas',
+          description: 'Gestión de cuentas por cobrar',
+          icon: 'DollarSign',
+          color: 'red',
+          route: '/cobranzas',
+          is_active: true,
+          is_enabled: false,
+          status: 'coming_soon' as const,
+        },
+        {
+          id: '3',
+          code: 'config_padres',
+          name: 'Configuración Padres',
+          description: 'Gestión de padres y estudiantes',
+          icon: 'Users',
+          color: 'blue',
+          route: '/config-padres',
+          is_active: true,
+          is_enabled: false,
+          status: 'coming_soon' as const,
+        },
+        {
+          id: '4',
+          code: 'auditoria',
+          name: 'Auditoría',
+          description: 'Logs y seguimiento del sistema',
+          icon: 'FileSearch',
+          color: 'purple',
+          route: '/auditoria',
+          is_active: true,
+          is_enabled: false,
+          status: 'coming_soon' as const,
+        },
+        {
+          id: '5',
+          code: 'finanzas',
+          name: 'Finanzas',
+          description: 'Reportes financieros y análisis',
+          icon: 'TrendingUp',
+          color: 'yellow',
+          route: '/finanzas',
+          is_active: true,
+          is_enabled: false,
+          status: 'coming_soon' as const,
+        },
+        {
+          id: '6',
+          code: 'logistica',
+          name: 'Logística',
+          description: 'Inventario y compras',
+          icon: 'Package',
+          color: 'orange',
+          route: '/logistica',
+          is_active: true,
+          is_enabled: false,
+          status: 'coming_soon' as const,
+        },
+      ];
+
+      // Admin General (dueño del negocio) tiene todos los módulos habilitados
       if (role === 'admin_general') {
-        setModules([
-          {
-            id: '1',
-            code: 'pos',
-            name: 'Punto de Venta',
-            description: 'Sistema de cobro y ventas',
-            icon: 'ShoppingCart',
-            color: 'green',
-            route: '/pos',
-            is_active: true,
-            is_enabled: true,
-            status: 'functional',
-          },
-          {
-            id: '2',
-            code: 'cobranzas',
-            name: 'Cobranzas',
-            description: 'Gestión de cuentas por cobrar',
-            icon: 'DollarSign',
-            color: 'red',
-            route: '/cobranzas',
-            is_active: true,
-            is_enabled: true,
-            status: 'coming_soon',
-          },
-          {
-            id: '3',
-            code: 'config_padres',
-            name: 'Configuración Padres',
-            description: 'Gestión de padres y estudiantes',
-            icon: 'Users',
-            color: 'blue',
-            route: '/config-padres',
-            is_active: true,
-            is_enabled: true,
-            status: 'coming_soon',
-          },
-          {
-            id: '4',
-            code: 'auditoria',
-            name: 'Auditoría',
-            description: 'Logs y seguimiento del sistema',
-            icon: 'FileSearch',
-            color: 'purple',
-            route: '/auditoria',
-            is_active: true,
-            is_enabled: true,
-            status: 'coming_soon',
-          },
-          {
-            id: '5',
-            code: 'finanzas',
-            name: 'Finanzas',
-            description: 'Reportes financieros y análisis',
-            icon: 'TrendingUp',
-            color: 'yellow',
-            route: '/finanzas',
-            is_active: true,
-            is_enabled: true,
-            status: 'coming_soon',
-          },
-          {
-            id: '6',
-            code: 'logistica',
-            name: 'Logística',
-            description: 'Inventario y compras',
-            icon: 'Package',
-            color: 'orange',
-            route: '/logistica',
-            is_active: true,
-            is_enabled: true,
-            status: 'coming_soon',
-          },
-        ]);
+        setModules(allModules.map(m => ({ ...m, is_enabled: true })));
+      } else if (role === 'pos') {
+        // Personal POS solo ve el módulo POS
+        setModules(allModules.map(m => ({
+          ...m,
+          is_enabled: m.code === 'pos'
+        })));
+      } else if (role === 'kitchen') {
+        // Personal Kitchen no ve ningún módulo del dashboard
+        setModules([]);
       } else {
-        // TODO: Consultar módulos asignados desde la BD
-        // Personal específico (POS, Kitchen) ve solo sus módulos asignados
-        setModules([
-          {
-            id: '1',
-            code: 'pos',
-            name: 'Punto de Venta',
-            description: 'Sistema de cobro y ventas',
-            icon: 'ShoppingCart',
-            color: 'green',
-            route: '/pos',
-            is_active: true,
-            is_enabled: true,
-            status: 'functional',
-          },
-        ]);
+        // Otros roles: mostrar todos pero deshabilitados
+        setModules(allModules);
       }
     } catch (error) {
       console.error('Error fetching modules:', error);
@@ -188,6 +186,13 @@ const Dashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
+        {/* DEBUG: Ver rol y cantidad de módulos */}
+        <div className="bg-yellow-100 dark:bg-yellow-900/20 border-b border-yellow-300 px-4 py-1">
+          <p className="text-xs font-mono text-yellow-800 dark:text-yellow-300 text-center">
+            🔍 DEBUG: ROL={role} | MÓDULOS CARGADOS={modules.length} | isStaff={isStaff ? '✅' : '❌'}
+          </p>
+        </div>
+        
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">Dashboard de Negocio</h1>
