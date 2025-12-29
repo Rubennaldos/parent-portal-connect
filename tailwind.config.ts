@@ -57,6 +57,15 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        // Lima Café 28 brand colors
+        brand: {
+          teal: "hsl(var(--brand-teal))",
+          "teal-dark": "hsl(var(--brand-teal-dark))",
+          "teal-light": "hsl(var(--brand-teal-light))",
+          gold: "hsl(var(--brand-gold))",
+          "gold-dark": "hsl(var(--brand-gold-dark))",
+          cream: "hsl(var(--brand-cream))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

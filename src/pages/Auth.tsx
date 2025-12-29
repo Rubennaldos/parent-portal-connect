@@ -13,7 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, GraduationCap, ShieldAlert } from 'lucide-react';
+import { Loader2, User, ShieldCheck } from 'lucide-react';
+import SplashScreen from '@/components/SplashScreen';
+import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 
 const authSchema = z.object({
   email: z.string().trim().email({ message: 'Email inválido' }).max(255, { message: 'Email muy largo' }),
@@ -27,6 +29,7 @@ export default function Auth() {
   const [activeTab, setActiveTab] = useState('login');
   const [userType, setUserType] = useState<'parent' | 'staff'>('parent');
   const [justLoggedIn, setJustLoggedIn] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const { signIn, signUp, user, loading, signOut } = useAuth();
   const { role, loading: roleLoading, isParent, isStaff, getDefaultRoute } = useRole();
   const navigate = useNavigate();
@@ -57,8 +60,8 @@ export default function Auth() {
           // Pero su rol es staff
           toast({
             variant: 'destructive',
-            title: '⛔ Acceso Denegado',
-            description: 'No tienes acceso como Padre de Familia. Tu cuenta es de Personal Administrativo. Por favor, selecciona "Personal Administrativo" e intenta de nuevo.',
+            title: 'Acceso Denegado',
+            description: 'No tienes acceso como Padre de Familia. Tu cuenta es de Personal Administrativo.',
             duration: 6000,
           });
           signOut();
@@ -72,8 +75,8 @@ export default function Auth() {
           // Pero su rol es parent
           toast({
             variant: 'destructive',
-            title: '⛔ Acceso Denegado',
-            description: 'No tienes acceso administrativo. Tu cuenta es de Padre de Familia. Por favor, selecciona "Padre de Familia" e intenta de nuevo.',
+            title: 'Acceso Denegado',
+            description: 'No tienes acceso administrativo. Tu cuenta es de Padre de Familia.',
             duration: 6000,
           });
           signOut();
@@ -85,7 +88,7 @@ export default function Auth() {
 
       // Si llegamos aquí, la validación fue exitosa
       toast({
-        title: '✅ Bienvenido',
+        title: 'Bienvenido',
         description: 'Has iniciado sesión correctamente.',
       });
       navigate(getDefaultRoute(), { replace: true });
@@ -157,6 +160,11 @@ export default function Auth() {
     }
   };
 
+  // Splash Screen
+  if (showSplash) {
+    return <SplashScreen onComplete={() => setShowSplash(false)} />;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -166,158 +174,206 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-secondary/30 to-background p-4">
-      <Card className="w-full max-w-md shadow-lg border-border/50">
-        <CardHeader className="text-center space-y-4">
-          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center">
-            <GraduationCap className="h-8 w-8 text-primary" />
-          </div>
-          <div>
-            <CardTitle className="text-2xl font-semibold">Portal de Padres</CardTitle>
-            <CardDescription className="mt-2">
-              Gestiona el kiosco escolar de tus hijos
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-brand-cream via-background to-brand-teal-light">
+      {/* Header con logo */}
+      <header className="w-full py-6 px-4 flex justify-center">
+        <img 
+          src={limaCafeLogo} 
+          alt="Lima Café 28" 
+          className="h-20 w-auto object-contain drop-shadow-sm"
+        />
+      </header>
+
+      {/* Contenido principal */}
+      <main className="flex-1 flex items-center justify-center p-4 pb-12">
+        <Card className="w-full max-w-md shadow-xl border-border/30 bg-card/95 backdrop-blur-sm">
+          <CardHeader className="text-center space-y-2 pb-4">
+            <CardTitle className="text-2xl font-semibold text-foreground">
+              Portal de Acceso
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Sistema de Gestión Lima Café 28
             </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="login">Iniciar Sesión</TabsTrigger>
-              <TabsTrigger value="register">Registrarse</TabsTrigger>
-            </TabsList>
+          </CardHeader>
+          <CardContent>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-6 bg-muted/50">
+                <TabsTrigger 
+                  value="login" 
+                  className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  Iniciar Sesión
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="register"
+                  className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  Registrarse
+                </TabsTrigger>
+              </TabsList>
 
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <TabsContent value="login" className="space-y-4 mt-0">
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="tu@email.com"
-                            autoComplete="email"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Contraseña</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            placeholder="••••••••"
-                            autoComplete="current-password"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  
-                  {/* Selector de Tipo de Usuario */}
-                  <div className="space-y-3 pt-2">
-                    <Label className="font-semibold">Ingresar como:</Label>
-                    <RadioGroup value={userType} onValueChange={(value: 'parent' | 'staff') => setUserType(value)} className="grid grid-cols-1 gap-3">
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="parent" id="parent-type" />
-                        <Label htmlFor="parent-type" className="flex flex-col flex-1 rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground cursor-pointer">
-                          <div className="flex items-center space-x-2 w-full">
-                            <GraduationCap className="h-5 w-5 text-primary" />
-                            <span className="font-medium">Padre de Familia</span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1 w-full text-left">Ver mis hijos y saldos</p>
-                        </Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="staff" id="staff-type" />
-                        <Label htmlFor="staff-type" className="flex flex-col flex-1 rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground cursor-pointer">
-                          <div className="flex items-center space-x-2 w-full">
-                            <ShieldAlert className="h-5 w-5 text-primary" />
-                            <span className="font-medium">Personal Administrativo</span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1 w-full text-left">Acceso a admin, POS, cocina</p>
-                        </Label>
-                      </div>
-                    </RadioGroup>
-                  </div>
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                  <TabsContent value="login" className="space-y-4 mt-0">
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-foreground">Email</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="email"
+                              placeholder="correo@ejemplo.com"
+                              autoComplete="email"
+                              className="bg-background/50 border-border focus:border-primary"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-foreground">Contraseña</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="••••••••"
+                              autoComplete="current-password"
+                              className="bg-background/50 border-border focus:border-primary"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    
+                    {/* Selector de Tipo de Usuario */}
+                    <div className="space-y-3 pt-2">
+                      <Label className="font-medium text-foreground">Tipo de acceso:</Label>
+                      <RadioGroup 
+                        value={userType} 
+                        onValueChange={(value: 'parent' | 'staff') => setUserType(value)} 
+                        className="grid grid-cols-1 gap-3"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="parent" id="parent-type" className="border-primary text-primary" />
+                          <Label 
+                            htmlFor="parent-type" 
+                            className="flex flex-col flex-1 rounded-lg border border-border bg-background/50 p-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2 w-full">
+                              <User className="h-4 w-4 text-primary" />
+                              <span className="font-medium text-foreground">Padre de Familia</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">Ver información de mis hijos</p>
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="staff" id="staff-type" className="border-primary text-primary" />
+                          <Label 
+                            htmlFor="staff-type" 
+                            className="flex flex-col flex-1 rounded-lg border border-border bg-background/50 p-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2 w-full">
+                              <ShieldCheck className="h-4 w-4 text-primary" />
+                              <span className="font-medium text-foreground">Personal Administrativo</span>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">Acceso a panel de gestión</p>
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
 
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Iniciando sesión...
-                      </>
-                    ) : (
-                      'Iniciar Sesión'
-                    )}
-                  </Button>
-                </TabsContent>
+                    <Button 
+                      type="submit" 
+                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium" 
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Iniciando sesión...
+                        </>
+                      ) : (
+                        'Iniciar Sesión'
+                      )}
+                    </Button>
+                  </TabsContent>
 
-                <TabsContent value="register" className="space-y-4 mt-0">
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="tu@email.com"
-                            autoComplete="email"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Contraseña</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            placeholder="Mínimo 6 caracteres"
-                            autoComplete="new-password"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Creando cuenta...
-                      </>
-                    ) : (
-                      'Crear Cuenta'
-                    )}
-                  </Button>
-                </TabsContent>
-              </form>
-            </Form>
-          </Tabs>
-        </CardContent>
-      </Card>
+                  <TabsContent value="register" className="space-y-4 mt-0">
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-foreground">Email</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="email"
+                              placeholder="correo@ejemplo.com"
+                              autoComplete="email"
+                              className="bg-background/50 border-border focus:border-primary"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-foreground">Contraseña</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="Mínimo 6 caracteres"
+                              autoComplete="new-password"
+                              className="bg-background/50 border-border focus:border-primary"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button 
+                      type="submit" 
+                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium" 
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creando cuenta...
+                        </>
+                      ) : (
+                        'Crear Cuenta'
+                      )}
+                    </Button>
+                  </TabsContent>
+                </form>
+              </Form>
+            </Tabs>
+          </CardContent>
+        </Card>
+      </main>
+
+      {/* Footer sutil */}
+      <footer className="py-4 text-center">
+        <p className="text-xs text-muted-foreground">
+          © 2024 Lima Café 28 — Sistema de Gestión
+        </p>
+      </footer>
     </div>
   );
 }

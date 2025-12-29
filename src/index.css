@@ -2,95 +2,99 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
+/* Lima Café 28 - Design System
+   Paleta elegante y profesional basada en la marca
+   Colores principales: Teal (verde azulado) y Gold (dorado/amarillo)
 */
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Colores de marca Lima Café 28 */
+    --brand-teal: 168 53% 42%;
+    --brand-teal-dark: 168 53% 32%;
+    --brand-teal-light: 168 40% 92%;
+    --brand-gold: 45 95% 55%;
+    --brand-gold-dark: 45 85% 45%;
+    --brand-cream: 45 30% 97%;
+
+    /* Sistema base */
+    --background: 45 30% 99%;
+    --foreground: 168 25% 15%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 168 25% 15%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 168 25% 15%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 168 53% 42%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 45 30% 95%;
+    --secondary-foreground: 168 25% 20%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 168 10% 94%;
+    --muted-foreground: 168 15% 45%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 45 95% 55%;
+    --accent-foreground: 168 25% 15%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 168 20% 88%;
+    --input: 168 20% 90%;
+    --ring: 168 53% 42%;
 
-    --radius: 0.5rem;
+    --radius: 0.625rem;
 
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 168 25% 12%;
+    --sidebar-foreground: 45 30% 95%;
+    --sidebar-primary: 45 95% 55%;
+    --sidebar-primary-foreground: 168 25% 12%;
+    --sidebar-accent: 168 30% 18%;
+    --sidebar-accent-foreground: 45 30% 95%;
+    --sidebar-border: 168 20% 20%;
+    --sidebar-ring: 45 95% 55%;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 168 25% 8%;
+    --foreground: 45 30% 95%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 168 25% 10%;
+    --card-foreground: 45 30% 95%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 168 25% 10%;
+    --popover-foreground: 45 30% 95%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 168 45% 50%;
+    --primary-foreground: 168 25% 8%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 168 20% 15%;
+    --secondary-foreground: 45 30% 90%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 168 20% 18%;
+    --muted-foreground: 168 15% 60%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 45 90% 50%;
+    --accent-foreground: 168 25% 8%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 168 20% 18%;
+    --input: 168 20% 18%;
+    --ring: 168 45% 50%;
+
+    --sidebar-background: 168 25% 6%;
+    --sidebar-foreground: 45 30% 95%;
+    --sidebar-primary: 45 90% 50%;
+    --sidebar-primary-foreground: 168 25% 8%;
+    --sidebar-accent: 168 25% 12%;
+    --sidebar-accent-foreground: 45 30% 95%;
+    --sidebar-border: 168 20% 15%;
+    --sidebar-ring: 45 90% 50%;
   }
 }
 
@@ -100,6 +104,75 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/* Animaciones personalizadas para splash screen */
+@layer utilities {
+  @keyframes logo-entrance {
+    0% {
+      opacity: 0;
+      transform: scale(0.8) translateY(20px);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05) translateY(-5px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  @keyframes glow {
+    0%, 100% {
+      opacity: 0.2;
+      transform: scale(1.4);
+    }
+    50% {
+      opacity: 0.4;
+      transform: scale(1.6);
+    }
+  }
+
+  @keyframes line-expand {
+    0% {
+      width: 0;
+      opacity: 0;
+    }
+    100% {
+      width: 3rem;
+      opacity: 1;
+    }
+  }
+
+  @keyframes text-fade {
+    0% {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-logo-entrance {
+    animation: logo-entrance 1s ease-out forwards;
+  }
+
+  .animate-glow {
+    animation: glow 2s ease-in-out infinite;
+  }
+
+  .animate-line-expand {
+    animation: line-expand 0.8s ease-out 0.5s forwards;
+    width: 0;
+  }
+
+  .animate-text-fade {
+    animation: text-fade 0.6s ease-out 0.8s forwards;
+    opacity: 0;
   }
 }
