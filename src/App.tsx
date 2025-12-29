@@ -8,6 +8,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import SuperAdmin from "./pages/SuperAdmin";
+import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import POS from "./pages/POS";
 import Kitchen from "./pages/Kitchen";
@@ -46,7 +47,17 @@ const App = () => (
               }
             />
             
-            {/* Panel de Administración - Solo admin_general */}
+            {/* Dashboard de Módulos - SuperAdmin y Admin General */}
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['superadmin', 'admin_general']}>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            
+            {/* Panel de Administración Legacy - Solo admin_general */}
             <Route
               path="/admin"
               element={
