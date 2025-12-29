@@ -14,8 +14,9 @@ import {
   UserPlus, 
   Database,
   Activity,
-  Settings,
-  Code2
+  ExternalLink,
+  CheckCircle2,
+  Circle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -62,7 +63,7 @@ const SuperAdmin = () => {
         if (updateError) throw updateError;
 
         toast({
-          title: '✅ Admin Creado',
+          title: 'Admin Creado',
           description: `Usuario ${newAdminEmail} creado con rol admin_general`,
         });
 
@@ -81,220 +82,228 @@ const SuperAdmin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
-      <header className="bg-slate-900/80 backdrop-blur-md border-b border-purple-500/30 sticky top-0 z-50 shadow-lg shadow-purple-500/10">
-        <div className="bg-purple-900/30 border-b border-purple-500/30 px-4 py-1">
-          <p className="text-xs font-mono text-purple-300 text-center">
-            🔐 DEBUG ROL: <strong>{role || 'null'}</strong> | isStaff: {isStaff ? '✅' : '❌'} | isParent: {isParent ? '✅' : '❌'}
-          </p>
-        </div>
+    <div className="min-h-screen bg-background">
+      {/* Debug banner - minimal */}
+      <div className="bg-muted border-b px-4 py-1">
+        <p className="text-xs font-mono text-muted-foreground text-center">
+          DEBUG: role={role || 'null'} | staff={isStaff ? '1' : '0'} | parent={isParent ? '1' : '0'}
+        </p>
+      </div>
 
+      {/* Header - clean and minimal */}
+      <header className="border-b bg-card">
         <div className="container mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-600 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/50">
-              <ShieldCheck className="h-7 w-7 text-white" />
+            <div className="w-10 h-10 bg-foreground rounded-lg flex items-center justify-center">
+              <ShieldCheck className="h-5 w-5 text-background" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                SuperAdmin Panel
+              <h1 className="text-lg font-semibold text-foreground tracking-tight">
+                SuperAdmin
               </h1>
-              <p className="text-xs text-purple-300">Panel de Programador - Acceso Total</p>
+              <p className="text-xs text-muted-foreground font-mono">system::root</p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="text-sm font-medium text-white">{user?.email}</p>
-              <p className="text-xs text-purple-300">👨‍💻 Programador</p>
+              <p className="text-sm text-foreground font-mono">{user?.email}</p>
+              <p className="text-xs text-muted-foreground">level: superadmin</p>
             </div>
             <Button 
               onClick={handleLogout} 
               variant="outline" 
               size="sm"
-              className="border-purple-500/50 hover:bg-purple-500/20"
             >
               <LogOut className="h-4 w-4 mr-2" />
-              Salir
+              Exit
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-6 py-6">
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-slate-900/50 border border-purple-500/30">
-            <TabsTrigger value="overview" className="data-[state=active]:bg-purple-600">
+          <TabsList className="bg-muted/50 border">
+            <TabsTrigger value="overview" className="data-[state=active]:bg-background">
               <Activity className="h-4 w-4 mr-2" />
-              Overview
+              Status
             </TabsTrigger>
-            <TabsTrigger value="users" className="data-[state=active]:bg-purple-600">
+            <TabsTrigger value="users" className="data-[state=active]:bg-background">
               <UserPlus className="h-4 w-4 mr-2" />
-              Crear Admins
+              Users
             </TabsTrigger>
-            <TabsTrigger value="errors" className="data-[state=active]:bg-purple-600">
+            <TabsTrigger value="errors" className="data-[state=active]:bg-background">
               <AlertTriangle className="h-4 w-4 mr-2" />
-              Errores
+              Logs
             </TabsTrigger>
-            <TabsTrigger value="credentials" className="data-[state=active]:bg-purple-600">
+            <TabsTrigger value="credentials" className="data-[state=active]:bg-background">
               <Key className="h-4 w-4 mr-2" />
-              Credenciales
+              Config
             </TabsTrigger>
-            <TabsTrigger value="database" className="data-[state=active]:bg-purple-600">
+            <TabsTrigger value="database" className="data-[state=active]:bg-background">
               <Database className="h-4 w-4 mr-2" />
-              Base de Datos
+              Database
             </TabsTrigger>
           </TabsList>
 
+          {/* Status Tab */}
           <TabsContent value="overview" className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="bg-slate-900/50 border-purple-500/30">
-                <CardHeader>
-                  <CardTitle className="text-purple-300">Sistema</CardTitle>
-                  <CardDescription>Estado del sistema</CardDescription>
+              <Card className="border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">System</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm">Estado:</span>
-                      <span className="text-green-400 font-bold">✅ Operativo</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm">Versión:</span>
-                      <span className="font-mono text-xs">v1.0.0</span>
-                    </div>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Status</span>
+                    <span className="flex items-center gap-1.5 text-foreground">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                      Operational
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Version</span>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">v1.0.0</code>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="bg-slate-900/50 border-purple-500/30">
-                <CardHeader>
-                  <CardTitle className="text-purple-300">Base de Datos</CardTitle>
-                  <CardDescription>Conexión Supabase</CardDescription>
+              <Card className="border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Database</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm">Conexión:</span>
-                      <span className="text-green-400 font-bold">✅ Activa</span>
-                    </div>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Connection</span>
+                    <span className="flex items-center gap-1.5 text-foreground">
+                      <Circle className="h-2 w-2 fill-green-600 text-green-600" />
+                      Active
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Provider</span>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">supabase</code>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="bg-slate-900/50 border-purple-500/30">
-                <CardHeader>
-                  <CardTitle className="text-purple-300">Accesos</CardTitle>
-                  <CardDescription>Nivel de permisos</CardDescription>
+              <Card className="border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Access</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm">Nivel:</span>
-                      <span className="text-purple-400 font-bold">SUPERADMIN</span>
-                    </div>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Level</span>
+                    <code className="text-xs bg-foreground text-background px-1.5 py-0.5 rounded font-semibold">ROOT</code>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Permissions</span>
+                    <span className="text-foreground">Full</span>
                   </div>
                 </CardContent>
               </Card>
             </div>
           </TabsContent>
 
+          {/* Users Tab */}
           <TabsContent value="users" className="space-y-4">
-            <Card className="bg-slate-900/50 border-purple-500/30">
+            <Card className="border max-w-lg">
               <CardHeader>
-                <CardTitle className="text-purple-300">Crear Admin General</CardTitle>
+                <CardTitle className="text-base">Create Admin</CardTitle>
                 <CardDescription>
-                  Crea nuevos usuarios con rol de administrador general
+                  Add a new admin_general user to the system
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="admin-email">Email del Admin</Label>
+                  <Label htmlFor="admin-email" className="text-sm">Email</Label>
                   <Input
                     id="admin-email"
                     type="email"
-                    placeholder="admin@limacafe28.com"
+                    placeholder="admin@example.com"
                     value={newAdminEmail}
                     onChange={(e) => setNewAdminEmail(e.target.value)}
-                    className="bg-slate-800 border-purple-500/30"
+                    className="font-mono text-sm"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="admin-password">Contraseña</Label>
+                  <Label htmlFor="admin-password" className="text-sm">Password</Label>
                   <Input
                     id="admin-password"
                     type="password"
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="min 6 characters"
                     value={newAdminPassword}
                     onChange={(e) => setNewAdminPassword(e.target.value)}
-                    className="bg-slate-800 border-purple-500/30"
                   />
                 </div>
 
                 <Button 
                   onClick={handleCreateAdminGeneral}
                   disabled={creatingAdmin}
-                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                  className="w-full"
                 >
-                  {creatingAdmin ? (
-                    <>Creando Admin...</>
-                  ) : (
-                    <>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Crear Admin General
-                    </>
-                  )}
+                  {creatingAdmin ? 'Creating...' : 'Create Admin'}
                 </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* Logs Tab */}
           <TabsContent value="errors" className="space-y-4">
-            <Card className="bg-slate-900/50 border-purple-500/30">
+            <Card className="border">
               <CardHeader>
-                <CardTitle className="text-purple-300">Logs de Errores</CardTitle>
-                <CardDescription>Monitoreo de errores del sistema</CardDescription>
+                <CardTitle className="text-base">System Logs</CardTitle>
+                <CardDescription>Error monitoring and debug output</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="bg-slate-800 rounded-lg p-4 font-mono text-xs">
-                  <p className="text-green-400">✅ No hay errores críticos registrados</p>
+                <div className="bg-muted rounded-md p-4 font-mono text-xs">
+                  <p className="text-muted-foreground">[info] No critical errors logged</p>
+                  <p className="text-muted-foreground mt-1">[info] System running normally</p>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* Config Tab */}
           <TabsContent value="credentials" className="space-y-4">
-            <Card className="bg-slate-900/50 border-purple-500/30">
+            <Card className="border max-w-lg">
               <CardHeader>
-                <CardTitle className="text-purple-300">Credenciales</CardTitle>
-                <CardDescription>Configuración de servicios</CardDescription>
+                <CardTitle className="text-base">Configuration</CardTitle>
+                <CardDescription>Service endpoints and settings</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="bg-slate-800 rounded-lg p-4">
-                  <Label>Supabase URL</Label>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Supabase URL</Label>
                   <Input 
-                    value={import.meta.env.VITE_SUPABASE_URL || 'No configurado'} 
+                    value={import.meta.env.VITE_SUPABASE_URL || 'Not configured'} 
                     readOnly 
-                    className="mt-2 bg-slate-900 font-mono text-xs"
+                    className="font-mono text-xs bg-muted"
                   />
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* Database Tab */}
           <TabsContent value="database" className="space-y-4">
-            <Card className="bg-slate-900/50 border-purple-500/30">
+            <Card className="border max-w-lg">
               <CardHeader>
-                <CardTitle className="text-purple-300">Gestión de Base de Datos</CardTitle>
+                <CardTitle className="text-base">Database Management</CardTitle>
+                <CardDescription>Direct access to database console</CardDescription>
               </CardHeader>
               <CardContent>
                 <Button 
                   variant="outline" 
-                  className="w-full justify-start border-purple-500/30"
+                  className="w-full justify-between"
                   onClick={() => window.open('https://supabase.com', '_blank')}
                 >
-                  <Database className="h-4 w-4 mr-2" />
-                  Abrir Supabase Dashboard
+                  <span className="flex items-center">
+                    <Database className="h-4 w-4 mr-2" />
+                    Open Supabase Dashboard
+                  </span>
+                  <ExternalLink className="h-4 w-4" />
                 </Button>
               </CardContent>
             </Card>
@@ -306,4 +315,3 @@ const SuperAdmin = () => {
 };
 
 export default SuperAdmin;
-
