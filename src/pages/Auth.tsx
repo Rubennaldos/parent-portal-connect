@@ -4,13 +4,16 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRole } from '@/hooks/useRole';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, GraduationCap } from 'lucide-react';
+import { Loader2, GraduationCap, ShieldAlert } from 'lucide-react';
 
 const authSchema = z.object({
   email: z.string().trim().email({ message: 'Email inválido' }).max(255, { message: 'Email muy largo' }),
@@ -22,7 +25,10 @@ type AuthFormValues = z.infer<typeof authSchema>;
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
-  const { signIn, signUp, user, loading } = useAuth();
+  const [userType, setUserType] = useState<'parent' | 'staff'>('parent');
+  const [justLoggedIn, setJustLoggedIn] = useState(false);
+  const { signIn, signUp, user, loading, signOut } = useAuth();
+  const { role, loading: roleLoading, isParent, isStaff, getDefaultRoute } = useRole();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -34,17 +40,64 @@ export default function Auth() {
     },
   });
 
+  // Redirigir si ya estaba autenticado (no recién logueado)
   useEffect(() => {
-    if (!loading && user) {
-      navigate('/', { replace: true });
+    if (!loading && !roleLoading && user && role && !justLoggedIn) {
+      navigate(getDefaultRoute(), { replace: true });
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn]);
+
+  // Validar después del login
+  useEffect(() => {
+    if (justLoggedIn && !roleLoading && role) {
+      // Validar que el tipo seleccionado coincida con el rol
+      if (userType === 'parent') {
+        // Usuario seleccionó "Padre de Familia"
+        if (!isParent) {
+          // Pero su rol es staff
+          toast({
+            variant: 'destructive',
+            title: '⛔ Acceso Denegado',
+            description: 'No tienes acceso como Padre de Familia. Tu cuenta es de Personal Administrativo. Por favor, selecciona "Personal Administrativo" e intenta de nuevo.',
+            duration: 6000,
+          });
+          signOut();
+          setIsLoading(false);
+          setJustLoggedIn(false);
+          return;
+        }
+      } else {
+        // Usuario seleccionó "Personal Administrativo"
+        if (!isStaff) {
+          // Pero su rol es parent
+          toast({
+            variant: 'destructive',
+            title: '⛔ Acceso Denegado',
+            description: 'No tienes acceso administrativo. Tu cuenta es de Padre de Familia. Por favor, selecciona "Padre de Familia" e intenta de nuevo.',
+            duration: 6000,
+          });
+          signOut();
+          setIsLoading(false);
+          setJustLoggedIn(false);
+          return;
+        }
+      }
+
+      // Si llegamos aquí, la validación fue exitosa
+      toast({
+        title: '✅ Bienvenido',
+        description: 'Has iniciado sesión correctamente.',
+      });
+      navigate(getDefaultRoute(), { replace: true });
+      setIsLoading(false);
+      setJustLoggedIn(false);
+    }
+  }, [justLoggedIn, roleLoading, role, userType, isParent, isStaff, getDefaultRoute, navigate, signOut, toast]);
 
   const onSubmit = async (values: AuthFormValues) => {
-    setIsLoading(true);
-
-    try {
-      if (activeTab === 'login') {
+    if (activeTab === 'login') {
+      setIsLoading(true);
+      try {
         const { error } = await signIn(values.email, values.password);
         if (error) {
           let message = 'Error al iniciar sesión';
@@ -58,27 +111,32 @@ export default function Auth() {
             title: 'Error',
             description: message,
           });
+          setIsLoading(false);
         } else {
-          toast({
-            title: 'Bienvenido',
-            description: 'Has iniciado sesión correctamente.',
-          });
+          // Login exitoso, marcar para validación
+          setJustLoggedIn(true);
+          // El useEffect se encargará de validar y redirigir
         }
-      } else {
+      } catch (err) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Error inesperado al iniciar sesión',
+        });
+        setIsLoading(false);
+      }
+    } else {
+      setIsLoading(true);
+      try {
         const { error } = await signUp(values.email, values.password);
         if (error) {
-          // Mostrar error técnico exacto para debug
-          const technicalError = `[SignUp Error] ${error.name || 'Error'}: ${error.message}${error.status ? ` (HTTP ${error.status})` : ''}`;
-          console.error(technicalError, error);
-          alert(technicalError);
-          
           let message = 'Error al crear la cuenta';
           if (error.message.includes('User already registered')) {
             message = 'Este email ya está registrado. Intenta iniciar sesión.';
           } else if (error.message.includes('Password')) {
             message = 'La contraseña no cumple con los requisitos de seguridad.';
           } else {
-            message = error.message; // Mostrar mensaje real en el toast también
+            message = error.message;
           }
           toast({
             variant: 'destructive',
@@ -93,9 +151,9 @@ export default function Auth() {
           form.reset();
           setActiveTab('login');
         }
+      } finally {
+        setIsLoading(false);
       }
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -167,6 +225,30 @@ export default function Auth() {
                       </FormItem>
                     )}
                   />
+                  
+                  {/* Selector de Tipo de Usuario */}
+                  <div className="space-y-3 pt-2">
+                    <Label className="font-semibold">Ingresar como:</Label>
+                    <RadioGroup value={userType} onValueChange={(value: 'parent' | 'staff') => setUserType(value)} className="grid grid-cols-1 gap-3">
+                      <Label htmlFor="parent-type" className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary cursor-pointer">
+                        <RadioGroupItem value="parent" id="parent-type" className="sr-only" />
+                        <div className="flex items-center space-x-2 w-full">
+                          <GraduationCap className="h-5 w-5 text-primary" />
+                          <span className="font-medium">Padre de Familia</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1 w-full text-left">Ver mis hijos y saldos</p>
+                      </Label>
+                      <Label htmlFor="staff-type" className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary cursor-pointer">
+                        <RadioGroupItem value="staff" id="staff-type" className="sr-only" />
+                        <div className="flex items-center space-x-2 w-full">
+                          <ShieldAlert className="h-5 w-5 text-primary" />
+                          <span className="font-medium">Personal Administrativo</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1 w-full text-left">Acceso a admin, POS, cocina</p>
+                      </Label>
+                    </RadioGroup>
+                  </div>
+
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? (
                       <>
