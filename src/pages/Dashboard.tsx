@@ -144,20 +144,28 @@ const Dashboard = () => {
 
       // Admin General (dueño del negocio) tiene todos los módulos habilitados
       if (role === 'admin_general') {
-        setModules(allModules.map(m => ({ ...m, is_enabled: true })));
+        const enabledModules = allModules.map(m => ({ ...m, is_enabled: true }));
+        console.log('👔 Admin General: Habilitando todos los módulos:', enabledModules.length);
+        setModules(enabledModules);
       } else if (role === 'pos') {
         // Personal POS solo ve el módulo POS
-        setModules(allModules.map(m => ({
+        const posModules = allModules.map(m => ({
           ...m,
           is_enabled: m.code === 'pos'
-        })));
+        }));
+        console.log('💰 Usuario POS: Habilitando solo módulo POS');
+        setModules(posModules);
       } else if (role === 'kitchen') {
         // Personal Kitchen no ve ningún módulo del dashboard
+        console.log('🍳 Usuario Kitchen: Sin módulos de dashboard');
         setModules([]);
       } else {
         // Otros roles: mostrar todos pero deshabilitados
+        console.log('❓ Rol desconocido:', role, '- Mostrando módulos deshabilitados');
         setModules(allModules);
       }
+      
+      console.log('📊 Módulos finales cargados:', role, allModules.length);
     } catch (error) {
       console.error('Error fetching modules:', error);
     } finally {
@@ -166,15 +174,21 @@ const Dashboard = () => {
   };
 
   const handleModuleClick = (module: Module) => {
+    console.log('🖱️ Clic en módulo:', module.name, '| Ruta:', module.route);
+    
     if (!module.is_enabled) {
-      return; // No hacer nada si no tiene permiso
+      console.log('❌ Módulo deshabilitado');
+      alert(`No tienes acceso al módulo "${module.name}"`);
+      return;
     }
 
     if (module.status === 'coming_soon') {
+      console.log('🚧 Módulo en desarrollo');
       alert(`El módulo "${module.name}" estará disponible próximamente.`);
       return;
     }
 
+    console.log('✅ Navegando a:', module.route);
     navigate(module.route);
   };
 
@@ -217,6 +231,18 @@ const Dashboard = () => {
           <p className="text-sm text-gray-500">
             Selecciona un módulo para acceder a sus funcionalidades
           </p>
+          
+          {/* Botón de prueba directo a POS */}
+          <Button 
+            onClick={() => {
+              console.log('🧪 TEST: Navegando directamente a /pos');
+              navigate('/pos');
+            }}
+            variant="outline"
+            className="mt-4"
+          >
+            🧪 TEST: Ir Directo a POS
+          </Button>
         </div>
 
         {/* Modules Grid */}
