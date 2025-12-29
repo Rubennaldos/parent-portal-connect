@@ -1,7 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { supabaseConfig } from "@/config/supabase.config";
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? "").toString().trim();
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").toString().trim();
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? supabaseConfig.url ?? "").toString().trim();
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? supabaseConfig.anonKey ?? "").toString().trim();
 
 let configured = Boolean(supabaseUrl && supabaseAnonKey);
 if (configured) {
