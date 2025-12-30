@@ -424,9 +424,15 @@ const POS = () => {
       }
 
       // Mostrar ticket e imprimir
+      console.log('🎫 MOSTRANDO MODAL DEL TICKET', {
+        ticketCode,
+        clientName: ticketInfo.clientName
+      });
       setTicketData(ticketInfo);
       setShowTicketPrint(true);
       setShowPaymentDialog(false);
+      
+      console.log('✅ showTicketPrint activado:', true);
 
       toast({
         title: '✅ Venta Realizada',
@@ -964,21 +970,23 @@ const POS = () => {
 
       {/* TICKET TÉRMICO 80MM (Solo para impresión) */}
       {showTicketPrint && ticketData && (
-        <div className="hidden print:block">
-          <style>{`
-            @media print {
-              @page {
-                size: 80mm auto;
-                margin: 0;
+        <>
+          {console.log('🖥️ RENDERIZANDO MODAL DEL TICKET', { showTicketPrint, ticketData: !!ticketData })}
+          <div className="hidden print:block">
+            <style>{`
+              @media print {
+                @page {
+                  size: 80mm auto;
+                  margin: 0;
+                }
+                body {
+                  width: 80mm;
+                  margin: 0;
+                  padding: 0;
+                }
               }
-              body {
-                width: 80mm;
-                margin: 0;
-                padding: 0;
-              }
-            }
-          `}</style>
-          <div style={{ width: '80mm', fontFamily: 'monospace', fontSize: '12px', padding: '10px' }}>
+            `}</style>
+            <div style={{ width: '80mm', fontFamily: 'monospace', fontSize: '12px', padding: '10px' }}>
             <div style={{ textAlign: 'center', marginBottom: '10px' }}>
               <h2 style={{ margin: '0', fontSize: '16px', fontWeight: 'bold' }}>LIMA CAFÉ 28</h2>
               <p style={{ margin: '2px 0', fontSize: '10px' }}>Kiosco Escolar</p>
@@ -1035,7 +1043,7 @@ const POS = () => {
           </div>
 
           {/* Botón para continuar (no se imprime) */}
-          <div className="print:hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="print:hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]">
             <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
               <h3 className="text-2xl font-bold mb-2 text-center text-emerald-600">
                 ✅ Venta Realizada
@@ -1068,7 +1076,8 @@ const POS = () => {
               </p>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
