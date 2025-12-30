@@ -275,18 +275,28 @@ FROM schools s
 LEFT JOIN school_prefixes sp ON sp.school_id = s.id
 ORDER BY s.name;
 
--- Ver estructura de ticket_sequences
-\d ticket_sequences
+-- Ver columnas agregadas a profiles
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'profiles' 
+AND column_name IN ('pos_number', 'ticket_prefix')
+ORDER BY column_name;
+
+-- Ver que ticket_sequences se creó
+SELECT COUNT(*) as "Tabla ticket_sequences existe"
+FROM information_schema.tables 
+WHERE table_name = 'ticket_sequences';
 
 -- Ver funciones creadas
-SELECT proname as "Función" 
+SELECT proname as "Función Creada" 
 FROM pg_proc 
 WHERE proname IN (
   'get_next_ticket_number',
   'create_ticket_sequence',
   'get_next_pos_number',
   'generate_ticket_prefix'
-);
+)
+ORDER BY proname;
 
 -- ============================================
 -- ✅ FASE 1 COMPLETADA
