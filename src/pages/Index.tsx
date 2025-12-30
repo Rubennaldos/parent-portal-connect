@@ -19,7 +19,11 @@ import {
   AlertCircle,
   TrendingDown,
   TrendingUp,
-  Settings
+  Settings,
+  Receipt,
+  MessageSquare,
+  UtensilsCrossed,
+  AlertTriangle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -288,8 +292,35 @@ const Index = () => {
           <p className="text-gray-600 mt-1">Gestiona las cuentas del kiosco de tus hijos</p>
         </div>
 
-        {/* Estado Vacío */}
-        {students.length === 0 && (
+        {/* Pestañas Principales */}
+        <Tabs defaultValue="alumnos" className="w-full">
+          <TabsList className="grid w-full grid-cols-5 mb-6 bg-white shadow-sm border">
+            <TabsTrigger value="alumnos" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              <span className="hidden sm:inline">Alumnos</span>
+            </TabsTrigger>
+            <TabsTrigger value="pagos" className="flex items-center gap-2">
+              <Receipt className="h-4 w-4" />
+              <span className="hidden sm:inline">Pagos</span>
+            </TabsTrigger>
+            <TabsTrigger value="consultas" className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              <span className="hidden sm:inline">Consultas</span>
+            </TabsTrigger>
+            <TabsTrigger value="nutricion" className="flex items-center gap-2">
+              <UtensilsCrossed className="h-4 w-4" />
+              <span className="hidden sm:inline">Nutrición</span>
+            </TabsTrigger>
+            <TabsTrigger value="alergias" className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="hidden sm:inline">Alergias</span>
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Pestaña: Alumnos */}
+          <TabsContent value="alumnos" className="space-y-6">
+            {/* Estado Vacío */}
+            {students.length === 0 && (
           <Card className="border-2 border-dashed border-gray-300 bg-white/50">
             <CardContent className="py-16 text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -307,10 +338,10 @@ const Index = () => {
           </Card>
         )}
 
-        {/* Grid de Estudiantes */}
-        {students.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {students.map((student) => (
+            {/* Grid de Estudiantes */}
+            {students.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {students.map((student) => (
               <Card key={student.id} className="overflow-hidden hover:shadow-xl transition-shadow border-2">
                 <div className="h-24 bg-gradient-to-br from-blue-500 to-purple-600"></div>
                 <CardContent className="pt-0 px-6 pb-6">
@@ -492,10 +523,205 @@ const Index = () => {
                     </Dialog>
                   </div>
                 </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Pestaña: Pagos */}
+          <TabsContent value="pagos" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5" />
+                  Historial de Pagos y Recargas
+                </CardTitle>
+                <CardDescription>
+                  Revisa todas las transacciones realizadas en el sistema
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-8 text-gray-500">
+                  <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Historial de pagos centralizado</p>
+                  <p className="text-sm mt-2">Próximamente: filtros por estudiante, fecha y tipo</p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Pestaña: Consultas */}
+          <TabsContent value="consultas" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5" />
+                  Preguntas y Consultas
+                </CardTitle>
+                <CardDescription>
+                  Envía tus dudas o comentarios al personal del kiosco
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="consulta">Tu consulta</Label>
+                    <textarea
+                      id="consulta"
+                      className="w-full min-h-[120px] px-3 py-2 border rounded-md resize-none"
+                      placeholder="Escribe tu pregunta o comentario aquí..."
+                    />
+                  </div>
+                  <Button className="w-full">
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    Enviar Consulta
+                  </Button>
+                  
+                  <div className="mt-8">
+                    <h3 className="font-semibold mb-3">Consultas Frecuentes</h3>
+                    <div className="space-y-2">
+                      <details className="border rounded-lg p-3">
+                        <summary className="font-medium cursor-pointer">¿Cómo recargo el saldo?</summary>
+                        <p className="text-sm text-gray-600 mt-2">Ingresa a la pestaña "Alumnos" y presiona el botón "Recargar" en la tarjeta de tu hijo.</p>
+                      </details>
+                      <details className="border rounded-lg p-3">
+                        <summary className="font-medium cursor-pointer">¿Puedo ver qué compró mi hijo?</summary>
+                        <p className="text-sm text-gray-600 mt-2">Sí, presiona "Historial" en la tarjeta del estudiante para ver todas las transacciones.</p>
+                      </details>
+                      <details className="border rounded-lg p-3">
+                        <summary className="font-medium cursor-pointer">¿Cómo funciona el límite diario?</summary>
+                        <p className="text-sm text-gray-600 mt-2">El límite diario controla cuánto puede gastar tu hijo por día en el kiosco.</p>
+                      </details>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Pestaña: Nutrición */}
+          <TabsContent value="nutricion" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UtensilsCrossed className="h-5 w-5" />
+                  Menú Semanal del Kiosco
+                </CardTitle>
+                <CardDescription>
+                  Conoce las opciones nutritivas disponibles cada día
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Lunes</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Sándwich de pollo</li>
+                      <li>• Ensalada de frutas</li>
+                      <li>• Jugos naturales</li>
+                    </ul>
+                  </div>
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Martes</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Hamburguesa saludable</li>
+                      <li>• Yogurt con granola</li>
+                      <li>• Agua de frutas</li>
+                    </ul>
+                  </div>
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Miércoles</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Pizza integral</li>
+                      <li>• Ensalada verde</li>
+                      <li>• Refresco natural</li>
+                    </ul>
+                  </div>
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Jueves</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Hot dog saludable</li>
+                      <li>• Snacks nutritivos</li>
+                      <li>• Limonada</li>
+                    </ul>
+                  </div>
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Viernes</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Wrap de vegetales</li>
+                      <li>• Fruta fresca</li>
+                      <li>• Smoothies</li>
+                    </ul>
+                  </div>
+                  <div className="border rounded-lg p-4 bg-blue-50">
+                    <h3 className="font-semibold mb-2 text-blue-900">Información</h3>
+                    <p className="text-sm text-blue-700">
+                      Todos nuestros productos cumplen con estándares nutricionales para escolares.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Pestaña: Alergias */}
+          <TabsContent value="alergias" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-orange-600" />
+                  Registro de Alergias
+                </CardTitle>
+                <CardDescription>
+                  Mantén actualizada la información de alergias de tus hijos
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {students.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <AlertTriangle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No hay estudiantes registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {students.map((student) => (
+                      <Card key={student.id} className="border-2">
+                        <CardContent className="pt-6">
+                          <div className="flex items-center gap-4 mb-4">
+                            <img
+                              src={student.photo_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`}
+                              alt={student.full_name}
+                              className="w-12 h-12 rounded-full"
+                            />
+                            <div>
+                              <h3 className="font-semibold">{student.full_name}</h3>
+                              <p className="text-sm text-gray-600">{student.grade} - {student.section}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-3">
+                            <div>
+                              <Label htmlFor={`allergies-${student.id}`}>Alergias conocidas</Label>
+                              <textarea
+                                id={`allergies-${student.id}`}
+                                className="w-full min-h-[80px] px-3 py-2 border rounded-md resize-none text-sm"
+                                placeholder="Ej: Alérgico a los maní, lácteos, mariscos..."
+                              />
+                            </div>
+                            <Button variant="outline" size="sm" className="w-full">
+                              Guardar Información
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
         {/* Modal de Historial */}
         <Dialog open={showHistory} onOpenChange={setShowHistory}>
