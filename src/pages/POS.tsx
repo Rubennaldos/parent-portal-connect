@@ -35,6 +35,7 @@ interface Product {
   price: number;
   category: string;
   image_url?: string | null;
+  active?: boolean;
 }
 
 interface CartItem {
@@ -101,6 +102,7 @@ const POS = () => {
       const { data, error } = await supabase
         .from('products')
         .select('*')
+        .eq('active', true)
         .order('category', { ascending: true })
         .order('name', { ascending: true });
 
