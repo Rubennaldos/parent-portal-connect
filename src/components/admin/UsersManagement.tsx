@@ -399,6 +399,12 @@ function CreateAdminForm({ onSuccess }: { onSuccess: () => void }) {
     setCreating(true);
 
     try {
+      // 🔐 GUARDAR SESIÓN ACTUAL DEL SUPERADMIN
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) {
+        throw new Error('No hay sesión activa de SuperAdmin');
+      }
+
       // Crear usuario en Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -407,6 +413,7 @@ function CreateAdminForm({ onSuccess }: { onSuccess: () => void }) {
           data: {
             full_name: fullName,
           },
+          emailRedirectTo: undefined,
         },
       });
 
@@ -421,6 +428,13 @@ function CreateAdminForm({ onSuccess }: { onSuccess: () => void }) {
 
         if (updateError) throw updateError;
 
+        // 🔄 RESTAURAR SESIÓN DEL SUPERADMIN
+        await supabase.auth.signOut();
+        await supabase.auth.setSession({
+          access_token: currentSession.access_token,
+          refresh_token: currentSession.refresh_token,
+        });
+
         toast({
           title: '✅ Admin Creado',
           description: `Usuario ${email} creado exitosamente`,
@@ -430,6 +444,18 @@ function CreateAdminForm({ onSuccess }: { onSuccess: () => void }) {
       }
     } catch (error: any) {
       console.error('Error creating admin:', error);
+
+      // 🔄 INTENTAR RESTAURAR SESIÓN INCLUSO SI HAY ERROR
+      try {
+        const { data: { session: fallbackSession } } = await supabase.auth.getSession();
+        if (!fallbackSession) {
+          // Forzar reload para volver al login
+          window.location.reload();
+        }
+      } catch (e) {
+        console.error('Error al recuperar sesión:', e);
+      }
+
       toast({
         variant: 'destructive',
         title: 'Error',

@@ -424,12 +424,19 @@ function CreatePOSKitchenForm({
     setCreating(true);
 
     try {
-      // 1. Crear usuario en Auth
+      // 🔐 GUARDAR SESIÓN ACTUAL DEL SUPERADMIN
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) {
+        throw new Error('No hay sesión activa de SuperAdmin');
+      }
+
+      // 1. Crear usuario en Auth (esto hará auto-login)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: { full_name: fullName },
+          emailRedirectTo: undefined, // Evitar redirección
         },
       });
 
@@ -482,6 +489,21 @@ function CreatePOSKitchenForm({
 
       if (updateError) throw updateError;
 
+      // 🔄 RESTAURAR SESIÓN DEL SUPERADMIN
+      // Cerrar sesión del nuevo usuario
+      await supabase.auth.signOut();
+      
+      // Restaurar sesión del SuperAdmin
+      const { error: setSessionError } = await supabase.auth.setSession({
+        access_token: currentSession.access_token,
+        refresh_token: currentSession.refresh_token,
+      });
+
+      if (setSessionError) {
+        console.warn('Error al restaurar sesión:', setSessionError);
+        // No lanzamos error, el usuario se creó correctamente
+      }
+
       toast({
         title: '✅ Usuario Creado',
         description: `${profileType === 'pos' ? 'Cajero' : 'Cocina'} ${email} creado exitosamente${ticketPrefix ? ` con prefijo ${ticketPrefix}` : ''}`,
@@ -490,6 +512,18 @@ function CreatePOSKitchenForm({
       onSuccess();
     } catch (error: any) {
       console.error('Error creating user:', error);
+      
+      // 🔄 INTENTAR RESTAURAR SESIÓN INCLUSO SI HAY ERROR
+      try {
+        const { data: { session: fallbackSession } } = await supabase.auth.getSession();
+        if (!fallbackSession) {
+          // Forzar reload para volver al login
+          window.location.reload();
+        }
+      } catch (e) {
+        console.error('Error al recuperar sesión:', e);
+      }
+
       toast({
         variant: 'destructive',
         title: 'Error',
