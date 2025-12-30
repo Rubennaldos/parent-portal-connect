@@ -437,7 +437,17 @@ const POS = () => {
       {!clientMode && (
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6">
-            <h2 className="text-2xl font-bold mb-6 text-center">Seleccionar Tipo de Cliente</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">Seleccionar Tipo de Cliente</h2>
+              <Button
+                variant="ghost"
+                onClick={handleLogout}
+                className="text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="h-5 w-5 mr-2" />
+                Cerrar Sesión
+              </Button>
+            </div>
             
             <div className="grid grid-cols-2 gap-4">
               {/* Cliente Genérico */}
