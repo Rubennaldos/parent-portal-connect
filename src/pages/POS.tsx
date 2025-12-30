@@ -274,19 +274,28 @@ const POS = () => {
       const total = getTotal();
       let ticketCode = '';
 
+      console.log('🔵 INICIANDO CHECKOUT', {
+        clientMode,
+        studentWillPay,
+        selectedStudent: selectedStudent?.full_name,
+        total,
+        userId: user?.id
+      });
+
       // Generar correlativo
       try {
         const { data: ticketNumber, error: ticketError } = await supabase
           .rpc('get_next_ticket_number', { p_user_id: user?.id });
 
         if (ticketError) {
-          console.warn('Error generando correlativo:', ticketError);
+          console.error('❌ Error generando correlativo:', ticketError);
           ticketCode = `TMP-${Date.now()}`;
         } else {
+          console.log('✅ Correlativo generado:', ticketNumber);
           ticketCode = ticketNumber;
         }
       } catch (err) {
-        console.warn('Error en correlativo:', err);
+        console.error('❌ Error en correlativo:', err);
         ticketCode = `TMP-${Date.now()}`;
       }
 
@@ -305,6 +314,13 @@ const POS = () => {
 
       // Si es estudiante a crédito (no paga)
       if (clientMode === 'student' && !studentWillPay && selectedStudent) {
+        console.log('💳 ESTUDIANTE A CRÉDITO', {
+          studentId: selectedStudent.id,
+          balanceActual: selectedStudent.balance,
+          total,
+          newBalance: selectedStudent.balance - total
+        });
+
         const newBalance = selectedStudent.balance - total;
 
         // Crear transacción
@@ -322,7 +338,11 @@ const POS = () => {
           .select()
           .single();
 
-        if (transError) throw transError;
+        if (transError) {
+          console.error('❌ Error creando transacción:', transError);
+          throw transError;
+        }
+        console.log('✅ Transacción creada:', transaction);
 
         // Crear items
         const items = cart.map(item => ({
@@ -338,15 +358,29 @@ const POS = () => {
           .from('transaction_items')
           .insert(items);
 
-        if (itemsError) throw itemsError;
+        if (itemsError) {
+          console.error('❌ Error creando items:', itemsError);
+          throw itemsError;
+        }
+        console.log('✅ Items creados:', items.length);
 
         // Actualizar saldo
+        console.log('💰 ACTUALIZANDO SALDO DEL ESTUDIANTE', {
+          studentId: selectedStudent.id,
+          oldBalance: selectedStudent.balance,
+          newBalance
+        });
+
         const { error: updateError } = await supabase
           .from('students')
           .update({ balance: newBalance })
           .eq('id', selectedStudent.id);
 
-        if (updateError) throw updateError;
+        if (updateError) {
+          console.error('❌ Error actualizando saldo:', updateError);
+          throw updateError;
+        }
+        console.log('✅ Saldo actualizado correctamente');
 
         ticketInfo.newBalance = newBalance;
       } else {
