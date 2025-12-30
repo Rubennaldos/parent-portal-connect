@@ -250,3 +250,4 @@ Acceso: /dashboard (Dashboard de módulos de negocio)
 **Commit:** b385c3b
 **Estado:** ✅ CORREGIDO Y APLICADO
 
+

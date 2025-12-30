@@ -117,3 +117,4 @@ FROM pg_policies
 WHERE tablename IN ('students', 'transactions')
 ORDER BY tablename, policyname;
 
+

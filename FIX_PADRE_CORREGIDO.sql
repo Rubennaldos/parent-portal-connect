@@ -40,3 +40,4 @@ SET parent_id = (SELECT id FROM public.profiles WHERE email = 'prueba@limacafe28
 WHERE parent_id IS NULL;
 */
 
+

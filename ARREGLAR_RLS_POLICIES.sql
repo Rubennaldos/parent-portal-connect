@@ -136,3 +136,4 @@ SELECT * FROM public.students WHERE parent_id = 'TU-UUID-AQUI';
 -- ✅ Si ves estudiantes, las políticas funcionan
 -- ❌ Si no ves nada, revisa que el parent_id coincida
 
+

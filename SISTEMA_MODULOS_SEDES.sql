@@ -191,3 +191,4 @@ FROM public.pos_points p
 JOIN public.locations l ON p.location_id = l.id
 ORDER BY l.name, p.name;
 
+

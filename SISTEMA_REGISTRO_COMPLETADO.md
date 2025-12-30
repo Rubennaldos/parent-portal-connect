@@ -284,3 +284,4 @@ Solo falta rediseñar el Dashboard con las nuevas pestañas:
 Sube todo a Lovable, recarga la app y prueba el flujo completo en:
 `/register?sede=colegio-a`
 
+

@@ -41,3 +41,4 @@ SELECT id, name, full_name, grade, balance FROM public.students LIMIT 5;
 
 -- ✅ Ahora tanto "name" como "full_name" funcionarán
 
+

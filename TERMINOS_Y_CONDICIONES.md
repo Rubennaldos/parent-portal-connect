@@ -245,3 +245,4 @@ _Este documento tiene validez legal según el Código Civil Peruano y la Ley de 
 
 **Lima Café 28 S.A.C. © 2025 - Todos los derechos reservados**
 
+

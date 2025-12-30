@@ -69,3 +69,4 @@ ORDER BY tipo DESC, detalle;
 -- - 2 estudiantes vinculados (Pedro y María)
 -- - 2 estudiantes sin vincular (Juan y Ana)
 
+

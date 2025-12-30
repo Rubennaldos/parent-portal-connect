@@ -268,3 +268,4 @@ SELECT '=== COLEGIOS ===' as info, id, name, code FROM public.schools;
 
 -- ✅ Si ves 7 tablas y 3 colegios, está todo listo!
 
+

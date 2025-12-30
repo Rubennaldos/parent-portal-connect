@@ -19,3 +19,4 @@ SELECT id, email, role FROM public.profiles WHERE email = 'superadmin@limacafe28
 -- ✅ Si ves 'superadmin', ¡está listo!
 -- ❌ Si ves otra cosa, avísame.
 
+

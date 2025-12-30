@@ -200,3 +200,4 @@ Pero la solución que te di arriba funciona sin configurar nada extra.
 
 **¿Empezamos? Dime si quieres que te ayude con algún paso específico.**
 
+

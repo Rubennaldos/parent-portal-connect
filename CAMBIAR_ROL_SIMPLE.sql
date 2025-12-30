@@ -12,3 +12,4 @@ WHERE email = 'superadmin@limacafe28.com';
 -- Ver el resultado
 SELECT id, email, role FROM public.profiles WHERE email = 'superadmin@limacafe28.com';
 
+

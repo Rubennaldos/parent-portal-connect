@@ -425,3 +425,4 @@ Dime:
 - **"Tengo dudas sobre..."** → Pregúntame lo que sea
 - **"Dame un ejemplo más simple"** → Te lo simplifico más
 
+

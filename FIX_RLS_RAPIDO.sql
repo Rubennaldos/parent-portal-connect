@@ -78,3 +78,4 @@ ORDER BY tablename, policyname;
 -- ✅ Si ves 7 políticas, está todo listo
 -- Ahora cierra sesión, limpia caché e inicia sesión de nuevo
 
+

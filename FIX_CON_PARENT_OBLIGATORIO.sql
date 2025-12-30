@@ -70,3 +70,4 @@ ORDER BY tipo DESC, detalle1;
 -- - Perfil: role = parent
 -- - 4 estudiantes vinculados (Pedro, María, Juan, Ana)
 
+

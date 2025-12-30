@@ -73,3 +73,4 @@ WHERE p.email = 'prueba@limacafe28.com';
 -- - PERFIL: role = 'parent'
 -- - HIJOS: Pedro García y María López vinculados
 
+

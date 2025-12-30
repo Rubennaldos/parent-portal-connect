@@ -21,3 +21,4 @@ WHERE s.parent_id = (SELECT id FROM public.profiles WHERE email = 'prueba@limaca
 
 -- ✅ Si ves role='parent' y 2 estudiantes, ¡está listo!
 
+

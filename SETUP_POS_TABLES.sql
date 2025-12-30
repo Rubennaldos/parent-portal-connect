@@ -118,3 +118,4 @@ SELECT id, name, balance, grade FROM public.students ORDER BY name;
 -- Ver productos creados
 SELECT id, name, price, category, stock FROM public.products ORDER BY category, name;
 
+

@@ -143,3 +143,4 @@ En VS Code / Cursor:
 
 ¡Listo! Todo el panel cambia de morado a azul.
 
+

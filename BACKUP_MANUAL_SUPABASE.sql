@@ -226,3 +226,4 @@ WHERE is_active = true;
 -- 2. Click en "Download CSV" para cada resultado
 -- 3. Guarda todos los archivos en una carpeta "backup-FECHA"
 
+

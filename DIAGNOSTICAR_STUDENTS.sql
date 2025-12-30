@@ -61,3 +61,4 @@ ALTER TABLE public.students ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT t
 ALTER TABLE public.students ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES public.profiles(id);
 */
 
+

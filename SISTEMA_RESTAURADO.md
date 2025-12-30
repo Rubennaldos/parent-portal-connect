@@ -334,3 +334,4 @@ ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
 
 Ejecuta los 4 pasos y estarás operativo de nuevo. 🚀
 
+

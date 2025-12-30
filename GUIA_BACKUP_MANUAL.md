@@ -292,3 +292,4 @@ PASO 9: ✅ Listo. Puedes entregar al cliente con confianza
 
 Solo dime "empecemos con el backup" y te voy dando cada query una por una.
 
+

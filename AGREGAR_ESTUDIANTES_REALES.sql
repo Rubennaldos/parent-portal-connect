@@ -92,3 +92,4 @@ ORDER BY s.full_name;
 
 -- ✅ Deberías ver tus estudiantes listados aquí
 
+

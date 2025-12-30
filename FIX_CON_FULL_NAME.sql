@@ -65,3 +65,4 @@ ORDER BY tipo DESC, detalle1;
 -- - Perfil: role = parent
 -- - Estudiantes vinculados a prueba@limacafe28.com
 
+

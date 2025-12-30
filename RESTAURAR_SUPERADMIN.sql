@@ -93,3 +93,4 @@ FROM public.profiles p
 INNER JOIN auth.users au ON p.id = au.id
 ORDER BY p.role, p.email;
 
+

@@ -196,3 +196,4 @@ Dime:
 - ⏰ "Después, por ahora dame la solución temporal"
 - ❓ "Tengo una pregunta sobre..."
 
+

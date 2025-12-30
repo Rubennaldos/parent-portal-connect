@@ -11,3 +11,4 @@ ORDER BY ordinal_position;
 -- Ver todos los estudiantes que existen
 SELECT * FROM public.students LIMIT 5;
 
+
