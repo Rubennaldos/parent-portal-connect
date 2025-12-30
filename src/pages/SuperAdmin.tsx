@@ -16,69 +16,21 @@ import {
   Activity,
   ExternalLink,
   CheckCircle2,
-  Circle
+  Circle,
+  Users,
+  Building2
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { UsersManagement } from '@/components/admin/UsersManagement';
+import { ProfilesControl } from '@/components/admin/ProfilesControl';
 
 const SuperAdmin = () => {
   const { signOut, user } = useAuth();
   const { role, isStaff, isParent } = useRole();
-  const { toast } = useToast();
-
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [newAdminPassword, setNewAdminPassword] = useState('');
-  const [creatingAdmin, setCreatingAdmin] = useState(false);
 
   const handleLogout = async () => {
     await signOut();
-  };
-
-  const handleCreateAdminGeneral = async () => {
-    if (!newAdminEmail || !newAdminPassword) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Debes completar todos los campos',
-      });
-      return;
-    }
-
-    setCreatingAdmin(true);
-
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: newAdminEmail,
-        password: newAdminPassword,
-      });
-
-      if (authError) throw authError;
-
-      if (authData.user) {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ role: 'admin_general' })
-          .eq('id', authData.user.id);
-
-        if (updateError) throw updateError;
-
-        toast({
-          title: 'Admin Creado',
-          description: `Usuario ${newAdminEmail} creado con rol admin_general`,
-        });
-
-        setNewAdminEmail('');
-        setNewAdminPassword('');
-      }
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error al crear admin',
-        description: error.message,
-      });
-    } finally {
-      setCreatingAdmin(false);
-    }
   };
 
   return (
@@ -129,17 +81,17 @@ const SuperAdmin = () => {
               <Activity className="h-4 w-4 mr-2" />
               Status
             </TabsTrigger>
-            <TabsTrigger value="users" className="data-[state=active]:bg-background">
-              <UserPlus className="h-4 w-4 mr-2" />
-              Users
+            <TabsTrigger value="users-management" className="data-[state=active]:bg-background">
+              <Users className="h-4 w-4 mr-2" />
+              Usuarios
+            </TabsTrigger>
+            <TabsTrigger value="profiles-control" className="data-[state=active]:bg-background">
+              <Building2 className="h-4 w-4 mr-2" />
+              Perfiles por Sede
             </TabsTrigger>
             <TabsTrigger value="errors" className="data-[state=active]:bg-background">
               <AlertTriangle className="h-4 w-4 mr-2" />
               Logs
-            </TabsTrigger>
-            <TabsTrigger value="credentials" className="data-[state=active]:bg-background">
-              <Key className="h-4 w-4 mr-2" />
-              Config
             </TabsTrigger>
             <TabsTrigger value="database" className="data-[state=active]:bg-background">
               <Database className="h-4 w-4 mr-2" />
@@ -206,54 +158,14 @@ const SuperAdmin = () => {
             </div>
           </TabsContent>
 
-          {/* Users Tab */}
-          <TabsContent value="users" className="space-y-4">
-            <Card className="border max-w-lg">
-              <CardHeader>
-                <CardTitle className="text-base">Create Business Owner / Admin</CardTitle>
-                <CardDescription>
-                  Add a new admin_general user (business owner/manager). This user will have access to the Business Dashboard with all modules (POS, Collections, Finance, etc.)
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="admin-email" className="text-sm">Email</Label>
-                  <Input
-                    id="admin-email"
-                    type="email"
-                    placeholder="admin@example.com"
-                    value={newAdminEmail}
-                    onChange={(e) => setNewAdminEmail(e.target.value)}
-                    className="font-mono text-sm"
-                  />
-                </div>
+          {/* Gestión de Usuarios Tab */}
+          <TabsContent value="users-management" className="space-y-4">
+            <UsersManagement />
+          </TabsContent>
 
-                <div className="space-y-2">
-                  <Label htmlFor="admin-password" className="text-sm">Password</Label>
-                  <Input
-                    id="admin-password"
-                    type="password"
-                    placeholder="min 6 characters"
-                    value={newAdminPassword}
-                    onChange={(e) => setNewAdminPassword(e.target.value)}
-                  />
-                </div>
-
-                <Button 
-                  onClick={handleCreateAdminGeneral}
-                  disabled={creatingAdmin}
-                  className="w-full"
-                >
-                  {creatingAdmin ? 'Creating...' : 'Create Admin'}
-                </Button>
-                
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mt-4">
-                  <p className="text-xs text-blue-300">
-                    <strong>ℹ️ Note:</strong> admin_general users will access the <strong>Business Dashboard</strong> (/dashboard) with business modules (POS, Collections, Finance, etc.). They will NOT see this technical panel.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Control de Perfiles por Sede Tab */}
+          <TabsContent value="profiles-control" className="space-y-4">
+            <ProfilesControl />
           </TabsContent>
 
           {/* Logs Tab */}
@@ -267,26 +179,6 @@ const SuperAdmin = () => {
                 <div className="bg-muted rounded-md p-4 font-mono text-xs">
                   <p className="text-muted-foreground">[info] No critical errors logged</p>
                   <p className="text-muted-foreground mt-1">[info] System running normally</p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Config Tab */}
-          <TabsContent value="credentials" className="space-y-4">
-            <Card className="border max-w-lg">
-              <CardHeader>
-                <CardTitle className="text-base">Configuration</CardTitle>
-                <CardDescription>Service endpoints and settings</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Supabase URL</Label>
-                  <Input 
-                    value={import.meta.env.VITE_SUPABASE_URL || 'Not configured'} 
-                    readOnly 
-                    className="font-mono text-xs bg-muted"
-                  />
                 </div>
               </CardContent>
             </Card>
