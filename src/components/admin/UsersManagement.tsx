@@ -203,30 +203,12 @@ export function UsersManagement() {
 
       if (profileError) throw profileError;
 
-      // 2. Intentar eliminar de auth.users
-      // Nota: Esto requiere service_role key, puede fallar
-      try {
-        const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
-        if (authError) {
-          console.warn('No se pudo eliminar de auth.users:', authError);
-          toast({
-            title: '⚠️ Eliminación Parcial',
-            description: `${user.email} eliminado de profiles. Para eliminación completa, ejecuta el SQL manualmente.`,
-          });
-        } else {
-          toast({
-            title: '✅ Usuario Eliminado Completamente',
-            description: `${user.email} ha sido eliminado del sistema.`,
-          });
-        }
-      } catch (authError) {
-        console.warn('auth.admin no disponible:', authError);
-        toast({
-          title: '⚠️ Usuario Eliminado (Parcial)',
-          description: `${user.email} eliminado de profiles. Para re-usar el email, ejecuta: DELETE FROM auth.users WHERE email = '${user.email}';`,
-          duration: 8000,
-        });
-      }
+      // 2. Mostrar advertencia sobre eliminación de auth.users
+      toast({
+        title: '⚠️ Usuario Eliminado de Profiles',
+        description: `${user.email} eliminado. Para eliminación completa, ejecuta en Supabase: DELETE FROM auth.users WHERE email = '${user.email}';`,
+        duration: 10000,
+      });
 
       setDeletingUser(null);
       fetchUsers();

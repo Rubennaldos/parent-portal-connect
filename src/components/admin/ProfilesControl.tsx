@@ -141,15 +141,8 @@ export function ProfilesControl() {
             .order('pos_number');
 
           // Obtener emails de auth
-          const profilesWithEmail = await Promise.all(
-            (profiles || []).map(async (profile) => {
-              const { data: authData } = await supabase.auth.admin.getUserById(profile.id);
-              return {
-                ...profile,
-                email: authData?.user?.email || 'Unknown',
-              };
-            })
-          );
+          // Ya no necesitamos auth.admin, el email ya viene en profiles
+          const profilesWithEmail = profiles || [];
 
           const posUsers = profilesWithEmail.filter(p => p.role === 'pos');
           const kitchenUsers = profilesWithEmail.filter(p => p.role === 'kitchen');
