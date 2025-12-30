@@ -182,6 +182,7 @@ const POS = () => {
   };
 
   const resetClient = () => {
+    console.log('🧹 Limpiando estado del cliente...');
     setClientMode(null);
     setSelectedStudent(null);
     setStudentSearch('');
@@ -192,6 +193,7 @@ const POS = () => {
     setShowStudentResults(false);
     setPaymentMethod('efectivo');
     setDocumentType('ticket');
+    console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
 
   const addToCart = (product: Product) => {
@@ -382,6 +384,14 @@ const POS = () => {
         }
         console.log('✅ Saldo actualizado correctamente');
 
+        // Actualizar el saldo en el estado local del estudiante seleccionado
+        if (selectedStudent) {
+          setSelectedStudent({
+            ...selectedStudent,
+            balance: newBalance
+          });
+        }
+
         ticketInfo.newBalance = newBalance;
       } else {
         // Cliente genérico o estudiante pagando - Solo registrar la venta (sin afectar saldo)
@@ -441,10 +451,12 @@ const POS = () => {
   };
 
   const handleContinue = () => {
+    console.log('🔄 CONTINUANDO - Reseteando POS para siguiente cliente');
     // Reset y preparar para siguiente cliente
     setShowTicketPrint(false);
     setTicketData(null);
     resetClient();
+    console.log('✅ POS reseteado - Listo para nuevo cliente');
   };
 
   const handleLogout = async () => {
