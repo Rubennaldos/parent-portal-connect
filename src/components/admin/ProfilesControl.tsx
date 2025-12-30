@@ -28,7 +28,8 @@ import {
   UtensilsCrossed,
   CreditCard,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Edit2
 } from 'lucide-react';
 
 interface School {
@@ -53,6 +54,8 @@ interface SchoolProfiles {
   kitchen_users: POSProfile[];
   total_profiles: number;
   can_add_more: boolean;
+  next_pos_number: number;
+  next_prefix: string;
 }
 
 export function ProfilesControl() {
@@ -61,10 +64,52 @@ export function ProfilesControl() {
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
+  const [editingPrefix, setEditingPrefix] = useState<string | null>(null);
+  const [newPrefixValue, setNewPrefixValue] = useState('');
 
   useEffect(() => {
     fetchSchoolsProfiles();
   }, []);
+
+  const handleUpdatePrefix = async (userId: string, oldPrefix: string) => {
+    if (!newPrefixValue || newPrefixValue === oldPrefix) {
+      setEditingPrefix(null);
+      return;
+    }
+
+    try {
+      // Actualizar prefijo en profiles
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ ticket_prefix: newPrefixValue })
+        .eq('id', userId);
+
+      if (profileError) throw profileError;
+
+      // Actualizar prefijo en ticket_sequences
+      const { error: seqError } = await supabase
+        .from('ticket_sequences')
+        .update({ prefix: newPrefixValue })
+        .eq('pos_user_id', userId);
+
+      if (seqError) throw seqError;
+
+      toast({
+        title: '✅ Prefijo Actualizado',
+        description: `Cambiado de ${oldPrefix} a ${newPrefixValue}`,
+      });
+
+      setEditingPrefix(null);
+      fetchSchoolsProfiles();
+    } catch (error: any) {
+      console.error('Error updating prefix:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo actualizar el prefijo',
+      });
+    }
+  };
 
   const fetchSchoolsProfiles = async () => {
     setLoading(true);
@@ -109,16 +154,27 @@ export function ProfilesControl() {
           const posUsers = profilesWithEmail.filter(p => p.role === 'pos');
           const kitchenUsers = profilesWithEmail.filter(p => p.role === 'kitchen');
           const totalProfiles = posUsers.length + kitchenUsers.length;
+          
+          // Calcular siguiente número POS disponible
+          const usedNumbers = posUsers.map(p => p.pos_number).filter(n => n !== null);
+          const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : 0;
+          const nextPosNumber = maxNumber + 1 <= 3 ? maxNumber + 1 : 0;
+          
+          // Generar siguiente prefijo
+          const prefixBase = school.school_prefixes?.[0]?.prefix_base || school.code;
+          const nextPrefix = nextPosNumber > 0 ? `${prefixBase}${nextPosNumber}` : '-';
 
           return {
             school: {
               ...school,
-              prefix_base: school.school_prefixes?.[0]?.prefix_base || school.code,
+              prefix_base: prefixBase,
             },
             pos_users: posUsers,
             kitchen_users: kitchenUsers,
             total_profiles: totalProfiles,
             can_add_more: totalProfiles < 3,
+            next_pos_number: nextPosNumber,
+            next_prefix: nextPrefix,
           };
         })
       );
@@ -162,8 +218,15 @@ export function ProfilesControl() {
                       {schoolData.school.name}
                     </CardTitle>
                     <CardDescription>
-                      Código: {schoolData.school.code} | Prefijo: {schoolData.school.prefix_base}
+                      Código: {schoolData.school.code} | Prefijo base: {schoolData.school.prefix_base}
                     </CardDescription>
+                    {schoolData.can_add_more && schoolData.next_pos_number > 0 && (
+                      <div className="mt-2 bg-blue-50 border border-blue-200 rounded px-2 py-1 inline-block">
+                        <span className="text-xs text-blue-900">
+                          ✨ Siguiente correlativo POS: <strong className="font-mono">{schoolData.next_prefix}</strong>
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant={schoolData.can_add_more ? 'secondary' : 'destructive'}>
@@ -219,11 +282,62 @@ export function ProfilesControl() {
                         {schoolData.pos_users.map((user) => (
                           <Card key={user.id} className="p-3">
                             <div className="flex items-center justify-between">
-                              <div>
+                              <div className="flex-1">
                                 <p className="text-sm font-mono">{user.email}</p>
-                                <Badge variant="secondary" className="mt-1">
-                                  {user.ticket_prefix}
-                                </Badge>
+                                <div className="mt-1 flex items-center gap-2">
+                                  {editingPrefix === user.id ? (
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        value={newPrefixValue}
+                                        onChange={(e) => setNewPrefixValue(e.target.value.toUpperCase())}
+                                        className="h-7 w-20 text-xs font-mono"
+                                        placeholder={user.ticket_prefix}
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            handleUpdatePrefix(user.id, user.ticket_prefix);
+                                          } else if (e.key === 'Escape') {
+                                            setEditingPrefix(null);
+                                          }
+                                        }}
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2"
+                                        onClick={() => handleUpdatePrefix(user.id, user.ticket_prefix)}
+                                      >
+                                        ✓
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 px-2"
+                                        onClick={() => setEditingPrefix(null)}
+                                      >
+                                        ✕
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <Badge variant="secondary">
+                                        {user.ticket_prefix}
+                                      </Badge>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-6 w-6 p-0"
+                                        onClick={() => {
+                                          setEditingPrefix(user.id);
+                                          setNewPrefixValue(user.ticket_prefix);
+                                        }}
+                                        title="Editar prefijo"
+                                      >
+                                        <Edit2 className="h-3 w-3" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                               <CheckCircle2 className="h-4 w-4 text-green-600" />
                             </div>
