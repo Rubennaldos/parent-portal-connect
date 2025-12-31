@@ -181,6 +181,14 @@ const POS = () => {
     setStudentSearch('');
   };
 
+  const selectStudentMode = () => {
+    console.log('📚 Modo Estudiante seleccionado - Limpiando búsqueda');
+    setClientMode('student');
+    setSelectedStudent(null);
+    setStudentSearch(''); // Asegurar que empiece vacío
+    setShowStudentResults(false);
+  };
+
   const resetClient = () => {
     console.log('🧹 Limpiando estado del cliente...');
     setClientMode(null);
@@ -257,7 +265,7 @@ const POS = () => {
     setShowConfirmDialog(true);
   };
 
-  const handleConfirmCheckout = async () => {
+  const handleConfirmCheckout = async (shouldPrint: boolean = false) => {
     // Si es cliente genérico, mostrar opciones de pago
     if (clientMode === 'generic') {
       setShowConfirmDialog(false);
@@ -265,6 +273,14 @@ const POS = () => {
     } else {
       // Si es estudiante, procesar directo
       await processCheckout();
+      
+      // Si debe imprimir, hacerlo
+      if (shouldPrint && ticketData) {
+        setTimeout(() => {
+          window.print();
+        }, 300);
+      }
+      
       // Después de procesar, resetear automáticamente
       setShowConfirmDialog(false);
       resetClient();
@@ -545,7 +561,7 @@ const POS = () => {
 
               {/* Estudiante */}
               <button
-                onClick={() => setClientMode('student')}
+                onClick={selectStudentMode}
                 className="p-8 border-2 border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
               >
                 <User className="h-16 w-16 mx-auto mb-4 text-gray-400 group-hover:text-blue-600" />
@@ -904,17 +920,29 @@ const POS = () => {
 
             {/* Botones */}
             <div className="space-y-3">
+              {/* Botón principal: Confirmar y Continuar */}
               <Button
-                onClick={handleConfirmCheckout}
+                onClick={() => handleConfirmCheckout(false)}
                 disabled={isProcessing}
                 className="w-full h-14 text-xl font-bold bg-emerald-500 hover:bg-emerald-600 text-white"
               >
                 {isProcessing ? 'PROCESANDO...' : '✅ Confirmar y Continuar'}
               </Button>
+              
+              {/* Botón secundario: Confirmar e Imprimir */}
+              <Button
+                onClick={() => handleConfirmCheckout(true)}
+                disabled={isProcessing}
+                className="w-full h-14 text-xl font-bold bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                {isProcessing ? 'PROCESANDO...' : '🖨️ Confirmar e Imprimir'}
+              </Button>
+              
+              {/* Botón cancelar */}
               <Button
                 variant="outline"
                 onClick={() => setShowConfirmDialog(false)}
-                className="w-full h-12"
+                className="w-full h-10 text-sm"
               >
                 Cancelar
               </Button>
