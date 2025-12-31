@@ -257,15 +257,17 @@ const POS = () => {
     setShowConfirmDialog(true);
   };
 
-  const handleConfirmCheckout = () => {
-    setShowConfirmDialog(false);
-    
+  const handleConfirmCheckout = async () => {
     // Si es cliente genérico, mostrar opciones de pago
     if (clientMode === 'generic') {
+      setShowConfirmDialog(false);
       setShowPaymentDialog(true);
     } else {
       // Si es estudiante, procesar directo
-      processCheckout();
+      await processCheckout();
+      // Después de procesar, resetear automáticamente
+      setShowConfirmDialog(false);
+      resetClient();
     }
   };
 
@@ -423,22 +425,21 @@ const POS = () => {
         await supabase.from('transaction_items').insert(items);
       }
 
-      // Mostrar ticket e imprimir
-      console.log('🎫 MOSTRANDO MODAL DEL TICKET', {
+      // Mostrar notificación rápida (sin modal)
+      console.log('🎫 VENTA COMPLETADA', {
         ticketCode,
         clientName: ticketInfo.clientName
       });
-      setTicketData(ticketInfo);
-      setShowTicketPrint(true);
-      setShowPaymentDialog(false);
-      
-      console.log('✅ showTicketPrint activado:', true);
 
       toast({
         title: '✅ Venta Realizada',
         description: `Ticket: ${ticketCode}`,
         duration: 2000,
       });
+
+      // Guardar datos del ticket para imprimir si es necesario
+      setTicketData(ticketInfo);
+      // NO mostramos el modal, el flujo continúa automáticamente
 
     } catch (error: any) {
       console.error('Error processing checkout:', error);
@@ -902,19 +903,20 @@ const POS = () => {
             )}
 
             {/* Botones */}
-            <div className="flex gap-3">
+            <div className="space-y-3">
+              <Button
+                onClick={handleConfirmCheckout}
+                disabled={isProcessing}
+                className="w-full h-14 text-xl font-bold bg-emerald-500 hover:bg-emerald-600 text-white"
+              >
+                {isProcessing ? 'PROCESANDO...' : '✅ Confirmar y Continuar'}
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setShowConfirmDialog(false)}
-                className="flex-1 h-12"
+                className="w-full h-12"
               >
                 Cancelar
-              </Button>
-              <Button
-                onClick={handleConfirmCheckout}
-                className="flex-1 h-12 bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
-              >
-                Confirmar Compra
               </Button>
             </div>
           </div>
@@ -968,25 +970,23 @@ const POS = () => {
         </DialogContent>
       </Dialog>
 
-      {/* TICKET TÉRMICO 80MM (Solo para impresión) */}
-      {showTicketPrint && ticketData && (
-        <>
-          {console.log('🖥️ RENDERIZANDO MODAL DEL TICKET', { showTicketPrint, ticketData: !!ticketData })}
-          <div className="hidden print:block">
-            <style>{`
-              @media print {
-                @page {
-                  size: 80mm auto;
-                  margin: 0;
-                }
-                body {
-                  width: 80mm;
-                  margin: 0;
-                  padding: 0;
-                }
+      {/* TICKET TÉRMICO 80MM (Para impresión directa si se necesita) */}
+      {ticketData && (
+        <div className="hidden print:block">
+          <style>{`
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0;
               }
-            `}</style>
-            <div style={{ width: '80mm', fontFamily: 'monospace', fontSize: '12px', padding: '10px' }}>
+              body {
+                width: 80mm;
+                margin: 0;
+                padding: 0;
+              }
+            }
+          `}</style>
+          <div style={{ width: '80mm', fontFamily: 'monospace', fontSize: '12px', padding: '10px' }}>
             <div style={{ textAlign: 'center', marginBottom: '10px' }}>
               <h2 style={{ margin: '0', fontSize: '16px', fontWeight: 'bold' }}>LIMA CAFÉ 28</h2>
               <p style={{ margin: '2px 0', fontSize: '10px' }}>Kiosco Escolar</p>
@@ -1041,43 +1041,7 @@ const POS = () => {
               <p style={{ margin: '2px 0', fontSize: '10px' }}>──────────────────────</p>
             </div>
           </div>
-          </div>
-
-          {/* Botón para continuar (no se imprime) */}
-          <div className="print:hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]">
-            <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-              <h3 className="text-2xl font-bold mb-2 text-center text-emerald-600">
-                ✅ Venta Realizada
-              </h3>
-              <p className="text-center text-gray-600 mb-6">
-                Ticket generado correctamente
-              </p>
-              
-              {/* Botones de acción */}
-              <div className="space-y-3">
-                <Button
-                  onClick={handlePrintTicket}
-                  className="w-full h-16 text-xl font-bold bg-blue-500 hover:bg-blue-600"
-                >
-                  <Printer className="h-6 w-6 mr-2" />
-                  🖨️ Imprimir Ticket
-                </Button>
-                
-                <Button
-                  onClick={handleContinue}
-                  className="w-full h-16 text-xl font-bold bg-emerald-500 hover:bg-emerald-600"
-                >
-                  <CheckCircle2 className="h-6 w-6 mr-2" />
-                  Continuar (Siguiente Cliente)
-                </Button>
-              </div>
-
-              <p className="text-xs text-center text-gray-500 mt-4">
-                Presiona "Imprimir" para generar el ticket físico
-              </p>
-            </div>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );
