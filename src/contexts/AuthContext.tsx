@@ -75,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const redirectUrl = `${window.location.origin}/`;
+    const redirectUrl = `${window.location.origin}/parent-portal-connect/#/`;
 
     const { error } = await supabase.auth.signUp({
       email,

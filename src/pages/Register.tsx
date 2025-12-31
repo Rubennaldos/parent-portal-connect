@@ -93,7 +93,7 @@ export default function Register() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: `${window.location.origin}/onboarding${schoolId ? `?school_id=${schoolId}` : ''}`,
+          redirectTo: `${window.location.origin}/parent-portal-connect/#/onboarding${schoolId ? `?school_id=${schoolId}` : ''}`,
         },
       });
 

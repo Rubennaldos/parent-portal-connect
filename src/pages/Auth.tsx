@@ -103,7 +103,7 @@ export default function Auth() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: `${window.location.origin}/`,
+          redirectTo: `${window.location.origin}/parent-portal-connect/#/`,
         },
       });
 
