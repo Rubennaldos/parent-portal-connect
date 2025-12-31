@@ -428,13 +428,19 @@ function CreatePOSKitchenForm({
         email,
         password,
         options: {
-          data: { full_name: fullName },
+          data: { 
+            full_name: fullName,
+            role: profileType, // 🔥 IMPORTANTE: Pasar el rol correcto desde el inicio
+          },
           emailRedirectTo: undefined, // Evitar redirección
         },
       });
 
       if (authError) throw authError;
       if (!authData.user) throw new Error('No se pudo crear el usuario');
+
+      // 🔥 ESPERAR UN MOMENTO PARA QUE EL TRIGGER CREE EL PERFIL
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // 2. Si es POS, obtener siguiente número y crear secuencia
       let posNumber: number | null = null;
@@ -469,16 +475,19 @@ function CreatePOSKitchenForm({
         if (seqError) throw seqError;
       }
 
-      // 3. Actualizar perfil
+      // 3. Actualizar perfil con UPSERT (forzar el rol correcto)
       const { error: updateError } = await supabase
         .from('profiles')
-        .update({
-          role: profileType,
+        .upsert({
+          id: authData.user.id,
+          email: email,
+          role: profileType, // 🔥 FORZAR el rol correcto (pos o kitchen)
           school_id: schoolId,
           pos_number: posNumber,
           ticket_prefix: ticketPrefix,
-        })
-        .eq('id', authData.user.id);
+        }, {
+          onConflict: 'id'
+        });
 
       if (updateError) throw updateError;
 
