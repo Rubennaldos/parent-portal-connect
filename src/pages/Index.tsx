@@ -38,6 +38,7 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { AddStudentModal } from '@/components/AddStudentModal';
+import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 
 interface Student {
   id: string;
@@ -62,6 +63,7 @@ interface Transaction {
 const Index = () => {
   const { user, signOut } = useAuth();
   const { toast } = useToast();
+  const { isChecking } = useOnboardingCheck();
   
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,6 +258,18 @@ const Index = () => {
     setShowHistory(true);
   };
 
+  // Mostrar loader mientras verifica onboarding
+  if (isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Verificando...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -282,8 +296,8 @@ const Index = () => {
             </div>
           </div>
           <span className="text-sm text-gray-600 hidden sm:block">
-            {user?.email}
-          </span>
+              {user?.email}
+            </span>
         </div>
       </header>
 
@@ -490,7 +504,7 @@ const Index = () => {
                             <p className="text-sm text-yellow-800">
                               Este límite ayuda a controlar los gastos diarios del estudiante en el kiosco.
                             </p>
-                          </div>
+        </div>
 
                           <Button 
                             onClick={handleUpdateLimit}
@@ -521,15 +535,15 @@ const Index = () => {
                 <CardDescription>
                   Revisa todas las transacciones realizadas en el sistema
                 </CardDescription>
-              </CardHeader>
-              <CardContent>
+            </CardHeader>
+            <CardContent>
                 <div className="text-center py-8 text-gray-500">
                   <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>Historial de pagos centralizado</p>
                   <p className="text-sm mt-2">Próximamente: filtros por estudiante, fecha y tipo</p>
                 </div>
-              </CardContent>
-            </Card>
+            </CardContent>
+          </Card>
           </TabsContent>
 
           {/* Pestaña: Consultas */}
@@ -576,7 +590,7 @@ const Index = () => {
                       </details>
                     </div>
                   </div>
-                </div>
+              </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -592,8 +606,8 @@ const Index = () => {
                 <CardDescription>
                   Conoce las opciones nutritivas disponibles cada día
                 </CardDescription>
-              </CardHeader>
-              <CardContent>
+            </CardHeader>
+            <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="border rounded-lg p-4">
                     <h3 className="font-semibold mb-2">Lunes</h3>
@@ -759,14 +773,14 @@ const Index = () => {
                     <Sliders className="h-4 w-4 mr-2" />
                     Configuración de App
                   </Button>
-                </CardContent>
-              </Card>
+            </CardContent>
+          </Card>
 
               {/* Funciones Próximamente */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Próximamente</CardTitle>
-                </CardHeader>
+            </CardHeader>
                 <CardContent className="space-y-2">
                   <Button variant="outline" className="w-full justify-start" disabled>
                     <Nfc className="h-4 w-4 mr-2" />
@@ -783,14 +797,14 @@ const Index = () => {
                     <Calendar className="h-4 w-4 mr-2" />
                     Eventos Privados
                   </Button>
-                </CardContent>
-              </Card>
+            </CardContent>
+          </Card>
 
               {/* Soporte y Contacto */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Soporte</CardTitle>
-                </CardHeader>
+            </CardHeader>
                 <CardContent className="space-y-2">
                   <Button variant="outline" className="w-full justify-start" onClick={() => {
                     toast({
@@ -821,8 +835,8 @@ const Index = () => {
                     <Shield className="h-4 w-4 mr-2" />
                     Privacidad y Seguridad
                   </Button>
-                </CardContent>
-              </Card>
+            </CardContent>
+          </Card>
 
               {/* Cerrar Sesión */}
               <Card className="border-red-200">
@@ -834,9 +848,9 @@ const Index = () => {
                   >
                     <LogOut className="h-4 w-4 mr-2" />
                     Cerrar Sesión
-                  </Button>
-                </CardContent>
-              </Card>
+            </Button>
+          </CardContent>
+        </Card>
             </div>
           </TabsContent>
 
