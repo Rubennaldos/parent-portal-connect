@@ -37,31 +37,28 @@ export function useOnboardingCheck() {
           return;
         }
 
-        // Verificar si tiene perfil de padre y si completó el onboarding
-        const { data: parentProfile, error: parentError } = await supabase
-          .from('parent_profiles')
-          .select('onboarding_completed')
-          .eq('user_id', user.id)
-          .single();
+        // Verificar si tiene hijos registrados
+        const { data: students, error: studentsError } = await supabase
+          .from('students')
+          .select('id')
+          .eq('parent_id', user.id)
+          .limit(1);
 
-        if (parentError) {
-          // Si no tiene perfil de padre, necesita onboarding
-          if (parentError.code === 'PGRST116') {
-            setNeedsOnboarding(true);
-            setIsChecking(false);
-            navigate('/onboarding', { replace: true });
-            return;
-          }
-          throw parentError;
+        if (studentsError) {
+          console.error('Error checking students:', studentsError);
+          throw studentsError;
         }
 
-        // Si no completó el onboarding, redirigir
-        if (!parentProfile.onboarding_completed) {
+        // Si NO tiene hijos, necesita hacer onboarding
+        if (!students || students.length === 0) {
+          console.log('🔄 Usuario sin hijos, redirigiendo a onboarding...');
           setNeedsOnboarding(true);
           setIsChecking(false);
           navigate('/onboarding', { replace: true });
           return;
         }
+
+        console.log('✅ Usuario tiene hijos, puede acceder al dashboard');
 
         setNeedsOnboarding(false);
         setIsChecking(false);
