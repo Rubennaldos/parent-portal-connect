@@ -35,6 +35,9 @@ export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // Detectar si viene desde OAuth (tiene hash con access_token)
+  const isOAuthCallback = window.location.hash.includes('access_token');
+
   const form = useForm<AuthFormValues>({
     resolver: zodResolver(authSchema),
     defaultValues: {
@@ -43,12 +46,22 @@ export default function Auth() {
     },
   });
 
-  // Redirigir si ya estaba autenticado (no recién logueado)
+  // Redirigir si ya estaba autenticado (incluyendo OAuth)
   useEffect(() => {
-    if (!loading && !roleLoading && user && role && !justLoggedIn) {
-      navigate(getDefaultRoute(), { replace: true });
+    if (!loading && !roleLoading && user && role) {
+      // Si viene desde OAuth, redirigir inmediatamente
+      if (isOAuthCallback) {
+        console.log('OAuth callback detected, redirecting to:', getDefaultRoute());
+        navigate(getDefaultRoute(), { replace: true });
+        return;
+      }
+      
+      // Si el usuario está autenticado y no está en proceso de login manual
+      if (!justLoggedIn) {
+        navigate(getDefaultRoute(), { replace: true });
+      }
     }
-  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn]);
+  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn, isOAuthCallback]);
 
   // Validar después del login
   useEffect(() => {
