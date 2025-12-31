@@ -1041,6 +1041,7 @@ const POS = () => {
               <p style={{ margin: '2px 0', fontSize: '10px' }}>──────────────────────</p>
             </div>
           </div>
+          </div>
 
           {/* Botón para continuar (no se imprime) */}
           <div className="print:hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]">
@@ -1075,7 +1076,6 @@ const POS = () => {
                 Presiona "Imprimir" para generar el ticket físico
               </p>
             </div>
-          </div>
           </div>
         </>
       )}
