@@ -44,22 +44,14 @@ export default function Register() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Detectar si viene desde OAuth callback
-  const isOAuthCallback = window.location.hash.includes('access_token');
-
-  // Si ya está logueado después de OAuth, avanzar al Paso 2
+  // Si ya está logueado (OAuth o manual), redirigir al dashboard
+  // El sistema detectará automáticamente si necesita onboarding
   useEffect(() => {
-    if (user && isOAuthCallback) {
-      console.log('✅ Usuario autenticado via OAuth, avanzando al Paso 2');
-      setStep(2);
-      // Poblar email desde el usuario de Google
-      setFormData(prev => ({
-        ...prev,
-        email: user.email || '',
-        full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-      }));
+    if (user) {
+      console.log('✅ Usuario autenticado, redirigiendo al dashboard');
+      navigate('/', { replace: true });
     }
-  }, [user, isOAuthCallback]);
+  }, [user, navigate]);
 
   // Cargar colegios
   useEffect(() => {
@@ -95,20 +87,25 @@ export default function Register() {
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
     setLoading(true);
     
-    // Obtener el school_id del URL
+    // Obtener el school_id del URL para guardarlo en metadata
     const sedeCode = searchParams.get('sede');
     const schoolId = formData.school_id || (sedeCode && schools.find(s => s.code === sedeCode)?.id);
     
-    // Construir URL de retorno al registro con el school_id
-    const redirectUrl = `${window.location.origin}/parent-portal-connect/#/register${sedeCode ? `?sede=${sedeCode}` : schoolId ? `?school_id=${schoolId}` : ''}`;
+    // Redirigir al dashboard después de OAuth
+    // El sistema detectará automáticamente si necesita onboarding
+    const redirectUrl = `${window.location.origin}/parent-portal-connect/#/`;
     
-    console.log('🔐 Iniciando OAuth, redirectTo:', redirectUrl);
+    console.log('🔐 Iniciando OAuth con school:', { sedeCode, schoolId, redirectUrl });
     
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
           redirectTo: redirectUrl,
+          // Guardar school_id en metadata del usuario
+          queryParams: schoolId ? {
+            school_id: schoolId
+          } : undefined,
         },
       });
 

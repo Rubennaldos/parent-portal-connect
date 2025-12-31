@@ -41,6 +41,17 @@ export default function Onboarding() {
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1); // 1: Datos del padre, 2: Datos de hijos
+  
+  // Datos del padre
+  const [parentData, setParentData] = useState({
+    full_name: user?.user_metadata?.full_name || user?.user_metadata?.name || '',
+    dni: '',
+    phone_1: '',
+    phone_2: '',
+    address: '',
+  });
+
   const [students, setStudents] = useState<StudentForm[]>([
     {
       id: crypto.randomUUID(),
@@ -104,7 +115,43 @@ export default function Onboarding() {
     );
   };
 
-  const validateForm = () => {
+  const validateParentData = () => {
+    if (!parentData.full_name.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Ingresa tu nombre completo',
+      });
+      return false;
+    }
+    if (!parentData.dni.trim() || parentData.dni.length < 8) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Ingresa un DNI válido (8 dígitos)',
+      });
+      return false;
+    }
+    if (!parentData.phone_1.trim() || parentData.phone_1.length < 9) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Ingresa un teléfono válido',
+      });
+      return false;
+    }
+    if (!parentData.address.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Ingresa tu dirección',
+      });
+      return false;
+    }
+    return true;
+  };
+
+  const validateStudentsData = () => {
     for (const student of students) {
       if (!student.full_name.trim()) {
         toast({
@@ -134,8 +181,16 @@ export default function Onboarding() {
     return true;
   };
 
+  const handleNextStep = () => {
+    if (currentStep === 1) {
+      if (validateParentData()) {
+        setCurrentStep(2);
+      }
+    }
+  };
+
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    if (!validateStudentsData()) return;
 
     setLoading(true);
 
@@ -145,9 +200,23 @@ export default function Onboarding() {
         throw new Error('No se pudo obtener el colegio. Por favor, intenta de nuevo.');
       }
 
-      // Insertar cada estudiante
+      // 1. Actualizar datos del padre en parent_profiles
+      const { error: parentError } = await supabase
+        .from('parent_profiles')
+        .update({
+          full_name: parentData.full_name,
+          dni: parentData.dni,
+          phone_1: parentData.phone_1,
+          phone_2: parentData.phone_2 || null,
+          address: parentData.address,
+        })
+        .eq('user_id', user?.id);
+
+      if (parentError) throw parentError;
+
+      // 2. Insertar cada estudiante
       for (const student of students) {
-        // 1. Crear estudiante
+        // Crear estudiante
         const { data: studentData, error: studentError } = await supabase
           .from('students')
           .insert({
@@ -228,13 +297,86 @@ export default function Onboarding() {
                 <GraduationCap className="h-8 w-8 text-blue-600" />
               </div>
             </div>
-            <CardTitle className="text-2xl text-center">Registra a tus Hijos</CardTitle>
+            <CardTitle className="text-2xl text-center">
+              {currentStep === 1 ? 'Completa tus Datos' : 'Registra a tus Hijos'}
+            </CardTitle>
             <CardDescription className="text-blue-100 text-center">
-              Agrega a todos los estudiantes que usarán el kiosco
+              {currentStep === 1 
+                ? 'Necesitamos algunos datos para completar tu perfil' 
+                : 'Agrega a todos los estudiantes que usarán el kiosco'}
             </CardDescription>
+            {/* Indicador de pasos */}
+            <div className="flex justify-center gap-2 mt-4">
+              <div className={`h-2 w-20 rounded-full ${currentStep === 1 ? 'bg-white' : 'bg-white/30'}`} />
+              <div className={`h-2 w-20 rounded-full ${currentStep === 2 ? 'bg-white' : 'bg-white/30'}`} />
+            </div>
           </CardHeader>
 
           <CardContent className="p-6 space-y-6">
+            
+            {/* PASO 1: Datos del Padre */}
+            {currentStep === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <Label>Nombre Completo *</Label>
+                  <Input
+                    value={parentData.full_name}
+                    onChange={(e) => setParentData({ ...parentData, full_name: e.target.value })}
+                    placeholder="Nombres y Apellidos"
+                  />
+                </div>
+
+                <div>
+                  <Label>DNI *</Label>
+                  <Input
+                    value={parentData.dni}
+                    onChange={(e) => setParentData({ ...parentData, dni: e.target.value })}
+                    placeholder="12345678"
+                    maxLength={8}
+                  />
+                </div>
+
+                <div>
+                  <Label>Teléfono Principal *</Label>
+                  <Input
+                    value={parentData.phone_1}
+                    onChange={(e) => setParentData({ ...parentData, phone_1: e.target.value })}
+                    placeholder="999888777"
+                    maxLength={9}
+                  />
+                </div>
+
+                <div>
+                  <Label>Teléfono Secundario (Opcional)</Label>
+                  <Input
+                    value={parentData.phone_2}
+                    onChange={(e) => setParentData({ ...parentData, phone_2: e.target.value })}
+                    placeholder="999888666"
+                    maxLength={9}
+                  />
+                </div>
+
+                <div>
+                  <Label>Dirección *</Label>
+                  <Input
+                    value={parentData.address}
+                    onChange={(e) => setParentData({ ...parentData, address: e.target.value })}
+                    placeholder="Av/Jr/Calle, Nro. Distrito"
+                  />
+                </div>
+
+                <Button
+                  onClick={handleNextStep}
+                  className="w-full h-12 text-lg"
+                >
+                  Siguiente: Registrar Hijos
+                </Button>
+              </div>
+            )}
+
+            {/* PASO 2: Datos de los Hijos */}
+            {currentStep === 2 && (
+              <div className="space-y-6">
             {/* Advertencia de alergias */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
               <p className="font-semibold text-yellow-800 mb-1">⚠️ Importante - Alergias Alimentarias</p>
@@ -351,35 +493,49 @@ export default function Onboarding() {
               </Card>
             ))}
 
-            {/* Botón agregar estudiante */}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={addStudent}
-              className="w-full border-dashed border-2"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Agregar Otro Estudiante
-            </Button>
+                {/* Botón agregar estudiante */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addStudent}
+                  className="w-full border-dashed border-2"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Agregar Otro Estudiante
+                </Button>
 
-            {/* Botón finalizar */}
-            <Button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="w-full h-12 text-lg"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Registrando...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="mr-2 h-5 w-5" />
-                  Finalizar Registro
-                </>
-              )}
-            </Button>
+                {/* Botones de navegación */}
+                <div className="flex gap-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCurrentStep(1)}
+                    disabled={loading}
+                    className="flex-1"
+                  >
+                    Atrás
+                  </Button>
+                  <Button
+                    onClick={handleSubmit}
+                    disabled={loading}
+                    className="flex-1 h-12 text-lg"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                        Registrando...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="mr-2 h-5 w-5" />
+                        Finalizar Registro
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+
           </CardContent>
         </Card>
       </div>
