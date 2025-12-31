@@ -44,12 +44,22 @@ export default function Register() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Si ya está logueado, redirigir
+  // Detectar si viene desde OAuth callback
+  const isOAuthCallback = window.location.hash.includes('access_token');
+
+  // Si ya está logueado después de OAuth, avanzar al Paso 2
   useEffect(() => {
-    if (user) {
-      navigate('/onboarding');
+    if (user && isOAuthCallback) {
+      console.log('✅ Usuario autenticado via OAuth, avanzando al Paso 2');
+      setStep(2);
+      // Poblar email desde el usuario de Google
+      setFormData(prev => ({
+        ...prev,
+        email: user.email || '',
+        full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+      }));
     }
-  }, [user, navigate]);
+  }, [user, isOAuthCallback]);
 
   // Cargar colegios
   useEffect(() => {
@@ -89,11 +99,16 @@ export default function Register() {
     const sedeCode = searchParams.get('sede');
     const schoolId = formData.school_id || (sedeCode && schools.find(s => s.code === sedeCode)?.id);
     
+    // Construir URL de retorno al registro con el school_id
+    const redirectUrl = `${window.location.origin}/parent-portal-connect/#/register${sedeCode ? `?sede=${sedeCode}` : schoolId ? `?school_id=${schoolId}` : ''}`;
+    
+    console.log('🔐 Iniciando OAuth, redirectTo:', redirectUrl);
+    
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: `${window.location.origin}/parent-portal-connect/#/onboarding${schoolId ? `?school_id=${schoolId}` : ''}`,
+          redirectTo: redirectUrl,
         },
       });
 
