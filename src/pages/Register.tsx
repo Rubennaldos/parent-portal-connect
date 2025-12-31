@@ -92,8 +92,9 @@ export default function Register() {
     const schoolId = formData.school_id || (sedeCode && schools.find(s => s.code === sedeCode)?.id);
     
     // Redirigir al dashboard después de OAuth
-    // El sistema detectará automáticamente si necesita onboarding
-    const redirectUrl = `${window.location.origin}/parent-portal-connect/#/`;
+    // IMPORTANTE: Usar window.location.href completa (sin modificar)
+    const baseUrl = window.location.origin + window.location.pathname;
+    const redirectUrl = baseUrl; // Supabase agregará el hash automáticamente
     
     console.log('🔐 Iniciando OAuth con school:', { sedeCode, schoolId, redirectUrl });
     
@@ -102,10 +103,6 @@ export default function Register() {
         provider: provider,
         options: {
           redirectTo: redirectUrl,
-          // Guardar school_id en metadata del usuario
-          queryParams: schoolId ? {
-            school_id: schoolId
-          } : undefined,
         },
       });
 

@@ -121,10 +121,11 @@ export default function Auth() {
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
     setIsLoading(true);
     try {
+      const baseUrl = window.location.origin + window.location.pathname;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: `${window.location.origin}/parent-portal-connect/#/onboarding`,
+          redirectTo: baseUrl,
         },
       });
 

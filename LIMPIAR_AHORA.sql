@@ -1,5 +1,6 @@
 -- ============================================
--- SCRIPT SIMPLE PARA LIMPIAR TODO
+-- SCRIPT ULTRA SIMPLE PARA LIMPIAR TODO
+-- (Sin tablas que no existen)
 -- ============================================
 
 -- 1. Borrar transaction_items de estudiantes
@@ -9,8 +10,8 @@ WHERE transaction_id IN (SELECT id FROM transactions WHERE student_id IS NOT NUL
 -- 2. Borrar transacciones de estudiantes
 DELETE FROM transactions WHERE student_id IS NOT NULL;
 
--- 3. Borrar alergias
-DELETE FROM allergies;
+-- 3. Borrar alergias (si existen)
+DELETE FROM allergies WHERE student_id IN (SELECT id FROM students);
 
 -- 4. Borrar relaciones familiares
 DELETE FROM student_relationships;
@@ -18,31 +19,21 @@ DELETE FROM student_relationships;
 -- 5. Borrar estudiantes
 DELETE FROM students;
 
--- 6. Borrar términos de padres (si existe la tabla)
-DO $$ 
-BEGIN
-  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'parent_terms_acceptance') THEN
-    DELETE FROM parent_terms_acceptance;
-  END IF;
-END $$;
-
--- 7. Borrar parent_profiles
+-- 6. Borrar parent_profiles
 DELETE FROM parent_profiles;
 
--- 8. Borrar profiles de padres (IMPORTANTE: Guardar IDs primero)
--- Crear tabla temporal con los IDs
+-- 7. Guardar IDs de padres antes de borrarlos
 CREATE TEMP TABLE temp_parent_ids AS
 SELECT id FROM profiles WHERE role = 'parent';
 
--- Borrar profiles
+-- 8. Borrar profiles de padres
 DELETE FROM profiles WHERE role = 'parent';
 
--- 9. Borrar usuarios de autenticación
--- NOTA: Solo funciona si tienes permisos de superadmin
+-- 9. Borrar usuarios de autenticación (requiere permisos de superadmin)
 DELETE FROM auth.users 
 WHERE id IN (SELECT id FROM temp_parent_ids);
 
--- Limpiar tabla temporal
+-- 10. Limpiar tabla temporal
 DROP TABLE temp_parent_ids;
 
 -- ============================================
