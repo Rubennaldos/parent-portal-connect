@@ -32,6 +32,21 @@
       }(window.location))
     </script>
     <!-- End Single Page Apps for GitHub Pages -->
+
+    <!-- Redirect handler for direct access -->
+    <script type="text/javascript">
+      // Si la página se carga directamente sin estar en index.html, redirigir
+      (function() {
+        var path = window.location.pathname;
+        var base = '/parent-portal-connect';
+        
+        // Si no estamos en la ruta base y no es un recurso estático
+        if (path !== base && path !== base + '/' && !path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
+          // Mantener el path pero asegurar que no redirija a /auth automáticamente
+          console.log('Direct access to:', path);
+        }
+      })();
+    </script>
   </head>
 
   <body>
