@@ -6,6 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -26,23 +32,19 @@ export default function Register() {
 
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState(1);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
-  // Form data
+  // Form data - SOLO PASO 1 (credenciales)
   const [formData, setFormData] = useState({
     email: '',
     password: '',
     confirmPassword: '',
-    full_name: '',
-    dni: '',
-    address: '',
-    phone_1: '',
-    phone_2: '',
     school_id: '',
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showExistingUserModal, setShowExistingUserModal] = useState(false);
+  const [existingUserEmail, setExistingUserEmail] = useState('');
 
   // Si ya está logueado (OAuth o manual), redirigir al dashboard
   // El sistema detectará automáticamente si necesita onboarding
@@ -60,7 +62,7 @@ export default function Register() {
 
   // Pre-seleccionar sede del QR
   useEffect(() => {
-    const sedeCode = searchParams.get('sede');
+    const sedeCode = searchParams.get('sede') || searchParams.get('school');
     if (sedeCode && schools.length > 0) {
       const school = schools.find(s => s.code === sedeCode);
       if (school) {
@@ -88,8 +90,14 @@ export default function Register() {
     setLoading(true);
     
     // Obtener el school_id del URL para guardarlo en metadata
-    const sedeCode = searchParams.get('sede');
+    const sedeCode = searchParams.get('sede') || searchParams.get('school');
     const schoolId = formData.school_id || (sedeCode && schools.find(s => s.code === sedeCode)?.id);
+    
+    // GUARDAR EN LOCALSTORAGE para recuperarlo en Onboarding después del login
+    if (schoolId) {
+      console.log('💾 Guardando schoolId para onboarding:', schoolId);
+      localStorage.setItem('pending_school_id', schoolId);
+    }
     
     // Redirigir al dashboard después de OAuth
     // IMPORTANTE: Usar window.location.href completa (sin modificar)
@@ -107,6 +115,12 @@ export default function Register() {
       });
 
       if (error) {
+        // Verificar si es un error de usuario ya existente
+        if (error.message.includes('already registered') || error.message.includes('User already registered')) {
+          // Este caso normalmente no ocurre en OAuth, pero por si acaso
+          console.log('⚠️ Usuario OAuth ya registrado');
+        }
+        
         toast({
           variant: 'destructive',
           title: 'Error',
@@ -115,7 +129,8 @@ export default function Register() {
         setLoading(false);
       }
       // Si no hay error, el usuario será redirigido a Google/Microsoft
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Error en OAuth:', err);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -137,47 +152,18 @@ export default function Register() {
     if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Las contraseñas no coinciden';
     }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const validateStep2 = () => {
-    const newErrors: Record<string, string> = {};
-
-    if (formData.full_name.trim().length < 3) {
-      newErrors.full_name = 'Nombre muy corto';
-    }
-    if (!/^\d{8}$/.test(formData.dni)) {
-      newErrors.dni = 'DNI debe tener 8 dígitos';
-    }
-    if (!/^9\d{8}$/.test(formData.phone_1)) {
-      newErrors.phone_1 = 'Teléfono inválido (ej: 999888777)';
-    }
-    if (formData.phone_2 && !/^9\d{8}$/.test(formData.phone_2)) {
-      newErrors.phone_2 = 'Teléfono inválido';
-    }
     if (!formData.school_id) {
       newErrors.school_id = 'Selecciona un colegio';
     }
-    if (!formData.address.trim()) {
-      newErrors.address = 'Dirección requerida';
-    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
-
-  const handleNextStep = () => {
-    if (step === 1 && validateStep1()) {
-      setStep(2);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateStep2()) return;
+    if (!validateStep1()) return;
     if (!acceptedTerms) {
       toast({
         variant: 'destructive',
@@ -190,10 +176,35 @@ export default function Register() {
     setLoading(true);
 
     try {
+      // 0. VERIFICAR SI EL EMAIL YA EXISTE
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('email', formData.email)
+        .maybeSingle();
+
+      if (existingUser) {
+        console.log('⚠️ Email ya registrado:', formData.email);
+        setExistingUserEmail(formData.email);
+        setShowExistingUserModal(true);
+        setLoading(false);
+        return;
+      }
+
       // 1. Crear usuario en Supabase Auth
       const { data: authData, error: authError } = await signUp(formData.email, formData.password);
 
-      if (authError) throw authError;
+      if (authError) {
+        // Capturar errores específicos de Supabase Auth
+        if (authError.message.includes('already registered') || authError.message.includes('User already registered')) {
+          console.log('⚠️ Email ya registrado (Auth):', formData.email);
+          setExistingUserEmail(formData.email);
+          setShowExistingUserModal(true);
+          setLoading(false);
+          return;
+        }
+        throw authError;
+      }
 
       if (!authData.user) {
         throw new Error('No se pudo crear el usuario');
@@ -213,18 +224,12 @@ export default function Register() {
 
       if (roleError) console.error('Error setting role:', roleError);
 
-      // 3. Crear perfil de padre
+      // 3. Crear perfil de padre BÁSICO (sin datos completos)
       const { error: profileError } = await supabase
         .from('parent_profiles')
         .insert({
           user_id: authData.user.id,
           school_id: formData.school_id,
-          full_name: formData.full_name,
-          dni: formData.dni,
-          address: formData.address,
-          phone_1: formData.phone_1,
-          phone_2: formData.phone_2 || null,
-          payment_responsible: true,
           onboarding_completed: false,
         });
 
@@ -243,13 +248,14 @@ export default function Register() {
       if (termsError) console.error('Error saving terms:', termsError);
 
       toast({
-        title: '✅ ¡Registro Exitoso!',
-        description: 'Ahora registra a tus hijos',
+        title: '✅ ¡Cuenta Creada!',
+        description: 'Ahora completa tus datos y registra a tus hijos',
       });
 
       // Esperar otro segundo antes de redirigir
       await new Promise(resolve => setTimeout(resolve, 500));
       
+      // Redirigir a onboarding para completar datos
       navigate('/onboarding');
 
     } catch (error: any) {
@@ -280,259 +286,161 @@ export default function Register() {
         </CardHeader>
 
         <CardContent className="p-6">
-          {/* Progress Steps */}
-          <div className="flex justify-center mb-8">
-            <div className="flex items-center">
-              <div className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                step >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-200'
-              }`}>
-                {step > 1 ? <CheckCircle2 className="h-5 w-5" /> : '1'}
-              </div>
-              <div className={`w-24 h-1 ${step >= 2 ? 'bg-blue-600' : 'bg-gray-200'}`}></div>
-              <div className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                step >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-200'
-              }`}>
-                2
-              </div>
-            </div>
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* STEP 1: Credenciales */}
-            {step === 1 && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-center mb-4">Paso 1: Crea tu Cuenta</h3>
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-center mb-4">Crea tu Cuenta</h3>
 
-                {/* Botones de Login Social */}
-                <div className="space-y-3 mb-6">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => handleSocialLogin('google')}
-                    disabled={loading}
-                  >
-                    <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                      <path
-                        fill="currentColor"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="currentColor"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="currentColor"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                      />
-                      <path
-                        fill="currentColor"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                      />
-                    </svg>
-                    Continuar con Google
-                  </Button>
+              {/* Botones de Login Social */}
+              <div className="space-y-3 mb-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => handleSocialLogin('google')}
+                  disabled={loading}
+                >
+                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                    />
+                  </svg>
+                  Continuar con Google
+                </Button>
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => handleSocialLogin('azure')}
-                    disabled={loading}
-                  >
-                    <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                      <path
-                        fill="currentColor"
-                        d="M11.4 24H0V12.6L11.4 0v24zM24 24H12.6V12.6L24 0v24z"
-                      />
-                    </svg>
-                    Continuar con Microsoft
-                  </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => handleSocialLogin('azure')}
+                  disabled={loading}
+                >
+                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M11.4 24H0V12.6L11.4 0v24zM24 24H12.6V12.6L24 0v24z"
+                    />
+                  </svg>
+                  Continuar con Microsoft
+                </Button>
 
-                  <div className="relative my-6">
-                    <Separator />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="bg-card px-2 text-xs text-muted-foreground">
-                        O crea cuenta con email
-                      </span>
-                    </div>
+                <div className="relative my-6">
+                  <Separator />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="bg-card px-2 text-xs text-muted-foreground">
+                      O crea cuenta con email
+                    </span>
                   </div>
                 </div>
-
-                <div>
-                  <Label htmlFor="email">Correo Electrónico *</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="tu@email.com"
-                    required
-                  />
-                  {errors.email && (
-                    <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" /> {errors.email}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <Label htmlFor="password">Contraseña *</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="Mínimo 6 caracteres"
-                    required
-                  />
-                  {errors.password && (
-                    <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" /> {errors.password}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <Label htmlFor="confirmPassword">Confirmar Contraseña *</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={formData.confirmPassword}
-                    onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                    placeholder="Repite tu contraseña"
-                    required
-                  />
-                  {errors.confirmPassword && (
-                    <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" /> {errors.confirmPassword}
-                    </p>
-                  )}
-                </div>
-
-                <Button type="button" onClick={handleNextStep} className="w-full">
-                  Siguiente →
-                </Button>
               </div>
-            )}
 
-            {/* STEP 2: Datos Personales */}
-            {step === 2 && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-center mb-4">Paso 2: Tus Datos</h3>
-
-                <div>
-                  <Label htmlFor="full_name">Nombre Completo *</Label>
-                  <Input
-                    id="full_name"
-                    value={formData.full_name}
-                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                    placeholder="Nombres y Apellidos"
-                    required
-                  />
-                  {errors.full_name && <p className="text-xs text-red-600 mt-1">{errors.full_name}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor="dni">DNI *</Label>
-                  <Input
-                    id="dni"
-                    value={formData.dni}
-                    onChange={(e) => setFormData({ ...formData, dni: e.target.value.replace(/\D/g, '').slice(0, 8) })}
-                    placeholder="12345678"
-                    maxLength={8}
-                    required
-                  />
-                  {errors.dni && <p className="text-xs text-red-600 mt-1">{errors.dni}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor="phone_1">Teléfono Principal *</Label>
-                  <Input
-                    id="phone_1"
-                    value={formData.phone_1}
-                    onChange={(e) => setFormData({ ...formData, phone_1: e.target.value.replace(/\D/g, '').slice(0, 9) })}
-                    placeholder="999888777"
-                    maxLength={9}
-                    required
-                  />
-                  {errors.phone_1 && <p className="text-xs text-red-600 mt-1">{errors.phone_1}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor="phone_2">Teléfono Secundario (Opcional)</Label>
-                  <Input
-                    id="phone_2"
-                    value={formData.phone_2}
-                    onChange={(e) => setFormData({ ...formData, phone_2: e.target.value.replace(/\D/g, '').slice(0, 9) })}
-                    placeholder="999888666"
-                    maxLength={9}
-                  />
-                  {errors.phone_2 && <p className="text-xs text-red-600 mt-1">{errors.phone_2}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor="address">Dirección *</Label>
-                  <Input
-                    id="address"
-                    value={formData.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    placeholder="Av/Jr/Calle, Nro, Distrito"
-                    required
-                  />
-                  {errors.address && <p className="text-xs text-red-600 mt-1">{errors.address}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor="school_id">Colegio/Sede *</Label>
-                  <Select value={formData.school_id} onValueChange={(value) => setFormData({ ...formData, school_id: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona el colegio" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {schools.map((school) => (
-                        <SelectItem key={school.id} value={school.id}>
-                          {school.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {errors.school_id && <p className="text-xs text-red-600 mt-1">{errors.school_id}</p>}
-                </div>
-
-                {/* Términos */}
-                <div className="flex items-start gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded">
-                  <Checkbox
-                    id="terms"
-                    checked={acceptedTerms}
-                    onCheckedChange={(checked) => setAcceptedTerms(checked as boolean)}
-                  />
-                  <label htmlFor="terms" className="text-sm cursor-pointer">
-                    Acepto los{' '}
-                    <a href="/terminos" target="_blank" className="text-blue-600 underline">
-                      Términos y Condiciones
-                    </a>{' '}
-                    y autorizo el tratamiento de mis datos personales según la Ley N° 29733.
-                  </label>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setStep(1)} className="flex-1">
-                    ← Atrás
-                  </Button>
-                  <Button type="submit" disabled={loading} className="flex-1">
-                    {loading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Registrando...
-                      </>
-                    ) : (
-                      'Crear Cuenta'
-                    )}
-                  </Button>
-                </div>
+              <div>
+                <Label htmlFor="school_id">Colegio/Sede *</Label>
+                <Select value={formData.school_id} onValueChange={(value) => setFormData({ ...formData, school_id: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona el colegio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {schools.map((school) => (
+                      <SelectItem key={school.id} value={school.id}>
+                        {school.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.school_id && <p className="text-xs text-red-600 mt-1">{errors.school_id}</p>}
               </div>
-            )}
+
+              <div>
+                <Label htmlFor="email">Correo Electrónico *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="tu@email.com"
+                  required
+                />
+                {errors.email && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" /> {errors.email}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="password">Contraseña *</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="Mínimo 6 caracteres"
+                  required
+                />
+                {errors.password && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" /> {errors.password}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="confirmPassword">Confirmar Contraseña *</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={formData.confirmPassword}
+                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                  placeholder="Repite tu contraseña"
+                  required
+                />
+                {errors.confirmPassword && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" /> {errors.confirmPassword}
+                  </p>
+                )}
+              </div>
+
+              {/* Términos */}
+              <div className="flex items-start gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                <Checkbox
+                  id="terms"
+                  checked={acceptedTerms}
+                  onCheckedChange={(checked) => setAcceptedTerms(checked as boolean)}
+                />
+                <label htmlFor="terms" className="text-sm cursor-pointer">
+                  Acepto los{' '}
+                  <a href="/terminos" target="_blank" className="text-blue-600 underline">
+                    Términos y Condiciones
+                  </a>{' '}
+                  y autorizo el tratamiento de mis datos personales según la Ley N° 29733.
+                </label>
+              </div>
+
+              <Button type="submit" disabled={loading} className="w-full h-12 text-lg">
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creando cuenta...
+                  </>
+                ) : (
+                  'Crear Cuenta'
+                )}
+              </Button>
+            </div>
           </form>
 
           <div className="mt-6 text-center text-sm text-gray-600">
@@ -543,6 +451,63 @@ export default function Register() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Modal de Usuario Existente */}
+      <Dialog open={showExistingUserModal} onOpenChange={setShowExistingUserModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <AlertCircle className="h-6 w-6 text-amber-600" />
+              Email Ya Registrado
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <p className="text-sm text-amber-800 mb-2">
+                Este correo electrónico ya está registrado en el sistema:
+              </p>
+              <p className="font-bold text-amber-900 font-mono text-base">
+                {existingUserEmail}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm text-gray-600 font-medium">¿Qué deseas hacer?</p>
+              
+              <Button
+                onClick={() => {
+                  setShowExistingUserModal(false);
+                  navigate('/auth', { state: { email: existingUserEmail } });
+                }}
+                className="w-full h-12 text-base bg-blue-600 hover:bg-blue-700"
+              >
+                🔐 Iniciar Sesión con esta cuenta
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  setShowExistingUserModal(false);
+                  setFormData({ ...formData, email: '', password: '', confirmPassword: '' });
+                  setExistingUserEmail('');
+                  setStep(1);
+                }}
+                variant="outline"
+                className="w-full h-12 text-base"
+              >
+                ❌ No soy yo, usar otro correo
+              </Button>
+            </div>
+
+            <div className="text-xs text-center text-gray-500 mt-4 pt-4 border-t">
+              <p>¿Olvidaste tu contraseña?</p>
+              <a href="/auth" className="text-blue-600 hover:underline font-medium">
+                Recuperar contraseña
+              </a>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

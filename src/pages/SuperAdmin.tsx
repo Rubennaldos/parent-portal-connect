@@ -19,13 +19,15 @@ import {
   Circle,
   Users,
   Building2,
-  GraduationCap
+  GraduationCap,
+  ShoppingCart
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { UsersManagement } from '@/components/admin/UsersManagement';
 import { ProfilesControl } from '@/components/admin/ProfilesControl';
 import StudentsManagement from '@/components/admin/StudentsManagement';
+import { SalesList } from '@/components/admin/SalesList';
 
 const SuperAdmin = () => {
   const { signOut, user } = useAuth();
@@ -94,6 +96,10 @@ const SuperAdmin = () => {
             <TabsTrigger value="students" className="data-[state=active]:bg-background">
               <GraduationCap className="h-4 w-4 mr-2" />
               Estudiantes
+            </TabsTrigger>
+            <TabsTrigger value="sales" className="data-[state=active]:bg-background">
+              <ShoppingCart className="h-4 w-4 mr-2" />
+              Ventas
             </TabsTrigger>
             <TabsTrigger value="errors" className="data-[state=active]:bg-background">
               <AlertTriangle className="h-4 w-4 mr-2" />
@@ -177,6 +183,11 @@ const SuperAdmin = () => {
           {/* Students Tab */}
           <TabsContent value="students" className="space-y-4">
             <StudentsManagement />
+          </TabsContent>
+
+          {/* Sales Tab */}
+          <TabsContent value="sales" className="space-y-4">
+            <SalesList />
           </TabsContent>
 
           {/* Logs Tab */}

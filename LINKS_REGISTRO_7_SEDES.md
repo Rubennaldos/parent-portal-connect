@@ -10,13 +10,13 @@ Cada sede tiene su **link único** que los padres escanean con QR o reciben por 
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=NRD
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=NRD
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=NRD
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=NRD
 ```
 
 ### Mensaje para WhatsApp:
@@ -26,7 +26,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=NRD
 Bienvenido al Sistema de Kiosco Nordic.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=NRD
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=NRD
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -40,13 +40,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=SGV
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGV
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=SGV
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGV
 ```
 
 ### Mensaje para WhatsApp:
@@ -56,7 +56,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=SGV
 Bienvenido al Sistema de Kiosco Saint George Villa.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=SGV
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGV
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -70,13 +70,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=SGM
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGM
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=SGM
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGM
 ```
 
 ### Mensaje para WhatsApp:
@@ -86,7 +86,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=SGM
 Bienvenido al Sistema de Kiosco Saint George Miraflores.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=SGM
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=SGM
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -100,13 +100,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=LSG
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=LSG
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=LSG
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=LSG
 ```
 
 ### Mensaje para WhatsApp:
@@ -116,7 +116,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=LSG
 Bienvenido al Sistema de Kiosco Little Saint George.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=LSG
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=LSG
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -130,13 +130,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=JLB
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=JLB
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=JLB
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=JLB
 ```
 
 ### Mensaje para WhatsApp:
@@ -146,7 +146,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=JLB
 Bienvenido al Sistema de Kiosco Jean LeBouch.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=JLB
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=JLB
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -160,13 +160,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=MC1
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC1
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=MC1
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC1
 ```
 
 ### Mensaje para WhatsApp:
@@ -176,7 +176,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=MC1
 Bienvenido al Sistema de Kiosco Maristas Champagnat 1.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=MC1
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC1
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email
@@ -190,13 +190,13 @@ Cualquier duda, escríbenos.
 
 ### Link de Registro:
 ```
-https://rubennaldos.github.io/parent-portal-connect/register?sede=MC2
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC2
 ```
 
 ### QR Code:
 ```
 Generar QR en: https://www.qr-code-generator.com/
-Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=MC2
+Contenido: https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC2
 ```
 
 ### Mensaje para WhatsApp:
@@ -206,7 +206,7 @@ Contenido: https://rubennaldos.github.io/parent-portal-connect/register?sede=MC2
 Bienvenido al Sistema de Kiosco Maristas Champagnat 2.
 
 Regístrate aquí:
-https://rubennaldos.github.io/parent-portal-connect/register?sede=MC2
+https://rubennaldos.github.io/parent-portal-connect/#/register?school=MC2
 
 ✅ Usa tu cuenta de Google (más rápido)
 ✅ O crea una cuenta con email

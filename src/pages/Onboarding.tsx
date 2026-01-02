@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { Loader2, Plus, Trash2, CheckCircle2, GraduationCap } from 'lucide-react';
+import { Loader2, Plus, Trash2, CheckCircle2, GraduationCap, School } from 'lucide-react';
 
 interface StudentForm {
   id: string;
@@ -38,6 +38,7 @@ const GRADES = [
 export default function Onboarding() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
@@ -65,6 +66,7 @@ export default function Onboarding() {
   ]);
 
   const [schoolId, setSchoolId] = useState<string>('');
+  const [schoolName, setSchoolName] = useState<string>('');
   const [schools, setSchools] = useState<{id: string, name: string, code: string}[]>([]);
 
   // Obtener el school_id del padre o desde el URL
@@ -77,19 +79,21 @@ export default function Onboarding() {
   const fetchSchoolInfo = async () => {
     try {
       // 1. Primero intentar obtener desde parent_profiles
-      const { data: parentData } = await supabase
+      const { data: pProfile } = await supabase
         .from('parent_profiles')
-        .select('school_id')
+        .select('school_id, schools(name)')
         .eq('user_id', user?.id)
         .maybeSingle();
 
-      if (parentData?.school_id) {
-        setSchoolId(parentData.school_id);
-        console.log('✅ School ID desde parent_profile:', parentData.school_id);
+      if (pProfile?.school_id) {
+        setSchoolId(pProfile.school_id);
+        const sName = (pProfile.schools as any)?.name || '';
+        setSchoolName(sName);
+        console.log('✅ School ID desde parent_profile:', pProfile.school_id, sName);
         return;
       }
 
-      // 2. Si no existe, obtener lista de colegios para que elija
+      // 2. Si no existe en la DB, obtener lista de colegios para que elija
       const { data: schoolsData } = await supabase
         .from('schools')
         .select('id, name, code')
@@ -98,16 +102,27 @@ export default function Onboarding() {
 
       if (schoolsData && schoolsData.length > 0) {
         setSchools(schoolsData);
-        // Si viene desde /register?sede=NRD, buscar ese colegio
-        const urlParams = new URLSearchParams(window.location.search);
-        const sedeCode = urlParams.get('sede') || urlParams.get('school');
+        
+        // Detectar desde URL (parámetro school o sede)
+        const sedeCode = searchParams.get('school') || searchParams.get('sede');
+        // O desde localStorage (guardado en Register.tsx antes de OAuth)
+        const savedSchoolId = localStorage.getItem('pending_school_id');
+        
+        console.log('🔍 Detectando sede:', { sedeCode, savedSchoolId });
+
+        let targetSchool = null;
         
         if (sedeCode) {
-          const school = schoolsData.find(s => s.code === sedeCode);
-          if (school) {
-            setSchoolId(school.id);
-            console.log('✅ School ID desde URL:', school.id, school.name);
-          }
+          targetSchool = schoolsData.find(s => s.code === sedeCode);
+        } else if (savedSchoolId) {
+          targetSchool = schoolsData.find(s => s.id === savedSchoolId);
+          localStorage.removeItem('pending_school_id'); // Limpiar
+        }
+        
+        if (targetSchool) {
+          setSchoolId(targetSchool.id);
+          setSchoolName(targetSchool.name);
+          console.log('✅ School ID detectado:', targetSchool.id, targetSchool.name);
         }
       }
     } catch (error) {
@@ -378,25 +393,54 @@ export default function Onboarding() {
             {currentStep === 1 && (
               <div className="space-y-4">
                 {/* Selector de Colegio (solo si no se detectó automáticamente) */}
-                {!schoolId && schools.length > 0 && (
-                  <div>
-                    <Label>Colegio/Sede *</Label>
-                    <Select
-                      value={schoolId}
-                      onValueChange={(value) => setSchoolId(value)}
+                {schoolId ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                        <School className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-blue-600 font-semibold uppercase">Sede Asignada</p>
+                        <p className="text-lg font-bold text-blue-900">{schoolName || 'Cargando sede...'}</p>
+                      </div>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => { setSchoolId(''); setSchoolName(''); }}
+                      className="text-xs text-blue-600 hover:bg-blue-100"
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona tu colegio" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {schools.map((school) => (
-                          <SelectItem key={school.id} value={school.id}>
-                            {school.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      Cambiar
+                    </Button>
                   </div>
+                ) : (
+                  schools.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Colegio/Sede *</Label>
+                      <Select
+                        value={schoolId}
+                        onValueChange={(value) => {
+                          setSchoolId(value);
+                          const s = schools.find(sch => sch.id === value);
+                          if (s) setSchoolName(s.name);
+                        }}
+                      >
+                        <SelectTrigger className="h-12 border-2 focus:border-blue-500">
+                          <SelectValue placeholder="Selecciona tu colegio" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {schools.map((school) => (
+                            <SelectItem key={school.id} value={school.id}>
+                              {school.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground italic">
+                        Selecciona el colegio donde estudian tus hijos
+                      </p>
+                    </div>
+                  )
                 )}
 
                 <div>

@@ -14,6 +14,7 @@ import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import POS from "./pages/POS";
 import Kitchen from "./pages/Kitchen";
+import SalesList from "./pages/SalesList";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();

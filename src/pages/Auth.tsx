@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -26,6 +26,7 @@ const authSchema = z.object({
 type AuthFormValues = z.infer<typeof authSchema>;
 
 export default function Auth() {
+  const location = useLocation();
   const [isLoading, setIsLoading] = useState(false);
   const [userType, setUserType] = useState<'parent' | 'staff'>('parent');
   const [justLoggedIn, setJustLoggedIn] = useState(false);
@@ -49,7 +50,7 @@ export default function Auth() {
   const form = useForm<AuthFormValues>({
     resolver: zodResolver(authSchema),
     defaultValues: {
-      email: '',
+      email: location.state?.email || '', // Pre-llenar email si viene del modal
       password: '',
     },
   });
