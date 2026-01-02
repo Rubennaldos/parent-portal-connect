@@ -91,6 +91,16 @@ const App = () => (
               }
             />
             
+            {/* Lista de Ventas - Admin General y POS */}
+            <Route
+              path="/sales"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'pos']}>
+                  <SalesList />
+                </ProtectedRoute>
+              }
+            />
+            
             {/* Pantalla de Cocina - SuperAdmin, Admin General y Kitchen */}
             <Route
               path="/kitchen"

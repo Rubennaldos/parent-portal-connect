@@ -77,11 +77,23 @@ const Dashboard = () => {
           color: 'green',
           route: '/pos',
           is_active: true,
-          is_enabled: false, // Se habilitará según el rol
+          is_enabled: false,
           status: 'functional' as const,
         },
         {
           id: '2',
+          code: 'ventas',
+          name: 'Lista de Ventas',
+          description: 'Historial y reportes del día',
+          icon: 'FileSearch',
+          color: 'blue',
+          route: '/sales',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
+          id: '3',
           code: 'cobranzas',
           name: 'Cobranzas',
           description: 'Gestión de cuentas por cobrar',
@@ -93,25 +105,13 @@ const Dashboard = () => {
           status: 'coming_soon' as const,
         },
         {
-          id: '3',
+          id: '4',
           code: 'config_padres',
           name: 'Configuración Padres',
           description: 'Gestión de padres y estudiantes',
           icon: 'Users',
-          color: 'blue',
-          route: '/config-padres',
-          is_active: true,
-          is_enabled: false,
-          status: 'coming_soon' as const,
-        },
-        {
-          id: '4',
-          code: 'auditoria',
-          name: 'Auditoría',
-          description: 'Logs y seguimiento del sistema',
-          icon: 'FileSearch',
           color: 'purple',
-          route: '/auditoria',
+          route: '/config-padres',
           is_active: true,
           is_enabled: false,
           status: 'coming_soon' as const,
@@ -148,12 +148,12 @@ const Dashboard = () => {
         console.log('👔 Admin General: Habilitando todos los módulos:', enabledModules.length);
         setModules(enabledModules);
       } else if (role === 'pos') {
-        // Personal POS solo ve el módulo POS
+        // Personal POS solo ve POS y Ventas
         const posModules = allModules.map(m => ({
           ...m,
-          is_enabled: m.code === 'pos'
+          is_enabled: m.code === 'pos' || m.code === 'ventas'
         }));
-        console.log('💰 Usuario POS: Habilitando solo módulo POS');
+        console.log('💰 Usuario POS: Habilitando POS y Ventas');
         setModules(posModules);
       } else if (role === 'kitchen') {
         // Personal Kitchen no ve ningún módulo del dashboard
