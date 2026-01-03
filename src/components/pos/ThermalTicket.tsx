@@ -50,21 +50,41 @@ export const ThermalTicket = ({
 
   return (
     <div 
-      className="hidden print:block" 
+      id="thermal-ticket-container"
       style={{ 
-        display: 'none',
-        position: 'absolute',
+        position: 'fixed',
+        top: '-9999px',
         left: '-9999px',
-        top: '-9999px'
+        width: '0',
+        height: '0',
+        overflow: 'hidden',
+        visibility: 'hidden',
+        opacity: 0,
+        pointerEvents: 'none',
+        zIndex: -1000
       }}
     >
       <style>{`
+        @media screen {
+          #thermal-ticket-container {
+            display: none !important;
+          }
+        }
         @media print {
-          .hidden.print\\:block {
+          #thermal-ticket-container {
             display: block !important;
             position: static !important;
+            width: 80mm !important;
+            height: auto !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            overflow: visible !important;
             left: auto !important;
             top: auto !important;
+            z-index: auto !important;
+          }
+          body > *:not(#thermal-ticket-container) {
+            display: none !important;
           }
           @page {
             size: 80mm auto;
