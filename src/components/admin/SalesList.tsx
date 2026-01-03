@@ -15,7 +15,7 @@ import {
   ArrowUpDown,
   Eye,
   Download,
-  Calendar,
+  Calendar as CalendarIcon,
   Trash2,
   AlertTriangle,
   ShoppingCart,
@@ -26,7 +26,9 @@ import {
   X,
   CheckSquare,
   FileCheck,
-  Receipt
+  Receipt,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { 
   Dialog,
@@ -43,7 +45,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { format, startOfDay, endOfDay } from "date-fns";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format, startOfDay, endOfDay, addDays, subDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import { ThermalTicket } from "@/components/pos/ThermalTicket";
@@ -92,6 +100,7 @@ export const SalesList = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('today');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
   // Selección múltiple
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -119,17 +128,19 @@ export const SalesList = () => {
 
   useEffect(() => {
     fetchTransactions();
-  }, [activeTab]);
+  }, [activeTab, selectedDate]);
 
   const fetchTransactions = async () => {
     try {
       setLoading(true);
       
-      const today = new Date();
-      const startDate = startOfDay(today).toISOString();
-      const endDate = endOfDay(today).toISOString();
+      const startDate = startOfDay(selectedDate).toISOString();
+      const endDate = endOfDay(selectedDate).toISOString();
 
-      console.log('🔍 INICIANDO BÚSQUEDA DE TRANSACCIONES (solo ventas POS)');
+      console.log('🔍 INICIANDO BÚSQUEDA DE TRANSACCIONES:', {
+        date: format(selectedDate, 'dd/MM/yyyy'),
+        activeTab
+      });
 
       let query = supabase
         .from('transactions')
@@ -410,11 +421,54 @@ export const SalesList = () => {
                 Módulo de Ventas
               </CardTitle>
               <CardDescription className="flex items-center gap-2 mt-1">
-                <Calendar className="h-3 w-3" />
-                {format(new Date(), "EEEE, dd 'de' MMMM yyyy", { locale: es })}
+                <CalendarIcon className="h-3 w-3" />
+                {format(selectedDate, "EEEE, dd 'de' MMMM yyyy", { locale: es })}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filtro de Fecha */}
+              <div className="flex items-center bg-muted rounded-lg p-1 mr-2">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8"
+                  onClick={() => setSelectedDate(prev => subDays(prev, 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 font-bold px-2 hover:bg-transparent"
+                    >
+                      {format(selectedDate, "dd/MM/yyyy")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end">
+                    <Calendar
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={(date) => date && setSelectedDate(date)}
+                      initialFocus
+                      locale={es}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8"
+                  onClick={() => setSelectedDate(prev => addDays(prev, 1))}
+                  disabled={startOfDay(selectedDate).getTime() >= startOfDay(new Date()).getTime()}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+
               {selectedIds.size > 0 && (
                 <>
                   <Badge variant="secondary" className="text-sm">
