@@ -323,6 +323,12 @@ export const SalesList = () => {
   };
 
   // ========== REIMPRIMIR TICKET ==========
+  const handleViewDetails = async (transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    await fetchTransactionItems(transaction.id);
+    setShowDetails(true);
+  };
+
   const handleReprint = async (transaction: Transaction) => {
     await fetchTransactionItems(transaction.id);
     setSelectedTransaction(transaction);
@@ -562,6 +568,13 @@ export const SalesList = () => {
                               S/ {Math.abs(t.amount).toFixed(2)}
                             </p>
                             <div className="flex gap-1 mt-2">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => handleViewDetails(t)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
                               {!t.is_deleted && (
                                 <>
                                   <Button 
@@ -720,57 +733,41 @@ export const SalesList = () => {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: Opciones de Impresión Múltiple */}
-      <Dialog open={showPrintOptions} onOpenChange={setShowPrintOptions}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+      {/* MODAL: Detalles de Venta (DISEÑO TICKET REAL) */}
+      <Dialog open={showDetails} onOpenChange={setShowDetails}>
+        <DialogContent className="max-w-[400px] p-0 bg-gray-100 overflow-hidden">
+          <DialogHeader className="p-4 bg-white border-b">
             <DialogTitle className="flex items-center gap-2">
-              <Printer className="h-5 w-5 text-blue-600" />
-              Imprimir Ventas Seleccionadas
+              <Receipt className="h-5 w-5 text-blue-600" />
+              Vista de Comprobante
             </DialogTitle>
-            <DialogDescription>
-              {selectedIds.size} ventas seleccionadas
-            </DialogDescription>
           </DialogHeader>
           
-          <div className="space-y-4">
-            <Label>Tipo de Impresión</Label>
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={() => setPrintType('individual')}
-                className={`p-4 border-2 rounded-xl transition-all ${
-                  printType === 'individual' 
-                    ? 'border-blue-500 bg-blue-50' 
-                    : 'border-gray-300 hover:border-blue-300'
-                }`}
-              >
-                <Receipt className="h-8 w-8 mx-auto mb-2 text-blue-600" />
-                <p className="text-sm font-semibold">Individual</p>
-                <p className="text-xs text-muted-foreground">Tickets separados</p>
-              </button>
-              
-              <button
-                onClick={() => setPrintType('consolidated')}
-                className={`p-4 border-2 rounded-xl transition-all ${
-                  printType === 'consolidated' 
-                    ? 'border-blue-500 bg-blue-50' 
-                    : 'border-gray-300 hover:border-blue-300'
-                }`}
-              >
-                <FileCheck className="h-8 w-8 mx-auto mb-2 text-blue-600" />
-                <p className="text-sm font-semibold">Consolidado</p>
-                <p className="text-xs text-muted-foreground">Reporte único</p>
-              </button>
-            </div>
+          <div className="p-6 overflow-y-auto max-h-[70vh]">
+            {selectedTransaction && (
+              <ThermalTicket
+                ticketCode={selectedTransaction.ticket_code}
+                date={new Date(selectedTransaction.created_at)}
+                cashierEmail={selectedTransaction.profiles?.email || 'sistema'}
+                clientName={selectedTransaction.client_name || selectedTransaction.student?.full_name || 'CLIENTE GENÉRICO'}
+                documentType={selectedTransaction.document_type || 'ticket'}
+                items={transactionItems}
+                total={Math.abs(selectedTransaction.amount)}
+                clientDNI={selectedTransaction.client_dni}
+                clientRUC={selectedTransaction.client_ruc}
+                isReprint={false}
+                showOnScreen={true} // ✅ Se muestra como ticket en pantalla
+              />
+            )}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPrintOptions(false)}>
-              Cancelar
+          <DialogFooter className="p-4 bg-white border-t flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setShowDetails(false)}>
+              Cerrar
             </Button>
-            <Button onClick={executePrint}>
-              <Printer className="h-4 w-4 mr-2" />
-              Imprimir
+            <Button className="flex-1 gap-2" onClick={() => selectedTransaction && handleReprint(selectedTransaction)}>
+              <Printer className="h-4 w-4" />
+              Imprimir Real
             </Button>
           </DialogFooter>
         </DialogContent>

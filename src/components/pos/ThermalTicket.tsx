@@ -21,6 +21,7 @@ interface ThermalTicketProps {
   clientDNI?: string;
   clientRUC?: string;
   isReprint?: boolean;
+  showOnScreen?: boolean; // NUEVA PROP
 }
 
 export const ThermalTicket = ({
@@ -35,7 +36,8 @@ export const ThermalTicket = ({
   newBalance,
   clientDNI,
   clientRUC,
-  isReprint = false
+  isReprint = false,
+  showOnScreen = false // POR DEFECTO FALSO
 }: ThermalTicketProps) => {
   const getDocumentTitle = () => {
     switch (documentType) {
@@ -50,8 +52,19 @@ export const ThermalTicket = ({
 
   return (
     <div 
-      id="thermal-ticket-container"
-      style={{ 
+      id={showOnScreen ? "thermal-ticket-screen" : "thermal-ticket-container"}
+      className={showOnScreen ? "mx-auto bg-white shadow-inner" : ""}
+      style={showOnScreen ? {
+        width: '100%',
+        maxWidth: '300px',
+        margin: '0 auto',
+        padding: '20px',
+        backgroundColor: '#fff',
+        color: '#000',
+        fontFamily: '"Courier New", Courier, monospace',
+        boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+        border: '1px solid #eee'
+      } : { 
         position: 'fixed',
         top: '-9999px',
         left: '-9999px',
@@ -66,12 +79,10 @@ export const ThermalTicket = ({
     >
       <style>{`
         @media screen {
-          #thermal-ticket-container {
-            display: none !important;
-          }
+          ${!showOnScreen ? '#thermal-ticket-container { display: none !important; }' : ''}
         }
         @media print {
-          #thermal-ticket-container {
+          #thermal-ticket-container, #thermal-ticket-screen {
             display: block !important;
             position: static !important;
             width: 80mm !important;
@@ -82,8 +93,11 @@ export const ThermalTicket = ({
             left: auto !important;
             top: auto !important;
             z-index: auto !important;
+            padding: 10mm 5mm !important;
+            box-shadow: none !important;
+            border: none !important;
           }
-          body > *:not(#thermal-ticket-container) {
+          body > *:not(#thermal-ticket-container):not(#thermal-ticket-screen) {
             display: none !important;
           }
           @page {
@@ -95,10 +109,6 @@ export const ThermalTicket = ({
             margin: 0;
             padding: 0;
             background: white;
-          }
-          * {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
           }
         }
       `}</style>
