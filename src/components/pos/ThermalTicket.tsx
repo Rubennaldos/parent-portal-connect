@@ -49,9 +49,23 @@ export const ThermalTicket = ({
   };
 
   return (
-    <div className="hidden print:block">
+    <div 
+      className="hidden print:block" 
+      style={{ 
+        display: 'none',
+        position: 'absolute',
+        left: '-9999px',
+        top: '-9999px'
+      }}
+    >
       <style>{`
         @media print {
+          .hidden.print\\:block {
+            display: block !important;
+            position: static !important;
+            left: auto !important;
+            top: auto !important;
+          }
           @page {
             size: 80mm auto;
             margin: 0;
