@@ -330,12 +330,24 @@ export const SalesList = () => {
   };
 
   const handleReprint = async (transaction: Transaction) => {
-    await fetchTransactionItems(transaction.id);
-    setSelectedTransaction(transaction);
-    // El componente ThermalTicket se renderiza oculto y activamos window.print()
-    setTimeout(() => {
-      window.print();
-    }, 300);
+    try {
+      // 1. Cargamos los datos y abrimos el modal para que se vea el ticket integrado
+      setSelectedTransaction(transaction);
+      await fetchTransactionItems(transaction.id);
+      setShowDetails(true);
+      
+      // 2. Damos un pequeño respiro para que el modal se dibuje y luego lanzamos la impresión
+      toast({
+        title: "Preparando ticket...",
+        description: "Abriendo vista previa e impresión",
+      });
+      
+      setTimeout(() => {
+        window.print();
+      }, 500);
+    } catch (error) {
+      console.error("Error al reimprimir:", error);
+    }
   };
 
   // ========== IMPRESIÓN MÚLTIPLE ==========
@@ -568,33 +580,35 @@ export const SalesList = () => {
                               S/ {Math.abs(t.amount).toFixed(2)}
                             </p>
                             <div className="flex gap-1 mt-2">
+                              {/* Botón Integrado: Ver y Reimprimir */}
                               <Button 
-                                variant="ghost" 
+                                variant="outline" 
                                 size="sm"
-                                onClick={() => handleViewDetails(t)}
+                                className="h-8 gap-1 border-blue-200 hover:bg-blue-50 text-blue-700"
+                                onClick={() => handleReprint(t)}
+                                title="Ver y Reimprimir Ticket"
                               >
-                                <Eye className="h-4 w-4" />
+                                <Printer className="h-3.5 w-3.5" />
+                                <span className="text-[10px] font-bold">TICKET</span>
                               </Button>
+
                               {!t.is_deleted && (
                                 <>
                                   <Button 
                                     variant="ghost" 
                                     size="sm"
+                                    className="h-8 w-8 p-0"
                                     onClick={() => handleOpenEditClient(t)}
+                                    title="Editar datos del cliente"
                                   >
                                     <Edit className="h-4 w-4" />
                                   </Button>
                                   <Button 
                                     variant="ghost" 
                                     size="sm"
-                                    onClick={() => handleReprint(t)}
-                                  >
-                                    <Printer className="h-4 w-4" />
-                                  </Button>
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm"
+                                    className="h-8 w-8 p-0"
                                     onClick={() => handleOpenAnnul(t)}
+                                    title="Anular venta"
                                   >
                                     <Trash2 className="h-4 w-4 text-red-600" />
                                   </Button>
