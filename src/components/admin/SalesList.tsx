@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { PermissionButton } from "@/components/PermissionButton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -649,28 +648,24 @@ export const SalesList = () => {
 
                               {!t.is_deleted && (
                                 <>
-                                  <PermissionButton
-                                    permission="ventas.editar"
+                                  <Button 
                                     variant="ghost" 
                                     size="sm"
                                     className="h-8 w-8 p-0"
                                     onClick={() => handleOpenEditClient(t)}
-                                    fallbackMessage="Solo Admin General puede editar ventas"
-                                    showLockIcon={false}
+                                    title="Editar datos del cliente"
                                   >
                                     <Edit className="h-4 w-4" />
-                                  </PermissionButton>
-                                  <PermissionButton
-                                    permission="ventas.anular"
+                                  </Button>
+                                  <Button 
                                     variant="ghost" 
                                     size="sm"
                                     className="h-8 w-8 p-0"
                                     onClick={() => handleOpenAnnul(t)}
-                                    fallbackMessage="Solo Admin General puede anular ventas"
-                                    showLockIcon={false}
+                                    title="Anular venta"
                                   >
                                     <Trash2 className="h-4 w-4 text-red-600" />
-                                  </PermissionButton>
+                                  </Button>
                                 </>
                               )}
                             </div>

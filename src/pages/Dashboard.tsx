@@ -14,8 +14,7 @@ import {
   Package,
   LogOut,
   Lock,
-  CheckCircle2,
-  Shield
+  CheckCircle2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -39,7 +38,6 @@ const ICON_MAP: { [key: string]: any } = {
   FileSearch,
   TrendingUp,
   Package,
-  Shield,
 };
 
 const COLOR_MAP: { [key: string]: string } = {
@@ -113,10 +111,10 @@ const Dashboard = () => {
           description: 'Gestión de padres y estudiantes',
           icon: 'Users',
           color: 'purple',
-          route: '/parents',
+          route: '/config-padres',
           is_active: true,
           is_enabled: false,
-          status: 'functional' as const,
+          status: 'coming_soon' as const,
         },
         {
           id: '5',
@@ -141,18 +139,6 @@ const Dashboard = () => {
           is_active: true,
           is_enabled: false,
           status: 'coming_soon' as const,
-        },
-        {
-          id: '7',
-          code: 'permisos',
-          name: 'Control de Permisos',
-          description: 'Gestión de permisos por rol y usuario',
-          icon: 'Shield',
-          color: 'purple',
-          route: '/permissions',
-          is_active: true,
-          is_enabled: false,
-          status: 'functional' as const,
         },
       ];
 
