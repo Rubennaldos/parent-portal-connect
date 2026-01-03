@@ -99,7 +99,7 @@ export function UsersManagement() {
     superadmin: 0,
     admin_general: 0,
     pos: 0,
-    kitchen: 0,
+    comedor: 0,
     parent: 0,
   });
 
@@ -147,7 +147,7 @@ export function UsersManagement() {
         superadmin: profiles?.filter(p => p.role === 'superadmin').length || 0,
         admin_general: profiles?.filter(p => p.role === 'admin_general').length || 0,
         pos: profiles?.filter(p => p.role === 'pos').length || 0,
-        kitchen: profiles?.filter(p => p.role === 'kitchen').length || 0,
+        comedor: profiles?.filter(p => p.role === 'comedor').length || 0,
         parent: profiles?.filter(p => p.role === 'parent').length || 0,
       };
       setStats(statsCopy);
@@ -272,7 +272,7 @@ export function UsersManagement() {
       superadmin: { label: 'SuperAdmin', variant: 'destructive' },
       admin_general: { label: 'Admin General', variant: 'default' },
       pos: { label: 'POS', variant: 'secondary' },
-      kitchen: { label: 'Kitchen', variant: 'secondary' },
+      comedor: { label: 'Comedor', variant: 'secondary' },
       parent: { label: 'Padre', variant: 'outline' },
     };
 
@@ -317,8 +317,8 @@ export function UsersManagement() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{stats.kitchen}</div>
-            <p className="text-xs text-muted-foreground">Kitchen</p>
+            <div className="text-2xl font-bold">{stats.comedor}</div>
+            <p className="text-xs text-muted-foreground">Comedor</p>
           </CardContent>
         </Card>
         <Card>
@@ -386,7 +386,7 @@ export function UsersManagement() {
                 <SelectItem value="superadmin">SuperAdmin</SelectItem>
                 <SelectItem value="admin_general">Admin General</SelectItem>
                 <SelectItem value="pos">POS</SelectItem>
-                <SelectItem value="kitchen">Kitchen</SelectItem>
+                <SelectItem value="comedor">Comedor</SelectItem>
                 <SelectItem value="parent">Padres</SelectItem>
               </SelectContent>
             </Select>
@@ -509,7 +509,7 @@ export function UsersManagement() {
                   <SelectItem value="parent">Padre de Familia</SelectItem>
                   <SelectItem value="admin_general">Admin General</SelectItem>
                   <SelectItem value="pos">Cajero (POS)</SelectItem>
-                  <SelectItem value="kitchen">Cocina (Kitchen)</SelectItem>
+                  <SelectItem value="comedor">Comedor</SelectItem>
                 </SelectContent>
               </Select>
             </div>

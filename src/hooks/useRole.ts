@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
-export type UserRole = 'parent' | 'superadmin' | 'admin_general' | 'pos' | 'kitchen' | null;
+export type UserRole = 'parent' | 'superadmin' | 'admin_general' | 'pos' | 'comedor' | null;
 
 interface UseRoleReturn {
   role: UserRole;
@@ -52,7 +52,7 @@ export function useRole(): UseRoleReturn {
 
   const isParent = useMemo(() => role === 'parent', [role]);
   const isStaff = useMemo(
-    () => ['superadmin', 'admin_general', 'pos', 'kitchen'].includes(role || ''),
+    () => ['superadmin', 'admin_general', 'pos', 'comedor'].includes(role || ''),
     [role]
   );
 
@@ -74,8 +74,8 @@ export function useRole(): UseRoleReturn {
         return '/dashboard'; // Dashboard de módulos de negocio
       case 'pos':
         return '/pos';
-      case 'kitchen':
-        return '/kitchen';
+      case 'comedor':
+        return '/comedor';
       default:
         return '/';
     }

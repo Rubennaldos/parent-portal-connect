@@ -2,9 +2,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChefHat, LogOut } from 'lucide-react';
+import { UtensilsCrossed, LogOut } from 'lucide-react';
 
-const Kitchen = () => {
+const Comedor = () => {
   const { signOut, user } = useAuth();
   const { role, isStaff, isParent } = useRole();
 
@@ -24,10 +24,10 @@ const Kitchen = () => {
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center">
-              <ChefHat className="h-5 w-5 text-orange-600" />
+              <UtensilsCrossed className="h-5 w-5 text-orange-600" />
             </div>
             <div>
-              <h1 className="font-semibold">Pantalla de Cocina</h1>
+              <h1 className="font-semibold">Pantalla de Comedor</h1>
               <p className="text-xs text-muted-foreground">Vista de órdenes</p>
             </div>
           </div>
@@ -44,14 +44,14 @@ const Kitchen = () => {
       <main className="container mx-auto px-4 py-8">
         <Card>
           <CardHeader>
-            <CardTitle>Pantalla de Cocina</CardTitle>
+            <CardTitle>Pantalla de Comedor</CardTitle>
             <CardDescription>
               Monitor de órdenes en tiempo real
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Sistema de cocina en construcción...
+              Sistema de comedor en construcción...
             </p>
           </CardContent>
         </Card>
@@ -60,6 +60,5 @@ const Kitchen = () => {
   );
 };
 
-export default Kitchen;
-
+export default Comedor;
 

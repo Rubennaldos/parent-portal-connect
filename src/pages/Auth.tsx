@@ -305,7 +305,7 @@ export default function Auth() {
           Versión 1.0.6 BETA
         </p>
         <p className="text-sm md:text-base font-medium text-muted-foreground px-4">
-          © 2025 ERP Profesional diseñado por <span className="text-primary/90 font-bold">ARQUISIA Soluciones</span> para <span className="text-foreground/80 font-black">Lima Café 28</span> —
+          © 2026 ERP Profesional diseñado por <span className="text-primary/90 font-bold">ARQUISIA Soluciones</span> para <span className="text-foreground/80 font-black">Lima Café 28</span> —
         </p>
       </footer>
     </div>

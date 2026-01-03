@@ -13,7 +13,7 @@ import SuperAdmin from "./pages/SuperAdmin";
 import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import POS from "./pages/POS";
-import Kitchen from "./pages/Kitchen";
+import Comedor from "./pages/Comedor";
 import SalesList from "./pages/SalesList";
 import NotFound from "./pages/NotFound";
 
@@ -65,7 +65,7 @@ const App = () => (
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute allowedRoles={['admin_general', 'pos', 'kitchen']}>
+                <ProtectedRoute allowedRoles={['admin_general', 'pos', 'comedor']}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -101,12 +101,12 @@ const App = () => (
               }
             />
             
-            {/* Pantalla de Cocina - SuperAdmin, Admin General y Kitchen */}
+            {/* Pantalla de Comedor - SuperAdmin, Admin General y Comedor */}
             <Route
-              path="/kitchen"
+              path="/comedor"
               element={
-                <ProtectedRoute allowedRoles={['superadmin', 'admin_general', 'kitchen']}>
-                  <Kitchen />
+                <ProtectedRoute allowedRoles={['superadmin', 'admin_general', 'comedor']}>
+                  <Comedor />
                 </ProtectedRoute>
               }
             />

@@ -155,9 +155,9 @@ const Dashboard = () => {
         }));
         console.log('💰 Usuario POS: Habilitando POS y Ventas');
         setModules(posModules);
-      } else if (role === 'kitchen') {
-        // Personal Kitchen no ve ningún módulo del dashboard
-        console.log('🍳 Usuario Kitchen: Sin módulos de dashboard');
+      } else if (role === 'comedor') {
+        // Personal Comedor no ve ningún módulo del dashboard
+        console.log('🍴 Usuario Comedor: Sin módulos de dashboard');
         setModules([]);
       } else {
         // Otros roles: mostrar todos pero deshabilitados

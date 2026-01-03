@@ -51,7 +51,7 @@ interface POSProfile {
 interface SchoolProfiles {
   school: School;
   pos_users: POSProfile[];
-  kitchen_users: POSProfile[];
+  comedor_users: POSProfile[];
   total_profiles: number;
   can_add_more: boolean;
   next_pos_number: number;
@@ -136,7 +136,7 @@ export function ProfilesControl() {
             .from('profiles')
             .select('id, role, pos_number, ticket_prefix, created_at')
             .eq('school_id', school.id)
-            .in('role', ['pos', 'kitchen'])
+            .in('role', ['pos', 'comedor'])
             .order('role')
             .order('pos_number');
 
@@ -145,8 +145,8 @@ export function ProfilesControl() {
           const profilesWithEmail = profiles || [];
 
           const posUsers = profilesWithEmail.filter(p => p.role === 'pos');
-          const kitchenUsers = profilesWithEmail.filter(p => p.role === 'kitchen');
-          const totalProfiles = posUsers.length + kitchenUsers.length;
+          const comedorUsers = profilesWithEmail.filter(p => p.role === 'comedor');
+          const totalProfiles = posUsers.length + comedorUsers.length;
           
           // Calcular siguiente número POS disponible
           const usedNumbers = posUsers.map(p => p.pos_number).filter(n => n !== null);
@@ -163,7 +163,7 @@ export function ProfilesControl() {
               prefix_base: prefixBase,
             },
             pos_users: posUsers,
-            kitchen_users: kitchenUsers,
+            comedor_users: comedorUsers,
             total_profiles: totalProfiles,
             can_add_more: totalProfiles < 3,
             next_pos_number: nextPosNumber,
@@ -192,7 +192,7 @@ export function ProfilesControl() {
         <div>
           <h2 className="text-2xl font-bold">Control de Perfiles por Sede</h2>
           <p className="text-muted-foreground">
-            Gestiona usuarios POS y Kitchen (máximo 3 por sede)
+            Gestiona usuarios POS y Comedor (máximo 3 por sede)
           </p>
         </div>
       </div>
@@ -239,12 +239,12 @@ export function ProfilesControl() {
                         </DialogTrigger>
                         <DialogContent>
                           <DialogHeader>
-                            <DialogTitle>Crear Usuario POS/Kitchen</DialogTitle>
+                            <DialogTitle>Crear Usuario POS/Comedor</DialogTitle>
                             <DialogDescription>
                               Sede: {schoolData.school.name}
                             </DialogDescription>
                           </DialogHeader>
-                          <CreatePOSKitchenForm 
+                          <CreatePOSComedorForm 
                             schoolId={schoolData.school.id}
                             schoolName={schoolData.school.name}
                             prefixBase={schoolData.school.prefix_base}
@@ -340,17 +340,17 @@ export function ProfilesControl() {
                     )}
                   </div>
 
-                  {/* Kitchen Users */}
+                  {/* Comedor Users */}
                   <div>
                     <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
                       <UtensilsCrossed className="h-4 w-4" />
-                      Gestión de Menús (Kitchen)
+                      Gestión de Menús (Comedor)
                     </h4>
-                    {schoolData.kitchen_users.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No hay usuarios de cocina</p>
+                    {schoolData.comedor_users.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No hay usuarios de comedor</p>
                     ) : (
                       <div className="space-y-2">
-                        {schoolData.kitchen_users.map((user) => (
+                        {schoolData.comedor_users.map((user) => (
                           <Card key={user.id} className="p-3">
                             <div className="flex items-center justify-between">
                               <div>
@@ -382,7 +382,7 @@ export function ProfilesControl() {
   );
 }
 
-function CreatePOSKitchenForm({ 
+function CreatePOSComedorForm({ 
   schoolId, 
   schoolName, 
   prefixBase,
@@ -396,7 +396,7 @@ function CreatePOSKitchenForm({
   onSuccess: () => void;
 }) {
   const { toast } = useToast();
-  const [profileType, setProfileType] = useState<'pos' | 'kitchen'>('pos');
+  const [profileType, setProfileType] = useState<'pos' | 'comedor'>('pos');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -481,7 +481,7 @@ function CreatePOSKitchenForm({
         .upsert({
           id: authData.user.id,
           email: email,
-          role: profileType, // 🔥 FORZAR el rol correcto (pos o kitchen)
+          role: profileType, // 🔥 FORZAR el rol correcto (pos o comedor)
           school_id: schoolId,
           pos_number: posNumber,
           ticket_prefix: ticketPrefix,
@@ -508,7 +508,7 @@ function CreatePOSKitchenForm({
 
       toast({
         title: '✅ Usuario Creado',
-        description: `${profileType === 'pos' ? 'Cajero' : 'Cocina'} ${email} creado exitosamente${ticketPrefix ? ` con prefijo ${ticketPrefix}` : ''}`,
+        description: `${profileType === 'pos' ? 'Cajero' : 'Comedor'} ${email} creado exitosamente${ticketPrefix ? ` con prefijo ${ticketPrefix}` : ''}`,
       });
 
       onSuccess();
@@ -548,7 +548,7 @@ function CreatePOSKitchenForm({
 
       <div>
         <Label htmlFor="profileType">Tipo de Perfil</Label>
-        <Select value={profileType} onValueChange={(v) => setProfileType(v as 'pos' | 'kitchen')}>
+        <Select value={profileType} onValueChange={(v) => setProfileType(v as 'pos' | 'comedor')}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
@@ -559,10 +559,10 @@ function CreatePOSKitchenForm({
                 Punto de Venta (POS)
               </div>
             </SelectItem>
-            <SelectItem value="kitchen">
+            <SelectItem value="comedor">
               <div className="flex items-center gap-2">
                 <UtensilsCrossed className="h-4 w-4" />
-                Gestión de Menús (Kitchen)
+                Gestión de Menús (Comedor)
               </div>
             </SelectItem>
           </SelectContent>
@@ -613,7 +613,7 @@ function CreatePOSKitchenForm({
       )}
 
       <Button type="submit" className="w-full" disabled={creating}>
-        {creating ? 'Creando...' : `Crear Usuario ${profileType === 'pos' ? 'POS' : 'Kitchen'}`}
+        {creating ? 'Creando...' : `Crear Usuario ${profileType === 'pos' ? 'POS' : 'Comedor'}`}
       </Button>
     </form>
   );
