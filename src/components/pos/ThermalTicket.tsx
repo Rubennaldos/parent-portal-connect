@@ -53,7 +53,7 @@ export const ThermalTicket = ({
   return (
     <div 
       id={showOnScreen ? "thermal-ticket-screen" : "thermal-ticket-container"}
-      className={showOnScreen ? "mx-auto bg-white shadow-inner" : ""}
+      className={showOnScreen ? "mx-auto bg-white shadow-inner" : "thermal-print-only"}
       style={showOnScreen ? {
         width: '100%',
         maxWidth: '300px',
@@ -65,50 +65,45 @@ export const ThermalTicket = ({
         boxShadow: '0 0 10px rgba(0,0,0,0.1)',
         border: '1px solid #eee'
       } : { 
-        position: 'fixed',
-        top: '-9999px',
-        left: '-9999px',
-        width: '0',
-        height: '0',
-        overflow: 'hidden',
-        visibility: 'hidden',
-        opacity: 0,
-        pointerEvents: 'none',
-        zIndex: -1000
+        display: 'none'
       }}
     >
       <style>{`
         @media screen {
-          ${!showOnScreen ? '#thermal-ticket-container { display: none !important; }' : ''}
-        }
-        @media print {
-          #thermal-ticket-container, #thermal-ticket-screen {
-            display: block !important;
-            position: static !important;
-            width: 80mm !important;
-            height: auto !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            overflow: visible !important;
-            left: auto !important;
-            top: auto !important;
-            z-index: auto !important;
-            padding: 10mm 5mm !important;
-            box-shadow: none !important;
-            border: none !important;
-          }
-          body > *:not(#thermal-ticket-container):not(#thermal-ticket-screen) {
+          .thermal-print-only {
             display: none !important;
           }
+        }
+        @media print {
+          /* Ocultar TODO menos el ticket */
+          body * {
+            visibility: hidden;
+            -webkit-print-color-adjust: exact;
+          }
+          
+          /* Mostrar solo el ticket que queremos imprimir */
+          .thermal-print-only, .thermal-print-only * {
+            visibility: visible;
+          }
+
+          #thermal-ticket-screen, #thermal-ticket-screen * {
+            visibility: visible;
+          }
+
+          /* Posicionar el ticket arriba a la izquierda para la impresora */
+          .thermal-print-only, #thermal-ticket-screen {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 80mm !important;
+            margin: 0 !important;
+            padding: 5mm !important;
+          }
+
           @page {
             size: 80mm auto;
             margin: 0;
-          }
-          body {
-            width: 80mm;
-            margin: 0;
-            padding: 0;
-            background: white;
           }
         }
       `}</style>
