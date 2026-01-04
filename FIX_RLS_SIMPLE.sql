@@ -32,6 +32,14 @@ DROP POLICY IF EXISTS "gestor_unidad_students" ON students;
 DROP POLICY IF EXISTS "operador_caja_students" ON students;
 DROP POLICY IF EXISTS "operador_cocina_students" ON students;
 DROP POLICY IF EXISTS "parents_own_students" ON students;
+DROP POLICY IF EXISTS "authenticated_users_students" ON students;
+DROP POLICY IF EXISTS "superadmin_all_students" ON students;
+DROP POLICY IF EXISTS "admin_general_all_students" ON students;
+DROP POLICY IF EXISTS "supervisor_red_view_all_students" ON students;
+DROP POLICY IF EXISTS "gestor_unidad_own_school_students" ON students;
+DROP POLICY IF EXISTS "operador_caja_own_school_students" ON students;
+DROP POLICY IF EXISTS "operador_cocina_own_school_students" ON students;
+DROP POLICY IF EXISTS "parents_own_children" ON students;
 
 -- Política SIMPLE: Todos los usuarios autenticados pueden ver estudiantes
 -- (el filtro por sede lo hace la aplicación)
@@ -48,6 +56,13 @@ DROP POLICY IF EXISTS "gestor_unidad_transactions" ON transactions;
 DROP POLICY IF EXISTS "operador_caja_transactions" ON transactions;
 DROP POLICY IF EXISTS "operador_cocina_transactions" ON transactions;
 DROP POLICY IF EXISTS "parents_own_transactions" ON transactions;
+DROP POLICY IF EXISTS "authenticated_users_transactions" ON transactions;
+DROP POLICY IF EXISTS "superadmin_all_transactions" ON transactions;
+DROP POLICY IF EXISTS "admin_general_all_transactions" ON transactions;
+DROP POLICY IF EXISTS "supervisor_red_view_all_transactions" ON transactions;
+DROP POLICY IF EXISTS "gestor_unidad_own_school_transactions" ON transactions;
+DROP POLICY IF EXISTS "operador_caja_own_school_transactions" ON transactions;
+DROP POLICY IF EXISTS "operador_cocina_own_school_transactions" ON transactions;
 
 -- Política SIMPLE: Todos los usuarios autenticados pueden ver transacciones
 CREATE POLICY "authenticated_users_transactions"
@@ -59,6 +74,9 @@ WITH CHECK (true);
 -- PRODUCTS: Ya están bien (compartidos globalmente)
 DROP POLICY IF EXISTS "authenticated_view_products" ON products;
 DROP POLICY IF EXISTS "admin_manage_products" ON products;
+DROP POLICY IF EXISTS "authenticated_users_products" ON products;
+DROP POLICY IF EXISTS "superadmin_all_products" ON products;
+DROP POLICY IF EXISTS "admin_general_all_products" ON products;
 
 CREATE POLICY "authenticated_users_products"
 ON products FOR ALL
@@ -70,6 +88,10 @@ WITH CHECK (true);
 DROP POLICY IF EXISTS "admin_all_parent_profiles" ON parent_profiles;
 DROP POLICY IF EXISTS "gestor_unidad_parent_profiles" ON parent_profiles;
 DROP POLICY IF EXISTS "parents_own_parent_profile" ON parent_profiles;
+DROP POLICY IF EXISTS "authenticated_users_parent_profiles" ON parent_profiles;
+DROP POLICY IF EXISTS "superadmin_all_parent_profiles" ON parent_profiles;
+DROP POLICY IF EXISTS "admin_general_all_parent_profiles" ON parent_profiles;
+DROP POLICY IF EXISTS "parents_own_profile" ON parent_profiles;
 
 CREATE POLICY "authenticated_users_parent_profiles"
 ON parent_profiles FOR ALL
