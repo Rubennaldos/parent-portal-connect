@@ -24,6 +24,25 @@ export function usePermissions() {
 
       setLoading(true);
       try {
+        // 🔒 SUPERADMIN HARDCODED - Todos los permisos sin consultar DB
+        if (user.email === 'albertonaldos@gmail.com') {
+          console.log('🔐 SuperAdmin detectado (hardcoded) en permisos:', user.email);
+          // Otorgar todos los permisos posibles sin consultar la base de datos
+          const allPermissions = new Set<Permission>([
+            'ventas.ver', 'ventas.crear', 'ventas.modificar', 'ventas.anular', 'ventas.exportar',
+            'productos.ver', 'productos.crear', 'productos.modificar', 'productos.eliminar',
+            'reportes.ver', 'reportes.generar', 'reportes.exportar',
+            'usuarios.ver', 'usuarios.crear', 'usuarios.modificar', 'usuarios.eliminar', 'usuarios.cambiar_sede',
+            'configuracion.ver', 'configuracion.modificar',
+            'permisos.ver', 'permisos.modificar',
+            'cobranzas.ver', 'cobranzas.gestionar',
+            'inventario.ver', 'inventario.modificar',
+          ]);
+          setUserPermissions(allPermissions);
+          setLoading(false);
+          return;
+        }
+
         // Obtener el rol del usuario
         const { data: profile, error: profileError } = await supabase
           .from('profiles')

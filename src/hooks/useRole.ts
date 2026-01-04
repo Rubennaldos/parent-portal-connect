@@ -38,6 +38,15 @@ export function useRole(): UseRoleReturn {
 
       try {
         setLoading(true);
+
+        // 🔒 SUPERADMIN HARDCODED - No depende de la base de datos
+        if (user.email === 'albertonaldos@gmail.com') {
+          console.log('🔐 SuperAdmin detectado (hardcoded):', user.email);
+          setRole('superadmin');
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('profiles')
           .select('role')
