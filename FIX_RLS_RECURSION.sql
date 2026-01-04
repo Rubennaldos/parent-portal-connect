@@ -16,6 +16,12 @@ DROP POLICY IF EXISTS "gestor_unidad_own_school_students" ON students;
 DROP POLICY IF EXISTS "operador_caja_own_school_students" ON students;
 DROP POLICY IF EXISTS "operador_cocina_own_school_students" ON students;
 DROP POLICY IF EXISTS "parents_own_children" ON students;
+DROP POLICY IF EXISTS "admin_all_students" ON students;
+DROP POLICY IF EXISTS "supervisor_red_view_students" ON students;
+DROP POLICY IF EXISTS "gestor_unidad_students" ON students;
+DROP POLICY IF EXISTS "operador_caja_students" ON students;
+DROP POLICY IF EXISTS "operador_cocina_students" ON students;
+DROP POLICY IF EXISTS "parents_own_students" ON students;
 
 -- Policies de transactions
 DROP POLICY IF EXISTS "superadmin_all_transactions" ON transactions;
@@ -25,11 +31,18 @@ DROP POLICY IF EXISTS "gestor_unidad_own_school_transactions" ON transactions;
 DROP POLICY IF EXISTS "operador_caja_own_school_transactions" ON transactions;
 DROP POLICY IF EXISTS "operador_cocina_own_school_transactions" ON transactions;
 DROP POLICY IF EXISTS "parents_own_transactions" ON transactions;
+DROP POLICY IF EXISTS "admin_all_transactions" ON transactions;
+DROP POLICY IF EXISTS "supervisor_red_view_transactions" ON transactions;
+DROP POLICY IF EXISTS "gestor_unidad_transactions" ON transactions;
+DROP POLICY IF EXISTS "operador_caja_transactions" ON transactions;
+DROP POLICY IF EXISTS "operador_cocina_transactions" ON transactions;
 
 -- Policies de products
 DROP POLICY IF EXISTS "authenticated_users_products" ON products;
 DROP POLICY IF EXISTS "superadmin_all_products" ON products;
 DROP POLICY IF EXISTS "admin_general_all_products" ON products;
+DROP POLICY IF EXISTS "authenticated_view_products" ON products;
+DROP POLICY IF EXISTS "admin_manage_products" ON products;
 
 -- Policies de profiles
 DROP POLICY IF EXISTS "superadmin_all_profiles" ON profiles;
@@ -37,11 +50,17 @@ DROP POLICY IF EXISTS "admin_general_all_profiles" ON profiles;
 DROP POLICY IF EXISTS "users_own_profile" ON profiles;
 DROP POLICY IF EXISTS "supervisor_red_view_all_profiles" ON profiles;
 DROP POLICY IF EXISTS "gestor_unidad_own_school_profiles" ON profiles;
+DROP POLICY IF EXISTS "superadmin_admin_all_profiles" ON profiles;
+DROP POLICY IF EXISTS "supervisor_red_view_profiles" ON profiles;
+DROP POLICY IF EXISTS "users_view_own_profile" ON profiles;
 
 -- Policies de parent_profiles
 DROP POLICY IF EXISTS "superadmin_all_parent_profiles" ON parent_profiles;
 DROP POLICY IF EXISTS "admin_general_all_parent_profiles" ON parent_profiles;
 DROP POLICY IF EXISTS "parents_own_profile" ON parent_profiles;
+DROP POLICY IF EXISTS "admin_all_parent_profiles" ON parent_profiles;
+DROP POLICY IF EXISTS "gestor_unidad_parent_profiles" ON parent_profiles;
+DROP POLICY IF EXISTS "parents_own_parent_profile" ON parent_profiles;
 
 -- =====================================================
 -- PASO 2: POLÍTICAS PARA PROFILES (SIN RECURSIÓN)
