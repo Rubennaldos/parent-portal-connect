@@ -28,6 +28,7 @@ import { UsersManagement } from '@/components/admin/UsersManagement';
 import { ProfilesControl } from '@/components/admin/ProfilesControl';
 import { AccessControlModule } from '@/components/admin/AccessControlModule';
 import StudentsManagement from '@/components/admin/StudentsManagement';
+import { APP_CONFIG } from '@/config/app.config';
 
 const SuperAdmin = () => {
   const { signOut, user } = useAuth();
@@ -128,7 +129,7 @@ const SuperAdmin = () => {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Version</span>
-                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">v1.0.0</code>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">v{APP_CONFIG.version}</code>
                   </div>
                 </CardContent>
               </Card>

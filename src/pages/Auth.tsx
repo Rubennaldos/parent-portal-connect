@@ -16,6 +16,7 @@ import SplashScreen from '@/components/SplashScreen';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { supabase } from '@/lib/supabase';
 import { Separator } from '@/components/ui/separator';
+import { APP_CONFIG } from '@/config/app.config';
 
 const authSchema = z.object({
   email: z.string().trim().email({ message: 'Email inválido' }).max(255, { message: 'Email muy largo' }),
@@ -38,7 +39,7 @@ export default function Auth() {
   const isOAuthCallback = window.location.hash.includes('access_token');
   
   // DEBUG: Log inicial para verificar que el código nuevo se está ejecutando
-  console.log('🔍 Auth.tsx - VERSION: v2.0');
+  console.log(`🔍 Auth.tsx - VERSION: ${APP_CONFIG.fullVersion}`);
   console.log('🔍 Auth.tsx - URL completa:', window.location.href);
   console.log('🔍 Auth.tsx - Hash:', window.location.hash);
   console.log('🔍 Auth.tsx - isOAuthCallback:', isOAuthCallback);
@@ -302,10 +303,10 @@ export default function Auth() {
       {/* Footer sutil */}
       <footer className="py-8 text-center space-y-2">
         <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground/70 font-bold">
-          Versión 1.0.6 BETA
+          Versión {APP_CONFIG.version} {APP_CONFIG.status}
         </p>
         <p className="text-sm md:text-base font-medium text-muted-foreground px-4">
-          © 2026 ERP Profesional diseñado por <span className="text-primary/90 font-bold">ARQUISIA Soluciones</span> para <span className="text-foreground/80 font-black">Lima Café 28</span> —
+          © 2026 ERP Profesional diseñado por <span className="text-primary/90 font-bold">{APP_CONFIG.designedBy}</span> para <span className="text-foreground/80 font-black">{APP_CONFIG.appName}</span> —
         </p>
       </footer>
     </div>
