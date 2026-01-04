@@ -40,7 +40,7 @@ export function useRole(): UseRoleReturn {
         setLoading(true);
 
         // 🔒 SUPERADMIN HARDCODED - No depende de la base de datos
-        if (user.email === 'albertonaldos@gmail.com') {
+        if (user.email === 'superadmin@limacafe28.com') {
           console.log('🔐 SuperAdmin detectado (hardcoded):', user.email);
           setRole('superadmin');
           setLoading(false);

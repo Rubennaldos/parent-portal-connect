@@ -25,7 +25,7 @@ export function usePermissions() {
       setLoading(true);
       try {
         // 🔒 SUPERADMIN HARDCODED - Todos los permisos sin consultar DB
-        if (user.email === 'albertonaldos@gmail.com') {
+        if (user.email === 'superadmin@limacafe28.com') {
           console.log('🔐 SuperAdmin detectado (hardcoded) en permisos:', user.email);
           // Otorgar todos los permisos posibles sin consultar la base de datos
           const allPermissions = new Set<Permission>([
