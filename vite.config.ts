@@ -8,6 +8,17 @@ export default defineConfig(({ mode }) => ({
   // Configuración base - sin GitHub Pages
   base: "/",
   
+  build: {
+    outDir: "dist",
+    sourcemap: false,
+    minify: "terser",
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
+    },
+  },
+  
   server: {
     host: "::",
     port: 8080,
