@@ -238,7 +238,20 @@ CREATE TRIGGER trigger_update_billing_payment_pending
 
 -- Insertar config por defecto para todas las sedes existentes
 INSERT INTO billing_config (school_id, message_template)
-SELECT id, DEFAULT
+SELECT 
+  id, 
+  '🔔 *COBRANZA LIMA CAFÉ 28*
+
+Estimado(a) {nombre_padre}
+
+El alumno *{nombre_estudiante}* tiene un consumo pendiente del período: {periodo}
+
+💰 Monto Total: S/ {monto}
+
+📎 Adjuntamos el detalle completo.
+
+Para pagar, contacte con administración.
+Gracias.'
 FROM schools
 ON CONFLICT (school_id) DO NOTHING;
 
