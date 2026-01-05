@@ -15,6 +15,7 @@ import Admin from "./pages/Admin";
 import POS from "./pages/POS";
 import Comedor from "./pages/Comedor";
 import SalesList from "./pages/SalesList";
+import Cobranzas from "./pages/Cobranzas";
 import ParentsManagement from "./components/admin/ParentsManagement";
 import AccessControl from "./pages/AccessControl";
 import NotFound from "./pages/NotFound";
@@ -105,6 +106,16 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['admin_general', 'operador_caja']}>
                   <SalesList />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Cobranzas - Admin General y Gestor de Unidad */}
+            <Route
+              path="/cobranzas"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'gestor_unidad']}>
+                  <Cobranzas />
                 </ProtectedRoute>
               }
             />

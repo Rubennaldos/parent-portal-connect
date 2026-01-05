@@ -106,7 +106,7 @@ const Dashboard = () => {
           route: '/cobranzas',
           is_active: true,
           is_enabled: false,
-          status: 'coming_soon' as const,
+          status: 'functional' as const,
         },
         {
           id: '4',
