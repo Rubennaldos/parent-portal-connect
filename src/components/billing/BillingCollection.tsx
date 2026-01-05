@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { generateBillingPDF } from '@/utils/pdfGenerator';
 
 interface School {
   id: string;
@@ -404,6 +405,35 @@ Gracias.`;
     });
   };
 
+  const generatePDF = (debtor: DebtorStudent) => {
+    const period = periods.find(p => p.id === selectedPeriod);
+    if (!period) return;
+
+    generateBillingPDF({
+      student_name: debtor.student_name,
+      parent_name: debtor.parent_name,
+      parent_phone: debtor.parent_phone,
+      school_name: debtor.school_name,
+      period_name: period.period_name,
+      start_date: period.start_date,
+      end_date: period.end_date,
+      transactions: debtor.transactions.map(t => ({
+        id: t.id,
+        created_at: t.created_at,
+        ticket_code: t.ticket_code,
+        description: t.description || 'Consumo',
+        amount: t.amount,
+      })),
+      total_amount: debtor.total_amount,
+      pending_amount: debtor.total_amount,
+    });
+
+    toast({
+      title: '✅ PDF generado',
+      description: `Estado de cuenta de ${debtor.student_name}`,
+    });
+  };
+
   const generateWhatsAppExport = () => {
     const period = periods.find(p => p.id === selectedPeriod);
     const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.student_id));
@@ -639,6 +669,7 @@ Gracias.`;
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => generatePDF(debtor)}
                           >
                             <FileText className="h-4 w-4 mr-1" />
                             PDF
