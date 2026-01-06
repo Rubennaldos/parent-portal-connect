@@ -569,14 +569,26 @@ const POS = () => {
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold">Seleccionar Tipo de Cliente</h2>
-              <Button
-                variant="ghost"
-                onClick={handleLogout}
-                className="text-red-600 hover:bg-red-50"
-              >
-                <LogOut className="h-5 w-5 mr-2" />
-                Cerrar Sesión
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleBackToDashboard}
+                  className="text-blue-600 hover:bg-blue-50 border-blue-300"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                  </svg>
+                  Volver al Panel
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleLogout}
+                  className="text-red-600 hover:bg-red-50"
+                >
+                  <LogOut className="h-5 w-5 mr-2" />
+                  Cerrar Sesión
+                </Button>
+              </div>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
