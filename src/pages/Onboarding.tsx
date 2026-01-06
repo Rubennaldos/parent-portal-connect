@@ -74,10 +74,12 @@ export default function Onboarding() {
     if (user) {
       fetchSchoolInfo();
     }
-  }, [user]);
+  }, [user, searchParams]); // Agregar searchParams como dependencia
 
   const fetchSchoolInfo = async () => {
     try {
+      console.log('🔍 Iniciando fetchSchoolInfo...');
+      
       // 0. CARGAR TODOS LOS COLEGIOS PRIMERO
       const { data: schoolsData } = await supabase
         .from('schools')
@@ -87,21 +89,10 @@ export default function Onboarding() {
 
       if (schoolsData) {
         setSchools(schoolsData);
+        console.log('📚 Colegios cargados:', schoolsData.length);
       }
 
-      // 1. Intentar obtener desde la URL inmediatamente
-      const sedeCode = searchParams.get('school') || searchParams.get('sede');
-      if (sedeCode && schoolsData) {
-        const schoolFromUrl = schoolsData.find(s => s.code === sedeCode);
-        if (schoolFromUrl) {
-          setSchoolId(schoolFromUrl.id);
-          setSchoolName(schoolFromUrl.name);
-          console.log('✅ Sede detectada desde URL:', schoolFromUrl.name);
-          return; // Si está en la URL, mandamos nosotros
-        }
-      }
-
-      // 2. Intentar obtener desde parent_profiles (si ya se registró antes)
+      // 1. PRIMERO: Intentar desde parent_profiles (prioridad máxima)
       const { data: pProfile } = await supabase
         .from('parent_profiles')
         .select('school_id, schools(name)')
@@ -112,23 +103,42 @@ export default function Onboarding() {
         setSchoolId(pProfile.school_id);
         const sName = (pProfile.schools as any)?.name || '';
         setSchoolName(sName);
-        console.log('✅ Sede desde perfil de la DB:', sName);
-        return;
+        console.log('✅ Sede desde DB (parent_profiles):', sName, pProfile.school_id);
+        return; // YA TENEMOS LA SEDE, SALIR
       }
 
-      // 3. Si no hay URL ni DB, usar el localStorage (para OAuth)
+      // 2. SEGUNDO: Intentar desde la URL
+      const sedeCode = searchParams.get('school') || searchParams.get('sede');
+      console.log('🔍 Parámetro URL school/sede:', sedeCode);
+      
+      if (sedeCode && schoolsData) {
+        const schoolFromUrl = schoolsData.find(s => s.code === sedeCode);
+        if (schoolFromUrl) {
+          setSchoolId(schoolFromUrl.id);
+          setSchoolName(schoolFromUrl.name);
+          console.log('✅ Sede detectada desde URL:', schoolFromUrl.name, schoolFromUrl.id);
+          return;
+        }
+      }
+
+      // 3. TERCERO: Intentar desde localStorage (para OAuth)
       const savedSchoolId = localStorage.getItem('pending_school_id');
+      console.log('💾 localStorage pending_school_id:', savedSchoolId);
+      
       if (savedSchoolId && schoolsData) {
         const schoolFromStorage = schoolsData.find(s => s.id === savedSchoolId);
         if (schoolFromStorage) {
           setSchoolId(schoolFromStorage.id);
           setSchoolName(schoolFromStorage.name);
           localStorage.removeItem('pending_school_id');
-          console.log('✅ Sede desde localStorage:', schoolFromStorage.name);
+          console.log('✅ Sede desde localStorage:', schoolFromStorage.name, schoolFromStorage.id);
+          return;
         }
       }
+
+      console.log('⚠️ No se detectó ninguna sede automáticamente');
     } catch (error) {
-      console.error('Error fetching school info:', error);
+      console.error('❌ Error fetching school info:', error);
     }
   };
 
