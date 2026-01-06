@@ -1,14 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
   GraduationCap, 
   LogOut, 
   Plus,
   History,
-  X
+  X,
+  Settings,
+  Receipt,
+  Users as UsersIcon,
+  AlertCircle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -41,6 +48,7 @@ interface Transaction {
   description: string;
   created_at: string;
   balance_after: number;
+  payment_method?: string;
 }
 
 const Index = () => {
@@ -51,18 +59,23 @@ const Index = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddStudent, setShowAddStudent] = useState(false);
+  const [activeTab, setActiveTab] = useState('alumnos');
   
   // Modales
   const [showRechargeModal, setShowRechargeModal] = useState(false);
   const [showMenuModal, setShowMenuModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
   
-  // Estudiante seleccionado para cada acción
+  // Estudiante seleccionado
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  
+  // Para límite diario
+  const [newLimit, setNewLimit] = useState('');
+  const [isUpdatingLimit, setIsUpdatingLimit] = useState(false);
 
   useEffect(() => {
     fetchStudents();
@@ -102,7 +115,7 @@ const Index = () => {
         .select('*')
         .eq('student_id', studentId)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) throw error;
       setTransactions(data || []);
@@ -124,7 +137,6 @@ const Index = () => {
     try {
       const newBalance = selectedStudent.balance + amount;
 
-      // 1. Crear transacción
       const { error: transError } = await supabase
         .from('transactions')
         .insert({
@@ -139,7 +151,6 @@ const Index = () => {
 
       if (transError) throw transError;
 
-      // 2. Actualizar saldo
       const { error: updateError } = await supabase
         .from('students')
         .update({ balance: newBalance })
@@ -147,7 +158,6 @@ const Index = () => {
 
       if (updateError) throw updateError;
 
-      // 3. Éxito
       toast({
         title: '✅ ¡Recarga Exitosa!',
         description: `Nuevo saldo: S/ ${newBalance.toFixed(2)}`,
@@ -163,6 +173,48 @@ const Index = () => {
         description: error.message || 'No se pudo completar la recarga',
       });
       throw error;
+    }
+  };
+
+  const handleUpdateLimit = async () => {
+    if (!selectedStudent) return;
+    
+    const limit = parseFloat(newLimit);
+    if (isNaN(limit) || limit < 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Ingresa un límite válido',
+      });
+      return;
+    }
+
+    setIsUpdatingLimit(true);
+
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ daily_limit: limit })
+        .eq('id', selectedStudent.id);
+
+      if (error) throw error;
+
+      toast({
+        title: '✅ Límite Actualizado',
+        description: `Nuevo límite diario: S/ ${limit.toFixed(2)}`,
+      });
+
+      await fetchStudents();
+      setShowLimitModal(false);
+    } catch (error: any) {
+      console.error('Error updating limit:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo actualizar el límite',
+      });
+    } finally {
+      setIsUpdatingLimit(false);
     }
   };
 
@@ -189,7 +241,8 @@ const Index = () => {
 
   const openSettingsModal = (student: Student) => {
     setSelectedStudent(student);
-    setShowSettingsModal(true);
+    setNewLimit(student.daily_limit.toString());
+    setShowLimitModal(true);
   };
 
   const handleLogout = async () => {
@@ -234,61 +287,160 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content con Tabs */}
       <main className="max-w-7xl mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Mis Alumnos</h2>
-          <p className="text-gray-600">Gestiona las cuentas del kiosco de tus hijos</p>
-        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-3 mb-8">
+            <TabsTrigger value="alumnos">
+              <UsersIcon className="h-4 w-4 mr-2" />
+              Mis Alumnos
+            </TabsTrigger>
+            <TabsTrigger value="pagos">
+              <Receipt className="h-4 w-4 mr-2" />
+              Pagos
+            </TabsTrigger>
+            <TabsTrigger value="configuracion">
+              <Settings className="h-4 w-4 mr-2" />
+              Configuración
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Sin estudiantes */}
-        {students.length === 0 && (
-          <Card className="border-2 border-dashed">
-            <CardContent className="flex flex-col items-center justify-center py-16">
-              <GraduationCap className="h-16 w-16 text-gray-400 mb-4" />
-              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                No hay estudiantes registrados
-              </h3>
-              <p className="text-gray-600 mb-6 text-center max-w-md">
-                Agrega a tu primer hijo para empezar a usar el kiosco escolar
-              </p>
-              <Button size="lg" onClick={() => setShowAddStudent(true)}>
-                <Plus className="h-5 w-5 mr-2" />
-                Registrar mi Primer Estudiante
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Grid de Estudiantes */}
-        {students.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-              {students.map((student) => (
-                <StudentCard
-                  key={student.id}
-                  student={student}
-                  onRecharge={() => openRechargeModal(student)}
-                  onViewHistory={() => openHistoryModal(student)}
-                  onViewMenu={() => openMenuModal(student)}
-                  onOpenSettings={() => openSettingsModal(student)}
-                  onPhotoClick={() => openPhotoModal(student)}
-                />
-              ))}
+          {/* TAB 1: MIS ALUMNOS */}
+          <TabsContent value="alumnos" className="space-y-6">
+            <div className="mb-6">
+              <h2 className="text-3xl font-bold text-gray-900 mb-2">Mis Alumnos</h2>
+              <p className="text-gray-600">Gestiona las cuentas del kiosco de tus hijos</p>
             </div>
 
-            {/* Botón Agregar Estudiante */}
-            <Card className="border-2 border-dashed hover:border-blue-400 transition-colors cursor-pointer" onClick={() => setShowAddStudent(true)}>
-              <CardContent className="flex items-center justify-center py-8">
-                <Plus className="h-6 w-6 text-gray-400 mr-2" />
-                <span className="text-gray-600 font-medium">Agregar otro estudiante</span>
+            {students.length === 0 ? (
+              <Card className="border-2 border-dashed">
+                <CardContent className="flex flex-col items-center justify-center py-16">
+                  <GraduationCap className="h-16 w-16 text-gray-400 mb-4" />
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">
+                    No hay estudiantes registrados
+                  </h3>
+                  <p className="text-gray-600 mb-6 text-center max-w-md">
+                    Agrega a tu primer hijo para empezar a usar el kiosco escolar
+                  </p>
+                  <Button size="lg" onClick={() => setShowAddStudent(true)}>
+                    <Plus className="h-5 w-5 mr-2" />
+                    Registrar mi Primer Estudiante
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                  {students.map((student) => (
+                    <StudentCard
+                      key={student.id}
+                      student={student}
+                      onRecharge={() => openRechargeModal(student)}
+                      onViewHistory={() => openHistoryModal(student)}
+                      onViewMenu={() => openMenuModal(student)}
+                      onOpenSettings={() => openSettingsModal(student)}
+                      onPhotoClick={() => openPhotoModal(student)}
+                    />
+                  ))}
+                </div>
+
+                <Card className="border-2 border-dashed hover:border-blue-400 transition-colors cursor-pointer" onClick={() => setShowAddStudent(true)}>
+                  <CardContent className="flex items-center justify-center py-8">
+                    <Plus className="h-6 w-6 text-gray-400 mr-2" />
+                    <span className="text-gray-600 font-medium">Agregar otro estudiante</span>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </TabsContent>
+
+          {/* TAB 2: PAGOS */}
+          <TabsContent value="pagos" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5" />
+                  Historial de Pagos y Recargas
+                </CardTitle>
+                <CardDescription>
+                  Revisa todas las transacciones realizadas
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {students.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Receipt className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500">No hay estudiantes registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {students.map((student) => (
+                      <Card key={student.id} className="border">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-semibold">{student.full_name}</p>
+                              <p className="text-sm text-gray-500">{student.grade} - {student.section}</p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => openHistoryModal(student)}>
+                              Ver Historial
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
-          </>
-        )}
+          </TabsContent>
+
+          {/* TAB 3: CONFIGURACIÓN */}
+          <TabsContent value="configuracion" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  Configuración de Límites
+                </CardTitle>
+                <CardDescription>
+                  Configura los topes de gasto diario para cada estudiante
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {students.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500">No hay estudiantes registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {students.map((student) => (
+                      <Card key={student.id} className="border">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-semibold">{student.full_name}</p>
+                              <p className="text-sm text-gray-500">
+                                Límite actual: S/ {student.daily_limit.toFixed(2)} / día
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => openSettingsModal(student)}>
+                              Modificar
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
 
-      {/* Modales */}
+      {/* MODALES */}
       <AddStudentModal
         isOpen={showAddStudent}
         onClose={() => setShowAddStudent(false)}
@@ -320,6 +472,49 @@ const Index = () => {
             studentName={selectedStudent.full_name}
             onSuccess={fetchStudents}
           />
+
+          {/* Modal de Límite Diario */}
+          <Dialog open={showLimitModal} onOpenChange={setShowLimitModal}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Límite de Gasto Diario</DialogTitle>
+                <DialogDescription>
+                  Configura el monto máximo que {selectedStudent.full_name} puede gastar por día
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="limit">Límite Diario (S/)</Label>
+                  <Input
+                    id="limit"
+                    type="number"
+                    step="0.50"
+                    value={newLimit}
+                    onChange={(e) => setNewLimit(e.target.value)}
+                    className="text-lg font-semibold"
+                    placeholder="15.00"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Coloca 0 para sin límite</p>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-start gap-2">
+                  <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-yellow-800">
+                    Este límite ayuda a controlar los gastos diarios del estudiante en el kiosco.
+                  </p>
+                </div>
+
+                <Button 
+                  onClick={handleUpdateLimit}
+                  disabled={isUpdatingLimit}
+                  className="w-full"
+                >
+                  {isUpdatingLimit ? 'Actualizando...' : 'Actualizar Límite'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Modal de Historial */}
           <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
@@ -375,16 +570,6 @@ const Index = () => {
               )}
             </DialogContent>
           </Dialog>
-
-          {/* Modal de Settings (placeholder) */}
-          <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Configuración de {selectedStudent.full_name}</DialogTitle>
-              </DialogHeader>
-              <p className="text-gray-600">Próximamente: configuración de topes y límites</p>
-            </DialogContent>
-          </Dialog>
         </>
       )}
     </div>
@@ -392,4 +577,3 @@ const Index = () => {
 };
 
 export default Index;
-

@@ -36,7 +36,8 @@ import {
   X,
   Printer,
   Receipt,
-  Users
+  Users,
+  Maximize2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -82,6 +83,7 @@ const POS = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [showStudentResults, setShowStudentResults] = useState(false);
   const [studentWillPay, setStudentWillPay] = useState(false); // Switch para que estudiante pague
+  const [showPhotoModal, setShowPhotoModal] = useState(false); // Para ampliar foto del estudiante
 
   // Estados de productos
   const [productSearch, setProductSearch] = useState('');
@@ -764,6 +766,23 @@ const POS = () => {
               ) : selectedStudent && (
                 <div>
                   <div className="flex items-center gap-3 mb-2">
+                    {/* Foto del estudiante */}
+                    {selectedStudent.photo_url && (
+                      <div 
+                        className="relative w-16 h-16 flex-shrink-0 cursor-pointer group"
+                        onClick={() => setShowPhotoModal(true)}
+                      >
+                        <img 
+                          src={selectedStudent.photo_url} 
+                          alt={selectedStudent.full_name}
+                          className="w-full h-full object-cover rounded-lg border-2 border-white shadow-lg"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                          <Maximize2 className="h-6 w-6 text-white" />
+                        </div>
+                      </div>
+                    )}
+                    
                     <div className="flex-1">
                       <h3 className="font-bold text-base">{selectedStudent.full_name}</h3>
                       <p className="text-xs text-emerald-100">{selectedStudent.grade} - {selectedStudent.section}</p>
@@ -1117,6 +1136,29 @@ const POS = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal para ver foto ampliada del estudiante */}
+      {selectedStudent?.photo_url && (
+        <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Foto de {selectedStudent.full_name}</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col items-center gap-4 p-4">
+              <img 
+                src={selectedStudent.photo_url} 
+                alt={selectedStudent.full_name}
+                className="w-full max-w-md h-auto object-contain rounded-lg border-4 border-gray-200 shadow-xl"
+              />
+              <div className="text-center">
+                <p className="text-lg font-bold text-gray-900">{selectedStudent.full_name}</p>
+                <p className="text-sm text-gray-600">{selectedStudent.grade} - {selectedStudent.section}</p>
+                <p className="text-sm text-gray-500 mt-2">Saldo: S/ {selectedStudent.balance.toFixed(2)}</p>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
