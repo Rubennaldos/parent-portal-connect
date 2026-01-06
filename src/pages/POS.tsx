@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { Button } from '@/components/ui/button';
@@ -68,6 +69,11 @@ const POS = () => {
   const { signOut, user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
+  const navigate = useNavigate();
+
+  console.log('🏪 POS - Componente montado');
+  console.log('👤 POS - Usuario:', user?.email);
+  console.log('🎭 POS - Rol:', role);
 
   // Estados de cliente
   const [clientMode, setClientMode] = useState<'student' | 'generic' | null>(null);
@@ -131,6 +137,7 @@ const POS = () => {
   }, [studentSearch, clientMode]);
 
   const fetchProducts = async () => {
+    console.log('🔵 POS - Iniciando carga de productos...');
     try {
       const { data, error } = await supabase
         .from('products')
@@ -139,15 +146,21 @@ const POS = () => {
         .order('category', { ascending: true })
         .order('name', { ascending: true });
 
-      if (error) throw error;
+      console.log('📦 POS - Productos recibidos:', data?.length || 0);
+      if (error) {
+        console.error('❌ POS - Error en query de productos:', error);
+        throw error;
+      }
+      
       setProducts(data || []);
       setFilteredProducts(data || []);
+      console.log('✅ POS - Productos cargados correctamente');
     } catch (error: any) {
-      console.error('Error fetching products:', error);
+      console.error('💥 POS - Error crítico cargando productos:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudieron cargar los productos',
+        description: 'No se pudieron cargar los productos: ' + error.message,
       });
     }
   };
@@ -503,6 +516,10 @@ const POS = () => {
     await signOut();
   };
 
+  const handleBackToDashboard = () => {
+    navigate('/dashboard');
+  };
+
   const total = getTotal();
   const insufficientBalance = selectedStudent && !studentWillPay && (selectedStudent.balance < total);
 
@@ -526,10 +543,23 @@ const POS = () => {
             <p className="text-xs text-gray-400">{user?.email}</p>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:bg-slate-800">
-          <LogOut className="h-5 w-5 mr-2" />
-          Salir
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleBackToDashboard}
+            className="text-white hover:bg-slate-800"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            Volver al Panel
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:bg-slate-800">
+            <LogOut className="h-5 w-5 mr-2" />
+            Salir
+          </Button>
+        </div>
       </header>
 
       {/* Modal de Selección de Cliente (Solo si no hay cliente) */}
@@ -579,8 +609,12 @@ const POS = () => {
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold">Buscar Estudiante</h2>
-              <Button variant="ghost" onClick={resetClient}>
-                <X className="h-5 w-5" />
+              <Button 
+                variant="ghost" 
+                onClick={resetClient}
+                className="text-gray-600 hover:bg-gray-100"
+              >
+                Volver
               </Button>
             </div>
             
@@ -702,14 +736,14 @@ const POS = () => {
             {/* Info del Cliente */}
             <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white p-4">
               {clientMode === 'generic' ? (
-                <div>
+                  <div>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-bold text-lg">CLIENTE GENÉRICO</h3>
                     <button
                       onClick={resetClient}
-                      className="hover:bg-emerald-700 p-2 rounded-lg transition-colors"
+                      className="hover:bg-emerald-700 px-3 py-1.5 rounded-lg transition-colors font-semibold text-sm"
                     >
-                      <X className="h-5 w-5" />
+                      CAMBIAR
                     </button>
                   </div>
                   <p className="text-sm text-emerald-100">Venta al contado</p>
@@ -723,9 +757,9 @@ const POS = () => {
                     </div>
                     <button
                       onClick={resetClient}
-                      className="hover:bg-emerald-700 p-2 rounded-lg transition-colors"
+                      className="hover:bg-emerald-700 px-3 py-1.5 rounded-lg transition-colors font-semibold text-sm"
                     >
-                      <X className="h-5 w-5" />
+                      CAMBIAR
                     </button>
                   </div>
                   <div className="flex justify-between items-center bg-emerald-700/50 rounded-lg px-3 py-2 mb-2">

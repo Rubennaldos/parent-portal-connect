@@ -133,6 +133,18 @@ const Dashboard = () => {
           status: 'functional' as const,
         },
         {
+          id: '8',
+          code: 'productos',
+          name: 'Productos',
+          description: 'Gestión de productos, promociones y menús',
+          icon: 'Package',
+          color: 'purple',
+          route: '/products',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
           id: '6',
           code: 'finanzas',
           name: 'Finanzas',
@@ -226,13 +238,6 @@ const Dashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
-        {/* DEBUG: Ver rol y cantidad de módulos */}
-        <div className="bg-yellow-100 dark:bg-yellow-900/20 border-b border-yellow-300 px-4 py-1">
-          <p className="text-xs font-mono text-yellow-800 dark:text-yellow-300 text-center">
-            🔍 DEBUG: ROL={role} | MÓDULOS CARGADOS={modules.length} | isStaff={isStaff ? '✅' : '❌'}
-          </p>
-        </div>
-        
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <WelcomeHeader showRole={true} />
           <div className="flex items-center gap-4">
@@ -255,18 +260,6 @@ const Dashboard = () => {
           <p className="text-sm text-gray-500">
             Selecciona un módulo para acceder a sus funcionalidades
           </p>
-          
-          {/* Botón de prueba directo a POS */}
-          <Button 
-            onClick={() => {
-              console.log('🧪 TEST: Navegando directamente a /pos');
-              navigate('/pos');
-            }}
-            variant="outline"
-            className="mt-4"
-          >
-            🧪 TEST: Ir Directo a POS
-          </Button>
         </div>
 
         {/* Modules Grid */}
