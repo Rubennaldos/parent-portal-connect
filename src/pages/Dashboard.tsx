@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { WelcomeHeader } from '@/components/WelcomeHeader';
 import { ViewAsSelector } from '@/components/ViewAsSelector';
+import { VersionBadge } from '@/components/VersionBadge';
 import { 
   ShoppingCart, 
   DollarSign, 
@@ -241,6 +242,7 @@ const Dashboard = () => {
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <WelcomeHeader showRole={true} />
           <div className="flex items-center gap-4">
+            <VersionBadge />
             <span className="text-sm text-gray-600">{user?.email}</span>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-2" />

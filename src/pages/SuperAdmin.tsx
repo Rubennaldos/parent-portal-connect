@@ -29,6 +29,7 @@ import { ProfilesControl } from '@/components/admin/ProfilesControl';
 import { AccessControlModule } from '@/components/admin/AccessControlModule';
 import StudentsManagement from '@/components/admin/StudentsManagement';
 import ErrorDashboard from '@/components/admin/ErrorDashboard';
+import { VersionBadge } from '@/components/VersionBadge';
 import { APP_CONFIG } from '@/config/app.config';
 
 const SuperAdmin = () => {
@@ -64,6 +65,7 @@ const SuperAdmin = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            <VersionBadge showFull />
             <div className="text-right">
               <p className="text-sm text-foreground font-mono">{user?.email}</p>
               <p className="text-xs text-muted-foreground">level: superadmin</p>
