@@ -29,7 +29,9 @@ import {
   CreditCard,
   AlertCircle,
   CheckCircle2,
-  Edit2
+  Edit2,
+  Copy,
+  Link as LinkIcon
 } from 'lucide-react';
 
 interface School {
@@ -213,6 +215,31 @@ export function ProfilesControl() {
                     <CardDescription>
                       Código: {schoolData.school.code} | Prefijo base: {schoolData.school.prefix_base}
                     </CardDescription>
+                    
+                    {/* Link de Registro para Padres */}
+                    <div className="mt-3 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-xl group">
+                      <LinkIcon className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                      <code className="text-[10px] md:text-xs font-mono text-slate-600 truncate flex-1">
+                        https://parent-portal-connect.vercel.app/#/register?school={schoolData.school.code}
+                      </code>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                        onClick={() => {
+                          const url = `https://parent-portal-connect.vercel.app/#/register?school=${schoolData.school.code}`;
+                          navigator.clipboard.writeText(url);
+                          toast({
+                            title: "✅ Link copiado",
+                            description: `Link de registro para ${schoolData.school.name} copiado al portapapeles.`,
+                          });
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5 mr-1" />
+                        Copiar
+                      </Button>
+                    </div>
+
                     {schoolData.can_add_more && schoolData.next_pos_number > 0 && (
                       <div className="mt-2 bg-blue-50 border border-blue-200 rounded px-2 py-1 inline-block">
                         <span className="text-xs text-blue-900">
