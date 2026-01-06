@@ -259,7 +259,8 @@ export default function Register() {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Redirigir a onboarding para completar datos
-      navigate('/onboarding');
+      const sedeCode = searchParams.get('school') || searchParams.get('sede');
+      navigate(`/onboarding${sedeCode ? `?school=${sedeCode}` : ''}`);
 
     } catch (error: any) {
       console.error('Error registering:', error);
