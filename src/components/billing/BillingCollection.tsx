@@ -120,8 +120,10 @@ export const BillingCollection = () => {
   useEffect(() => {
     // Cargar deudores cuando cambie la sede seleccionada
     // No depende de períodos porque los admins ven TODAS las deudas
-    fetchDebtors();
-  }, [selectedSchool]);
+    if (userSchoolId !== null || canViewAllSchools) {
+      fetchDebtors();
+    }
+  }, [selectedSchool, userSchoolId]);
 
   const fetchSchools = async () => {
     if (isDemoMode) {
@@ -265,6 +267,8 @@ export const BillingCollection = () => {
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
+      console.log('🔍 Buscando deudores...', { schoolIdFilter, canViewAllSchools, selectedSchool, userSchoolId });
+
       // ESTRATEGIA: Hacer dos consultas y combinar resultados
       // Mostrar TODAS las deudas sin importar fechas (los períodos solo afectan el portal de padres)
       
@@ -302,6 +306,13 @@ export const BillingCollection = () => {
 
       // Ejecutar ambas consultas
       const [result1, result2] = await Promise.all([query1, query2]);
+
+      console.log('📊 Resultados queries:', { 
+        query1_count: result1.data?.length || 0, 
+        query2_count: result2.data?.length || 0,
+        query1_error: result1.error,
+        query2_error: result2.error
+      });
 
       if (result1.error) throw result1.error;
       if (result2.error) throw result2.error;
@@ -369,7 +380,10 @@ export const BillingCollection = () => {
         debtorsMap[studentId].transactions.push(transaction);
       });
 
-      setDebtors(Object.values(debtorsMap));
+      const debtorsArray = Object.values(debtorsMap);
+      console.log('👥 Deudores encontrados:', debtorsArray.length, debtorsArray);
+      
+      setDebtors(debtorsArray);
     } catch (error) {
       console.error('Error fetching debtors:', error);
       toast({
