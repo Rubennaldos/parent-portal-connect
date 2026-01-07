@@ -263,8 +263,14 @@ export const BillingCollection = () => {
       const period = periods.find(p => p.id === selectedPeriod);
       if (!period) return;
 
-      // Obtener transacciones del período que están pendientes de pago o no facturadas
-      let query = supabase
+      // Determinar el school_id a filtrar
+      const schoolIdFilter = !canViewAllSchools || selectedSchool !== 'all' 
+        ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
+        : null;
+
+      // ESTRATEGIA: Hacer dos consultas y combinar resultados
+      // 1. Transacciones NO facturadas
+      let query1 = supabase
         .from('transactions')
         .select(`
           *,
@@ -282,21 +288,54 @@ export const BillingCollection = () => {
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .or('is_billed.eq.false,payment_status.eq.pending')
+        .eq('is_billed', false)
         .gte('created_at', period.start_date)
-        .lte('created_at', period.end_date)
-        .order('created_at', { ascending: false });
+        .lte('created_at', period.end_date);
 
-      if (!canViewAllSchools || selectedSchool !== 'all') {
-        const schoolId = selectedSchool !== 'all' ? selectedSchool : userSchoolId;
-        if (schoolId) {
-          query = query.eq('school_id', schoolId);
-        }
+      if (schoolIdFilter) {
+        query1 = query1.eq('school_id', schoolIdFilter);
       }
 
-      const { data: transactions, error } = await query;
+      // 2. Transacciones con pago pendiente (Cuenta Libre)
+      let query2 = supabase
+        .from('transactions')
+        .select(`
+          *,
+          students(
+            id,
+            full_name,
+            parent_id,
+            parent_profiles(
+              user_id,
+              full_name,
+              phone_1,
+              profiles(email)
+            )
+          ),
+          schools(id, name)
+        `)
+        .eq('type', 'purchase')
+        .eq('payment_status', 'pending')
+        .gte('created_at', period.start_date)
+        .lte('created_at', period.end_date);
 
-      if (error) throw error;
+      if (schoolIdFilter) {
+        query2 = query2.eq('school_id', schoolIdFilter);
+      }
+
+      // Ejecutar ambas consultas
+      const [result1, result2] = await Promise.all([query1, query2]);
+
+      if (result1.error) throw result1.error;
+      if (result2.error) throw result2.error;
+
+      // Combinar resultados eliminando duplicados por ID
+      const transactionsMap = new Map();
+      [...(result1.data || []), ...(result2.data || [])].forEach((t: any) => {
+        transactionsMap.set(t.id, t);
+      });
+
+      const transactions = Array.from(transactionsMap.values());
 
       // Agrupar por estudiante
       const debtorsMap: { [key: string]: DebtorStudent } = {};
@@ -324,7 +363,7 @@ export const BillingCollection = () => {
           };
         }
 
-        debtorsMap[studentId].total_amount += transaction.amount;
+        debtorsMap[studentId].total_amount += Math.abs(transaction.amount);
         debtorsMap[studentId].transaction_count += 1;
         debtorsMap[studentId].transactions.push(transaction);
       });
