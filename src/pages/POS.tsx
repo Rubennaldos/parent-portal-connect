@@ -109,6 +109,72 @@ const POS = () => {
   const [showTicketPrint, setShowTicketPrint] = useState(false);
   const [ticketData, setTicketData] = useState<any>(null);
 
+  // --- REORDENAR CATEGORÍAS ---
+  const [orderedCategories, setOrderedCategories] = useState([
+    { id: 'todos', label: 'Todos', icon: ShoppingCart },
+    { id: 'bebidas', label: 'Bebidas', icon: Coffee },
+    { id: 'snacks', label: 'Snacks', icon: Cookie },
+    { id: 'menu', label: 'Menú', icon: UtensilsCrossed },
+  ]);
+  const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
+
+  // Cargar orden guardado
+  useEffect(() => {
+    const savedOrder = localStorage.getItem('pos_category_order');
+    if (savedOrder) {
+      try {
+        const orderIds = JSON.parse(savedOrder);
+        const baseCategories = [
+          { id: 'todos', label: 'Todos', icon: ShoppingCart },
+          { id: 'bebidas', label: 'Bebidas', icon: Coffee },
+          { id: 'snacks', label: 'Snacks', icon: Cookie },
+          { id: 'menu', label: 'Menú', icon: UtensilsCrossed },
+        ];
+        
+        const newOrder = orderIds.map((id: string) => 
+          baseCategories.find(c => c.id === id)
+        ).filter(Boolean);
+
+        baseCategories.forEach(c => {
+          if (!orderIds.includes(c.id)) newOrder.push(c);
+        });
+
+        setOrderedCategories(newOrder);
+      } catch (e) {
+        console.error('Error cargando orden de categorías:', e);
+      }
+    }
+  }, []);
+
+  const onDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedItemIndex(index);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      const target = e.target as HTMLElement;
+      target.style.opacity = '0.4';
+    }
+  };
+
+  const onDragEnd = (e: React.DragEvent) => {
+    const target = e.target as HTMLElement;
+    target.style.opacity = '1';
+    setDraggedItemIndex(null);
+  };
+
+  const onDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedItemIndex === null || draggedItemIndex === index) return;
+
+    const newList = [...orderedCategories];
+    const draggedItem = newList[draggedItemIndex];
+    newList.splice(draggedItemIndex, 1);
+    newList.splice(index, 0, draggedItem);
+    
+    setDraggedItemIndex(index);
+    setOrderedCategories(newList);
+    localStorage.setItem('pos_category_order', JSON.stringify(newList.map(c => c.id)));
+  };
+
   // Cargar productos al inicio
   useEffect(() => {
     fetchProducts();
@@ -568,13 +634,6 @@ const POS = () => {
   const total = getTotal();
   const insufficientBalance = selectedStudent && !studentWillPay && (selectedStudent.balance < total);
 
-  const categories = [
-    { id: 'todos', label: 'Todos', icon: ShoppingCart },
-    { id: 'bebidas', label: 'Bebidas', icon: Coffee },
-    { id: 'snacks', label: 'Snacks', icon: Cookie },
-    { id: 'menu', label: 'Menú', icon: UtensilsCrossed },
-  ];
-
   return (
     <div className="h-screen flex flex-col bg-gray-100">
       {/* Header */}
@@ -726,15 +785,19 @@ const POS = () => {
           
           {/* ZONA 1: CATEGORÍAS */}
           <aside className="w-[15%] bg-slate-800 p-4 flex flex-col gap-2 overflow-y-auto">
-            {categories.map((cat) => {
+            {orderedCategories.map((cat, index) => {
               const Icon = cat.icon;
               const isActive = selectedCategory === cat.id;
               return (
                 <button
                   key={cat.id}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, index)}
+                  onDragEnd={onDragEnd}
+                  onDragOver={(e) => onDragOver(e, index)}
                   onClick={() => setSelectedCategory(cat.id)}
                   className={cn(
-                    "flex flex-col items-center justify-center gap-2 py-8 rounded-xl font-semibold transition-all cursor-pointer select-none touch-manipulation",
+                    "flex flex-col items-center justify-center gap-2 py-8 rounded-xl font-semibold transition-all cursor-move select-none touch-manipulation",
                     "hover:bg-slate-700 active:scale-95",
                     isActive 
                       ? "bg-emerald-500 text-white shadow-lg" 
