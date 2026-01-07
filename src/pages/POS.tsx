@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -73,6 +73,7 @@ const POS = () => {
   const { role } = useRole();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   console.log('🏪 POS - Componente montado');
   console.log('👤 POS - Usuario:', user?.email);
@@ -140,6 +141,36 @@ const POS = () => {
       setShowStudentResults(false);
     }
   }, [studentSearch, clientMode]);
+
+  // Efecto para Escucha Global de Teclado (Pistola de Código de Barras)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Si estamos en un modo de venta y el foco no está en un input
+      if (clientMode) {
+        const target = e.target as HTMLElement;
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+        // Si no estamos escribiendo en un cuadro de texto y presionamos una tecla alfanumérica
+        // O si es una pistola que envía prefijos, esto capturará la primera tecla y enfocará
+        if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
+          searchInputRef.current?.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [clientMode]);
+
+  // Auto-focus cuando se selecciona un cliente
+  useEffect(() => {
+    if (clientMode === 'generic' || selectedStudent) {
+      // Dar un pequeño respiro para que el DOM se actualice
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 200);
+    }
+  }, [clientMode, selectedStudent]);
 
   const fetchProducts = async () => {
     console.log('🔵 POS - Iniciando carga de productos...');
@@ -724,6 +755,7 @@ const POS = () => {
               <div className="relative">
                 <Search className="absolute left-4 top-4 h-5 w-5 text-gray-400" />
                 <Input
+                  ref={searchInputRef}
                   placeholder="Buscar productos..."
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
