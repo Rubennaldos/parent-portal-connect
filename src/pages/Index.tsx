@@ -483,8 +483,6 @@ const Index = () => {
           </div>
         )}
 
-        {activeTab === 'mas' && <MoreMenu userEmail={user?.email || ''} onLogout={handleLogout} />}
-
       </main>
 
       {/* MODALES */}
