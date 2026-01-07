@@ -273,21 +273,12 @@ export const BillingCollection = () => {
         .from('transactions')
         .select(`
           *,
-          students(
-            id,
-            full_name,
-            parent_id,
-            parent_profiles(
-              user_id,
-              full_name,
-              phone_1,
-              profiles(email)
-            )
-          ),
+          students(id, full_name, parent_id),
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .eq('is_billed', false);
+        .eq('is_billed', false)
+        .not('student_id', 'is', null);
 
       if (schoolIdFilter) {
         query1 = query1.eq('school_id', schoolIdFilter);
@@ -298,21 +289,12 @@ export const BillingCollection = () => {
         .from('transactions')
         .select(`
           *,
-          students(
-            id,
-            full_name,
-            parent_id,
-            parent_profiles(
-              user_id,
-              full_name,
-              phone_1,
-              profiles(email)
-            )
-          ),
+          students(id, full_name, parent_id),
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .eq('payment_status', 'pending');
+        .eq('payment_status', 'pending')
+        .not('student_id', 'is', null);
 
       if (schoolIdFilter) {
         query2 = query2.eq('school_id', schoolIdFilter);
@@ -332,6 +314,30 @@ export const BillingCollection = () => {
 
       const transactions = Array.from(transactionsMap.values());
 
+      // Obtener IDs únicos de padres
+      const parentIds = [...new Set(transactions
+        .map((t: any) => t.students?.parent_id)
+        .filter(Boolean))];
+
+      // Obtener datos de los padres
+      const { data: parentProfiles, error: parentError } = await supabase
+        .from('parent_profiles')
+        .select(`
+          user_id,
+          full_name,
+          phone_1,
+          profiles(email)
+        `)
+        .in('user_id', parentIds);
+
+      if (parentError) console.error('Error fetching parent profiles:', parentError);
+
+      // Crear mapa de padres para acceso rápido
+      const parentMap = new Map();
+      parentProfiles?.forEach((p: any) => {
+        parentMap.set(p.user_id, p);
+      });
+
       // Agrupar por estudiante
       const debtorsMap: { [key: string]: DebtorStudent } = {};
 
@@ -340,13 +346,13 @@ export const BillingCollection = () => {
         if (!studentId || !transaction.students) return;
 
         const student = transaction.students;
-        const parentProfile = student.parent_profiles;
+        const parentProfile = parentMap.get(student.parent_id);
         
         if (!debtorsMap[studentId]) {
           debtorsMap[studentId] = {
             student_id: studentId,
             student_name: student.full_name,
-            parent_id: parentProfile?.user_id || '',
+            parent_id: student.parent_id || '',
             parent_name: parentProfile?.full_name || 'Sin padre asignado',
             parent_phone: parentProfile?.phone_1 || '',
             parent_email: parentProfile?.profiles?.email || '',
