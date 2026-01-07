@@ -269,9 +269,9 @@ const POS = () => {
       return selectedStudent.balance >= amountToDeduct;
     }
     
-    // Si es cliente genérico
+    // Si es cliente genérico, permitir (el documento se elige en el modal de pago)
     if (clientMode === 'generic') {
-      return documentType !== null;
+      return true;
     }
     
     return false;
@@ -288,6 +288,7 @@ const POS = () => {
     // Si es cliente genérico, mostrar opciones de pago
     if (clientMode === 'generic') {
       setShowConfirmDialog(false);
+      setDocumentType(null); // Reset para forzar selección en modal
       setShowPaymentDialog(true);
     } else {
       // Si es estudiante, procesar directo
@@ -765,30 +766,6 @@ const POS = () => {
                       CAMBIAR
                     </button>
                   </div>
-                  
-                  <div className="mt-4 space-y-2">
-                    <label className="text-xs font-bold text-emerald-100 uppercase">Documento de Venta</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['ticket', 'boleta', 'factura'].map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => setDocumentType(type as any)}
-                          className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                            documentType === type 
-                              ? 'bg-yellow-400 text-emerald-900 shadow-inner' 
-                              : 'bg-emerald-700/50 text-emerald-100 hover:bg-emerald-700'
-                          }`}
-                        >
-                          {type.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                    {!documentType && (
-                      <p className="text-[10px] text-yellow-200 animate-pulse font-bold">
-                        ⚠️ Seleccione tipo de documento para cobrar
-                      </p>
-                    )}
-                  </div>
                 </div>
               ) : selectedStudent && (
                 <div>
@@ -1137,9 +1114,9 @@ const POS = () => {
 
             <div>
               <Label className="mb-2 block">Tipo de Documento</Label>
-              <Select value={documentType} onValueChange={(v: any) => setDocumentType(v)}>
+              <Select value={documentType || ''} onValueChange={(v: any) => setDocumentType(v)}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Selecciona un documento" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ticket">Ticket</SelectItem>
@@ -1147,11 +1124,14 @@ const POS = () => {
                   <SelectItem value="factura">Factura</SelectItem>
                 </SelectContent>
               </Select>
+              {!documentType && (
+                <p className="text-xs text-red-500 mt-1">⚠️ Debe seleccionar un tipo de documento</p>
+              )}
             </div>
 
             <Button
               onClick={processCheckout}
-              disabled={isProcessing}
+              disabled={isProcessing || !documentType}
               className="w-full h-14 text-xl font-bold"
             >
               {isProcessing ? 'Procesando...' : 'Confirmar Pago'}
