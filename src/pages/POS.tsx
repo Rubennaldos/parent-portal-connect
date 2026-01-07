@@ -148,7 +148,7 @@ const POS = () => {
         .from('products')
         .select('*')
         .eq('active', true)
-        .order('category', { ascending: true })
+        .order('total_sales', { ascending: false, nullsFirst: false }) // Más vendidos primero
         .order('name', { ascending: true });
 
       console.log('📦 POS - Productos recibidos:', data?.length || 0);
@@ -475,7 +475,14 @@ const POS = () => {
 
       // Guardar datos del ticket para imprimir si es necesario
       setTicketData(ticketInfo);
-      // NO mostramos el modal, el flujo continúa automáticamente
+      
+      // Cerrar modales
+      setShowPaymentDialog(false);
+      
+      // Resetear POS automáticamente para siguiente venta
+      setTimeout(() => {
+        resetClient();
+      }, 500);
 
     } catch (error: any) {
       console.error('Error processing checkout:', error);
@@ -696,12 +703,13 @@ const POS = () => {
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
                   className={cn(
-                    "flex flex-col items-center justify-center gap-2 py-6 rounded-xl font-semibold transition-all",
+                    "flex flex-col items-center justify-center gap-2 py-8 rounded-xl font-semibold transition-all cursor-pointer select-none touch-manipulation",
                     "hover:bg-slate-700 active:scale-95",
                     isActive 
                       ? "bg-emerald-500 text-white shadow-lg" 
                       : "bg-slate-700 text-gray-300"
                   )}
+                  style={{ minHeight: '100px' }}
                 >
                   <Icon className="h-8 w-8" />
                   <span className="text-sm">{cat.label}</span>
