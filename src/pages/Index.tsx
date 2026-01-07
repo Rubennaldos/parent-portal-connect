@@ -34,6 +34,7 @@ import { PaymentsTab } from '@/components/parent/PaymentsTab';
 import { StudentLinksManager } from '@/components/parent/StudentLinksManager';
 import { MoreMenu } from '@/components/parent/MoreMenu';
 import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
+import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 
 interface Student {
@@ -84,8 +85,6 @@ const Index = () => {
   
   // Estudiante seleccionado
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   
   // Para límite diario
   const [newLimit, setNewLimit] = useState('');
@@ -118,30 +117,6 @@ const Index = () => {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchTransactions = async (studentId: string) => {
-    try {
-      setLoadingHistory(true);
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('student_id', studentId)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (error) throw error;
-      setTransactions(data || []);
-    } catch (error: any) {
-      console.error('Error fetching transactions:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo cargar el historial',
-      });
-    } finally {
-      setLoadingHistory(false);
     }
   };
 
@@ -244,7 +219,6 @@ const Index = () => {
 
   const openHistoryModal = (student: Student) => {
     setSelectedStudent(student);
-    fetchTransactions(student.id);
     setShowHistoryModal(true);
   };
 
@@ -578,60 +552,15 @@ const Index = () => {
             </DialogContent>
           </Dialog>
 
-          {/* Modal de Historial */}
-          <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
-            <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-              <DialogHeader>
-                <div className="flex items-center justify-between">
-                  <DialogTitle className="text-2xl">
-                    Historial de {selectedStudent.full_name}
-                  </DialogTitle>
-                  <Button variant="ghost" size="icon" onClick={() => setShowHistoryModal(false)}>
-                    <X className="h-5 w-5" />
-                  </Button>
-                </div>
-              </DialogHeader>
-
-              {loadingHistory ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                </div>
-              ) : transactions.length === 0 ? (
-                <div className="text-center py-12">
-                  <History className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500">Sin transacciones aún</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {transactions.map((trans) => (
-                    <Card key={trans.id} className="border">
-                      <CardContent className="p-4">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold text-gray-900">
-                              {trans.type === 'recharge' ? '💰 Recarga' : '🛒 Compra'}
-                            </p>
-                            <p className="text-sm text-gray-600">{trans.description}</p>
-                            <p className="text-xs text-gray-400 mt-1">
-                              {format(new Date(trans.created_at), "d 'de' MMMM, yyyy 'a las' HH:mm", { locale: es })}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className={`text-lg font-bold ${trans.type === 'recharge' ? 'text-green-600' : 'text-red-600'}`}>
-                              {trans.type === 'recharge' ? '+' : '-'} S/ {trans.amount.toFixed(2)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              Saldo: S/ {trans.balance_after.toFixed(2)}
-                            </p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
+          {/* Modal de Historial de Compras */}
+          {selectedStudent && (
+            <PurchaseHistoryModal
+              isOpen={showHistoryModal}
+              onClose={() => setShowHistoryModal(false)}
+              studentId={selectedStudent.id}
+              studentName={selectedStudent.full_name}
+            />
+          )}
         </>
       )}
 
