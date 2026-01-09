@@ -66,13 +66,10 @@ export default function ParentsManagement() {
   
   // Permisos granulares
   const [permissions, setPermissions] = useState({
-    canViewDashboard: false,
     canCreateParent: false,
     canEditParent: false,
-    canDeleteParent: false,
     canCreateStudent: false,
     canEditStudent: false,
-    canDeleteStudent: false,
   });
   
   // Modales
@@ -120,13 +117,10 @@ export default function ParentsManagement() {
       if (role === 'admin_general') {
         setCanViewAllSchools(true);
         setPermissions({
-          canViewDashboard: true,
           canCreateParent: true,
           canEditParent: true,
-          canDeleteParent: true,
           canCreateStudent: true,
           canEditStudent: true,
-          canDeleteStudent: true,
         });
         setLoading(false);
         return;
@@ -166,13 +160,10 @@ export default function ParentsManagement() {
       // Mapear permisos
       let canViewAll = false;
       let perms = {
-        canViewDashboard: false,
         canCreateParent: false,
         canEditParent: false,
-        canDeleteParent: false,
         canCreateStudent: false,
         canEditStudent: false,
-        canDeleteStudent: false,
       };
 
       data?.forEach((perm: any) => {
@@ -182,26 +173,17 @@ export default function ParentsManagement() {
             case 'ver_todas_sedes':
               canViewAll = true;
               break;
-            case 'ver_dashboard':
-              perms.canViewDashboard = true;
-              break;
             case 'crear_padre':
               perms.canCreateParent = true;
               break;
             case 'editar_padre':
               perms.canEditParent = true;
               break;
-            case 'eliminar_padre':
-              perms.canDeleteParent = true;
-              break;
             case 'crear_estudiante':
               perms.canCreateStudent = true;
               break;
             case 'editar_estudiante':
               perms.canEditStudent = true;
-              break;
-            case 'eliminar_estudiante':
-              perms.canDeleteStudent = true;
               break;
           }
         }
@@ -683,18 +665,6 @@ export default function ParentsManagement() {
                         onClick={() => openEditModal(parent)}
                       >
                         <Edit className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {permissions.canDeleteParent && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setSelectedParent(parent);
-                          setShowDeleteModal(true);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-600" />
                       </Button>
                     )}
                   </div>
