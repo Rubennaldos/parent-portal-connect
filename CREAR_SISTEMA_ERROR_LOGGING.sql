@@ -74,7 +74,8 @@ CREATE POLICY "Authenticated users can insert errors"
   WITH CHECK (auth.uid() IS NOT NULL);
 
 -- 3. Vista: Estadísticas de Errores
-CREATE OR REPLACE VIEW error_statistics AS
+DROP VIEW IF EXISTS error_statistics CASCADE;
+CREATE VIEW error_statistics AS
 SELECT 
   error_type,
   COUNT(*) as total_count,
@@ -88,7 +89,8 @@ GROUP BY error_type
 ORDER BY total_count DESC;
 
 -- 4. Vista: Puntos Críticos (Hotspots)
-CREATE OR REPLACE VIEW error_hotspots AS
+DROP VIEW IF EXISTS error_hotspots CASCADE;
+CREATE VIEW error_hotspots AS
 SELECT 
   page_url,
   component,
@@ -104,7 +106,8 @@ ORDER BY error_count DESC
 LIMIT 10;
 
 -- 5. Vista: Errores Más Frecuentes
-CREATE OR REPLACE VIEW most_frequent_errors AS
+DROP VIEW IF EXISTS most_frequent_errors CASCADE;
+CREATE VIEW most_frequent_errors AS
 SELECT 
   error_message,
   error_translated,
