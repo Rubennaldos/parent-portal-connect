@@ -103,13 +103,31 @@ export default function ParentsManagement() {
         .from('parent_profiles')
         .select(`
           *,
-          school:schools(id, name, code),
-          children:students(id, full_name, code, grade, section)
+          school:schools(id, name, code)
         `)
         .order('full_name');
       
       if (parentsError) throw parentsError;
-      setParents(parentsData || []);
+      
+      // Para cada padre, obtener sus hijos
+      if (parentsData) {
+        const parentsWithChildren = await Promise.all(
+          parentsData.map(async (parent) => {
+            const { data: childrenData } = await supabase
+              .from('students')
+              .select('id, full_name, code, grade, section')
+              .eq('parent_id', parent.user_id);
+            
+            return {
+              ...parent,
+              children: childrenData || []
+            };
+          })
+        );
+        setParents(parentsWithChildren);
+      } else {
+        setParents([]);
+      }
     } catch (error) {
       console.error('Error al cargar datos:', error);
       toast({

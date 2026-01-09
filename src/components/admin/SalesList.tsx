@@ -204,8 +204,7 @@ export const SalesList = () => {
           granted,
           permissions (
             module,
-            action,
-            scope
+            action
           )
         `)
         .eq('role', role)
