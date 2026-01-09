@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { useRole } from '@/hooks/useRole';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,12 +51,18 @@ interface Transaction {
 }
 
 export default function ParentsManagement() {
+  const { user } = useAuth();
+  const { role } = useRole();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [parents, setParents] = useState<ParentProfile[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
+  
+  // Permisos y alcance
+  const [canViewAllSchools, setCanViewAllSchools] = useState(false);
+  const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   
   // Modales
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -82,8 +90,79 @@ export default function ParentsManagement() {
   });
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    checkPermissions();
+  }, [user, role]);
+
+  useEffect(() => {
+    if (!loading && (canViewAllSchools || userSchoolId)) {
+      fetchData();
+    }
+  }, [canViewAllSchools, userSchoolId]);
+
+  const checkPermissions = async () => {
+    if (!user || !role) return;
+
+    try {
+      console.log('🔍 Verificando permisos de Config Padres para rol:', role);
+
+      // Admin General tiene acceso total
+      if (role === 'admin_general') {
+        setCanViewAllSchools(true);
+        setLoading(false);
+        return;
+      }
+
+      // Obtener school_id del usuario actual
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user.id)
+        .single();
+
+      if (profileData?.school_id) {
+        setUserSchoolId(profileData.school_id);
+        console.log('🏫 School ID del usuario:', profileData.school_id);
+      }
+
+      // Consultar permisos del rol
+      const { data, error } = await supabase
+        .from('role_permissions')
+        .select(`
+          granted,
+          permissions (
+            module,
+            action
+          )
+        `)
+        .eq('role', role)
+        .eq('granted', true);
+
+      if (error) {
+        console.error('❌ Error consultando permisos:', error);
+        setLoading(false);
+        return;
+      }
+
+      // Verificar alcance de visualización
+      let canViewAll = false;
+      data?.forEach((perm: any) => {
+        const permission = perm.permissions;
+        if (permission?.module === 'config_padres') {
+          if (permission.action === 'ver_todas_sedes') {
+            canViewAll = true;
+          }
+        }
+      });
+
+      console.log('✅ Puede ver todas las sedes:', canViewAll);
+      setCanViewAllSchools(canViewAll);
+      setLoading(false);
+
+    } catch (error) {
+      console.error('Error checking permissions:', error);
+      setLoading(false);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -97,19 +176,29 @@ export default function ParentsManagement() {
       if (schoolsError) throw schoolsError;
       setSchools(schoolsData || []);
 
-      // Obtener perfiles de padres
-      const { data: parentsData, error: parentsError } = await supabase
+      // Construir query de padres con filtro de sede
+      let query = supabase
         .from('parent_profiles')
         .select(`
           *,
           school:schools(id, name, code)
-        `)
-        .order('full_name');
+        `);
+
+      // Aplicar filtro de sede según permisos
+      if (!canViewAllSchools && userSchoolId) {
+        console.log('🔒 Filtrando por sede:', userSchoolId);
+        query = query.eq('school_id', userSchoolId);
+      } else {
+        console.log('🌍 Viendo todas las sedes');
+      }
+
+      const { data: parentsData, error: parentsError } = await query.order('full_name');
       
       if (parentsError) throw parentsError;
       
       if (!parentsData || parentsData.length === 0) {
         setParents([]);
+        setLoading(false);
         return;
       }
       
@@ -462,19 +551,21 @@ export default function ParentsManagement() {
                 className="pl-10"
               />
             </div>
-            <Select value={selectedSchool} onValueChange={setSelectedSchool}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Todas las sedes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las sedes</SelectItem>
-                {schools.map(school => (
-                  <SelectItem key={school.id} value={school.id}>
-                    {school.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {canViewAllSchools && (
+              <Select value={selectedSchool} onValueChange={setSelectedSchool}>
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Todas las sedes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las sedes</SelectItem>
+                  {schools.map(school => (
+                    <SelectItem key={school.id} value={school.id}>
+                      {school.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button onClick={() => setShowCreateModal(true)} className="gap-2">
               <Plus className="h-4 w-4" />
               Nuevo Padre
