@@ -64,6 +64,17 @@ export default function ParentsManagement() {
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   
+  // Permisos granulares
+  const [permissions, setPermissions] = useState({
+    canViewDashboard: false,
+    canCreateParent: false,
+    canEditParent: false,
+    canDeleteParent: false,
+    canCreateStudent: false,
+    canEditStudent: false,
+    canDeleteStudent: false,
+  });
+  
   // Modales
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -108,6 +119,15 @@ export default function ParentsManagement() {
       // Admin General tiene acceso total
       if (role === 'admin_general') {
         setCanViewAllSchools(true);
+        setPermissions({
+          canViewDashboard: true,
+          canCreateParent: true,
+          canEditParent: true,
+          canDeleteParent: true,
+          canCreateStudent: true,
+          canEditStudent: true,
+          canDeleteStudent: true,
+        });
         setLoading(false);
         return;
       }
@@ -143,18 +163,54 @@ export default function ParentsManagement() {
         return;
       }
 
-      // Verificar alcance de visualización
+      // Mapear permisos
       let canViewAll = false;
+      let perms = {
+        canViewDashboard: false,
+        canCreateParent: false,
+        canEditParent: false,
+        canDeleteParent: false,
+        canCreateStudent: false,
+        canEditStudent: false,
+        canDeleteStudent: false,
+      };
+
       data?.forEach((perm: any) => {
         const permission = perm.permissions;
         if (permission?.module === 'config_padres') {
-          if (permission.action === 'ver_todas_sedes') {
-            canViewAll = true;
+          switch (permission.action) {
+            case 'ver_todas_sedes':
+              canViewAll = true;
+              break;
+            case 'ver_dashboard':
+              perms.canViewDashboard = true;
+              break;
+            case 'crear_padre':
+              perms.canCreateParent = true;
+              break;
+            case 'editar_padre':
+              perms.canEditParent = true;
+              break;
+            case 'eliminar_padre':
+              perms.canDeleteParent = true;
+              break;
+            case 'crear_estudiante':
+              perms.canCreateStudent = true;
+              break;
+            case 'editar_estudiante':
+              perms.canEditStudent = true;
+              break;
+            case 'eliminar_estudiante':
+              perms.canDeleteStudent = true;
+              break;
           }
         }
       });
 
+      console.log('✅ Permisos finales:', perms);
       console.log('✅ Puede ver todas las sedes:', canViewAll);
+      
+      setPermissions(perms);
       setCanViewAllSchools(canViewAll);
       setLoading(false);
 
@@ -566,10 +622,12 @@ export default function ParentsManagement() {
                 </SelectContent>
               </Select>
             )}
-            <Button onClick={() => setShowCreateModal(true)} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Nuevo Padre
-            </Button>
+            {permissions.canCreateParent && (
+              <Button onClick={() => setShowCreateModal(true)} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Nuevo Padre
+              </Button>
+            )}
             <Button onClick={exportToExcel} variant="outline" className="gap-2">
               <Download className="h-4 w-4" />
               Excel
@@ -618,23 +676,27 @@ export default function ParentsManagement() {
                       <Baby className="h-4 w-4 mr-1" />
                       Ver Hijos
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openEditModal(parent)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setSelectedParent(parent);
-                        setShowDeleteModal(true);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
+                    {permissions.canEditParent && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEditModal(parent)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {permissions.canDeleteParent && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedParent(parent);
+                          setShowDeleteModal(true);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
