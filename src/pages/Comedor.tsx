@@ -1,10 +1,12 @@
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { useRole } from '@/hooks/useRole';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { UtensilsCrossed, LogOut } from 'lucide-react';
+import { UtensilsCrossed, LogOut, ArrowLeft } from 'lucide-react';
 
 const Comedor = () => {
+  const navigate = useNavigate();
   const { signOut, user } = useAuth();
   const { role, isStaff, isParent } = useRole();
 
@@ -23,6 +25,14 @@ const Comedor = () => {
 
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/dashboard')}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Volver
+            </Button>
             <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center">
               <UtensilsCrossed className="h-5 w-5 text-orange-600" />
             </div>

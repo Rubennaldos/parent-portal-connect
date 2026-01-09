@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   DollarSign, 
@@ -11,7 +13,8 @@ import {
   FileText,
   Settings,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  ArrowLeft
 } from 'lucide-react';
 
 // Importar los componentes de cada tab
@@ -30,6 +33,7 @@ interface TabPermissions {
 }
 
 const Cobranzas = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { role } = useRole();
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -174,14 +178,24 @@ const Cobranzas = () => {
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <DollarSign className="h-8 w-8 text-red-600" />
-              Módulo de Cobranzas
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Gestión integral de cuentas por cobrar y períodos de facturación
-            </p>
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/dashboard')}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Volver
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+                <DollarSign className="h-8 w-8 text-red-600" />
+                Módulo de Cobranzas
+              </h1>
+              <p className="text-gray-600 mt-1">
+                Gestión integral de cuentas por cobrar y períodos de facturación
+              </p>
+            </div>
           </div>
         </div>
 

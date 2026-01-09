@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { Button } from '@/components/ui/button';
@@ -21,7 +22,8 @@ import {
   Building2,
   GraduationCap,
   Lock,
-  CreditCard
+  CreditCard,
+  ArrowLeft
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -35,6 +37,7 @@ import { VersionBadge } from '@/components/VersionBadge';
 import { APP_CONFIG } from '@/config/app.config';
 
 const SuperAdmin = () => {
+  const navigate = useNavigate();
   const { signOut, user } = useAuth();
   const { role, isStaff, isParent } = useRole();
 
@@ -55,6 +58,14 @@ const SuperAdmin = () => {
       <header className="border-b bg-card">
         <div className="container mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/dashboard')}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Volver
+            </Button>
             <div className="w-10 h-10 bg-foreground rounded-lg flex items-center justify-center">
               <ShieldCheck className="h-5 w-5 text-background" />
             </div>
