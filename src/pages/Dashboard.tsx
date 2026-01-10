@@ -19,7 +19,8 @@ import {
   Lock,
   CheckCircle2,
   ShieldCheck,
-  CreditCard
+  CreditCard,
+  UtensilsCrossed
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -45,6 +46,7 @@ const ICON_MAP: { [key: string]: any } = {
   Package,
   ShieldCheck,
   CreditCard,
+  UtensilsCrossed,
 };
 
 const COLOR_MAP: { [key: string]: string } = {
@@ -161,6 +163,18 @@ const Dashboard = () => {
           status: 'functional' as const,
         },
         {
+          id: '10',
+          code: 'almuerzos',
+          name: 'Calendario de Almuerzos',
+          description: 'Gestión de menús escolares',
+          icon: 'UtensilsCrossed',
+          color: 'orange',
+          route: '/lunch-calendar',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
           id: '6',
           code: 'finanzas',
           name: 'Finanzas',
@@ -252,8 +266,9 @@ const Dashboard = () => {
 
       console.log('📦 Módulos habilitados:', Array.from(enabledModuleCodes));
 
-      // Control de Acceso SOLO para admin_general
-      if (role !== 'admin_general') {
+      // Control de Acceso SOLO para admin_general (verificar con string directo)
+      const userRoleString = role as string;
+      if (userRoleString !== 'admin_general') {
         enabledModuleCodes.delete('control_acceso');
       }
 

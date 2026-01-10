@@ -20,6 +20,7 @@ import SalesList from "./pages/SalesList";
 import Cobranzas from "./pages/Cobranzas";
 import Products from "./pages/Products";
 import PaymentStats from "./pages/PaymentStats";
+import LunchCalendar from "./pages/LunchCalendar";
 import ParentsManagement from "./components/admin/ParentsManagement";
 import AccessControl from "./pages/AccessControl";
 import NotFound from "./pages/NotFound";
@@ -172,6 +173,16 @@ const App = () => (
                 <ProtectedRoute allowedRoles={['admin_general']}>
                   <PaymentStats />
                 </ProtectedRoute>
+              }
+            />
+            
+            {/* Calendario de Almuerzos - Basado en permisos dinámicos */}
+            <Route
+              path="/lunch-calendar"
+              element={
+                <PermissionProtectedRoute moduleCode="almuerzos">
+                  <LunchCalendar />
+                </PermissionProtectedRoute>
               }
             />
             
