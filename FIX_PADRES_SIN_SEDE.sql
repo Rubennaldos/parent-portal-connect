@@ -125,3 +125,4 @@ LEFT JOIN schools s ON s.id = pp.school_id
 GROUP BY s.name
 ORDER BY total_padres DESC;
 
+
