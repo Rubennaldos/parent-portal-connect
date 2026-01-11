@@ -79,41 +79,45 @@ export const WeeklyMenuModal = ({ isOpen, onClose, studentId }: WeeklyMenuModalP
     try {
       const weekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
 
-      // Obtener menús de la semana
-      const { data: menus, error: menusError } = await supabase
-        .from('lunch_menus')
-        .select(`
-          id,
-          date,
-          starter,
-          main_course,
-          beverage,
-          dessert,
-          notes,
-          schools:school_id (
-            name
-          )
-        `)
-        .eq('school_id', schoolId)
-        .gte('date', format(currentWeekStart, 'yyyy-MM-dd'))
-        .lte('date', format(weekEnd, 'yyyy-MM-dd'))
-        .order('date', { ascending: true });
+      // Usar la función que respeta límites de visibilidad para padres
+      const { data: menus, error: menusError } = await supabase.rpc(
+        'get_visible_lunch_menus_for_parent',
+        {
+          target_school_id: schoolId,
+          target_date: format(new Date(), 'yyyy-MM-dd'),
+        }
+      );
 
       if (menusError) throw menusError;
 
+      // Filtrar solo los menús de la semana actual
+      const weekStart = format(currentWeekStart, 'yyyy-MM-dd');
+      const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
+      
+      const weekMenusFiltered = (menus || []).filter((menu: any) => 
+        menu.date >= weekStart && menu.date <= weekEndStr
+      );
+
+      // Obtener nombre de la sede
+      const { data: school } = await supabase
+        .from('schools')
+        .select('name')
+        .eq('id', schoolId)
+        .single();
+
       // Formatear los datos
-      const formattedMenus = (menus || []).map((menu: any) => ({
+      const formattedMenus = weekMenusFiltered.map((menu: any) => ({
         ...menu,
-        school_name: menu.schools?.name || '',
+        school_name: school?.name || '',
       }));
 
-      // Obtener días especiales
+      // Obtener días especiales de la semana
       const { data: special, error: specialError } = await supabase
         .from('special_days')
         .select('date, type, title, description')
         .or(`school_id.is.null,school_id.eq.${schoolId}`)
-        .gte('date', format(currentWeekStart, 'yyyy-MM-dd'))
-        .lte('date', format(weekEnd, 'yyyy-MM-dd'));
+        .gte('date', weekStart)
+        .lte('date', weekEndStr);
 
       if (specialError) throw specialError;
 

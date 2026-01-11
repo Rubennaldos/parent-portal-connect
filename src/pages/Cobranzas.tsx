@@ -45,6 +45,7 @@ const Cobranzas = () => {
     periods: false,
     collect: false,
     reports: false,
+    statistics: false,
     config: false,
   });
   const [loading, setLoading] = useState(true);
@@ -67,6 +68,7 @@ const Cobranzas = () => {
           periods: true,
           collect: true,
           reports: true,
+          statistics: true,
           config: true,
         });
         setActiveTab('dashboard');
@@ -100,6 +102,7 @@ const Cobranzas = () => {
         periods: false,
         collect: false,
         reports: false,
+        statistics: false,
         config: false,
       };
 
@@ -122,6 +125,9 @@ const Cobranzas = () => {
             case 'sacar_reportes':
               perms.reports = true;
               break;
+            case 'ver_estadisticas':
+              perms.statistics = true;
+              break;
             case 'configuracion':
               perms.config = true;
               break;
@@ -137,6 +143,7 @@ const Cobranzas = () => {
       else if (perms.periods) setActiveTab('periods');
       else if (perms.collect) setActiveTab('collect');
       else if (perms.reports) setActiveTab('reports');
+      else if (perms.statistics) setActiveTab('statistics');
       else if (perms.config) setActiveTab('config');
 
     } catch (error) {
@@ -231,6 +238,12 @@ const Cobranzas = () => {
                     <span className="hidden sm:inline">Reportes</span>
                   </TabsTrigger>
                 )}
+                {permissions.statistics && (
+                  <TabsTrigger value="statistics" className="flex items-center gap-2 py-3">
+                    <BarChart3 className="h-4 w-4" />
+                    <span className="hidden sm:inline">Estadísticas</span>
+                  </TabsTrigger>
+                )}
                 {permissions.config && (
                   <TabsTrigger value="config" className="flex items-center gap-2 py-3">
                     <Settings className="h-4 w-4" />
@@ -264,6 +277,13 @@ const Cobranzas = () => {
               {permissions.reports && (
                 <TabsContent value="reports" className="mt-6">
                   <BillingReports />
+                </TabsContent>
+              )}
+
+              {/* Estadísticas Tab */}
+              {permissions.statistics && (
+                <TabsContent value="statistics" className="mt-6">
+                  <PaymentStatistics />
                 </TabsContent>
               )}
 

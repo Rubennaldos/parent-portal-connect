@@ -151,18 +151,6 @@ const Dashboard = () => {
           status: 'functional' as const,
         },
         {
-          id: '9',
-          code: 'pagos',
-          name: 'Estadísticas de Pagos',
-          description: 'Reportes y análisis de transacciones',
-          icon: 'CreditCard',
-          color: 'green',
-          route: '/payment-stats',
-          is_active: true,
-          is_enabled: false,
-          status: 'functional' as const,
-        },
-        {
           id: '10',
           code: 'almuerzos',
           name: 'Calendario de Almuerzos',
