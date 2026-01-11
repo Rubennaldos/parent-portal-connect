@@ -132,6 +132,23 @@ const MODULE_CONFIG = {
       { action: 'editar_estudiante', label: 'Editar estudiante', description: 'Modificar datos de estudiantes' },
       { action: 'eliminar_estudiante', label: 'Eliminar estudiante', description: 'Eliminar estudiantes' }
     ]
+  },
+  almuerzos: {
+    name: 'Almuerzos (Calendario)',
+    icon: '🍱',
+    color: 'emerald',
+    description: 'Gestión de menús diarios y calendario escolar',
+    permissions: [
+      { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder al calendario' },
+      { action: 'crear_menu', label: 'Crear menú', description: 'Agregar platos diarios' },
+      { action: 'editar_menu', label: 'Editar menú', description: 'Modificar platos existentes' },
+      { action: 'eliminar_menu', label: 'Eliminar menú', description: 'Borrar platos registrados' },
+      { action: 'carga_masiva', label: 'Carga masiva', description: 'Subir menús mediante Excel' },
+      { action: 'gestionar_dias_especiales', label: 'Marcar Feriados/No Laborables', description: 'Cambiar estado del día' },
+      { action: 'ver_su_sede', label: 'Solo su sede', description: 'Ver y gestionar únicamente su sede', group: 'scope' },
+      { action: 'ver_todas_sedes', label: 'Todas las sedes', description: 'Gestión total de todas las sedes', group: 'scope' },
+      { action: 'exportar', label: 'Exportar reportes', description: 'Descargar menús en PDF/Excel' }
+    ]
   }
 };
 

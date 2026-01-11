@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -21,7 +21,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search, Save, Check } from 'lucide-react';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface School {
   id: string;
@@ -38,6 +53,104 @@ interface LunchMenuModalProps {
   userSchoolId?: string | null;
   onSuccess: () => void;
 }
+
+// Componente Autocomplete interno
+const AutocompleteInput = ({ 
+  label, 
+  value, 
+  onChange, 
+  type, 
+  placeholder,
+  icon: Icon
+}: { 
+  label: string, 
+  value: string, 
+  onChange: (val: string) => void, 
+  type: string,
+  placeholder: string,
+  icon: any
+}) => {
+  const [open, setOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (value.length < 2) {
+        setSuggestions([]);
+        return;
+      }
+      
+      setLoading(true);
+      try {
+        const { data, error } = await supabase.rpc('search_lunch_items', {
+          p_type: type,
+          p_query: value
+        });
+        if (!error && data) {
+          setSuggestions(data.map((item: any) => item.name));
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const timer = setTimeout(fetchSuggestions, 300);
+    return () => clearTimeout(timer);
+  }, [value, type]);
+
+  return (
+    <div className="space-y-2">
+      <Label className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        {label}
+      </Label>
+      <div className="relative">
+        <Popover open={open && suggestions.length > 0} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <div className="relative">
+              <Input
+                placeholder={placeholder}
+                value={value}
+                onChange={(e) => {
+                  onChange(e.target.value);
+                  setOpen(true);
+                }}
+                className="pr-10"
+              />
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <Search className="h-4 w-4 text-muted-foreground" />}
+              </div>
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
+            <Command>
+              <CommandList>
+                <CommandGroup>
+                  {suggestions.map((s) => (
+                    <CommandItem
+                      key={s}
+                      value={s}
+                      onSelect={(currentValue) => {
+                        onChange(currentValue);
+                        setOpen(false);
+                      }}
+                    >
+                      <Check className="mr-2 h-4 w-4" />
+                      {s}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+};
 
 export const LunchMenuModal = ({
   isOpen,
@@ -128,6 +241,16 @@ export const LunchMenuModal = ({
 
     setLoading(true);
     try {
+      // 1. Guardar platos en la librería para futuro autocomplete
+      const libraryPromises = [
+        supabase.rpc('upsert_lunch_item', { p_type: 'entrada', p_name: formData.starter.trim() }),
+        supabase.rpc('upsert_lunch_item', { p_type: 'segundo', p_name: formData.main_course.trim() }),
+        supabase.rpc('upsert_lunch_item', { p_type: 'bebida', p_name: formData.beverage.trim() }),
+        supabase.rpc('upsert_lunch_item', { p_type: 'postre', p_name: formData.dessert.trim() }),
+      ];
+      await Promise.all(libraryPromises);
+
+      // 2. Guardar el menú
       const payload = {
         ...formData,
         starter: formData.starter.trim() || null,
@@ -216,19 +339,26 @@ export const LunchMenuModal = ({
     }
   };
 
+  const formattedDate = initialDate ? format(initialDate, "EEEE d 'de' MMMM, yyyy", { locale: es }) : '';
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Save className="h-5 w-5 text-green-600" />
             {menuId ? 'Editar Menú' : 'Nuevo Menú de Almuerzo'}
           </DialogTitle>
           <DialogDescription>
-            Completa los platos del día. Solo el segundo es obligatorio.
+            {formattedDate ? (
+              <span className="font-bold text-green-700 capitalize">{formattedDate}</span>
+            ) : (
+              'Completa los platos del día. Solo el segundo es obligatorio.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="school_id">Sede *</Label>
@@ -239,7 +369,7 @@ export const LunchMenuModal = ({
                 }
                 disabled={loading || !!userSchoolId}
               >
-                <SelectTrigger>
+                <SelectTrigger className="bg-muted/30">
                   <SelectValue placeholder="Selecciona una sede" />
                 </SelectTrigger>
                 <SelectContent>
@@ -260,71 +390,58 @@ export const LunchMenuModal = ({
               </Select>
             </div>
 
-            <div>
-              <Label htmlFor="date">Fecha *</Label>
-              <Input
-                id="date"
-                type="date"
-                value={formData.date}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, date: e.target.value }))
-                }
-                disabled={loading}
-                required
-              />
-            </div>
+            {!initialDate && (
+              <div>
+                <Label htmlFor="date">Fecha *</Label>
+                <Input
+                  id="date"
+                  type="date"
+                  value={formData.date}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, date: e.target.value }))
+                  }
+                  disabled={loading}
+                  required
+                />
+              </div>
+            )}
           </div>
 
-          <div>
-            <Label htmlFor="starter">🥗 Entrada</Label>
-            <Input
-              id="starter"
-              placeholder="Ej: Ensalada de verduras frescas"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <AutocompleteInput 
+              label="🥗 Entrada"
               value={formData.starter}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, starter: e.target.value }))
-              }
-              disabled={loading}
+              onChange={(v) => setFormData(p => ({ ...p, starter: v }))}
+              type="entrada"
+              placeholder="Ej: Ensalada de verduras frescas"
+              icon={Search}
             />
-          </div>
 
-          <div>
-            <Label htmlFor="main_course">🍲 Segundo Plato *</Label>
-            <Input
-              id="main_course"
-              placeholder="Ej: Arroz con pollo y ensalada"
+            <AutocompleteInput 
+              label="🍲 Segundo Plato *"
               value={formData.main_course}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, main_course: e.target.value }))
-              }
-              disabled={loading}
-              required
+              onChange={(v) => setFormData(p => ({ ...p, main_course: v }))}
+              type="segundo"
+              placeholder="Ej: Arroz con pollo"
+              icon={UtensilsCrossed}
             />
-          </div>
 
-          <div>
-            <Label htmlFor="beverage">🥤 Bebida</Label>
-            <Input
-              id="beverage"
-              placeholder="Ej: Refresco de maracuyá"
+            <AutocompleteInput 
+              label="🥤 Bebida"
               value={formData.beverage}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, beverage: e.target.value }))
-              }
-              disabled={loading}
+              onChange={(v) => setFormData(p => ({ ...p, beverage: v }))}
+              type="bebida"
+              placeholder="Ej: Refresco de maracuyá"
+              icon={Search}
             />
-          </div>
 
-          <div>
-            <Label htmlFor="dessert">🍰 Postre</Label>
-            <Input
-              id="dessert"
-              placeholder="Ej: Gelatina de fresa"
+            <AutocompleteInput 
+              label="🍰 Postre"
               value={formData.dessert}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, dessert: e.target.value }))
-              }
-              disabled={loading}
+              onChange={(v) => setFormData(p => ({ ...p, dessert: v }))}
+              type="postre"
+              placeholder="Ej: Gelatina de fresa"
+              icon={Search}
             />
           </div>
 
@@ -339,10 +456,11 @@ export const LunchMenuModal = ({
               }
               disabled={loading}
               rows={3}
+              className="mt-2"
             />
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 pt-4 border-t">
             {menuId && (
               <Button
                 type="button"
@@ -351,10 +469,7 @@ export const LunchMenuModal = ({
                 disabled={loading}
               >
                 {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Eliminando...
-                  </>
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   'Eliminar'
                 )}
@@ -363,7 +478,7 @@ export const LunchMenuModal = ({
             <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading} className="bg-green-600 hover:bg-green-700">
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -382,3 +497,5 @@ export const LunchMenuModal = ({
   );
 };
 
+// Necesario para que UtensilsCrossed esté disponible en AutocompleteInput
+import { UtensilsCrossed } from 'lucide-react';

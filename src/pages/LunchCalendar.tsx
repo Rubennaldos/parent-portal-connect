@@ -4,7 +4,22 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Calendar, ArrowLeft, Plus, ChevronLeft, ChevronRight, Upload, Download, Filter } from 'lucide-react';
+import {
+  Calendar,
+  ArrowLeft,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  Upload,
+  Download,
+  Filter,
+  MoreVertical,
+  Coffee,
+  Ban,
+  CalendarDays,
+  UtensilsCrossed,
+  Eye
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -14,12 +29,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
+} from '@/components/ui/dropdown-menu';
 import { LunchMenuModal } from '@/components/lunch/LunchMenuModal';
 import { MassUploadModal } from '@/components/lunch/MassUploadModal';
 import { SpecialDayModal } from '@/components/lunch/SpecialDayModal';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface School {
   id: string;
@@ -50,6 +84,7 @@ interface DayData {
   specialDayInfo?: {
     type: string;
     title: string;
+    school_id: string | null;
   };
 }
 
@@ -91,6 +126,7 @@ const LunchCalendar = () => {
   const [isMenuModalOpen, setIsMenuModalOpen] = useState(false);
   const [isMassUploadModalOpen, setIsMassUploadModalOpen] = useState(false);
   const [isSpecialDayModalOpen, setIsSpecialDayModalOpen] = useState(false);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
 
@@ -248,6 +284,33 @@ const LunchCalendar = () => {
     loadMonthlyMenus();
   }, [currentDate, selectedSchools, toast]);
 
+  const handleSetDayState = async (date: Date, type: string, schoolIds: string[] | null) => {
+    try {
+      const { error } = await supabase.rpc('set_day_state', {
+        p_date: date.toISOString().split('T')[0],
+        p_type: type,
+        p_school_ids: schoolIds,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Estado actualizado',
+        description: `El día se marcó como ${type.replace('_', ' ')}`,
+      });
+
+      // Recargar datos
+      setCurrentDate(new Date(currentDate));
+    } catch (error) {
+      console.error('Error setting day state:', error);
+      toast({
+        title: 'Error',
+        description: 'No se pudo cambiar el estado del día',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handlePreviousMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
   };
@@ -259,8 +322,10 @@ const LunchCalendar = () => {
   const handleDayClick = (dayData: DayData) => {
     setSelectedDay(dayData);
     
-    // Si hay un solo menú, abrirlo para editar
-    if (dayData.menus.length === 1 && canEdit) {
+    // Si hay menús de varias sedes, abrir vista detallada
+    if (dayData.menus.length > 1) {
+      setIsDetailModalOpen(true);
+    } else if (dayData.menus.length === 1 && canEdit) {
       setSelectedMenuId(dayData.menus[0].id);
       setIsMenuModalOpen(true);
     } else if (dayData.menus.length === 0 && canCreate) {
@@ -483,63 +548,172 @@ const LunchCalendar = () => {
                       const isToday =
                         dayData.date.toDateString() === new Date().toDateString();
                       const hasMenus = dayData.menus.length > 0;
+                      const dayOfWeek = dayData.date.getDay();
+                      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-                      let bgClass = 'bg-gray-50 hover:bg-gray-100';
-                      if (hasMenus) {
-                        bgClass = 'bg-green-50 hover:bg-green-100 border-green-200';
+                      let bgClass = 'bg-white hover:bg-gray-50';
+                      
+                      if (isWeekend) {
+                        bgClass = 'bg-gray-200/50 hover:bg-gray-200';
                       }
+
+                      if (hasMenus) {
+                        bgClass = 'bg-green-100 hover:bg-green-200 border-green-300';
+                      }
+
                       if (dayData.isSpecialDay && dayData.specialDayInfo) {
-                        bgClass = SPECIAL_DAY_COLORS[
-                          dayData.specialDayInfo.type as keyof typeof SPECIAL_DAY_COLORS
-                        ] || bgClass;
+                        if (dayData.specialDayInfo.type === 'feriado') {
+                          bgClass = 'bg-red-100 hover:bg-red-200 border-red-300';
+                        } else if (dayData.specialDayInfo.type === 'no_laborable') {
+                          bgClass = 'bg-gray-200 hover:bg-gray-300 border-gray-400';
+                        }
                       }
 
                       return (
-                        <button
+                        <div
                           key={index}
-                          onClick={() => handleDayClick(dayData)}
                           className={cn(
-                            'aspect-square border rounded-lg p-2 transition-all',
+                            'aspect-square border rounded-lg p-2 transition-all relative group',
                             bgClass,
                             isToday && 'ring-2 ring-blue-500',
-                            'hover:shadow-md cursor-pointer'
+                            'shadow-sm hover:shadow-md cursor-pointer'
                           )}
+                          onClick={() => handleDayClick(dayData)}
                         >
                           <div className="h-full flex flex-col">
-                            <div className="text-sm font-semibold">
-                              {dayData.date.getDate()}
+                            <div className="flex justify-between items-start">
+                              <span className={cn(
+                                "text-sm font-bold",
+                                isWeekend && "text-gray-600"
+                              )}>
+                                {dayData.date.getDate()}
+                              </span>
+                              
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDayClick(dayData); }}>
+                                    <Eye className="h-4 w-4 mr-2" />
+                                    Ver Detalle
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  
+                                  {/* Submenú para cambiar estado */}
+                                  <DropdownMenuSub>
+                                    <DropdownMenuSubTrigger>
+                                      <CalendarDays className="h-4 w-4 mr-2" />
+                                      Marcar como...
+                                    </DropdownMenuSubTrigger>
+                                    <DropdownMenuPortal>
+                                      <DropdownMenuSubContent>
+                                        <DropdownMenuItem onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          handleSetDayState(dayData.date, 'con_menu', null); 
+                                        }}>
+                                          <UtensilsCrossed className="h-4 w-4 mr-2 text-green-600" />
+                                          Con menú (Default)
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          handleSetDayState(dayData.date, 'sin_menu', null); 
+                                        }}>
+                                          <Ban className="h-4 w-4 mr-2 text-gray-400" />
+                                          Sin menú
+                                        </DropdownMenuItem>
+                                        
+                                        <DropdownMenuSeparator />
+                                        
+                                        {/* Aplicar a todas o individuales */}
+                                        <DropdownMenuSub>
+                                          <DropdownMenuSubTrigger>
+                                            <Badge variant="outline" className="mr-2 text-red-600 border-red-200 bg-red-50">Feriado</Badge>
+                                          </DropdownMenuSubTrigger>
+                                          <DropdownMenuPortal>
+                                            <DropdownMenuSubContent>
+                                              <DropdownMenuItem onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                handleSetDayState(dayData.date, 'feriado', null); 
+                                              }}>
+                                                Todas las sedes
+                                              </DropdownMenuItem>
+                                              {!canViewAllSchools && (
+                                                <DropdownMenuItem onClick={(e) => { 
+                                                  e.stopPropagation(); 
+                                                  handleSetDayState(dayData.date, 'feriado', [userSchoolId!]); 
+                                                }}>
+                                                  Solo mi sede
+                                                </DropdownMenuItem>
+                                              )}
+                                            </DropdownMenuSubContent>
+                                          </DropdownMenuPortal>
+                                        </DropdownMenuSub>
+
+                                        <DropdownMenuSub>
+                                          <DropdownMenuSubTrigger>
+                                            <Badge variant="outline" className="mr-2 text-gray-600 border-gray-300 bg-gray-100">No Laborable</Badge>
+                                          </DropdownMenuSubTrigger>
+                                          <DropdownMenuPortal>
+                                            <DropdownMenuSubContent>
+                                              <DropdownMenuItem onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                handleSetDayState(dayData.date, 'no_laborable', null); 
+                                              }}>
+                                                Todas las sedes
+                                              </DropdownMenuItem>
+                                              {!canViewAllSchools && (
+                                                <DropdownMenuItem onClick={(e) => { 
+                                                  e.stopPropagation(); 
+                                                  handleSetDayState(dayData.date, 'no_laborable', [userSchoolId!]); 
+                                                }}>
+                                                  Solo mi sede
+                                                </DropdownMenuItem>
+                                              )}
+                                            </DropdownMenuSubContent>
+                                          </DropdownMenuPortal>
+                                        </DropdownMenuSub>
+
+                                      </DropdownMenuSubContent>
+                                    </DropdownMenuPortal>
+                                  </DropdownMenuSub>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                             
                             {dayData.isSpecialDay && dayData.specialDayInfo && (
-                              <div className="flex-1 flex items-center justify-center">
-                                <Badge variant="secondary" className="text-xs px-1 py-0">
-                                  {dayData.specialDayInfo.type === 'feriado' && '🎉'}
-                                  {dayData.specialDayInfo.type === 'no_laborable' && '🚫'}
-                                  {dayData.specialDayInfo.type === 'suspension' && '⚠️'}
-                                </Badge>
+                              <div className="mt-1">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground block truncate">
+                                  {dayData.specialDayInfo.title}
+                                </span>
                               </div>
                             )}
 
-                            {hasMenus && (
-                              <div className="flex-1 flex flex-col gap-0.5 mt-1 overflow-hidden">
-                                {dayData.menus.slice(0, 3).map((menu) => (
-                                  <div
-                                    key={menu.id}
-                                    className="w-full h-1 rounded-full"
-                                    style={{
-                                      backgroundColor: menu.school_color || '#10b981',
-                                    }}
+                            <div className="flex-1 flex flex-col gap-1 mt-2 overflow-hidden">
+                              {dayData.menus.slice(0, 4).map((menu) => (
+                                <div
+                                  key={menu.id}
+                                  className="w-full flex items-center gap-1"
+                                >
+                                  <div 
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{ backgroundColor: menu.school_color || '#10b981' }}
                                   />
-                                ))}
-                                {dayData.menus.length > 3 && (
-                                  <div className="text-xs text-center text-muted-foreground">
-                                    +{dayData.menus.length - 3}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                                  <span className="text-[9px] truncate text-muted-foreground">
+                                    {menu.school_name}
+                                  </span>
+                                </div>
+                              ))}
+                              {dayData.menus.length > 4 && (
+                                <div className="text-[9px] text-center font-medium text-muted-foreground bg-gray-100 rounded">
+                                  +{dayData.menus.length - 4} sedes
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -592,6 +766,86 @@ const LunchCalendar = () => {
           setCurrentDate(new Date(currentDate));
         }}
       />
+
+      {/* Modal de Detalle de Menús del Día */}
+      <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-2xl">
+              <UtensilsCrossed className="h-6 w-6 text-green-600" />
+              Menús del {selectedDay && format(selectedDay.date, "EEEE d 'de' MMMM", { locale: es })}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="mt-6 space-y-6">
+            {selectedDay?.menus.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed">
+                <Coffee className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500 font-medium">No hay menús registrados para este día.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {selectedDay?.menus.map((menu) => (
+                  <Card key={menu.id} className="overflow-hidden border-l-4" style={{ borderLeftColor: menu.school_color || '#10b981' }}>
+                    <CardHeader className="bg-muted/30 py-3 flex flex-row items-center justify-between space-y-0">
+                      <CardTitle className="text-sm font-bold flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: menu.school_color || '#10b981' }} />
+                        {menu.school_name}
+                      </CardTitle>
+                      {canEdit && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            setSelectedMenuId(menu.id);
+                            setIsDetailModalOpen(false);
+                            setIsMenuModalOpen(true);
+                          }}
+                        >
+                          Editar
+                        </Button>
+                      )}
+                    </CardHeader>
+                    <CardContent className="pt-4 space-y-3">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Entrada</p>
+                          <p className="font-medium">{menu.starter || '—'}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider text-green-700">Segundo</p>
+                          <p className="font-bold text-green-700">{menu.main_course}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Bebida</p>
+                          <p className="font-medium">{menu.beverage || '—'}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Postre</p>
+                          <p className="font-medium">{menu.dessert || '—'}</p>
+                        </div>
+                      </div>
+                      {menu.notes && (
+                        <div className="mt-2 pt-2 border-t border-dashed">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Notas</p>
+                          <p className="text-xs text-muted-foreground italic mt-1">{menu.notes}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+            
+            <div className="flex justify-end pt-4">
+              <Button onClick={() => setIsDetailModalOpen(false)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
