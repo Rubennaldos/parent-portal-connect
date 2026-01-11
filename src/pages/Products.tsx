@@ -12,10 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Package, Tag, Percent, UtensilsCrossed, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2 } from 'lucide-react';
+import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { MenusTab } from '@/components/products/MenusTab';
 
 interface Product {
   id: string;
@@ -637,11 +636,10 @@ const Products = () => {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="dashboard" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="dashboard"><BarChart3 className="h-4 w-4 mr-2" />Dashboard</TabsTrigger>
             <TabsTrigger value="productos"><Package className="h-4 w-4 mr-2" />Productos</TabsTrigger>
             <TabsTrigger value="promociones"><Percent className="h-4 w-4 mr-2" />Promociones</TabsTrigger>
-            <TabsTrigger value="menus"><UtensilsCrossed className="h-4 w-4 mr-2" />Menús</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard">
@@ -861,10 +859,6 @@ const Products = () => {
                 <Button variant="outline" className="mt-4">Crear Primera Promoción</Button>
               </CardContent>
             </Card>
-          </TabsContent>
-
-          <TabsContent value="menus">
-            <MenusTab schools={schools} />
           </TabsContent>
         </Tabs>
       </main>

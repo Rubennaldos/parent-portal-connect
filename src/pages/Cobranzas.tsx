@@ -14,7 +14,8 @@ import {
   Settings,
   Loader2,
   AlertCircle,
-  ArrowLeft
+  ArrowLeft,
+  BarChart3
 } from 'lucide-react';
 
 // Importar los componentes de cada tab
@@ -23,12 +24,14 @@ import { BillingPeriods } from '@/components/billing/BillingPeriods';
 import { BillingCollection } from '@/components/billing/BillingCollection';
 import { BillingReports } from '@/components/billing/BillingReports';
 import { BillingConfig } from '@/components/billing/BillingConfig';
+import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
 
 interface TabPermissions {
   dashboard: boolean;
   periods: boolean;
   collect: boolean;
   reports: boolean;
+  statistics: boolean;
   config: boolean;
 }
 
