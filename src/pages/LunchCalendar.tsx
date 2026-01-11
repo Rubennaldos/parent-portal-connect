@@ -322,6 +322,11 @@ const LunchCalendar = () => {
   const handleDayClick = (dayData: DayData) => {
     setSelectedDay(dayData);
     
+    // Si es día especial (feriado/no laborable), no hacer nada al hacer clic
+    if (dayData.isSpecialDay) {
+      return;
+    }
+    
     // Si hay menús de varias sedes, abrir vista detallada
     if (dayData.menus.length > 1) {
       setIsDetailModalOpen(true);
