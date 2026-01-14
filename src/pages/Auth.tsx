@@ -72,6 +72,12 @@ export default function Auth() {
 
   // Redirigir si ya estaba autenticado (incluyendo OAuth)
   useEffect(() => {
+    // Si estamos en modo recovery, NO redirigir automáticamente
+    if (isResetMode) {
+      console.log('🔐 Modo recovery activo - NO redirigir al dashboard');
+      return;
+    }
+    
     if (!loading && !roleLoading && user && role) {
       // Si viene desde OAuth, redirigir inmediatamente
       if (isOAuthCallback) {
@@ -85,7 +91,7 @@ export default function Auth() {
         navigate(getDefaultRoute(), { replace: true });
       }
     }
-  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn, isOAuthCallback]);
+  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn, isOAuthCallback, isResetMode]);
 
   // Validar después del login
   useEffect(() => {
