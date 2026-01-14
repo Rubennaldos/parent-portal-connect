@@ -233,26 +233,15 @@ const Index = () => {
     
     console.log('🔍 Abriendo modal para:', student.full_name);
     console.log('🔍 Tiene deudas pendientes?', student.has_pending_debts);
-    console.log('🔍 Es cuenta libre?', student.free_account);
     
-    // Si tiene deudas pendientes, SIEMPRE abrir modal de pago de deudas
-    // (Ya sea cuenta libre o no)
+    // SIMPLE: Si hay deudas → PayDebtModal, Si NO hay deudas → RechargeModal
     if (student.has_pending_debts) {
-      console.log('✅ Abriendo PayDebtModal - Tiene deudas');
+      console.log('✅ Abriendo PayDebtModal');
       setShowPayDebtModal(true);
-      return;
+    } else {
+      console.log('✅ Abriendo RechargeModal');
+      setShowRechargeModal(true);
     }
-    
-    // Si NO es cuenta libre y NO tiene deudas, abrir modal de pago de deudas
-    if (!student.free_account) {
-      console.log('✅ Abriendo PayDebtModal - No es cuenta libre');
-      setShowPayDebtModal(true);
-      return;
-    }
-    
-    // Si es cuenta libre SIN deudas, abrir modal de recarga
-    console.log('✅ Abriendo RechargeModal - Cuenta libre sin deudas');
-    setShowRechargeModal(true);
   };
 
   const openMenuModal = (student: Student) => {
