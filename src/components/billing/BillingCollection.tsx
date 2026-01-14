@@ -528,10 +528,27 @@ Gracias.`;
   const generatePDF = async (debtor: DebtorStudent) => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
     
-    // Si no hay período seleccionado, usar fechas genéricas
-    const periodName = period?.period_name || 'Cuenta Pendiente';
-    const startDate = period?.start_date || new Date().toISOString().split('T')[0];
-    const endDate = period?.end_date || new Date().toISOString().split('T')[0];
+    let periodName: string;
+    let startDate: string;
+    let endDate: string;
+    
+    if (period) {
+      periodName = period.period_name;
+      startDate = period.start_date;
+      endDate = period.end_date;
+    } else {
+      // Usar las fechas de las transacciones
+      periodName = 'Cuenta Pendiente';
+      const dates = debtor.transactions.map(t => new Date(t.created_at));
+      if (dates.length > 0) {
+        startDate = new Date(Math.min(...dates.map(d => d.getTime()))).toISOString();
+        endDate = new Date(Math.max(...dates.map(d => d.getTime()))).toISOString();
+      } else {
+        const now = new Date().toISOString();
+        startDate = now;
+        endDate = now;
+      }
+    }
 
     // Intentar obtener el logo en base64
     let logoBase64 = '';
@@ -655,8 +672,27 @@ Gracias.`;
       
       const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
       const periodName = period ? period.period_name : 'Todas las deudas';
-      const startDate = period ? period.start_date : '';
-      const endDate = period ? period.end_date : new Date().toISOString();
+      
+      // Calcular fechas reales basadas en las transacciones si no hay período
+      let startDate: string;
+      let endDate: string;
+      
+      if (period) {
+        startDate = period.start_date;
+        endDate = period.end_date;
+      } else {
+        // Usar las fechas de las transacciones del deudor
+        const dates = debtor.transactions.map(t => new Date(t.created_at));
+        if (dates.length > 0) {
+          startDate = new Date(Math.min(...dates.map(d => d.getTime()))).toISOString();
+          endDate = new Date(Math.max(...dates.map(d => d.getTime()))).toISOString();
+        } else {
+          // Fallback: usar fecha actual
+          const now = new Date().toISOString();
+          startDate = now;
+          endDate = now;
+        }
+      }
 
       generateBillingPDF({
         student_name: debtor.student_name,
