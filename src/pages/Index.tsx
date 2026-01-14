@@ -410,110 +410,6 @@ const Index = () => {
 
         {activeTab === 'pagos' && <PaymentsTab userId={user?.id || ''} />}
 
-        {activeTab === 'configuracion' && (
-          <div className="space-y-6">
-            <div className="mb-4">
-              <h2 className="text-2xl font-bold text-[#8B4513] mb-1">Configuración</h2>
-              <p className="text-gray-600 text-sm">Gestiona las opciones de cada estudiante</p>
-            </div>
-
-            {students.length === 0 ? (
-              <Card>
-                <CardContent className="text-center py-12">
-                  <Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500">No hay estudiantes registrados</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                    {students.map((student) => (
-                      <Card key={student.id} className="border-2">
-                        <CardContent className="p-4">
-                          <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <p className="font-bold text-lg">{student.full_name}</p>
-                                <p className="text-sm text-gray-500">{student.grade} - {student.section}</p>
-                              </div>
-                              {student.free_account !== false && (
-                                <span className="text-xs bg-green-100 text-green-800 px-3 py-1 rounded-full font-bold">
-                                  ✓ Cuenta Libre
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                              {/* Cuenta Libre */}
-                              <div className="bg-gray-50 rounded-lg p-3 border">
-                                <Label className="text-xs font-bold text-gray-700 uppercase mb-2 block">
-                                  Cuenta Libre (Pagar después)
-                                </Label>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-gray-600">
-                                    {student.free_account !== false ? 'Activada' : 'Desactivada'}
-                                  </span>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => {
-                                      if (student.free_account !== false) {
-                                        setSelectedStudent(student);
-                                        setShowFreeAccountWarning(true);
-                                      } else {
-                                        handleToggleFreeAccount(student, true);
-                                      }
-                                    }}
-                                  >
-                                    {student.free_account !== false ? 'Desactivar' : 'Activar'}
-                                  </Button>
-                                </div>
-                              </div>
-
-                              {/* Límite Diario */}
-                              <div className="bg-gray-50 rounded-lg p-3 border">
-                                <Label className="text-xs font-bold text-gray-700 uppercase mb-2 block">
-                                  Límite Diario
-                                </Label>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-gray-600">
-                                    S/ {student.daily_limit.toFixed(2)}
-                                  </span>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openSettingsModal(student)}
-                                  >
-                                    Modificar
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Vínculos Familiares */}
-                            <div className="pt-3 border-t">
-                              <Button
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-purple-50"
-                                onClick={() => {
-                                  setSelectedStudent(student);
-                                  setShowLinksManager(true);
-                                }}
-                              >
-                                <UsersIcon className="h-4 w-4 mr-2 text-purple-600" />
-                                <span className="text-sm font-semibold text-purple-700">
-                                  Gestionar Vínculos Familiares
-                                </span>
-                              </Button>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-          </div>
-        )}
-
       </main>
 
       {/* MODALES */}
@@ -651,7 +547,7 @@ const Index = () => {
       {/* Navegación Inferior Fija - Colores Lima Café 28 */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-[#8B4513]/20 shadow-lg z-50">
         <div className="max-w-7xl mx-auto px-2">
-          <div className="grid grid-cols-4 gap-1">
+          <div className="grid grid-cols-3 gap-1">
             <button
               onClick={() => setActiveTab('alumnos')}
               className={`flex flex-col items-center justify-center py-3 transition-all ${
@@ -674,18 +570,6 @@ const Index = () => {
             >
               <Wallet className="h-6 w-6 mb-1" />
               <span className="text-xs font-semibold">Pagos</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('configuracion')}
-              className={`flex flex-col items-center justify-center py-3 transition-all ${
-                activeTab === 'configuracion'
-                  ? 'text-[#8B4513] bg-[#FFF8E7]'
-                  : 'text-gray-500 hover:text-[#8B4513] hover:bg-gray-50'
-              }`}
-            >
-              <Settings className="h-6 w-6 mb-1" />
-              <span className="text-xs font-semibold">Config</span>
             </button>
 
             <button
