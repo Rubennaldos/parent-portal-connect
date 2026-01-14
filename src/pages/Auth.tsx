@@ -89,22 +89,22 @@ export default function Auth() {
 
   // Redirigir si ya estaba autenticado (incluyendo OAuth)
   useEffect(() => {
-    // Si estamos en modo recovery, NO redirigir automáticamente
+    // PRIORIDAD MÁXIMA: Si estamos en modo recovery, NO redirigir NUNCA
     if (isResetMode) {
-      console.log('🔐 Modo recovery activo - NO redirigir al dashboard');
+      console.log('🔐 Modo recovery activo - BLOQUEANDO toda redirección');
       return;
     }
     
     if (!loading && !roleLoading && user && role) {
       // Si viene desde OAuth, redirigir inmediatamente
-      if (isOAuthCallback) {
+      if (isOAuthCallback && !isResetMode) {
         console.log('OAuth callback detected, redirecting to:', getDefaultRoute());
         navigate(getDefaultRoute(), { replace: true });
         return;
       }
       
       // Si el usuario está autenticado y no está en proceso de login manual
-      if (!justLoggedIn) {
+      if (!justLoggedIn && !isResetMode) {
         navigate(getDefaultRoute(), { replace: true });
       }
     }
@@ -112,6 +112,11 @@ export default function Auth() {
 
   // Validar después del login
   useEffect(() => {
+    // NO redirigir si estamos en modo recovery
+    if (isResetMode) {
+      return;
+    }
+    
     if (justLoggedIn && !roleLoading && role) {
       // Login exitoso -> redirigir automáticamente según el rol real en `profiles.role`
       toast({
@@ -122,7 +127,7 @@ export default function Auth() {
       setIsLoading(false);
       setJustLoggedIn(false);
     }
-  }, [justLoggedIn, roleLoading, role, getDefaultRoute, navigate, toast]);
+  }, [justLoggedIn, roleLoading, role, getDefaultRoute, navigate, toast, isResetMode]);
 
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
     // ... (código existente)
