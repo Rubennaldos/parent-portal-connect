@@ -145,7 +145,7 @@ export function StudentCard({
 
         {/* Botones principales */}
         <div className="space-y-2">
-          {/* Botón RECARGAR - Solo si NO es cuenta libre */}
+          {/* Botón PAGAR DEUDAS o RECARGAR - Solo si NO es cuenta libre */}
           {!isFreeAccount && (
             <Button
               onClick={onRecharge}
@@ -153,7 +153,7 @@ export function StudentCard({
               size="lg"
             >
               <CreditCard className="h-5 w-5 mr-2" />
-              Recargar Saldo
+              Pagar Deudas
             </Button>
           )}
 
