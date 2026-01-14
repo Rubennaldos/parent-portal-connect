@@ -936,32 +936,36 @@ Gracias.`;
               <DollarSign className="h-7 w-7 text-green-600" />
               Registrar Pago
             </DialogTitle>
-            <DialogDescription className="text-lg">
+            <DialogDescription asChild>
               <div className="mt-3 p-4 bg-blue-50 rounded-lg space-y-1">
-                <p className="font-semibold text-gray-900">👨‍🎓 Estudiante: {currentDebtor?.student_name}</p>
-                <p className="font-semibold text-gray-900">👤 Padre: {currentDebtor?.parent_name}</p>
-                <p className="text-2xl font-bold text-red-600 mt-2">Total a Cobrar: S/ {currentDebtor?.total_amount.toFixed(2)}</p>
-                <p className="text-sm text-gray-600">{currentDebtor?.transaction_count} consumo(s) pendiente(s)</p>
+                <div className="font-semibold text-gray-900">👨‍🎓 Estudiante: {currentDebtor?.student_name}</div>
+                <div className="font-semibold text-gray-900">👤 Padre: {currentDebtor?.parent_name}</div>
+                <div className="text-2xl font-bold text-red-600 mt-2">Total a Cobrar: S/ {currentDebtor?.total_amount.toFixed(2)}</div>
+                <div className="text-sm text-gray-600">{currentDebtor?.transaction_count} consumo(s) pendiente(s)</div>
               </div>
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 mt-4">
-            {/* Monto a Pagar - GRANDE Y VISIBLE */}
+            {/* Monto a Pagar - MUY GRANDE Y VISIBLE */}
             <Card className="bg-green-50 border-green-200">
               <CardContent className="p-6">
-                <Label className="text-lg font-semibold mb-3 block">💰 Monto a Pagar *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max={currentDebtor?.total_amount || 0}
-                  value={paymentData.paid_amount || ''}
-                  onChange={(e) => setPaymentData(prev => ({ ...prev, paid_amount: parseFloat(e.target.value) || 0 }))}
-                  className="text-5xl font-bold h-24 text-center border-4 border-green-400"
-                  placeholder="0.00"
-                  autoFocus
-                />
+                <Label className="text-xl font-bold mb-4 block">💰 Monto a Pagar *</Label>
+                <div className="relative">
+                  <span className="absolute left-6 top-1/2 -translate-y-1/2 text-7xl font-black text-green-700">S/</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={currentDebtor?.total_amount || 0}
+                    value={paymentData.paid_amount || ''}
+                    onChange={(e) => setPaymentData(prev => ({ ...prev, paid_amount: parseFloat(e.target.value) || 0 }))}
+                    style={{ fontSize: '5rem', paddingLeft: '140px' }}
+                    className="font-black h-32 text-center border-4 border-green-500 focus:border-green-600 focus:ring-4 focus:ring-green-200"
+                    placeholder="0.00"
+                    autoFocus
+                  />
+                </div>
                 {currentDebtor && paymentData.paid_amount < currentDebtor.total_amount && paymentData.paid_amount > 0 && (
                   <Alert className="mt-3 bg-orange-50 border-orange-200">
                     <AlertTriangle className="h-4 w-4 text-orange-600" />
