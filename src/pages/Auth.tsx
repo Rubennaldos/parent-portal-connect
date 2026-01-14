@@ -189,11 +189,21 @@ export default function Auth() {
 
     setIsLoading(true);
     try {
+      // Verificar que tengamos una sesión activa
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        throw new Error('La sesión ha expirado. Por favor, solicita un nuevo correo de recuperación.');
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: password,
       });
 
       if (error) throw error;
+
+      // Cerrar sesión después de cambiar la contraseña
+      await supabase.auth.signOut();
 
       toast({
         title: '✅ Contraseña actualizada',
@@ -202,7 +212,7 @@ export default function Auth() {
       
       // Limpiar URL y volver al login
       setIsResetMode(false);
-      navigate('/auth', { replace: true });
+      window.location.href = window.location.origin + '/parent-portal-connect/#/auth';
     } catch (err: any) {
       toast({
         variant: 'destructive',
