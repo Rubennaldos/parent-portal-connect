@@ -618,6 +618,78 @@ Gracias.`;
     });
   };
 
+  const generateMassivePDFs = async () => {
+    const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.student_id));
+
+    if (selectedDebtorsList.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Selecciona al menos un deudor',
+      });
+      return;
+    }
+
+    toast({
+      title: '📄 Generando PDFs...',
+      description: `Procesando ${selectedDebtorsList.length} documento(s)`,
+    });
+
+    // Cargar logo una sola vez
+    let logoBase64 = '';
+    try {
+      const response = await fetch(limaCafeLogo);
+      const blob = await response.blob();
+      logoBase64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error('Error cargando logo:', error);
+    }
+
+    // Generar PDFs con pequeño delay entre cada uno
+    for (let i = 0; i < selectedDebtorsList.length; i++) {
+      const debtor = selectedDebtorsList[i];
+      
+      const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
+      const periodName = period ? period.period_name : 'Todas las deudas';
+      const startDate = period ? period.start_date : '';
+      const endDate = period ? period.end_date : new Date().toISOString();
+
+      generateBillingPDF({
+        student_name: debtor.student_name,
+        parent_name: debtor.parent_name,
+        parent_phone: debtor.parent_phone,
+        school_name: debtor.school_name,
+        period_name: periodName,
+        start_date: startDate,
+        end_date: endDate,
+        transactions: debtor.transactions.map(t => ({
+          id: t.id,
+          created_at: t.created_at,
+          ticket_code: t.ticket_code,
+          description: t.description || 'Consumo',
+          amount: t.amount,
+        })),
+        total_amount: debtor.total_amount,
+        pending_amount: debtor.total_amount,
+        logo_base64: logoBase64
+      });
+
+      // Pequeño delay entre PDFs para evitar bloqueo del navegador
+      if (i < selectedDebtorsList.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    toast({
+      title: '✅ PDFs generados',
+      description: `Se generaron ${selectedDebtorsList.length} documentos exitosamente`,
+    });
+  };
+
   const currentPeriod = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
 
   return (
@@ -767,6 +839,7 @@ Gracias.`;
                       variant="outline"
                       size="sm"
                       disabled={selectedDebtors.size === 0}
+                      onClick={generateMassivePDFs}
                     >
                       <FileText className="h-4 w-4 mr-2" />
                       PDFs Masivos
