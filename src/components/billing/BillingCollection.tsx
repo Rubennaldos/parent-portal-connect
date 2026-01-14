@@ -1160,23 +1160,37 @@ Gracias.`;
                 >
                   🎫 Ticket
                 </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.document_type === 'boleta' ? 'default' : 'outline'}
-                  className={`h-16 text-base ${paymentData.document_type === 'boleta' ? 'bg-green-600 hover:bg-green-700' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'boleta' }))}
-                >
-                  📄 Boleta
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.document_type === 'factura' ? 'default' : 'outline'}
-                  className={`h-16 text-base ${paymentData.document_type === 'factura' ? 'bg-purple-600 hover:bg-purple-700' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'factura' }))}
-                >
-                  📋 Factura
-                </Button>
+                <div className="relative">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-16 text-base opacity-50 cursor-not-allowed w-full"
+                    disabled
+                  >
+                    📄 Boleta
+                  </Button>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
+                  </div>
+                </div>
+                <div className="relative">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-16 text-base opacity-50 cursor-not-allowed w-full"
+                    disabled
+                  >
+                    📋 Factura
+                  </Button>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
+                  </div>
+                </div>
               </div>
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
+                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
+              </p>
             </div>
 
             {/* Notas */}
