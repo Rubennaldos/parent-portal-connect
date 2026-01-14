@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { YapeLogo } from '@/components/ui/YapeLogo';
+import { PlinLogo } from '@/components/ui/PlinLogo';
 import {
   Select,
   SelectContent,
@@ -953,11 +955,12 @@ Gracias.`;
                   type="number"
                   step="0.01"
                   min="0"
-                  max={currentDebtor?.total_amount}
-                  value={paymentData.paid_amount}
+                  max={currentDebtor?.total_amount || 0}
+                  value={paymentData.paid_amount || ''}
                   onChange={(e) => setPaymentData(prev => ({ ...prev, paid_amount: parseFloat(e.target.value) || 0 }))}
-                  className="text-3xl font-bold h-16 text-center border-2 border-green-400"
+                  className="text-5xl font-bold h-24 text-center border-4 border-green-400"
                   placeholder="0.00"
+                  autoFocus
                 />
                 {currentDebtor && paymentData.paid_amount < currentDebtor.total_amount && paymentData.paid_amount > 0 && (
                   <Alert className="mt-3 bg-orange-50 border-orange-200">
@@ -988,22 +991,22 @@ Gracias.`;
                 <Button
                   type="button"
                   variant={paymentData.payment_method === 'yape' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'yape' ? 'bg-purple-600 hover:bg-purple-700' : ''}`}
+                  className={`h-20 text-lg ${paymentData.payment_method === 'yape' ? 'bg-[#6C1C8C] hover:bg-[#5A1773]' : ''}`}
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'yape' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">📱</span>
+                    <YapeLogo className="w-10 h-10" />
                     <span>Yape</span>
                   </div>
                 </Button>
                 <Button
                   type="button"
                   variant={paymentData.payment_method === 'plin' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'plin' ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
+                  className={`h-20 text-lg ${paymentData.payment_method === 'plin' ? 'bg-[#00D4D8] hover:bg-[#00B8BC] text-gray-900' : ''}`}
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'plin' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">📲</span>
+                    <PlinLogo className="w-10 h-10" />
                     <span>Plin</span>
                   </div>
                 </Button>

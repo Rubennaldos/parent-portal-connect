@@ -9,6 +9,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { initiatePayment } from '@/services/paymentService';
+import { YapeLogo } from '@/components/ui/YapeLogo';
+import { PlinLogo } from '@/components/ui/PlinLogo';
 import { 
   CreditCard, 
   Smartphone, 
@@ -164,6 +166,7 @@ export function RechargeModal({
       id: 'card',
       name: 'Tarjeta de Crédito/Débito',
       icon: CreditCard,
+      customIcon: null,
       color: 'blue',
       description: 'Visa, Mastercard, Amex',
       available: true,
@@ -172,7 +175,8 @@ export function RechargeModal({
     {
       id: 'yape',
       name: 'Yape',
-      icon: Smartphone,
+      icon: null,
+      customIcon: YapeLogo,
       color: 'purple',
       description: 'Pago instantáneo',
       available: true,
@@ -181,7 +185,8 @@ export function RechargeModal({
     {
       id: 'plin',
       name: 'Plin',
-      icon: Smartphone,
+      icon: null,
+      customIcon: PlinLogo,
       color: 'green',
       description: 'Pago instantáneo',
       available: true,
@@ -191,6 +196,7 @@ export function RechargeModal({
       id: 'bank',
       name: 'Transferencia Bancaria',
       icon: Building2,
+      customIcon: null,
       color: 'orange',
       description: 'Acredita en 24-48h',
       available: false,
@@ -274,6 +280,7 @@ export function RechargeModal({
               <div className="grid grid-cols-1 gap-3">
                 {paymentMethods.map((method) => {
                   const Icon = method.icon;
+                  const CustomIcon = method.customIcon;
                   const isSelected = selectedMethod === method.id;
                   const bgColor = {
                     blue: 'bg-blue-50 border-blue-500',
@@ -296,7 +303,11 @@ export function RechargeModal({
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={`w-12 h-12 rounded-lg bg-white flex items-center justify-center`}>
-                            <Icon className={`h-6 w-6 text-${method.color}-600`} />
+                            {CustomIcon ? (
+                              <CustomIcon className="w-10 h-10" />
+                            ) : Icon ? (
+                              <Icon className={`h-6 w-6 text-${method.color}-600`} />
+                            ) : null}
                           </div>
                           <div>
                             <p className="font-semibold text-gray-900">{method.name}</p>
