@@ -10,8 +10,14 @@ import {
   Settings2,
   UtensilsCrossed,
   ChevronRight,
-  Camera
+  Camera,
+  Info
 } from 'lucide-react';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface Student {
   id: string;
@@ -128,10 +134,34 @@ export function StudentCard({
             : 'bg-blue-50 border-2 border-blue-200'
         }`}>
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-                {isFreeAccount ? 'Total Acumulado' : 'Saldo Disponible'}
-              </p>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                  {hasDebt ? 'TOTAL ADEUDADO' : (isFreeAccount ? 'TOTAL A FAVOR' : 'SALDO DISPONIBLE')}
+                </p>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="hover:bg-white/50 rounded-full p-0.5 transition-all">
+                      <Info className="h-4 w-4 text-gray-500 hover:text-gray-700" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80" side="top">
+                    <div className="space-y-2">
+                      <h4 className="font-bold text-sm">
+                        {hasDebt ? '💳 Deuda Pendiente' : (isFreeAccount ? '✅ Saldo a Favor' : '💰 Saldo Prepago')}
+                      </h4>
+                      <p className="text-xs text-gray-600">
+                        {hasDebt 
+                          ? `Este monto representa consumos que ${student.full_name} realizó en el kiosco escolar y que aún no han sido pagados. Puedes cancelarlos haciendo clic en "Pagar Deudas".`
+                          : isFreeAccount
+                            ? `${student.full_name} tiene este saldo a favor. Se descontará automáticamente de sus próximos consumos en el kiosco.`
+                            : `Este es el saldo disponible de ${student.full_name} para consumir en el kiosco. Cuando se agote, necesitará una recarga.`
+                        }
+                      </p>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
               <p className={`text-3xl font-black ${
                 isFreeAccount 
                   ? student.balance < 0 ? 'text-red-600' : 'text-green-600'
