@@ -930,12 +930,11 @@ Gracias.`;
                                   📱 {debtor.parent_phone}
                                 </p>
                               )}
-                              {canViewAllSchools && (
-                                <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                                  <Building2 className="h-4 w-4" />
-                                  {debtor.school_name}
-                                </div>
-                              )}
+                              {/* SIEMPRE mostrar la sede */}
+                              <div className="flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md inline-flex">
+                                <Building2 className="h-4 w-4" />
+                                {debtor.school_name}
+                              </div>
                             </div>
                             <div className="text-right">
                               <p className="text-3xl font-bold text-red-600">

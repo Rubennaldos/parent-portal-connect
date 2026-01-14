@@ -87,13 +87,13 @@ const MODULE_CONFIG = {
     description: 'Gestión de cuentas por cobrar',
     permissions: [
       { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder a cobranzas' },
-      { action: 'ver_dashboard', label: 'Ver dashboard', description: 'Ver estadísticas' },
-      { action: 'editar_periodos', label: 'Editar períodos', description: 'Modificar períodos de facturación' },
+      { action: 'ver_dashboard', label: 'Ver dashboard', description: 'Ver estadísticas generales' },
       { action: 'cobrar_su_sede', label: 'Solo su sede', description: 'Registrar pagos únicamente de su sede asignada', group: 'scope' },
       { action: 'cobrar_todas_sedes', label: 'Todas las sedes', description: 'Registrar pagos de todas las sedes del sistema', group: 'scope' },
       { action: 'cobrar_personalizado', label: 'Personalizado', description: 'Elegir manualmente qué sedes puede cobrar', group: 'scope' },
-      { action: 'sacar_reportes', label: 'Sacar reportes', description: 'Generar reportes' },
-      { action: 'configuracion', label: 'Configuración', description: 'Acceder a configuración' }
+      { action: 'sacar_reportes', label: 'Sacar reportes', description: 'Generar reportes de cobranzas' },
+      { action: 'ver_estadisticas', label: 'Ver estadísticas', description: 'Ver estadísticas de pagos' },
+      { action: 'configuracion', label: 'Configuración', description: 'Acceder a configuración de cobranzas' }
     ]
   },
   productos: {
