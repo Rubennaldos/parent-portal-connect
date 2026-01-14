@@ -41,7 +41,13 @@ export default function Auth() {
   useEffect(() => {
     const hash = window.location.hash;
     const params = new URLSearchParams(window.location.search);
+    
+    // El hash puede contener parámetros después del # (como en GitHub Pages)
+    // Ejemplo: #access_token=...&type=recovery
+    const hashParams = new URLSearchParams(hash.substring(hash.indexOf('?') > -1 ? hash.indexOf('?') : hash.indexOf('&') > -1 ? hash.indexOf('&') - 1 : 0));
+    
     if (hash.includes('type=recovery') || params.get('type') === 'recovery') {
+      console.log('🔐 Modo recuperación de contraseña detectado');
       setIsResetMode(true);
     }
   }, []);
