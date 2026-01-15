@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,6 +22,7 @@ interface SupplyRequest {
 const SchoolAdmin = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [myRequests, setMyRequests] = useState<SupplyRequest[]>([]);
@@ -114,14 +116,24 @@ const SchoolAdmin = () => {
     <div className="min-h-screen bg-[#FDFCFB] p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3">
-            <ShoppingCart className="h-8 w-8 text-[#8B4513]" />
-            Administración de Sede
-          </h1>
-          <p className="text-slate-400 font-medium mt-1">
-            Gestión de pedidos, calendarios y tarjetas de identificación
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3">
+              <ShoppingCart className="h-8 w-8 text-[#8B4513]" />
+              Administración de Sede
+            </h1>
+            <p className="text-slate-400 font-medium mt-1">
+              Gestión de pedidos, calendarios y tarjetas de identificación
+            </p>
+          </div>
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/dashboard')}
+            className="gap-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver al Panel
+          </Button>
         </div>
 
         {/* Tabs Principales */}

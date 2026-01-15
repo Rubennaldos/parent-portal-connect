@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft } from 'lucide-react';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -50,6 +51,7 @@ const ParentConfiguration = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const { role, canViewAllSchools: canViewAllSchoolsHook } = useRole();
+  const navigate = useNavigate();
   
   const [loading, setLoading] = useState(true);
   const [parents, setParents] = useState<ParentProfile[]>([]);
@@ -497,14 +499,24 @@ const ParentConfiguration = () => {
     <div className="min-h-screen bg-[#FDFCFB] p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3">
-            <Users className="h-8 w-8 text-[#8B4513]" />
-            Configuración de Padres
-          </h1>
-          <p className="text-slate-400 font-medium mt-1">
-            Gestiona perfiles, visualiza estadísticas y genera reportes del sistema
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3">
+              <Users className="h-8 w-8 text-[#8B4513]" />
+              Configuración de Padres
+            </h1>
+            <p className="text-slate-400 font-medium mt-1">
+              Gestiona perfiles, visualiza estadísticas y genera reportes del sistema
+            </p>
+          </div>
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/dashboard')}
+            className="gap-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver al Panel
+          </Button>
         </div>
 
         {/* Tabs principales */}
