@@ -141,6 +141,7 @@ const MODULE_CONFIG = {
     description: 'Gestión de menús diarios y calendario escolar',
     permissions: [
       { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder al calendario' },
+      { action: 'ver_dashboard', label: 'Ver Analytics', description: 'Acceder a reportes y estadísticas' },
       { action: 'crear_menu', label: 'Crear menú', description: 'Agregar platos diarios' },
       { action: 'editar_menu', label: 'Editar menú', description: 'Modificar platos existentes' },
       { action: 'eliminar_menu', label: 'Eliminar menú', description: 'Borrar platos registrados' },

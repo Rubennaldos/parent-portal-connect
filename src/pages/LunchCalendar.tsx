@@ -43,9 +43,11 @@ import {
 import { LunchMenuModal } from '@/components/lunch/LunchMenuModal';
 import { MassUploadModal } from '@/components/lunch/MassUploadModal';
 import { SpecialDayModal } from '@/components/lunch/SpecialDayModal';
+import { LunchAnalyticsDashboard } from '@/components/lunch/LunchAnalyticsDashboard';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -421,7 +423,15 @@ const LunchCalendar = () => {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-12 gap-6">
+        <Tabs defaultValue="calendar" className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="calendar">📅 Calendario</TabsTrigger>
+            <TabsTrigger value="analytics">📊 Analytics</TabsTrigger>
+          </TabsList>
+
+          {/* Tab: Calendario */}
+          <TabsContent value="calendar">
+            <div className="grid grid-cols-12 gap-6">
           {/* Panel lateral de filtros */}
           <aside className="col-span-3">
             <Card>
@@ -779,6 +789,16 @@ const LunchCalendar = () => {
             </Card>
           </div>
         </div>
+          </TabsContent>
+
+          {/* Tab: Analytics */}
+          <TabsContent value="analytics">
+            <LunchAnalyticsDashboard
+              selectedSchool={selectedSchools.length === schools.length ? 'all' : selectedSchools[0] || 'all'}
+              canViewAllSchools={canViewAllSchools}
+            />
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Modales */}
