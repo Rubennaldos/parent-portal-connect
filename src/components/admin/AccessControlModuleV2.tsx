@@ -46,6 +46,7 @@ interface ModulePermissions {
 const ROLES = [
   { value: 'supervisor_red', label: 'Supervisor de Red', icon: '🌐', description: 'Auditor multi-sede' },
   { value: 'gestor_unidad', label: 'Gestor de Unidad', icon: '🏢', description: 'Administrador de sede' },
+  { value: 'almacenero', label: 'Almacenero', icon: '📦', description: 'Gestión de inventarios' },
   { value: 'operador_caja', label: 'Operador de Caja', icon: '💰', description: 'Cajero' },
   { value: 'operador_cocina', label: 'Operador de Cocina', icon: '👨‍🍳', description: 'Personal de cocina' },
 ];
@@ -148,6 +149,38 @@ const MODULE_CONFIG = {
       { action: 'ver_su_sede', label: 'Solo su sede', description: 'Ver y gestionar únicamente su sede', group: 'scope' },
       { action: 'ver_todas_sedes', label: 'Todas las sedes', description: 'Gestión total de todas las sedes', group: 'scope' },
       { action: 'exportar', label: 'Exportar reportes', description: 'Descargar menús en PDF/Excel' }
+    ]
+  },
+  logistica: {
+    name: 'Logística y Almacén',
+    icon: '📦',
+    color: 'blue',
+    description: 'Inventarios, pedidos y órdenes de compra',
+    permissions: [
+      { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder al módulo completo' },
+      { action: 'ver_inventario', label: 'Ver inventario', description: 'Ver stock de productos' },
+      { action: 'editar_inventario', label: 'Editar inventario', description: 'Agregar/modificar productos y stock' },
+      { action: 'ver_pedidos', label: 'Ver pedidos', description: 'Ver solicitudes de suministros' },
+      { action: 'procesar_pedidos', label: 'Procesar pedidos', description: 'Aprobar y procesar solicitudes' },
+      { action: 'crear_orden_compra', label: 'Crear órdenes de compra', description: 'Generar órdenes a proveedores' },
+      { action: 'ver_ordenes_compra', label: 'Ver órdenes de compra', description: 'Consultar órdenes' },
+      { action: 'gestionar_proveedores', label: 'Gestionar proveedores', description: 'Agregar/editar proveedores' },
+      { action: 'ver_activos', label: 'Ver activos', description: 'Ver inventario de máquinas y equipos' },
+      { action: 'editar_activos', label: 'Editar activos', description: 'Agregar/modificar activos' },
+      { action: 'ver_analytics', label: 'Ver analytics de inventario', description: 'Reportes y gráficos' }
+    ]
+  },
+  admin_sede: {
+    name: 'Administración de Sede',
+    icon: '🏢',
+    color: 'purple',
+    description: 'Pedidos, calendario y tarjetas ID',
+    permissions: [
+      { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder al módulo completo' },
+      { action: 'crear_pedidos', label: 'Crear pedidos de suministros', description: 'Solicitar mercadería al almacén' },
+      { action: 'ver_pedidos', label: 'Ver pedidos de suministros', description: 'Consultar estado de pedidos' },
+      { action: 'gestionar_calendario', label: 'Gestionar calendarios', description: 'Eventos académicos e internos' },
+      { action: 'gestionar_tarjetas', label: 'Gestionar tarjetas ID', description: 'Activar y vincular tarjetas' }
     ]
   }
 };
