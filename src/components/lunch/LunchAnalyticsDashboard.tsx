@@ -114,8 +114,8 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
       
       menus?.forEach(menu => {
         // Entrada
-        if (menu.starter) {
-          const key = menu.starter.toLowerCase();
+        if (menu.starter && menu.starter.trim()) {
+          const key = menu.starter.toLowerCase().trim();
           if (!dishCount[key]) {
             dishCount[key] = { category: 'Entrada', frequency: 0, schools: new Set() };
           }
@@ -123,8 +123,8 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
           dishCount[key].schools.add(menu.school_id);
         }
         // Segundo
-        if (menu.main_course) {
-          const key = menu.main_course.toLowerCase();
+        if (menu.main_course && menu.main_course.trim()) {
+          const key = menu.main_course.toLowerCase().trim();
           if (!dishCount[key]) {
             dishCount[key] = { category: 'Segundo', frequency: 0, schools: new Set() };
           }
@@ -132,8 +132,8 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
           dishCount[key].schools.add(menu.school_id);
         }
         // Bebida
-        if (menu.beverage) {
-          const key = menu.beverage.toLowerCase();
+        if (menu.beverage && menu.beverage.trim()) {
+          const key = menu.beverage.toLowerCase().trim();
           if (!dishCount[key]) {
             dishCount[key] = { category: 'Bebida', frequency: 0, schools: new Set() };
           }
@@ -141,8 +141,8 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
           dishCount[key].schools.add(menu.school_id);
         }
         // Postre
-        if (menu.dessert) {
-          const key = menu.dessert.toLowerCase();
+        if (menu.dessert && menu.dessert.trim()) {
+          const key = menu.dessert.toLowerCase().trim();
           if (!dishCount[key]) {
             dishCount[key] = { category: 'Postre', frequency: 0, schools: new Set() };
           }
@@ -500,7 +500,7 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
                   </thead>
                   <tbody>
                     {dishPopularity.map((dish, idx) => (
-                      <tr key={idx} className="border-b hover:bg-slate-50">
+                      <tr key={`dish-${dish.dish_name}-${dish.category}-${idx}`} className="border-b hover:bg-slate-50">
                         <td className="p-3 font-bold">{dish.dish_name}</td>
                         <td className="p-3 text-center">
                           <Badge className="bg-[#8B4513] text-white">{dish.category}</Badge>
@@ -549,7 +549,7 @@ export function LunchAnalyticsDashboard({ selectedSchool = 'all', canViewAllScho
             <CardContent>
               <div className="space-y-3">
                 {schoolStats.map((school, idx) => (
-                  <Card key={idx} className="border-l-4 border-l-blue-500">
+                  <Card key={`school-${school.school_name}-${idx}`} className="border-l-4 border-l-blue-500">
                     <CardContent className="pt-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
