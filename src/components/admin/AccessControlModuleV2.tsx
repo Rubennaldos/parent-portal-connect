@@ -69,7 +69,7 @@ const MODULE_CONFIG = {
     description: 'Historial y reportes de ventas',
     permissions: [
       { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder a la lista de ventas' },
-      { action: 'ver_dashboard', label: 'Ver dashboard', description: 'Ver estadísticas' },
+      { action: 'ver_dashboard', label: 'Ver dashboard', description: 'Ver estadísticas y analytics' },
       { action: 'ver_su_sede', label: 'Solo su sede', description: 'Ver únicamente ventas de su sede asignada', group: 'scope' },
       { action: 'ver_todas_sedes', label: 'Todas las sedes', description: 'Ver ventas de todas las sedes del sistema', group: 'scope' },
       { action: 'ver_personalizado', label: 'Personalizado', description: 'Elegir manualmente qué sedes puede ver', group: 'scope' },
