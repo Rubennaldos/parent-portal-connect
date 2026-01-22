@@ -39,6 +39,7 @@ interface StudentCardProps {
   onViewMenu: () => void;
   onOpenSettings: () => void;
   onPhotoClick: () => void;
+  // onViewCalendar: () => void; // Comentado temporalmente
 }
 
 export function StudentCard({
@@ -48,7 +49,8 @@ export function StudentCard({
   onLunchFast,
   onViewMenu,
   onOpenSettings,
-  onPhotoClick
+  onPhotoClick,
+  // onViewCalendar // Comentado temporalmente
 }: StudentCardProps) {
   const isFreeAccount = student.free_account !== false;
   
@@ -115,7 +117,10 @@ export function StudentCard({
 
         {/* Icono de cámara minimalista */}
         <button
-          onClick={onPhotoClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPhotoClick();
+          }}
           className="absolute top-20 left-20 w-8 h-8 bg-white rounded-xl shadow-md border border-slate-100 flex items-center justify-center hover:bg-slate-50 transition-all active:scale-90"
         >
           <Camera className="h-4 w-4 text-slate-400" />
@@ -196,14 +201,7 @@ export function StudentCard({
             </Button>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              onClick={onViewMenu}
-              variant="ghost"
-              className="h-11 rounded-xl text-slate-500 font-bold hover:bg-slate-100 transition-all text-xs"
-            >
-              Calendario
-            </Button>
+          <div className="grid grid-cols-1 gap-3">
             <Button
               onClick={onViewHistory}
               variant="ghost"
@@ -218,8 +216,7 @@ export function StudentCard({
             onClick={onOpenSettings}
             className="w-full pt-2 flex items-center justify-center gap-2 text-slate-300 hover:text-[#8B4513] transition-colors group/btn"
           >
-            <Settings2 className="h-3 w-3 group-hover/btn:rotate-90 transition-transform duration-500" />
-            <span className="text-[9px] font-black uppercase tracking-widest">Configuración</span>
+            <Settings2 className="h-5 w-5 group-hover/btn:rotate-90 transition-transform duration-500" />
           </button>
         </div>
       </CardContent>

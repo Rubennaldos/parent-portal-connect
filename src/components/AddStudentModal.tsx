@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface AddStudentModalProps {
   isOpen: boolean;
@@ -15,25 +16,138 @@ interface AddStudentModalProps {
   onSuccess: () => void;
 }
 
+interface Level {
+  id: string;
+  name: string;
+  order_index: number;
+}
+
+interface Classroom {
+  id: string;
+  name: string;
+  level_id: string;
+  order_index: number;
+}
+
 export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [schoolId, setSchoolId] = useState<string | null>(null);
+  const [levels, setLevels] = useState<Level[]>([]);
+  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [filteredClassrooms, setFilteredClassrooms] = useState<Classroom[]>([]);
   
   const [formData, setFormData] = useState({
     full_name: '',
-    grade: '',
-    section: '',
+    level_id: '',
+    classroom_id: '',
   });
+
+  // Cargar school_id del padre y datos de grados/aulas
+  useEffect(() => {
+    if (isOpen && user) {
+      fetchParentSchoolAndLevels();
+    }
+  }, [isOpen, user]);
+
+  // Filtrar aulas cuando cambia el nivel seleccionado
+  useEffect(() => {
+    if (formData.level_id) {
+      const filtered = classrooms.filter(c => c.level_id === formData.level_id);
+      setFilteredClassrooms(filtered);
+      // Limpiar aula seleccionada si ya no está en la lista filtrada
+      if (formData.classroom_id && !filtered.find(c => c.id === formData.classroom_id)) {
+        setFormData(prev => ({ ...prev, classroom_id: '' }));
+      }
+    } else {
+      setFilteredClassrooms([]);
+      setFormData(prev => ({ ...prev, classroom_id: '' }));
+    }
+  }, [formData.level_id, classrooms]);
+
+  const fetchParentSchoolAndLevels = async () => {
+    if (!user) return;
+    
+    setIsLoadingData(true);
+    try {
+      // 1. Obtener el school_id del padre desde la tabla students (de algún hijo existente)
+      const { data: existingStudent } = await supabase
+        .from('students')
+        .select('school_id')
+        .eq('parent_id', user.id)
+        .eq('is_active', true)
+        .limit(1)
+        .single();
+
+      let parentSchoolId = existingStudent?.school_id;
+
+      // Si no tiene hijos, obtener school_id desde el perfil del padre (si existe)
+      if (!parentSchoolId) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('school_id')
+          .eq('id', user.id)
+          .single();
+        
+        parentSchoolId = profile?.school_id;
+      }
+
+      if (!parentSchoolId) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'No se pudo determinar tu sede. Contacta al administrador.',
+        });
+        setIsLoadingData(false);
+        return;
+      }
+
+      setSchoolId(parentSchoolId);
+
+      // 2. Cargar niveles de esa sede
+      const { data: levelsData, error: levelsError } = await supabase
+        .from('school_levels')
+        .select('*')
+        .eq('school_id', parentSchoolId)
+        .eq('is_active', true)
+        .order('order_index');
+
+      if (levelsError) throw levelsError;
+      setLevels(levelsData || []);
+
+      // 3. Cargar todas las aulas de esa sede
+      const { data: classroomsData, error: classroomsError } = await supabase
+        .from('school_classrooms')
+        .select('*')
+        .eq('school_id', parentSchoolId)
+        .eq('is_active', true)
+        .order('order_index');
+
+      if (classroomsError) throw classroomsError;
+      setClassrooms(classroomsData || []);
+
+    } catch (error: any) {
+      console.error('Error fetching school data:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudieron cargar los grados y aulas',
+      });
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!user) {
+    if (!user || !schoolId) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se encontró el usuario',
+        description: 'No se encontró el usuario o la sede',
       });
       return;
     }
@@ -47,11 +161,20 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
       return;
     }
 
-    if (!formData.grade) {
+    if (!formData.level_id) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Selecciona un grado',
+        description: 'Selecciona un grado/nivel',
+      });
+      return;
+    }
+
+    if (!formData.classroom_id) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Selecciona un aula/sección',
       });
       return;
     }
@@ -59,17 +182,24 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
     setIsSubmitting(true);
 
     try {
+      // Obtener los nombres de nivel y aula para campos legacy
+      const selectedLevel = levels.find(l => l.id === formData.level_id);
+      const selectedClassroom = classrooms.find(c => c.id === formData.classroom_id);
+
       const { error } = await supabase
         .from('students')
         .insert({
           full_name: formData.full_name.trim(),
-          grade: formData.grade,
-          section: formData.section || 'A',
-          balance: 0, // Siempre inicia en 0 con cuenta libre
-          daily_limit: 0, // Sin límite para cuenta libre
+          level_id: formData.level_id,
+          classroom_id: formData.classroom_id,
+          grade: selectedLevel?.name || '', // Campo legacy por compatibilidad
+          section: selectedClassroom?.name || '', // Campo legacy por compatibilidad
+          balance: 0,
+          daily_limit: 0,
           parent_id: user.id,
+          school_id: schoolId,
           is_active: true,
-          free_account: true, // Por defecto cuenta libre activada
+          free_account: true,
         });
 
       if (error) throw error;
@@ -82,8 +212,8 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
       // Limpiar formulario
       setFormData({
         full_name: '',
-        grade: '',
-        section: '',
+        level_id: '',
+        classroom_id: '',
       });
 
       onSuccess();
@@ -111,80 +241,103 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Nombre Completo */}
-          <div>
-            <Label htmlFor="full_name">Nombre Completo *</Label>
-            <Input
-              id="full_name"
-              placeholder="Ej: Carlos Pérez López"
-              value={formData.full_name}
-              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-              required
-            />
+        {isLoadingData ? (
+          <div className="flex justify-center items-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="ml-3 text-muted-foreground">Cargando datos...</span>
           </div>
+        ) : levels.length === 0 ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              No hay grados disponibles para tu sede. Contacta al administrador para que configure los grados y aulas.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Nombre Completo */}
+            <div>
+              <Label htmlFor="full_name">Nombre Completo *</Label>
+              <Input
+                id="full_name"
+                placeholder="Ej: Carlos Pérez López"
+                value={formData.full_name}
+                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                required
+              />
+            </div>
 
-          {/* Grado */}
-          <div>
-            <Label htmlFor="grade">Grado *</Label>
-            <Select value={formData.grade} onValueChange={(value) => setFormData({ ...formData, grade: value })}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona el grado" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Inicial 3 años">Inicial 3 años</SelectItem>
-                <SelectItem value="Inicial 4 años">Inicial 4 años</SelectItem>
-                <SelectItem value="Inicial 5 años">Inicial 5 años</SelectItem>
-                <SelectItem value="1ro Primaria">1ro Primaria</SelectItem>
-                <SelectItem value="2do Primaria">2do Primaria</SelectItem>
-                <SelectItem value="3ro Primaria">3ro Primaria</SelectItem>
-                <SelectItem value="4to Primaria">4to Primaria</SelectItem>
-                <SelectItem value="5to Primaria">5to Primaria</SelectItem>
-                <SelectItem value="6to Primaria">6to Primaria</SelectItem>
-                <SelectItem value="1ro Secundaria">1ro Secundaria</SelectItem>
-                <SelectItem value="2do Secundaria">2do Secundaria</SelectItem>
-                <SelectItem value="3ro Secundaria">3ro Secundaria</SelectItem>
-                <SelectItem value="4to Secundaria">4to Secundaria</SelectItem>
-                <SelectItem value="5to Secundaria">5to Secundaria</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+            {/* Grado/Nivel */}
+            <div>
+              <Label htmlFor="level">Grado/Nivel *</Label>
+              <Select 
+                value={formData.level_id} 
+                onValueChange={(value) => setFormData({ ...formData, level_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona el grado" />
+                </SelectTrigger>
+                <SelectContent>
+                  {levels.map((level) => (
+                    <SelectItem key={level.id} value={level.id}>
+                      {level.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          {/* Sección */}
-          <div>
-            <Label htmlFor="section">Sección</Label>
-            <Input
-              id="section"
-              placeholder="Ej: A, B, C"
-              maxLength={2}
-              value={formData.section}
-              onChange={(e) => setFormData({ ...formData, section: e.target.value.toUpperCase() })}
-            />
-          </div>
+            {/* Aula/Sección */}
+            <div>
+              <Label htmlFor="classroom">Aula/Sección *</Label>
+              <Select 
+                value={formData.classroom_id} 
+                onValueChange={(value) => setFormData({ ...formData, classroom_id: value })}
+                disabled={!formData.level_id}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={formData.level_id ? "Selecciona el aula" : "Primero selecciona un grado"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredClassrooms.length > 0 ? (
+                    filteredClassrooms.map((classroom) => (
+                      <SelectItem key={classroom.id} value={classroom.id}>
+                        {classroom.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="p-2 text-sm text-muted-foreground text-center">
+                      No hay aulas para este grado
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
 
-          {/* Botones */}
-          <div className="flex gap-2 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1"
-              onClick={onClose}
-              disabled={isSubmitting}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" className="flex-1" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Guardando...
-                </>
-              ) : (
-                'Registrar Estudiante'
-              )}
-            </Button>
-          </div>
-        </form>
+            {/* Botones */}
+            <div className="flex gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={onClose}
+                disabled={isSubmitting}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Guardando...
+                  </>
+                ) : (
+                  'Registrar Estudiante'
+                )}
+              </Button>
+            </div>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

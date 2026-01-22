@@ -59,6 +59,7 @@ const COLOR_MAP: { [key: string]: string } = {
   yellow: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/30',
   orange: 'bg-orange-500/10 text-orange-600 border-orange-500/30',
   indigo: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/30',
+  pink: 'bg-pink-500/10 text-pink-600 border-pink-500/30',
 };
 
 const Dashboard = () => {
@@ -185,6 +186,18 @@ const Dashboard = () => {
           icon: 'ShoppingCart',
           color: 'purple',
           route: '/school-admin',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
+          id: '13',
+          code: 'promociones',
+          name: 'Combos y Promociones',
+          description: 'Crea combos especiales y descuentos',
+          icon: 'TrendingUp',
+          color: 'pink',
+          route: '/combos-promotions',
           is_active: true,
           is_enabled: false,
           status: 'functional' as const,

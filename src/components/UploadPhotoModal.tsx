@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ interface UploadPhotoModalProps {
   studentId: string;
   studentName: string;
   onSuccess: () => void;
+  skipConsent?: boolean; // Nuevo prop para saltar el consentimiento
 }
 
 export const UploadPhotoModal = ({ 
@@ -20,15 +21,26 @@ export const UploadPhotoModal = ({
   onClose, 
   studentId, 
   studentName,
-  onSuccess 
+  onSuccess,
+  skipConsent = true // Por defecto, saltar el consentimiento (ya se validó antes)
 }: UploadPhotoModalProps) => {
   const { toast } = useToast();
-  const [step, setStep] = useState<'consent' | 'upload'>('consent');
-  const [consentAccepted, setConsentAccepted] = useState(false);
+  const [step, setStep] = useState<'consent' | 'upload'>(skipConsent ? 'upload' : 'consent');
+  const [consentAccepted, setConsentAccepted] = useState(skipConsent);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Resetear al paso correcto cuando se abre el modal
+  useEffect(() => {
+    if (isOpen) {
+      setStep(skipConsent ? 'upload' : 'consent');
+      setConsentAccepted(skipConsent);
+      setPreview(null);
+      setSelectedFile(null);
+    }
+  }, [isOpen, skipConsent]);
 
   const handleConsentAccept = () => {
     if (!consentAccepted) {

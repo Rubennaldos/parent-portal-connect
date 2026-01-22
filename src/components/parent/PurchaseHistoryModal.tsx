@@ -145,7 +145,7 @@ export const PurchaseHistoryModal = ({
                         <Receipt className="h-5 w-5 text-[#8B4513]" />
                       </div>
                       <div>
-                        <p className="font-bold text-gray-900 flex items-center gap-2">
+                        <div className="font-bold text-gray-900 flex items-center gap-2">
                           {purchase.ticket_code || 'Sin ticket'}
                           {purchase.payment_status === 'pending' && (
                             <Badge variant="outline" className="text-xs border-amber-300 text-amber-700">
@@ -153,11 +153,11 @@ export const PurchaseHistoryModal = ({
                               Pendiente
                             </Badge>
                           )}
-                        </p>
-                        <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                        </div>
+                        <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                           <Clock className="h-3 w-3" />
                           {format(new Date(purchase.created_at), "EEEE, d 'de' MMMM 'de' yyyy • HH:mm", { locale: es })}
-                        </p>
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">

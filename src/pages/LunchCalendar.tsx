@@ -44,6 +44,7 @@ import { LunchMenuModal } from '@/components/lunch/LunchMenuModal';
 import { MassUploadModal } from '@/components/lunch/MassUploadModal';
 import { SpecialDayModal } from '@/components/lunch/SpecialDayModal';
 import { LunchAnalyticsDashboard } from '@/components/lunch/LunchAnalyticsDashboard';
+import { LunchConfiguration } from '@/components/lunch/LunchConfiguration';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -424,9 +425,10 @@ const LunchCalendar = () => {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="calendar" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
+          <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="calendar">📅 Calendario</TabsTrigger>
             <TabsTrigger value="analytics">📊 Analytics</TabsTrigger>
+            <TabsTrigger value="config">⚙️ Configuración</TabsTrigger>
           </TabsList>
 
           {/* Tab: Calendario */}
@@ -796,6 +798,14 @@ const LunchCalendar = () => {
             <LunchAnalyticsDashboard
               selectedSchool={selectedSchools.length === schools.length ? 'all' : selectedSchools[0] || 'all'}
               canViewAllSchools={canViewAllSchools}
+            />
+          </TabsContent>
+
+          {/* Tab: Configuración */}
+          <TabsContent value="config">
+            <LunchConfiguration
+              schoolId={userSchoolId}
+              canEdit={canEdit || canCreate}
             />
           </TabsContent>
         </Tabs>

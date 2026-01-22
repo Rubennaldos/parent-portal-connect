@@ -35,7 +35,7 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
   const { user } = useAuth();
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showParentData, setShowParentData] = useState(false);
-  const [showPhotoConsent, setShowPhotoConsent] = useState(false);
+  const [showPhotoInfo, setShowPhotoInfo] = useState(false); // Cambiado de showPhotoConsent
   const [photoConsentAccepted, setPhotoConsentAccepted] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -75,7 +75,7 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
           label: 'Gestionar Fotos', 
           badge: photoConsentAccepted ? '✓ Activado' : 'No activado', 
           badgeVariant: photoConsentAccepted ? 'default' : 'outline',
-          action: () => setShowPhotoConsent(true) 
+          action: () => setShowPhotoInfo(true) // Cambiado a setShowPhotoInfo
         },
       ]
     },
@@ -222,7 +222,7 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
       </Dialog>
 
       {/* Modal Consentimiento Fotos */}
-      <Dialog open={showPhotoConsent} onOpenChange={setShowPhotoConsent}>
+      <Dialog open={showPhotoInfo} onOpenChange={setShowPhotoInfo}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-xl flex items-center gap-2">
@@ -289,7 +289,7 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
             )}
 
             <Button 
-              onClick={() => setShowPhotoConsent(false)}
+              onClick={() => setShowPhotoInfo(false)}
               className="w-full bg-[#8B4513] hover:bg-[#A0522D]"
             >
               Cerrar

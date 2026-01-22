@@ -12,9 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2 } from 'lucide-react';
+import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { PriceMatrix } from '@/components/products/PriceMatrix';
+import { BulkProductUpload } from '@/components/products/BulkProductUpload';
+import { CombosPromotionsManager } from '@/components/products/CombosPromotionsManager';
 
 interface Product {
   id: string;
@@ -67,6 +70,10 @@ const Products = () => {
   const [isCheckingCode, setIsCheckingCode] = useState(false);
   const [codeStatus, setCodeStatus] = useState<'none' | 'available' | 'exists'>('none');
   const [currentCode, setCurrentCode] = useState('');
+  const [showPriceMatrix, setShowPriceMatrix] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [dashStats, setDashStats] = useState<DashboardStats>({
     totalProducts: 0,
     activeProducts: 0,
@@ -120,11 +127,17 @@ const Products = () => {
     const checkCode = async () => {
       setIsCheckingCode(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('products')
           .select('id')
-          .eq('code', currentCode)
-          .maybeSingle();
+          .eq('code', currentCode);
+
+        // Si estamos editando, excluir el producto actual de la búsqueda
+        if (editingProductId) {
+          query = query.neq('id', editingProductId);
+        }
+
+        const { data, error } = await query.maybeSingle();
         
         if (error) throw error;
         setCodeStatus(data ? 'exists' : 'available');
@@ -138,7 +151,7 @@ const Products = () => {
 
     const timer = setTimeout(checkCode, 500);
     return () => clearTimeout(timer);
-  }, [currentCode]);
+  }, [currentCode, editingProductId]);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -217,6 +230,35 @@ const Products = () => {
     setCurrentCode('');
     setCodeStatus('none');
     setWizardStep(1);
+    setEditingProductId(null);
+    forceUpdate({});
+  };
+
+  const handleEditProduct = (product: Product) => {
+    formRef.current = {
+      name: product.name,
+      code: product.code,
+      hasCode: !!product.code,
+      price_cost: String(product.price_cost || ''),
+      price_sale: String(product.price_sale || ''),
+      category: product.category,
+      newCategory: '',
+      has_stock: product.has_stock,
+      stock_initial: String(product.stock_initial || ''),
+      stock_min: String(product.stock_min || ''),
+      has_expiry: product.has_expiry || false,
+      expiry_days: String(product.expiry_days || ''),
+      has_igv: product.has_igv,
+      has_wholesale: product.has_wholesale || false,
+      wholesale_qty: String(product.wholesale_qty || ''),
+      wholesale_price: String(product.wholesale_price || ''),
+      school_ids: product.school_ids || [],
+      applyToAllSchools: (product.school_ids || []).length === schools.length,
+    };
+    setCurrentCode(product.code || '');
+    setEditingProductId(product.id);
+    setWizardStep(1);
+    setShowProductModal(true);
     forceUpdate({});
   };
 
@@ -261,7 +303,7 @@ const Products = () => {
 
       const selectedSchools = f.applyToAllSchools ? schools.map(s => s.id) : f.school_ids;
 
-      const newProduct = {
+      const productData = {
         name: f.name,
         code: finalCode,
         price: parseFloat(f.price_sale),
@@ -281,10 +323,19 @@ const Products = () => {
         school_ids: selectedSchools,
       };
 
-      const { error } = await supabase.from('products').insert(newProduct);
-      if (error) throw error;
+      if (editingProductId) {
+        const { error } = await supabase
+          .from('products')
+          .update(productData)
+          .eq('id', editingProductId);
+        if (error) throw error;
+        toast({ title: '✅ Producto actualizado', description: 'Los cambios se han guardado correctamente' });
+      } else {
+        const { error } = await supabase.from('products').insert(productData);
+        if (error) throw error;
+        toast({ title: '✅ Producto creado', description: 'El producto se ha guardado correctamente' });
+      }
 
-      toast({ title: '✅ Producto creado', description: 'El producto se ha guardado correctamente' });
       setShowProductModal(false);
       resetForm();
       fetchProducts();
@@ -299,45 +350,68 @@ const Products = () => {
     switch (wizardStep) {
       case 1:
         return (
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold">📦 Información Básica</h3>
-            <div>
-              <Label>Nombre del Producto *</Label>
-              <Input 
-                defaultValue={f.name}
-                onChange={e => { f.name = e.target.value; forceUpdate({}); }}
-                placeholder="Ej: Coca Cola 500ml" 
-                autoFocus
-              />
-            </div>
-            <div>
-              <Label>Categoría</Label>
-              <div className="flex gap-2 mb-2">
-                <Select 
-                  value={f.category} 
-                  onValueChange={v => { f.category = v; forceUpdate({}); }}
-                >
-                  <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {categories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+          <div className="space-y-6">
+            <div className="text-center space-y-2 pb-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 mb-2">
+                <Package className="h-8 w-8 text-blue-600" />
               </div>
-              <div className="space-y-2">
+              <h3 className="text-2xl font-bold">Información Básica</h3>
+              <p className="text-sm text-muted-foreground">Comienza con el nombre y categoría del producto</p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <Label className="text-base font-semibold">Nombre del Producto *</Label>
                 <Input 
-                  placeholder="O crea una nueva categoría" 
+                  defaultValue={f.name}
+                  onChange={e => { f.name = e.target.value; forceUpdate({}); }}
+                  placeholder="Ej: Coca Cola 500ml" 
+                  autoFocus
+                  className="h-14 text-lg mt-2"
+                />
+              </div>
+              <div>
+                <Label className="text-base font-semibold">Categoría</Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                  {categories.slice(0, 4).map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => { f.category = cat; forceUpdate({}); }}
+                      className={`p-4 border-2 rounded-lg transition-all ${
+                        f.category === cat 
+                          ? 'border-primary bg-primary/10 font-semibold' 
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">
+                        {cat === 'bebidas' ? '🥤' : cat === 'snacks' ? '🍪' : cat === 'menu' ? '🍽️' : '📦'}
+                      </div>
+                      <div className="text-sm capitalize">{cat}</div>
+                    </button>
+                  ))}
+                </div>
+                {categories.length > 4 && (
+                  <Select 
+                    value={f.category} 
+                    onValueChange={v => { f.category = v; forceUpdate({}); }}
+                  >
+                    <SelectTrigger className="h-12 mt-3"><SelectValue placeholder="Más categorías..." /></SelectTrigger>
+                    <SelectContent>
+                      {categories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Input 
+                  placeholder="O escribe una nueva categoría" 
                   defaultValue={f.newCategory}
-                  onChange={e => { 
-                    f.newCategory = e.target.value; 
-                    forceUpdate({}); // Forzar update para mostrar/ocultar el botón
-                  }}
+                  onChange={e => { f.newCategory = e.target.value; forceUpdate({}); }}
+                  className="h-12 mt-3"
                 />
                 {f.newCategory.trim() !== '' && (
                   <Button 
                     type="button"
-                    variant="secondary" 
-                    size="sm" 
-                    className="w-full bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                    size="lg"
+                    className="w-full mt-2 bg-emerald-600 hover:bg-emerald-700"
                     onClick={() => {
                       const newCat = f.newCategory.trim();
                       if (newCat && !categories.includes(newCat)) {
@@ -345,15 +419,12 @@ const Products = () => {
                         f.category = newCat;
                         f.newCategory = '';
                         forceUpdate({});
-                        toast({
-                          title: "✅ Categoría agregada",
-                          description: `Se ha seleccionado "${newCat}"`
-                        });
+                        toast({ title: "✅ Categoría agregada", description: `Se ha seleccionado "${newCat}"` });
                       }
                     }}
                   >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Grabar categoría "{f.newCategory}"
+                    <Plus className="h-5 w-5 mr-2" />
+                    Agregar "{f.newCategory}"
                   </Button>
                 )}
               </div>
@@ -362,59 +433,107 @@ const Products = () => {
         );
       case 2:
         return (
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold">💰 Precios</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Precio Costo *</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  defaultValue={f.price_cost}
-                  onChange={e => { f.price_cost = e.target.value; forceUpdate({}); }}
-                  placeholder="0.00" 
-                  autoFocus
-                />
+          <div className="space-y-6">
+            <div className="text-center space-y-2 pb-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-2">
+                <DollarSign className="h-8 w-8 text-green-600" />
               </div>
-              <div>
-                <Label>Precio Venta *</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  defaultValue={f.price_sale}
-                  onChange={e => { f.price_sale = e.target.value; forceUpdate({}); }}
-                  placeholder="0.00" 
-                />
+              <h3 className="text-2xl font-bold">Configuración de Precios</h3>
+              <p className="text-sm text-muted-foreground">Define el costo y precio de venta</p>
+            </div>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Precio Costo *</Label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl text-muted-foreground">S/</span>
+                  <Input 
+                    type="number" 
+                    step="0.01" 
+                    defaultValue={f.price_cost}
+                    onChange={e => { f.price_cost = e.target.value; forceUpdate({}); }}
+                    placeholder="0.00" 
+                    autoFocus
+                    className="h-16 text-2xl pl-14"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Precio Venta *</Label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl text-muted-foreground">S/</span>
+                  <Input 
+                    type="number" 
+                    step="0.01" 
+                    defaultValue={f.price_sale}
+                    onChange={e => { f.price_sale = e.target.value; forceUpdate({}); }}
+                    placeholder="0.00" 
+                    className="h-16 text-2xl pl-14 border-primary"
+                  />
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={f.has_igv} onCheckedChange={v => { f.has_igv = v; forceUpdate({}); }} />
-              <Label>Incluye IGV (18%)</Label>
+            {f.price_cost && f.price_sale && parseFloat(f.price_sale) > parseFloat(f.price_cost) && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-green-900">Margen de Ganancia</p>
+                    <p className="text-2xl font-bold text-green-600">
+                      {(((parseFloat(f.price_sale) - parseFloat(f.price_cost)) / parseFloat(f.price_cost)) * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-green-900">Ganancia por Unidad</p>
+                    <p className="text-2xl font-bold text-green-600">
+                      S/ {(parseFloat(f.price_sale) - parseFloat(f.price_cost)).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+              <Switch 
+                checked={f.has_igv} 
+                onCheckedChange={v => { f.has_igv = v; forceUpdate({}); }} 
+                className="data-[state=checked]:bg-primary"
+              />
+              <div className="flex-1">
+                <Label className="text-base font-semibold cursor-pointer">Incluye IGV (18%)</Label>
+                <p className="text-xs text-muted-foreground">El precio ya incluye el impuesto</p>
+              </div>
             </div>
-            <div className="border rounded p-3">
-              <div className="flex items-center gap-2 mb-3">
-                <Switch checked={f.has_wholesale} onCheckedChange={v => { f.has_wholesale = v; forceUpdate({}); }} />
-                <Label className="font-semibold">Activar Precio Mayorista</Label>
+            <div className="border-2 border-dashed rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <Switch 
+                  checked={f.has_wholesale} 
+                  onCheckedChange={v => { f.has_wholesale = v; forceUpdate({}); }}
+                  className="data-[state=checked]:bg-purple-600"
+                />
+                <div className="flex-1">
+                  <Label className="text-base font-semibold cursor-pointer">Precio Mayorista</Label>
+                  <p className="text-xs text-muted-foreground">Precio especial por cantidad</p>
+                </div>
               </div>
               {f.has_wholesale && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>
-                    <Label className="text-xs">A partir de (unidades)</Label>
+                    <Label>A partir de (unidades)</Label>
                     <Input 
                       type="number" 
                       defaultValue={f.wholesale_qty}
                       onChange={e => { f.wholesale_qty = e.target.value; forceUpdate({}); }}
                       placeholder="10" 
+                      className="h-12 text-lg"
                     />
                   </div>
                   <div>
-                    <Label className="text-xs">Precio Mayorista</Label>
+                    <Label>Precio Mayorista</Label>
                     <Input 
                       type="number" 
                       step="0.01" 
                       defaultValue={f.wholesale_price}
                       onChange={e => { f.wholesale_price = e.target.value; forceUpdate({}); }}
                       placeholder="0.00" 
+                      className="h-12 text-lg"
                     />
                   </div>
                 </div>
@@ -804,9 +923,20 @@ const Products = () => {
                     <CardTitle>Lista de Productos</CardTitle>
                     <CardDescription>{products.length} productos registrados</CardDescription>
                   </div>
-                  <Button onClick={() => { setShowProductModal(true); resetForm(); }}>
-                    <Plus className="h-4 w-4 mr-2" />Crear Producto
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setShowBulkUpload(true)}
+                      className="border-green-200 text-green-700 hover:bg-green-50"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />
+                      Carga Masiva
+                    </Button>
+                    <Button onClick={() => { setShowProductModal(true); resetForm(); }}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Crear Producto
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -829,8 +959,27 @@ const Products = () => {
                             Stock: {product.stock_initial || 0} | Mín: {product.stock_min || 0}
                           </div>
                         )}
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline"><Pencil className="h-3 w-3" /></Button>
+                        <div className="flex gap-2 flex-wrap">
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedProduct(product);
+                              setShowPriceMatrix(true);
+                            }}
+                            className="flex-1"
+                            title="Configurar precios por sede"
+                          >
+                            <Building2 className="h-3 w-3 mr-1" />
+                            Precios
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => handleEditProduct(product)}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
                           <Button 
                             size="sm" 
                             variant="destructive" 
@@ -848,17 +997,7 @@ const Products = () => {
           </TabsContent>
 
           <TabsContent value="promociones">
-            <Card>
-              <CardHeader>
-                <CardTitle>Promociones y Combos</CardTitle>
-                <CardDescription>Gestione ofertas especiales para los estudiantes</CardDescription>
-              </CardHeader>
-              <CardContent className="py-12 text-center text-gray-500">
-                <Percent className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                <p>No hay promociones activas actualmente.</p>
-                <Button variant="outline" className="mt-4">Crear Primera Promoción</Button>
-              </CardContent>
-            </Card>
+            <CombosPromotionsManager />
           </TabsContent>
         </Tabs>
       </main>
@@ -867,29 +1006,51 @@ const Products = () => {
       <Dialog open={showProductModal} onOpenChange={setShowProductModal}>
         <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Crear Nuevo Producto</DialogTitle>
+            <DialogTitle>{editingProductId ? 'Editar Producto' : 'Crear Nuevo Producto'}</DialogTitle>
           </DialogHeader>
           
           <div className="mb-4">
-            <div className="flex gap-2 mb-4">
+            <div className="flex gap-2 mb-6">
               {[1,2,3,4].map(step => (
-                <div key={step} className={`flex-1 h-2 rounded ${wizardStep >= step ? 'bg-blue-500' : 'bg-gray-200'}`} />
+                <div 
+                  key={step} 
+                  className={`flex-1 h-3 rounded-full transition-all ${
+                    wizardStep >= step ? 'bg-primary' : 'bg-gray-200'
+                  }`} 
+                />
               ))}
             </div>
             {WizardContent()}
-            <div className="flex justify-between mt-6">
-              <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
-                Anterior
+            <div className="flex justify-between mt-8 gap-4">
+              <Button 
+                type="button"
+                variant="outline" 
+                size="lg"
+                onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} 
+                disabled={wizardStep === 1}
+                className="px-8"
+              >
+                ← Anterior
               </Button>
               {wizardStep < 4 ? (
                 <Button 
+                  type="button"
+                  size="lg"
                   onClick={() => setWizardStep(wizardStep + 1)}
                   disabled={!canAdvance(wizardStep)}
+                  className="px-8 flex-1"
                 >
-                  Siguiente
+                  Siguiente →
                 </Button>
               ) : (
-                <Button onClick={handleSaveProduct}>Guardar Producto</Button>
+                <Button 
+                  type="button"
+                  size="lg"
+                  onClick={handleSaveProduct}
+                  className="px-8 flex-1 bg-green-600 hover:bg-green-700"
+                >
+                  {editingProductId ? '✓ Guardar Cambios' : '✓ Guardar Producto'}
+                </Button>
               )}
             </div>
           </div>
@@ -912,6 +1073,26 @@ const Products = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Precios por Sede */}
+      <PriceMatrix
+        isOpen={showPriceMatrix}
+        onClose={() => {
+          setShowPriceMatrix(false);
+          setSelectedProduct(null);
+          fetchProducts(); // Refrescar productos después de cambios
+        }}
+        product={selectedProduct}
+      />
+
+      {/* Modal de Carga Masiva */}
+      <BulkProductUpload
+        isOpen={showBulkUpload}
+        onClose={() => setShowBulkUpload(false)}
+        onSuccess={fetchProducts}
+        categories={categories}
+        schools={schools}
+      />
     </div>
   );
 };

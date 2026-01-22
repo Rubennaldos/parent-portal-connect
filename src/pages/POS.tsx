@@ -38,11 +38,13 @@ import {
   Printer,
   Receipt,
   Users,
-  Maximize2
+  Maximize2,
+  Gift
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { getProductsForSchool } from '@/lib/productPricing';
 
 interface Student {
   id: string;
@@ -94,6 +96,7 @@ const POS = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('todos');
+  const [combos, setCombos] = useState<any[]>([]); // Combos activos
 
   // Estados de carrito y venta
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -178,11 +181,18 @@ const POS = () => {
   // Cargar productos al inicio
   useEffect(() => {
     fetchProducts();
+    fetchCombos();
   }, []);
 
   // Filtrar productos
   useEffect(() => {
     let filtered = products;
+
+    // Si se selecciona la categoría de combos
+    if (selectedCategory === 'combos') {
+      setFilteredProducts([]); // No mostramos productos normales, solo combos
+      return;
+    }
 
     if (selectedCategory !== 'todos') {
       filtered = filtered.filter(p => p.category === selectedCategory);
@@ -241,22 +251,29 @@ const POS = () => {
   const fetchProducts = async () => {
     console.log('🔵 POS - Iniciando carga de productos...');
     try {
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('active', true)
-        .order('total_sales', { ascending: false, nullsFirst: false }) // Más vendidos primero
-        .order('name', { ascending: true });
+      // Obtener el school_id del usuario actual
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user?.id)
+        .single();
 
-      console.log('📦 POS - Productos recibidos:', data?.length || 0);
-      if (error) {
-        console.error('❌ POS - Error en query de productos:', error);
-        throw error;
+      if (profileError) {
+        console.warn('⚠️ POS - No se pudo obtener school_id del usuario, usando precios base');
       }
+
+      const schoolId = profile?.school_id || null;
+      console.log('🏫 POS - Sede del usuario:', schoolId);
+
+      // Usar la función de pricing inteligente
+      const productsData = await getProductsForSchool(schoolId);
       
-      setProducts(data || []);
-      setFilteredProducts(data || []);
-      console.log('✅ POS - Productos cargados correctamente');
+      console.log('📦 POS - Productos recibidos:', productsData.length);
+      console.log('💰 POS - Productos con precio personalizado:', productsData.filter(p => p.is_custom_price).length);
+      
+      setProducts(productsData);
+      setFilteredProducts(productsData);
+      console.log('✅ POS - Productos cargados correctamente con precios de sede');
     } catch (error: any) {
       console.error('💥 POS - Error crítico cargando productos:', error);
       toast({
@@ -264,6 +281,85 @@ const POS = () => {
         title: 'Error',
         description: 'No se pudieron cargar los productos: ' + error.message,
       });
+    }
+  };
+
+  const fetchCombos = async () => {
+    try {
+      // Obtener el school_id del usuario actual
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user?.id)
+        .single();
+
+      if (profileError || !profile?.school_id) {
+        console.warn('⚠️ POS - No se pudo obtener school_id para filtrar combos');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('combos')
+        .select('*')
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching combos:', error);
+        return;
+      }
+
+      // Cargar items de cada combo
+      const combosWithItems = await Promise.all(
+        (data || []).map(async (combo) => {
+          const { data: items } = await supabase
+            .from('combo_items')
+            .select('quantity, product_id')
+            .eq('combo_id', combo.id);
+
+          const productIds = (items || []).map(item => item.product_id);
+          
+          if (productIds.length === 0) {
+            return { ...combo, combo_items: [] };
+          }
+
+          const { data: products } = await supabase
+            .from('products')
+            .select('id, name, price_sale, has_stock')
+            .in('id', productIds);
+
+          const combo_items = (items || []).map(item => ({
+            quantity: item.quantity,
+            product: products?.find(p => p.id === item.product_id)
+          }));
+
+          return { ...combo, combo_items };
+        })
+      );
+
+      // Filtrar combos que aplican a esta sede
+      const filteredCombos = combosWithItems.filter(combo => {
+        if (!combo.school_ids || combo.school_ids.length === 0) return true;
+        return combo.school_ids.includes(profile.school_id);
+      });
+
+      setCombos(filteredCombos);
+      
+      // Si hay combos, agregar categoría
+      if (filteredCombos.length > 0) {
+        setOrderedCategories(prev => {
+          const hasComboCategory = prev.some(c => c.id === 'combos');
+          if (!hasComboCategory) {
+            return [
+              ...prev,
+              { id: 'combos', label: 'Combos', icon: Gift }
+            ];
+          }
+          return prev;
+        });
+      }
+    } catch (error) {
+      console.error('Error cargando combos:', error);
     }
   };
 
@@ -331,6 +427,33 @@ const POS = () => {
     } else {
       setCart([...cart, { product, quantity: 1 }]);
     }
+  };
+
+  const addComboToCart = (combo: any) => {
+    // Crear un "producto virtual" para el combo
+    const comboProduct: Product = {
+      id: `combo_${combo.id}`,
+      name: `🎁 ${combo.name}`,
+      price: combo.combo_price,
+      category: 'combos',
+    };
+
+    const existing = cart.find(item => item.product.id === comboProduct.id);
+    
+    if (existing) {
+      setCart(cart.map(item =>
+        item.product.id === comboProduct.id
+          ? { ...item, quantity: item.quantity + 1 }
+          : item
+      ));
+    } else {
+      setCart([...cart, { product: comboProduct, quantity: 1 }]);
+    }
+
+    toast({
+      title: '🎁 Combo agregado',
+      description: `${combo.name} - S/ ${combo.combo_price.toFixed(2)}`,
+    });
   };
 
   const updateQuantity = (productId: string, delta: number) => {
@@ -461,6 +584,30 @@ const POS = () => {
       // Si es estudiante
       if (clientMode === 'student' && selectedStudent) {
         const isFreeAccount = selectedStudent.free_account !== false; // Por defecto true
+        
+        // **VERIFICAR LÍMITES DE GASTO**
+        const { data: limitCheck, error: limitError } = await supabase
+          .rpc('check_student_spending_limit', {
+            p_student_id: selectedStudent.id,
+            p_amount: total
+          });
+
+        if (limitError) {
+          console.error('Error checking spending limit:', limitError);
+          // Si hay error verificando, continuamos (no bloqueamos la venta)
+        } else if (limitCheck && limitCheck.length > 0 && !limitCheck[0].can_purchase) {
+          // Límite excedido - BLOQUEAR VENTA
+          const limitInfo = limitCheck[0];
+          const limitTypeText = limitInfo.limit_type === 'daily' ? 'diario' : 
+                               limitInfo.limit_type === 'weekly' ? 'semanal' : 'mensual';
+          
+          throw new Error(
+            `⚠️ Límite ${limitTypeText} excedido.\n` +
+            `Gastado: S/ ${limitInfo.current_spent.toFixed(2)}\n` +
+            `Límite: S/ ${limitInfo.limit_amount.toFixed(2)}\n` +
+            `No se puede procesar esta compra de S/ ${total.toFixed(2)}`
+          );
+        }
         
         // Calcular montos
         const amountToDeduct = studentWillPay ? Math.max(0, total - cashAmount) : total;
@@ -837,10 +984,33 @@ const POS = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {filteredProducts.length === 0 ? (
+              {filteredProducts.length === 0 && combos.length === 0 && selectedCategory !== 'combos' ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
                   <Search className="h-24 w-24 mb-4 opacity-30" />
                   <p className="text-xl font-semibold">No hay productos disponibles</p>
+                </div>
+              ) : selectedCategory === 'combos' ? (
+                <div className="grid grid-cols-3 gap-4">
+                  {combos.map((combo) => (
+                    <button
+                      key={combo.id}
+                      onClick={() => addComboToCart(combo)}
+                      className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-2xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 hover:-translate-y-1 active:scale-95 p-4 min-h-[140px] flex flex-col justify-center"
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <Gift className="h-5 w-5 text-purple-600" />
+                        <h3 className="font-black text-xl line-clamp-2 leading-tight text-left">
+                          {combo.name}
+                        </h3>
+                      </div>
+                      <p className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
+                        S/ {combo.combo_price.toFixed(2)}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {combo.combo_items?.length || 0} productos
+                      </p>
+                    </button>
+                  ))}
                 </div>
               ) : (
                 <div className="grid grid-cols-3 gap-4">

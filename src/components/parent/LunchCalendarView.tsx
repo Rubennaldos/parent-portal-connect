@@ -8,12 +8,12 @@ import { useToast } from '@/hooks/use-toast';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, startOfWeek, endOfWeek } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-interface LunchMenu {
-  id: string;
+interface LunchOrder {
+  order_id: string | null;
   school_id: string;
   school_name: string;
   school_color: string;
-  date: string;
+  order_date: string;
   starter: string;
   main_course: string;
   beverage: string;
@@ -22,45 +22,47 @@ interface LunchMenu {
   is_special_day: boolean;
   special_day_type: string;
   special_day_title: string;
+  order_status: string;
 }
 
 interface LunchCalendarViewProps {
-  studentSchoolIds: string[];
+  studentId: string; // Cambiar a studentId en lugar de studentSchoolIds
+  studentName: string; // Agregar nombre del estudiante
 }
 
-export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) {
+export function LunchCalendarView({ studentId, studentName }: LunchCalendarViewProps) {
   const { toast } = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [menus, setMenus] = useState<LunchMenu[]>([]);
+  const [orders, setOrders] = useState<LunchOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
   useEffect(() => {
-    if (studentSchoolIds.length > 0) {
-      fetchMonthMenus();
+    if (studentId) {
+      fetchMonthOrders();
     }
-  }, [currentDate, studentSchoolIds]);
+  }, [currentDate, studentId]);
 
-  const fetchMonthMenus = async () => {
+  const fetchMonthOrders = async () => {
     try {
       setLoading(true);
       const month = currentDate.getMonth() + 1;
       const year = currentDate.getFullYear();
 
-      const { data, error } = await supabase.rpc('get_monthly_lunch_menus', {
+      const { data, error } = await supabase.rpc('get_student_lunch_orders', {
+        p_student_id: studentId,
         target_month: month,
-        target_year: year,
-        target_school_ids: studentSchoolIds
+        target_year: year
       });
 
       if (error) throw error;
-      setMenus(data || []);
+      setOrders(data || []);
     } catch (error: any) {
-      console.error('Error fetching menus:', error);
+      console.error('Error fetching lunch orders:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudieron cargar los menús del mes',
+        description: 'No se pudieron cargar los pedidos de almuerzo',
       });
     } finally {
       setLoading(false);
@@ -86,24 +88,24 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
 
-  const getMenusForDay = (day: Date) => {
+  const getOrdersForDay = (day: Date) => {
     const dayStr = format(day, 'yyyy-MM-dd');
-    return menus.filter(m => m.date === dayStr);
+    return orders.filter(o => o.order_date === dayStr);
   };
 
   const getDayType = (day: Date) => {
-    const dayMenus = getMenusForDay(day);
+    const dayOrders = getOrdersForDay(day);
     
-    if (dayMenus.length === 0) return 'sin_menu';
+    if (dayOrders.length === 0) return 'sin_pedido';
     
-    const firstMenu = dayMenus[0];
-    if (firstMenu.is_special_day) {
-      return firstMenu.special_day_type || 'no_laborable';
+    const firstOrder = dayOrders[0];
+    if (firstOrder.is_special_day) {
+      return firstOrder.special_day_type || 'no_laborable';
     }
     
-    if (firstMenu.main_course) return 'con_menu';
+    if (firstOrder.order_status === 'confirmed' && firstOrder.main_course) return 'con_pedido';
     
-    return 'sin_menu';
+    return 'sin_pedido';
   };
 
   const getDayBgColor = (day: Date, type: string) => {
@@ -114,7 +116,7 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
     if (isToday) return 'ring-4 ring-blue-500';
     
     switch (type) {
-      case 'con_menu':
+      case 'con_pedido':
         return 'bg-green-100 hover:bg-green-200';
       case 'feriado':
         return 'bg-red-100';
@@ -126,52 +128,42 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
   };
 
   const renderDayContent = (day: Date, type: string) => {
-    const dayMenus = getMenusForDay(day);
+    const dayOrders = getOrdersForDay(day);
     
     if (type === 'feriado' || type === 'no_laborable') {
-      const title = dayMenus[0]?.special_day_title || (type === 'feriado' ? 'FERIADO' : 'FIN DE SEMANA');
+      const title = dayOrders[0]?.special_day_title || (type === 'feriado' ? 'FERIADO' : 'FIN DE SEMANA');
       return (
         <div className="text-center">
-          <p className="text-lg font-black text-gray-700 uppercase">{title}</p>
+          <p className="text-xs font-black text-gray-700 uppercase">{title}</p>
         </div>
       );
     }
     
-    if (type === 'sin_menu') {
+    if (type === 'sin_pedido') {
       return (
         <div className="text-center">
-          <p className="text-sm font-semibold text-gray-400">Sin menú</p>
+          <p className="text-xs font-semibold text-gray-400">Sin pedido</p>
         </div>
       );
     }
     
-    // Con menú - Mostrar nombres de escuelas
+    // Con pedido - Mostrar que tiene almuerzo
     return (
       <div className="space-y-1">
-        {dayMenus.map((menu, idx) => (
-          <div 
-            key={idx}
-            className="flex items-center gap-1 text-xs"
-          >
-            <div 
-              className="w-2 h-2 rounded-full flex-shrink-0" 
-              style={{ backgroundColor: menu.school_color || '#3b82f6' }}
-            />
-            <span className="font-semibold text-gray-700 truncate">
-              {menu.school_name}
-            </span>
-          </div>
-        ))}
+        <div className="text-center">
+          <p className="text-xs font-bold text-green-700">✓ Almuerzo</p>
+          <p className="text-xs text-gray-600">{studentName}</p>
+        </div>
       </div>
     );
   };
 
-  if (studentSchoolIds.length === 0) {
+  if (!studentId) {
     return (
       <Card>
         <CardContent className="text-center py-12">
           <UtensilsCrossed className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500">No tienes estudiantes registrados aún</p>
+          <p className="text-gray-500">Selecciona un estudiante para ver su calendario</p>
         </CardContent>
       </Card>
     );
@@ -196,7 +188,7 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
               <CardTitle className="text-2xl font-bold">
                 {format(currentDate, 'MMMM yyyy', { locale: es }).toUpperCase()}
               </CardTitle>
-              <p className="text-sm text-white/80">Calendario de Almuerzos</p>
+              <p className="text-sm text-white/80">Pedidos de {studentName}</p>
             </div>
 
             <Button
@@ -224,11 +216,11 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
           <div className="flex flex-wrap gap-3 justify-center text-xs">
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-green-100 border-2 border-green-300 rounded" />
-              <span className="font-semibold">Con menú</span>
+              <span className="font-semibold">Pedido confirmado</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-white border-2 border-gray-300 rounded" />
-              <span className="font-semibold">Sin menú</span>
+              <span className="font-semibold">Sin pedido</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-red-100 border-2 border-red-300 rounded" />
@@ -275,7 +267,7 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
                         min-h-[100px] p-2 rounded-lg border-2 transition-all
                         ${getDayBgColor(day, type)}
                         ${isCurrentMonth ? 'border-gray-300' : 'border-gray-200'}
-                        ${type === 'con_menu' ? 'cursor-pointer' : 'cursor-default'}
+                        ${type === 'con_pedido' ? 'cursor-pointer' : 'cursor-default'}
                       `}
                     >
                       <div className="text-left mb-1">
@@ -294,12 +286,12 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
       </Card>
 
       {/* Modal de detalle del día (si se selecciona) */}
-      {selectedDay && getDayType(selectedDay) === 'con_menu' && (
+      {selectedDay && getDayType(selectedDay) === 'con_pedido' && (
         <Card className="border-4 border-green-500">
           <CardHeader className="bg-green-50">
             <div className="flex items-center justify-between">
               <CardTitle>
-                {format(selectedDay, "EEEE d 'de' MMMM", { locale: es })}
+                Almuerzo - {format(selectedDay, "EEEE d 'de' MMMM", { locale: es })}
               </CardTitle>
               <Button variant="ghost" size="icon" onClick={() => setSelectedDay(null)}>
                 ✕
@@ -307,15 +299,20 @@ export function LunchCalendarView({ studentSchoolIds }: LunchCalendarViewProps) 
             </div>
           </CardHeader>
           <CardContent className="space-y-4 pt-4">
-            {getMenusForDay(selectedDay).map((menu, idx) => (
-              <div key={idx} className="border-l-4 pl-4" style={{ borderColor: menu.school_color }}>
-                <p className="font-bold text-lg mb-2">{menu.school_name}</p>
+            {getOrdersForDay(selectedDay).map((order, idx) => (
+              <div key={idx} className="border-l-4 pl-4 border-green-500">
+                <p className="font-bold text-lg mb-2">{order.school_name}</p>
                 <div className="space-y-2 text-sm">
-                  <p><span className="font-semibold">Entrada:</span> {menu.starter || 'No especificado'}</p>
-                  <p><span className="font-semibold">Segundo:</span> {menu.main_course}</p>
-                  <p><span className="font-semibold">Bebida:</span> {menu.beverage || 'No especificado'}</p>
-                  <p><span className="font-semibold">Postre:</span> {menu.dessert || 'No especificado'}</p>
-                  {menu.notes && <p className="text-gray-600 italic">{menu.notes}</p>}
+                  <p><span className="font-semibold">Entrada:</span> {order.starter || 'No especificado'}</p>
+                  <p><span className="font-semibold">Segundo:</span> {order.main_course}</p>
+                  <p><span className="font-semibold">Bebida:</span> {order.beverage || 'No especificado'}</p>
+                  <p><span className="font-semibold">Postre:</span> {order.dessert || 'No especificado'}</p>
+                  {order.notes && <p className="text-gray-600 italic">{order.notes}</p>}
+                  <div className="mt-3 pt-3 border-t">
+                    <p className="text-xs font-semibold text-green-700">
+                      Estado: {order.order_status === 'confirmed' ? '✓ Confirmado' : 'Pendiente'}
+                    </p>
+                  </div>
                 </div>
               </div>
             ))}

@@ -277,7 +277,7 @@ export default function Auth() {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-brand-cream via-background to-brand-teal-light">
       {/* Header con logo */}
-      <header className="w-full py-6 px-4 flex justify-center">
+      <header className="w-full pt-12 pb-0 px-4 flex justify-center">
         <img 
           src={limaCafeLogo} 
           alt="Lima Café 28" 
@@ -286,7 +286,7 @@ export default function Auth() {
       </header>
 
       {/* Contenido principal */}
-      <main className="flex-1 flex items-center justify-center p-4 pb-12">
+      <main className="flex-1 flex items-start justify-center p-4 pt-2 pb-12">
         <Card className="w-full max-w-md shadow-xl border-border/30 bg-card/95 backdrop-blur-sm">
           <CardHeader className="text-center space-y-2 pb-4">
             <CardTitle className="text-2xl font-semibold text-foreground">
@@ -334,8 +334,7 @@ export default function Auth() {
                   type="button"
                   variant="outline"
                   className="w-full"
-                  onClick={() => handleSocialLogin('azure')}
-                  disabled={isLoading}
+                  disabled={true}
                 >
                   <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
                     <path
@@ -343,7 +342,7 @@ export default function Auth() {
                       d="M11.4 24H0V12.6L11.4 0v24zM24 24H12.6V12.6L24 0v24z"
                     />
                   </svg>
-                  Continuar con Microsoft
+                  Continuar con Microsoft (Próximamente)
                 </Button>
 
                 <div className="relative my-6">

@@ -18,7 +18,8 @@ import {
   Menu as MenuIcon,
   Home,
   Wallet,
-  UtensilsCrossed
+  UtensilsCrossed,
+  Calendar
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -32,12 +33,15 @@ import { PayDebtModal } from '@/components/parent/PayDebtModal';
 import { WeeklyMenuModal } from '@/components/parent/WeeklyMenuModal';
 import { VersionBadge } from '@/components/VersionBadge';
 import { FreeAccountWarningModal } from '@/components/parent/FreeAccountWarningModal';
+import { FreeAccountOnboardingModal } from '@/components/parent/FreeAccountOnboardingModal';
+import { SpendingLimitsModal } from '@/components/parent/SpendingLimitsModal';
 import { PaymentsTab } from '@/components/parent/PaymentsTab';
 import { StudentLinksManager } from '@/components/parent/StudentLinksManager';
 import { MoreMenu } from '@/components/parent/MoreMenu';
 import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { LunchCalendarView } from '@/components/parent/LunchCalendarView';
+import { LunchOrderCalendar } from '@/components/parent/LunchOrderCalendar';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 
 interface Student {
@@ -74,12 +78,14 @@ const Index = () => {
   const [parentName, setParentName] = useState<string>('');
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [activeTab, setActiveTab] = useState('alumnos');
+  const [showOnboarding, setShowOnboarding] = useState(false);
   
   // Modales
   const [showRechargeModal, setShowRechargeModal] = useState(false);
   const [showPayDebtModal, setShowPayDebtModal] = useState(false);
   const [showMenuModal, setShowMenuModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showCalendarModal, setShowCalendarModal] = useState(false); // Nuevo
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
@@ -93,30 +99,83 @@ const Index = () => {
   
   // Estudiante seleccionado
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  
-  // Para límite diario
-  const [newLimit, setNewLimit] = useState('');
-  const [isUpdatingLimit, setIsUpdatingLimit] = useState(false);
+
+  // Estado para evitar doble apertura
+  const [isOpeningPhotoModal, setIsOpeningPhotoModal] = useState(false);
 
   useEffect(() => {
     fetchStudents();
     fetchParentProfile();
+    checkOnboardingStatus();
   }, [user]);
 
   const fetchParentProfile = async () => {
     if (!user) return;
     try {
-      const { data, error } = await supabase
+      // Obtener nombre del perfil
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('full_name')
         .eq('id', user.id)
         .single();
       
-      if (data && data.full_name) {
-        setParentName(data.full_name);
+      if (profileData && profileData.full_name) {
+        setParentName(profileData.full_name);
+      }
+
+      // Verificar si ya aceptó el consentimiento de fotos
+      const { data: consentData, error: consentError } = await supabase
+        .from('parent_profiles')
+        .select('photo_consent')
+        .eq('user_id', user.id)
+        .maybeSingle(); // Usar maybeSingle en lugar de single para evitar error si no existe
+
+      if (consentData && consentData.photo_consent === true) {
+        setPhotoConsentAccepted(true);
+        console.log('✅ Photo consent already accepted');
+      } else {
+        console.log('⚠️ Photo consent not found or not accepted');
       }
     } catch (e) {
       console.error("Error fetching parent profile:", e);
+    }
+  };
+
+  const checkOnboardingStatus = async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('free_account_onboarding_completed')
+        .eq('id', user.id)
+        .single();
+      
+      if (error) throw error;
+      
+      // Si no ha completado el onboarding, mostrar el modal
+      if (!data?.free_account_onboarding_completed) {
+        setShowOnboarding(true);
+      }
+    } catch (e) {
+      console.error("Error checking onboarding status:", e);
+    }
+  };
+
+  const handleOnboardingComplete = async () => {
+    if (!user) return;
+    try {
+      await supabase
+        .from('profiles')
+        .update({ free_account_onboarding_completed: true })
+        .eq('id', user.id);
+      
+      setShowOnboarding(false);
+      toast({
+        title: '✅ ¡Bienvenido!',
+        description: 'Ya puedes comenzar a usar el portal',
+      });
+    } catch (e) {
+      console.error("Error completing onboarding:", e);
     }
   };
 
@@ -192,48 +251,6 @@ const Index = () => {
     }
   };
 
-  const handleUpdateLimit = async () => {
-    if (!selectedStudent) return;
-    
-    const limit = parseFloat(newLimit);
-    if (isNaN(limit) || limit < 0) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Ingresa un límite válido',
-      });
-      return;
-    }
-
-    setIsUpdatingLimit(true);
-
-    try {
-      const { error } = await supabase
-        .from('students')
-        .update({ daily_limit: limit })
-        .eq('id', selectedStudent.id);
-
-      if (error) throw error;
-
-      toast({
-        title: '✅ Límite Actualizado',
-        description: `Nuevo límite diario: S/ ${limit.toFixed(2)}`,
-      });
-
-      await fetchStudents();
-      setShowLimitModal(false);
-    } catch (error: any) {
-      console.error('Error updating limit:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo actualizar el límite',
-      });
-    } finally {
-      setIsUpdatingLimit(false);
-    }
-  };
-
   const openRechargeModal = (student: Student) => {
     setSelectedStudent(student);
     
@@ -266,15 +283,59 @@ const Index = () => {
     setShowHistoryModal(true);
   };
 
-  const openPhotoModal = (student: Student) => {
+  const openCalendarModal = (student: Student) => {
+    setSelectedStudent(student);
+    setShowCalendarModal(true);
+  };
+
+  const openPhotoModal = async (student: Student) => {
+    // Prevenir múltiples llamadas simultáneas
+    if (isOpeningPhotoModal) {
+      console.log('⚠️ Already opening photo modal, ignoring duplicate call');
+      return;
+    }
+
+    setIsOpeningPhotoModal(true);
     setSelectedStudent(student);
     
-    // Verificar si ya aceptó el consentimiento
-    if (!photoConsentAccepted) {
-      setShowPhotoConsent(true);
+    console.log('🔍 openPhotoModal called for:', student.full_name);
+    console.log('🔍 Current photoConsentAccepted (state):', photoConsentAccepted);
+    
+    // Verificar EN VIVO desde la base de datos
+    if (user?.id) {
+      try {
+        const { data: consentData, error } = await supabase
+          .from('parent_profiles')
+          .select('photo_consent')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('❌ Error checking consent:', error);
+        }
+
+        const hasConsent = consentData?.photo_consent === true;
+        console.log('🔍 photo_consent from database:', hasConsent);
+
+        if (hasConsent) {
+          console.log('✅ User has consent - opening photo upload');
+          setPhotoConsentAccepted(true);
+          setShowUploadPhoto(true);
+        } else {
+          console.log('⚠️ No consent found - showing consent modal');
+          setShowPhotoConsent(true);
+        }
+      } catch (error) {
+        console.error('❌ Exception in openPhotoModal:', error);
+      }
     } else {
-      setShowUploadPhoto(true);
+      console.log('⚠️ No user ID - cannot check consent');
     }
+
+    // Liberar el lock después de un breve delay
+    setTimeout(() => {
+      setIsOpeningPhotoModal(false);
+    }, 500);
   };
 
   const handlePhotoConsentAccept = () => {
@@ -282,11 +343,13 @@ const Index = () => {
     setShowPhotoConsent(false);
     setShowUploadPhoto(true);
     setPhotoConsentRefresh(prev => prev + 1); // Forzar refresh del estado en MoreMenu
+    
+    // Refrescar el perfil para confirmar que se guardó
+    fetchParentProfile();
   };
 
   const openSettingsModal = (student: Student) => {
     setSelectedStudent(student);
-    setNewLimit(student.daily_limit.toString());
     setShowLimitModal(true);
   };
 
@@ -491,6 +554,7 @@ const Index = () => {
                       onViewMenu={() => openMenuModal(student)}
                       onOpenSettings={() => openSettingsModal(student)}
                       onPhotoClick={() => openPhotoModal(student)}
+                      // onViewCalendar={() => openCalendarModal(student)} // Deshabilitado temporalmente
                     />
                   ))}
                 </div>
@@ -511,13 +575,14 @@ const Index = () => {
 
         {activeTab === 'pagos' && <PaymentsTab userId={user?.id || ''} />}
 
-        {activeTab === 'almuerzos' && (
-          <div className="space-y-4">
-            <div className="mb-4">
-              <h2 className="text-2xl font-bold text-[#8B4513] mb-1">Calendario de Almuerzos</h2>
-              <p className="text-gray-600 text-sm">Consulta los menús programados para tus hijos</p>
-            </div>
-            <LunchCalendarView studentSchoolIds={Array.from(new Set(students.map(s => s.school_id).filter(Boolean) as string[]))} />
+        {activeTab === 'almuerzos' && user && (
+          <div className="px-4">
+            <LunchOrderCalendar
+              isOpen={true}
+              onClose={() => {}}
+              parentId={user.id}
+              embedded={true}
+            />
           </div>
         )}
 
@@ -528,6 +593,13 @@ const Index = () => {
         isOpen={showAddStudent}
         onClose={() => setShowAddStudent(false)}
         onSuccess={fetchStudents}
+      />
+
+      {/* Modal de Calendario de Pedidos de Almuerzos */}
+      <LunchOrderCalendar
+        isOpen={showMenuModal}
+        onClose={() => setShowMenuModal(false)}
+        parentId={user?.id || ''}
       />
 
       {selectedStudent && (
@@ -550,62 +622,23 @@ const Index = () => {
             onPaymentComplete={fetchStudents}
           />
 
-          <WeeklyMenuModal
-            isOpen={showMenuModal}
-            onClose={() => setShowMenuModal(false)}
-            studentId={selectedStudent.id}
-          />
-
           <UploadPhotoModal
             isOpen={showUploadPhoto}
             onClose={() => setShowUploadPhoto(false)}
             studentId={selectedStudent.id}
             studentName={selectedStudent.full_name}
             onSuccess={fetchStudents}
+            skipConsent={true} // Saltar el consentimiento porque ya fue validado
           />
 
-          {/* Modal de Límite Diario */}
-          <Dialog open={showLimitModal} onOpenChange={setShowLimitModal}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Límite de Gasto Diario</DialogTitle>
-                <DialogDescription>
-                  Configura el monto máximo que {selectedStudent.full_name} puede gastar por día
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="limit">Límite Diario (S/)</Label>
-                  <Input
-                    id="limit"
-                    type="number"
-                    step="0.50"
-                    value={newLimit}
-                    onChange={(e) => setNewLimit(e.target.value)}
-                    className="text-lg font-semibold"
-                    placeholder="15.00"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Coloca 0 para sin límite</p>
-                </div>
-
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-start gap-2">
-                  <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                  <p className="text-sm text-yellow-800">
-                    Este límite ayuda a controlar los gastos diarios del estudiante en el kiosco.
-                  </p>
-                </div>
-
-                <Button 
-                  onClick={handleUpdateLimit}
-                  disabled={isUpdatingLimit}
-                  className="w-full"
-                >
-                  {isUpdatingLimit ? 'Actualizando...' : 'Actualizar Límite'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {/* Modal de Límites de Gasto */}
+          <SpendingLimitsModal
+            open={showLimitModal}
+            onOpenChange={setShowLimitModal}
+            studentId={selectedStudent.id}
+            studentName={selectedStudent.full_name}
+            onSuccess={fetchStudents}
+          />
 
           {/* Modal de Historial de Compras */}
           {selectedStudent && (
@@ -615,6 +648,18 @@ const Index = () => {
               studentId={selectedStudent.id}
               studentName={selectedStudent.full_name}
             />
+          )}
+
+          {/* Modal de Calendario de Almuerzos */}
+          {selectedStudent && (
+            <Dialog open={showCalendarModal} onOpenChange={setShowCalendarModal}>
+              <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+                <LunchCalendarView
+                  studentId={selectedStudent.id}
+                  studentName={selectedStudent.full_name}
+                />
+              </DialogContent>
+            </Dialog>
           )}
 
           {/* Modal de Confirmación LUNCH FAST */}
@@ -729,7 +774,9 @@ const Index = () => {
             </button>
 
             <button
-              onClick={() => setActiveTab('almuerzos')}
+              onClick={() => {
+                setActiveTab('almuerzos');
+              }}
               className={`flex flex-col items-center justify-center py-3 transition-all ${
                 activeTab === 'almuerzos'
                   ? 'text-[#8B4513] bg-[#FFF8E7]'
@@ -766,6 +813,13 @@ const Index = () => {
           </div>
         </div>
       </nav>
+
+      {/* Modal de Onboarding - Cuenta Libre */}
+      <FreeAccountOnboardingModal
+        open={showOnboarding}
+        onAccept={handleOnboardingComplete}
+        parentName={parentName || 'Padre de Familia'}
+      />
     </div>
   );
 };

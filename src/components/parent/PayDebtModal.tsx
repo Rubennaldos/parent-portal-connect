@@ -27,6 +27,7 @@ interface PayDebtModalProps {
   studentName: string;
   studentId: string;
   onPaymentComplete: () => void;
+  selectedTransactionIds?: string[]; // IDs de transacciones seleccionadas
 }
 
 interface Transaction {
@@ -42,7 +43,8 @@ export function PayDebtModal({
   onClose,
   studentName,
   studentId,
-  onPaymentComplete
+  onPaymentComplete,
+  selectedTransactionIds
 }: PayDebtModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -56,29 +58,50 @@ export function PayDebtModal({
     if (isOpen && studentId) {
       fetchDebtData();
     }
-  }, [isOpen, studentId]);
+  }, [isOpen, studentId, selectedTransactionIds]);
 
   const fetchDebtData = async () => {
     try {
       setLoading(true);
       
-      // Obtener transacciones pendientes
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('student_id', studentId)
-        .eq('payment_status', 'pending')
-        .eq('type', 'purchase')
-        .order('created_at', { ascending: false });
+      // Si hay transacciones seleccionadas, solo cargar esas
+      if (selectedTransactionIds && selectedTransactionIds.length > 0) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .in('id', selectedTransactionIds)
+          .eq('student_id', studentId)
+          .eq('payment_status', 'pending')
+          .eq('type', 'purchase')
+          .order('created_at', { ascending: false });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const trans = data || [];
-      setTransactions(trans);
-      
-      // Calcular deuda total
-      const total = trans.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-      setTotalDebt(total);
+        const trans = data || [];
+        setTransactions(trans);
+        
+        // Calcular deuda total
+        const total = trans.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        setTotalDebt(total);
+      } else {
+        // Si no hay selección, cargar todas las transacciones pendientes (comportamiento anterior)
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('student_id', studentId)
+          .eq('payment_status', 'pending')
+          .eq('type', 'purchase')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const trans = data || [];
+        setTransactions(trans);
+        
+        // Calcular deuda total
+        const total = trans.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        setTotalDebt(total);
+      }
 
     } catch (error: any) {
       console.error('Error fetching debt:', error);

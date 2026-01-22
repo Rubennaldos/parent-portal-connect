@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft, GraduationCap } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { CreateSupplyRequestModal } from '@/components/school-admin/CreateSupplyRequestModal';
+import { GradesManagement } from '@/components/school-admin/GradesManagement';
 
 interface SupplyRequest {
   id: string;
@@ -38,18 +39,19 @@ const SchoolAdmin = () => {
     try {
       setLoading(true);
       
-      // Obtener el school_id del usuario
+      // Obtener el school_id y rol del usuario
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('school_id')
+        .select('school_id, role')
         .eq('id', user.id)
         .single();
 
       if (profileError) throw profileError;
       
+      // Admin General puede no tener school_id, es normal
       setUserSchoolId(profileData.school_id);
 
-      // Cargar pedidos de esta sede
+      // Cargar pedidos de esta sede (solo si tiene school_id)
       if (profileData.school_id) {
         const { data: requestsData, error: requestsError } = await supabase
           .from('supply_requests')
@@ -138,10 +140,14 @@ const SchoolAdmin = () => {
 
         {/* Tabs Principales */}
         <Tabs defaultValue="requests" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-white border rounded-xl p-1">
+          <TabsList className="grid w-full grid-cols-4 bg-white border rounded-xl p-1">
             <TabsTrigger value="requests" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
               <ShoppingCart className="h-4 w-4 mr-2" />
               Pedidos
+            </TabsTrigger>
+            <TabsTrigger value="grades" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
+              <GraduationCap className="h-4 w-4 mr-2" />
+              Grados y Salones
             </TabsTrigger>
             <TabsTrigger value="calendar" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
               <Calendar className="h-4 w-4 mr-2" />
@@ -222,6 +228,11 @@ const SchoolAdmin = () => {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Pestaña de Grados y Salones */}
+          <TabsContent value="grades" className="mt-6">
+            <GradesManagement schoolId={userSchoolId} />
           </TabsContent>
 
           {/* Pestaña de Calendario */}

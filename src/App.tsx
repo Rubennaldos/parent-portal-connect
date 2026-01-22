@@ -26,6 +26,7 @@ import Logistics from "./pages/Logistics";
 import SchoolAdmin from "./pages/SchoolAdmin";
 import ParentsManagement from "./components/admin/ParentsManagement";
 import AccessControl from "./pages/AccessControl";
+import CombosPromotions from "./pages/CombosPromotions";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -205,6 +206,16 @@ const App = () => (
               element={
                 <PermissionProtectedRoute moduleCode="admin_sede">
                   <SchoolAdmin />
+                </PermissionProtectedRoute>
+              }
+            />
+            
+            {/* Combos y Promociones - Basado en permisos dinámicos */}
+            <Route
+              path="/combos-promotions"
+              element={
+                <PermissionProtectedRoute moduleCode="promociones">
+                  <CombosPromotions />
                 </PermissionProtectedRoute>
               }
             />

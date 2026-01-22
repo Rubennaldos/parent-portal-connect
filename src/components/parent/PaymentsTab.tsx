@@ -176,11 +176,8 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
 
   const handlePayAll = (studentDebt: StudentDebt) => {
     // Seleccionar todas las transacciones del estudiante
-    setSelectedTransactions(prev => {
-      const newSet = new Set(prev);
-      studentDebt.pending_transactions.forEach(t => newSet.add(t.id));
-      return newSet;
-    });
+    const allTransactionIds = studentDebt.pending_transactions.map(t => t.id);
+    setSelectedTransactions(new Set(allTransactionIds));
     setPaymentAmount(studentDebt.total_debt);
     setSelectedStudentForPayment({ id: studentDebt.student_id, name: studentDebt.student_name });
     setShowPaymentModal(true);
@@ -368,6 +365,7 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
           }}
           studentName={selectedStudentForPayment.name}
           studentId={selectedStudentForPayment.id}
+          selectedTransactionIds={Array.from(selectedTransactions)}
           onPaymentComplete={async () => {
             await fetchDebts();
             setSelectedTransactions(new Set());
