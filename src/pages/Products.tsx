@@ -22,6 +22,7 @@ import { CombosPromotionsManager } from '@/components/products/CombosPromotionsM
 interface Product {
   id: string;
   name: string;
+  description?: string;
   code: string;
   price_cost: number;
   price_sale: number;
@@ -86,6 +87,7 @@ const Products = () => {
   // Form state con useRef para evitar re-renders
   const formRef = useRef({
     name: '',
+    description: '',
     code: '',
     hasCode: true,
     price_cost: '',
@@ -209,6 +211,7 @@ const Products = () => {
   const resetForm = () => {
     formRef.current = {
       name: '',
+      description: '',
       code: '',
       hasCode: true,
       price_cost: '',
@@ -237,6 +240,7 @@ const Products = () => {
   const handleEditProduct = (product: Product) => {
     formRef.current = {
       name: product.name,
+      description: product.description || '',
       code: product.code,
       hasCode: !!product.code,
       price_cost: String(product.price_cost || ''),
@@ -305,6 +309,7 @@ const Products = () => {
 
       const productData = {
         name: f.name,
+        description: f.description || null,
         code: finalCode,
         price: parseFloat(f.price_sale),
         category: finalCategory,
@@ -367,6 +372,15 @@ const Products = () => {
                   placeholder="Ej: Coca Cola 500ml" 
                   autoFocus
                   className="h-14 text-lg mt-2"
+                />
+              </div>
+              <div>
+                <Label className="text-base font-semibold">Descripción</Label>
+                <textarea 
+                  defaultValue={f.description}
+                  onChange={e => { f.description = e.target.value; forceUpdate({}); }}
+                  placeholder="Ej: Gaseosa refrescante de 500ml, ideal para el refrigerio" 
+                  className="w-full h-20 px-3 py-2 text-base border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 mt-2"
                 />
               </div>
               <div>
@@ -952,7 +966,7 @@ const Products = () => {
                       </CardHeader>
                       <CardContent>
                         <div className="text-2xl font-bold text-green-600 mb-2">
-                          S/ {product.price_sale?.toFixed(2) || product.price?.toFixed(2)}
+                          S/ {product.price_sale?.toFixed(2)}
                         </div>
                         {product.has_stock && (
                           <div className="text-sm text-gray-500 mb-2">

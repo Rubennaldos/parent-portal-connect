@@ -227,9 +227,20 @@ const ParentConfiguration = () => {
 
       const { data: parentsData, error: parentsError } = await query.order('full_name');
       
-      if (parentsError) throw parentsError;
+      if (parentsError) {
+        console.error('❌ Error al cargar padres:', parentsError);
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: `Error al cargar padres: ${parentsError.message}`,
+        });
+        throw parentsError;
+      }
+      
+      console.log('📊 Padres encontrados:', parentsData?.length || 0);
       
       if (!parentsData || parentsData.length === 0) {
+        console.log('⚠️ No hay padres en la base de datos');
         setParents([]);
         setLoading(false);
         return;
@@ -645,9 +656,32 @@ const ParentConfiguration = () => {
                 </div>
 
                 {filteredParents.length === 0 && (
-                  <div className="text-center py-12">
-                    <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">No se encontraron padres.</p>
+                  <div className="text-center py-12 bg-amber-50 rounded-xl border-2 border-amber-200">
+                    <Users className="h-16 w-16 text-amber-600 mx-auto mb-4" />
+                    {parents.length === 0 ? (
+                      <>
+                        <p className="text-lg font-bold text-amber-900 mb-2">No hay padres registrados</p>
+                        <p className="text-amber-700 mb-4">
+                          No se encontraron padres en el sistema. Crea el primer padre usando el botón "Nuevo Padre".
+                        </p>
+                        {permissions.canCreateParent && (
+                          <Button 
+                            onClick={() => setShowCreateModal(true)} 
+                            className="bg-[#8B4513] hover:bg-[#6F370F]"
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Crear Primer Padre
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-bold text-amber-900">No se encontraron resultados</p>
+                        <p className="text-amber-700">
+                          No hay padres que coincidan con los filtros aplicados.
+                        </p>
+                      </>
+                    )}
                   </div>
                 )}
               </CardContent>

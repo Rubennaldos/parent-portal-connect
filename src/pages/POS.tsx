@@ -39,7 +39,13 @@ import {
   Receipt,
   Users,
   Maximize2,
-  Gift
+  Gift,
+  CreditCard,
+  QrCode,
+  Smartphone,
+  Building2,
+  Banknote,
+  Loader2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -59,6 +65,7 @@ interface Student {
 interface Product {
   id: string;
   name: string;
+  description?: string;
   price: number;
   category: string;
   image_url?: string | null;
@@ -101,12 +108,16 @@ const POS = () => {
   // Estados de carrito y venta
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [insufficientBalance, setInsufficientBalance] = useState(false);
 
-  // Estados de pago (solo para cliente genérico)
-  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'yape' | 'tarjeta'>('efectivo');
-  const [documentType, setDocumentType] = useState<'ticket' | 'boleta' | 'factura' | null>(null);
+  // Estados de pago mejorados (Cliente Genérico)
+  const [paymentMethod, setPaymentMethod] = useState<string | null>(null); // 'efectivo', 'yape_qr', 'yape_numero', 'plin_qr', 'plin_numero', 'tarjeta', 'transferencia'
+  const [yapeNumber, setYapeNumber] = useState('');
+  const [plinNumber, setPlinNumber] = useState('');
+  const [transactionCode, setTransactionCode] = useState('');
+  const [requiresInvoice, setRequiresInvoice] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false); // NUEVO: confirmación
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   // Estado de ticket generado
   const [showTicketPrint, setShowTicketPrint] = useState(false);
@@ -410,8 +421,11 @@ const POS = () => {
     setProductSearch('');
     setSelectedCategory('todos');
     setShowStudentResults(false);
-    setPaymentMethod('efectivo');
-    setDocumentType('ticket');
+    setPaymentMethod(null);
+    setYapeNumber('');
+    setPlinNumber('');
+    setTransactionCode('');
+    setRequiresInvoice(false);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
 
@@ -505,26 +519,19 @@ const POS = () => {
   };
 
   const handleConfirmCheckout = async (shouldPrint: boolean = false) => {
-    // Si es cliente genérico, mostrar opciones de pago
-    if (clientMode === 'generic') {
-      setShowConfirmDialog(false);
-      setDocumentType(null); // Reset para forzar selección en modal
-      setShowPaymentDialog(true);
-    } else {
-      // Si es estudiante, procesar directo
-      await processCheckout();
-      
-      // Si debe imprimir, hacerlo
-      if (shouldPrint && ticketData) {
-        setTimeout(() => {
-          window.print();
-        }, 300);
-      }
-      
-      // Después de procesar, resetear automáticamente
-      setShowConfirmDialog(false);
-      resetClient();
+    // Procesar directamente (ya no hay segundo modal)
+    await processCheckout();
+    
+    // Si debe imprimir, hacerlo
+    if (shouldPrint && ticketData) {
+      setTimeout(() => {
+        window.print();
+      }, 300);
     }
+      
+    // Después de procesar, resetear automáticamente
+    setShowConfirmDialog(false);
+    resetClient();
   };
 
   const processCheckout = async () => {
@@ -576,7 +583,7 @@ const POS = () => {
         items: cart,
         total: total,
         paymentMethod: clientMode === 'generic' ? paymentMethod : (studentWillPay ? 'efectivo' : 'credito'),
-        documentType: clientMode === 'generic' ? documentType : 'ticket',
+        documentType: clientMode === 'generic' ? (requiresInvoice ? 'factura' : 'ticket') : 'ticket',
         timestamp: new Date(),
         cashierEmail: user?.email || 'No disponible',
       };
@@ -788,7 +795,12 @@ const POS = () => {
   };
 
   const total = getTotal();
-  const insufficientBalance = selectedStudent && !studentWillPay && (selectedStudent.balance < total);
+  
+  // Verificar saldo insuficiente en useEffect
+  useEffect(() => {
+    const insufficient = selectedStudent && !studentWillPay && (selectedStudent.balance < total);
+    setInsufficientBalance(insufficient);
+  }, [selectedStudent, studentWillPay, total]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
@@ -862,13 +874,13 @@ const POS = () => {
                 <p className="text-sm text-gray-600">Venta al contado (Efectivo/Yape/Tarjeta)</p>
               </button>
 
-              {/* Estudiante */}
+              {/* Crédito */}
               <button
                 onClick={selectStudentMode}
                 className="p-8 border-2 border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
               >
                 <User className="h-16 w-16 mx-auto mb-4 text-gray-400 group-hover:text-blue-600" />
-                <h3 className="text-xl font-bold mb-2">Estudiante</h3>
+                <h3 className="text-xl font-bold mb-2">Crédito</h3>
                 <p className="text-sm text-gray-600">Compra a crédito (Descuenta de saldo)</p>
               </button>
             </div>
@@ -1018,11 +1030,18 @@ const POS = () => {
                     <button
                       key={product.id}
                       onClick={() => addToCart(product)}
-                      className="group bg-white border-2 rounded-2xl overflow-hidden transition-all hover:shadow-xl hover:border-emerald-500 hover:-translate-y-1 active:scale-95 p-4 min-h-[140px] flex flex-col justify-center"
+                      className="group bg-white border-2 rounded-2xl overflow-hidden transition-all hover:shadow-xl hover:border-emerald-500 hover:-translate-y-1 active:scale-95 p-4 min-h-[160px] flex flex-col justify-between"
                     >
-                      <h3 className="font-black text-xl mb-3 line-clamp-2 leading-tight">
-                        {product.name}
-                      </h3>
+                      <div>
+                        <h3 className="font-black text-xl mb-2 line-clamp-1 leading-tight">
+                          {product.name}
+                        </h3>
+                        {product.description && (
+                          <p className="text-sm text-gray-500 mb-3 line-clamp-2">
+                            {product.description}
+                          </p>
+                        )}
+                      </div>
                       <p className="text-lg font-semibold text-emerald-600">
                         S/ {product.price.toFixed(2)}
                       </p>
@@ -1252,193 +1271,255 @@ const POS = () => {
         </div>
       )}
 
-      {/* MODAL DE CONFIRMACIÓN (ANTES DE COBRAR) */}
+      {/* MODAL DE MEDIOS DE PAGO (CLIENTE GENÉRICO) */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-2xl flex items-center gap-2">
-              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
-              Confirmar Compra
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <CreditCard className="h-7 w-7 text-emerald-600" />
+              Selecciona Método de Pago
             </DialogTitle>
           </DialogHeader>
           
-          <div className="space-y-4">
-            {/* Info del Cliente */}
-            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
-              <p className="text-sm text-blue-600 font-semibold mb-1">CLIENTE</p>
-              <p className="text-xl font-bold text-blue-900">
-                {clientMode === 'generic' 
-                  ? 'CLIENTE GENÉRICO' 
-                  : selectedStudent?.full_name}
-              </p>
-              {selectedStudent && (
-                <p className="text-sm text-blue-700 mt-1">
-                  {selectedStudent.grade} - {selectedStudent.section}
-                </p>
-              )}
-            </div>
-
-            {/* Detalle de Productos */}
-            <div className="border-2 border-gray-200 rounded-xl p-4">
-              <p className="text-sm text-gray-600 font-semibold mb-3">DETALLE DE COMPRA</p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {cart.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-0">
-                    <div className="flex-1">
-                      <p className="font-semibold text-sm">{item.product.name}</p>
-                      <p className="text-xs text-gray-500">
-                        {item.quantity} x S/ {item.product.price.toFixed(2)}
-                      </p>
-                    </div>
-                    <p className="font-bold text-emerald-600">
-                      S/ {(item.product.price * item.quantity).toFixed(2)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Total */}
-            <div className="bg-slate-900 text-white rounded-xl p-4">
+          <div className="space-y-6">
+            {/* Resumen de Compra */}
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl p-6">
               <div className="flex justify-between items-center">
-                <span className="text-lg font-semibold">TOTAL A PAGAR</span>
-                <span className="text-3xl font-black">S/ {getTotal().toFixed(2)}</span>
+                <div>
+                  <p className="text-sm text-gray-300 uppercase font-semibold mb-1">Total a Cobrar</p>
+                  <p className="text-5xl font-black">S/ {getTotal().toFixed(2)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-400">{cart.length} productos</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">
+                    {clientMode === 'generic' ? 'Cliente Genérico' : selectedStudent?.full_name}
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-gray-400 mt-2">{cart.length} productos</p>
             </div>
 
-            {/* Saldo (si es estudiante) */}
-            {selectedStudent && (
-              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="text-sm text-emerald-700 font-bold">Saldo Digital</p>
-                    <p className="text-xl font-bold text-emerald-900">
-                      S/ {selectedStudent.balance.toFixed(2)}
-                    </p>
+            {/* Medios de Pago - Botones Grandes */}
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2">💳 Medios de Pago</p>
+              
+              <div className="grid grid-cols-2 gap-3">
+                {/* Efectivo */}
+                <button
+                  onClick={() => setPaymentMethod('efectivo')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'efectivo'
+                      ? 'border-emerald-500 bg-emerald-50 shadow-emerald-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Banknote className={`h-12 w-12 ${paymentMethod === 'efectivo' ? 'text-emerald-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'efectivo' ? 'text-emerald-700' : 'text-gray-700'}`}>
+                      Efectivo
+                    </span>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-emerald-700 font-bold">Nuevo Saldo</p>
-                    <p className="text-xl font-bold text-emerald-900">
-                      S/ {(selectedStudent.balance - (studentWillPay ? Math.max(0, getTotal() - cashAmount) : getTotal())).toFixed(2)}
-                    </p>
+                </button>
+
+                {/* Yape QR */}
+                <button
+                  onClick={() => setPaymentMethod('yape_qr')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'yape_qr'
+                      ? 'border-purple-500 bg-purple-50 shadow-purple-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <QrCode className={`h-12 w-12 ${paymentMethod === 'yape_qr' ? 'text-purple-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'yape_qr' ? 'text-purple-700' : 'text-gray-700'}`}>
+                      Yape (QR)
+                    </span>
                   </div>
-                </div>
-                {studentWillPay && (
-                  <div className="mt-2 pt-2 border-t border-emerald-200 space-y-1">
-                    <div className="flex justify-between text-xs font-bold text-amber-700">
-                      <span>PAGO EN EFECTIVO (ABONO):</span>
-                      <span>S/ {cashAmount.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs font-bold text-emerald-700">
-                      <span>COBRO DE SALDO DIGITAL:</span>
-                      <span>S/ {Math.max(0, getTotal() - cashAmount).toFixed(2)}</span>
-                    </div>
+                </button>
+
+                {/* Yape Número */}
+                <button
+                  onClick={() => setPaymentMethod('yape_numero')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'yape_numero'
+                      ? 'border-purple-500 bg-purple-50 shadow-purple-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Smartphone className={`h-12 w-12 ${paymentMethod === 'yape_numero' ? 'text-purple-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'yape_numero' ? 'text-purple-700' : 'text-gray-700'}`}>
+                      Yape (Número)
+                    </span>
                   </div>
-                )}
+                </button>
+
+                {/* Plin QR */}
+                <button
+                  onClick={() => setPaymentMethod('plin_qr')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'plin_qr'
+                      ? 'border-pink-500 bg-pink-50 shadow-pink-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <QrCode className={`h-12 w-12 ${paymentMethod === 'plin_qr' ? 'text-pink-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'plin_qr' ? 'text-pink-700' : 'text-gray-700'}`}>
+                      Plin (QR)
+                    </span>
+                  </div>
+                </button>
+
+                {/* Plin Número */}
+                <button
+                  onClick={() => setPaymentMethod('plin_numero')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'plin_numero'
+                      ? 'border-pink-500 bg-pink-50 shadow-pink-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Smartphone className={`h-12 w-12 ${paymentMethod === 'plin_numero' ? 'text-pink-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'plin_numero' ? 'text-pink-700' : 'text-gray-700'}`}>
+                      Plin (Número)
+                    </span>
+                  </div>
+                </button>
+
+                {/* Tarjeta */}
+                <button
+                  onClick={() => setPaymentMethod('tarjeta')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'tarjeta'
+                      ? 'border-blue-500 bg-blue-50 shadow-blue-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <CreditCard className={`h-12 w-12 ${paymentMethod === 'tarjeta' ? 'text-blue-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'tarjeta' ? 'text-blue-700' : 'text-gray-700'}`}>
+                      Tarjeta
+                    </span>
+                    <span className="text-xs text-gray-500">Visa/Mastercard</span>
+                  </div>
+                </button>
+
+                {/* Transferencia Bancaria */}
+                <button
+                  onClick={() => setPaymentMethod('transferencia')}
+                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
+                    paymentMethod === 'transferencia'
+                      ? 'border-cyan-500 bg-cyan-50 shadow-cyan-200'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Building2 className={`h-12 w-12 ${paymentMethod === 'transferencia' ? 'text-cyan-600' : 'text-gray-400'}`} />
+                    <span className={`text-lg font-bold ${paymentMethod === 'transferencia' ? 'text-cyan-700' : 'text-gray-700'}`}>
+                      Transferencia
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Campos adicionales según método seleccionado */}
+            {paymentMethod === 'yape_numero' && (
+              <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
+                <Label className="text-sm font-bold text-purple-900 mb-2 block">Número de Celular (Yape)</Label>
+                <Input
+                  type="text"
+                  value={yapeNumber}
+                  onChange={(e) => setYapeNumber(e.target.value)}
+                  placeholder="999 999 999"
+                  className="h-14 text-lg font-semibold"
+                  maxLength={9}
+                />
               </div>
             )}
 
-            {/* Botones */}
+            {paymentMethod === 'plin_numero' && (
+              <div className="bg-pink-50 border-2 border-pink-200 rounded-xl p-4">
+                <Label className="text-sm font-bold text-pink-900 mb-2 block">Número de Celular (Plin)</Label>
+                <Input
+                  type="text"
+                  value={plinNumber}
+                  onChange={(e) => setPlinNumber(e.target.value)}
+                  placeholder="999 999 999"
+                  className="h-14 text-lg font-semibold"
+                  maxLength={9}
+                />
+              </div>
+            )}
+
+            {(paymentMethod === 'transferencia' || paymentMethod === 'yape_qr' || paymentMethod === 'plin_qr') && (
+              <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
+                <Label className="text-sm font-bold text-amber-900 mb-2 block">Código de Operación</Label>
+                <Input
+                  type="text"
+                  value={transactionCode}
+                  onChange={(e) => setTransactionCode(e.target.value)}
+                  placeholder="Ej: OP12345678"
+                  className="h-14 text-lg font-semibold uppercase"
+                />
+                <p className="text-xs text-amber-700 mt-2">
+                  Ingresa el código de la transacción para validar el pago
+                </p>
+              </div>
+            )}
+
+            {/* Opción de Factura */}
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-base font-bold text-blue-900">¿Requiere Factura?</Label>
+                  <p className="text-xs text-blue-600 mt-1">Marcar solo si el cliente solicita factura</p>
+                </div>
+                <Switch
+                  checked={requiresInvoice}
+                  onCheckedChange={setRequiresInvoice}
+                  className="data-[state=checked]:bg-blue-600"
+                />
+              </div>
+            </div>
+
+            {/* Botones de Acción */}
             <div className="space-y-3">
-              {/* Botón principal: Confirmar y Continuar */}
               <Button
                 onClick={() => handleConfirmCheckout(false)}
-                disabled={isProcessing}
-                className="w-full h-14 text-xl font-bold bg-emerald-500 hover:bg-emerald-600 text-white"
+                disabled={!paymentMethod || isProcessing}
+                className="w-full h-16 text-xl font-black bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300"
               >
-                {isProcessing ? 'PROCESANDO...' : '✅ Confirmar y Continuar'}
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="h-6 w-6 mr-2 animate-spin" />
+                    PROCESANDO...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-6 w-6 mr-2" />
+                    CONFIRMAR COBRO
+                  </>
+                )}
               </Button>
-              
-              {/* Botón secundario: Confirmar e Imprimir */}
-              <Button
-                onClick={() => handleConfirmCheckout(true)}
-                disabled={isProcessing}
-                className="w-full h-14 text-xl font-bold bg-blue-500 hover:bg-blue-600 text-white"
-              >
-                {isProcessing ? 'PROCESANDO...' : '🖨️ Confirmar e Imprimir'}
-              </Button>
-              
-              {/* Botón cancelar */}
+
               <Button
                 variant="outline"
-                onClick={() => setShowConfirmDialog(false)}
-                className="w-full h-10 text-sm"
+                onClick={() => {
+                  setShowConfirmDialog(false);
+                  setPaymentMethod(null);
+                  setYapeNumber('');
+                  setPlinNumber('');
+                  setTransactionCode('');
+                  setRequiresInvoice(false);
+                }}
+                className="w-full h-12 text-base"
               >
                 Cancelar
               </Button>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL DE PAGO (Solo Cliente Genérico) */}
-      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Opciones de Pago</DialogTitle>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            <div>
-              <Label className="mb-2 block">Método de Pago</Label>
-              <Select value={paymentMethod} onValueChange={(v: any) => setPaymentMethod(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="efectivo">Efectivo</SelectItem>
-                  <SelectItem value="yape">Yape/Plin</SelectItem>
-                  <SelectItem value="tarjeta">Tarjeta</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="mb-2 block">Tipo de Documento</Label>
-              <Select value={documentType || ''} onValueChange={(v: any) => setDocumentType(v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecciona un documento" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ticket">Ticket</SelectItem>
-                  <SelectItem value="boleta" disabled>
-                    <div className="flex items-center gap-2">
-                      <span>Boleta</span>
-                      <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300">
-                        Requiere SUNAT
-                      </Badge>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="factura" disabled>
-                    <div className="flex items-center gap-2">
-                      <span>Factura</span>
-                      <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300">
-                        Requiere SUNAT
-                      </Badge>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              {!documentType && (
-                <p className="text-xs text-red-500 mt-1">⚠️ Debe seleccionar un tipo de documento</p>
-              )}
-              {documentType && documentType !== 'ticket' && (
-                <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded-lg">
-                  <p className="text-xs text-amber-800">
-                    ⚠️ <strong>Boletas y Facturas</strong> requieren integración con SUNAT. Por ahora solo está disponible <strong>Ticket</strong>.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <Button
-              onClick={processCheckout}
-              disabled={isProcessing || !documentType}
-              className="w-full h-14 text-xl font-bold"
-            >
-              {isProcessing ? 'Procesando...' : 'Confirmar Pago'}
-            </Button>
           </div>
         </DialogContent>
       </Dialog>
