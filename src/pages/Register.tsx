@@ -47,14 +47,14 @@ export default function Register() {
   const [existingUserEmail, setExistingUserEmail] = useState('');
   const [detectedSchoolName, setDetectedSchoolName] = useState<string>('');
 
-  // Si ya está logueado (OAuth o manual), redirigir al dashboard
-  // El sistema detectará automáticamente si necesita onboarding
-  useEffect(() => {
-    if (user) {
-      console.log('✅ Usuario autenticado, redirigiendo al dashboard');
-      navigate('/', { replace: true });
-    }
-  }, [user, navigate]);
+  // ✅ NO REDIRIGIR - El link /register debe SIEMPRE mostrar el formulario
+  // Si el usuario ya está registrado, puede hacer logout o el sistema lo manejará
+  // useEffect(() => {
+  //   if (user) {
+  //     console.log('✅ Usuario autenticado, redirigiendo al dashboard');
+  //     navigate('/', { replace: true });
+  //   }
+  // }, [user, navigate]);
 
   // Cargar colegios
   useEffect(() => {
