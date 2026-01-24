@@ -98,12 +98,12 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
       return;
     }
 
-    // Validar Responsable 2 (todos obligatorios excepto dirección)
-    if (!firstName2 || !lastName2 || !email2 || !documentNumber2 || !phone2) {
+    // Validar Responsable 2 (email y dirección son opcionales)
+    if (!firstName2 || !lastName2 || !documentNumber2 || !phone2) {
       toast({ 
         variant: 'destructive', 
         title: 'Responsable 2 incompleto', 
-        description: 'Por favor, completa los datos del segundo responsable (la dirección es opcional).' 
+        description: 'Por favor, completa los datos obligatorios del segundo responsable (email y dirección son opcionales).' 
       });
       setIsLoading(false);
       return;
@@ -139,7 +139,7 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
           
           // Responsable 2
           full_name_2: fullName2,
-          email_2: email2,
+          email_2: email2 || null, // Opcional
           dni_2: documentNumber2,
           phone_2: phone2,
           address_2: address2 || null, // Opcional
@@ -347,15 +347,14 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
 
             <div>
               <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <Mail className="h-4 w-4" /> Email *
+                <Mail className="h-4 w-4" /> Email <span className="text-gray-400">(Opcional)</span>
               </Label>
               <Input 
                 type="email"
                 value={email2}
                 onChange={(e) => setEmail2(e.target.value)}
-                placeholder="Ej: maria.lopez@gmail.com"
+                placeholder="Ej: maria.lopez@gmail.com (opcional)"
                 className="h-12 border-2 focus:border-blue-500 font-medium"
-                required
               />
             </div>
 
