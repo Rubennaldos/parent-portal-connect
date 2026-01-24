@@ -11,19 +11,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Eye, EyeOff, GraduationCap, CheckCircle2, UserPlus, ArrowRight } from 'lucide-react';
 import SplashScreen from '@/components/SplashScreen';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { supabase } from '@/lib/supabase';
 import { Separator } from '@/components/ui/separator';
 import { APP_CONFIG } from '@/config/app.config';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const authSchema = z.object({
   email: z.string().trim().email({ message: 'Email inválido' }).max(255, { message: 'Email muy largo' }),
   password: z.string().min(6, { message: 'La contraseña debe tener al menos 6 caracteres' }).max(72, { message: 'Contraseña muy larga' }),
   confirmPassword: z.string().optional(),
 }).refine((data) => {
-  // Si confirmPassword tiene valor, debe coincidir con password
   if (data.confirmPassword) {
     return data.password === data.confirmPassword;
   }
@@ -35,136 +36,176 @@ const authSchema = z.object({
 
 type AuthFormValues = z.infer<typeof authSchema>;
 
+interface School {
+  id: string;
+  name: string;
+  code: string;
+}
+
+interface Student {
+  id: string;
+  full_name: string;
+  grade: string;
+  section: string;
+}
+
 export default function Auth() {
   const location = useLocation();
-  
-  // Detectar modo recovery INMEDIATAMENTE antes de cualquier render
-  const hash = window.location.hash;
-  const params = new URLSearchParams(window.location.search);
-  const isRecoveryDetected = hash.includes('type=recovery') || params.get('type') === 'recovery';
-  
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const { signIn, user, loading: authLoading } = useAuth();
+  const { role, loading: roleLoading, getDefaultRoute } = useRole();
+
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [justLoggedIn, setJustLoggedIn] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
-  const [isResetMode, setIsResetMode] = useState(isRecoveryDetected);
-  const { signIn, user, loading } = useAuth();
-  const { role, loading: roleLoading, getDefaultRoute } = useRole();
-  const navigate = useNavigate();
-  const { toast } = useToast();
+  const [isResetMode, setIsResetMode] = useState(false);
+  
+  // ONBOARDING INLINE
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<'school' | 'students'>('school');
+  const [schools, setSchools] = useState<School[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [students, setStudents] = useState<Student[]>([
+    { id: crypto.randomUUID(), full_name: '', grade: '', section: '' }
+  ]);
 
-  // Detectar modo recuperación desde la URL o el hash
   useEffect(() => {
     const hash = window.location.hash;
     const params = new URLSearchParams(window.location.search);
-    
-    // El hash puede contener parámetros después del # (como en GitHub Pages)
-    // Ejemplo: #access_token=...&type=recovery
-    const hashParams = new URLSearchParams(hash.substring(hash.indexOf('?') > -1 ? hash.indexOf('?') : hash.indexOf('&') > -1 ? hash.indexOf('&') - 1 : 0));
-    
     if (hash.includes('type=recovery') || params.get('type') === 'recovery') {
-      console.log('🔐 Modo recuperación de contraseña detectado');
       setIsResetMode(true);
     }
   }, []);
 
-  const isOAuthCallback = window.location.hash.includes('access_token');
-  
-  // DEBUG: Log inicial para verificar que el código nuevo se está ejecutando
-  console.log(`🔍 Auth.tsx - VERSION: ${APP_CONFIG.fullVersion}`);
-  console.log('🔍 Auth.tsx - URL completa:', window.location.href);
-  console.log('🔍 Auth.tsx - Hash:', window.location.hash);
-  console.log('🔍 Auth.tsx - isOAuthCallback:', isOAuthCallback);
-  console.log('🔍 Auth.tsx - user:', user);
-  console.log('🔍 Auth.tsx - role:', role);
+  useEffect(() => {
+    if (isOnboarding) {
+      const fetchSchools = async () => {
+        const { data } = await supabase.from('schools').select('id, name, code').eq('is_active', true).order('name');
+        setSchools(data || []);
+      };
+      fetchSchools();
+    }
+  }, [isOnboarding]);
+
+  useEffect(() => {
+    if (authLoading || roleLoading || isResetMode) return;
+
+    if (user && role) {
+      if (role === 'parent') {
+        const checkOnboarding = async () => {
+          const { data: profile } = await supabase
+            .from('parent_profiles')
+            .select('onboarding_completed')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          if (profile && !profile.onboarding_completed) {
+            setIsOnboarding(true);
+            setIsLoading(false);
+          } else {
+            navigate('/', { replace: true });
+          }
+        };
+        checkOnboarding();
+      } else {
+        navigate(getDefaultRoute(), { replace: true });
+      }
+    }
+  }, [user, role, authLoading, roleLoading, isResetMode, navigate, getDefaultRoute]);
 
   const form = useForm<AuthFormValues>({
     resolver: zodResolver(authSchema),
-    defaultValues: {
-      email: location.state?.email || '', // Pre-llenar email si viene del modal
-      password: '',
-    },
+    defaultValues: { email: '', password: '' },
   });
 
-  // Redirigir si ya estaba autenticado (incluyendo OAuth)
-  useEffect(() => {
-    // PRIORIDAD MÁXIMA: Si estamos en modo recovery, NO redirigir NUNCA
-    if (isResetMode) {
-      console.log('🔐 Modo recovery activo - BLOQUEANDO toda redirección');
-      return;
-    }
-    
-    if (!loading && !roleLoading && user && role) {
-      // Si viene desde OAuth, redirigir inmediatamente
-      if (isOAuthCallback && !isResetMode) {
-        console.log('OAuth callback detected, redirecting to:', getDefaultRoute());
-        navigate(getDefaultRoute(), { replace: true });
-        return;
-      }
-      
-      // Si el usuario está autenticado y no está en proceso de login manual
-      if (!justLoggedIn && !isResetMode) {
-        navigate(getDefaultRoute(), { replace: true });
-      }
-    }
-  }, [user, loading, roleLoading, role, navigate, getDefaultRoute, justLoggedIn, isOAuthCallback, isResetMode]);
-
-  // Validar después del login
-  useEffect(() => {
-    // NO redirigir si estamos en modo recovery
-    if (isResetMode) {
-      return;
-    }
-    
-    if (justLoggedIn && !roleLoading && role) {
-      // Login exitoso -> redirigir automáticamente según el rol real en `profiles.role`
-      toast({
-        title: 'Bienvenido',
-        description: 'Has iniciado sesión correctamente.',
-      });
-      navigate(getDefaultRoute(), { replace: true });
-      setIsLoading(false);
-      setJustLoggedIn(false);
-    }
-  }, [justLoggedIn, roleLoading, role, getDefaultRoute, navigate, toast, isResetMode]);
-
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
-    // ... (código existente)
+    try {
+      setIsLoading(true);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: provider,
+        options: {
+          redirectTo: `${window.location.origin}/auth`,
+          queryParams: { prompt: 'select_account' }
+        },
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      setIsLoading(false);
+    }
   };
 
-  const handleForgotPassword = async () => {
-    const email = form.getValues('email');
-    if (!email) {
-      toast({
-        variant: 'destructive',
-        title: 'Email requerido',
-        description: 'Por favor, ingresa tu email para recuperar la contraseña.',
-      });
+  const handleSchoolNext = async () => {
+    if (!selectedSchoolId || !acceptedTerms) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Selecciona sede y acepta términos' });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await supabase.from('parent_profiles').update({ school_id: selectedSchoolId }).eq('user_id', user?.id);
+      setOnboardingStep('students');
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Error al guardar sede' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleOnboardingFinish = async () => {
+    const invalid = students.find(s => !s.full_name || !s.grade || !s.section);
+    if (invalid) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Completa todos los campos' });
       return;
     }
 
     setIsLoading(true);
     try {
-      // URL limpia sin hash (BrowserRouter)
-      const redirectTo = `${window.location.origin}/auth?type=recovery`;
+      const { data: inserted, error: sErr } = await supabase.from('students').insert(
+        students.map(s => ({ full_name: s.full_name, grade: s.grade, section: s.section, school_id: selectedSchoolId }))
+      ).select();
       
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectTo,
-      });
+      if (sErr) throw sErr;
 
+      await supabase.from('student_relationships').insert(
+        inserted.map(s => ({ parent_id: user?.id, student_id: s.id, relationship_type: 'padre/madre' }))
+      );
+
+      await supabase.from('parent_profiles').update({ onboarding_completed: true }).eq('user_id', user?.id);
+      
+      toast({ title: '¡Bienvenido!', description: 'Registro completado con éxito' });
+      navigate('/', { replace: true });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onSubmit = async (values: AuthFormValues) => {
+    setIsLoading(true);
+    const { error } = await signIn(values.email, values.password);
+    if (error) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Credenciales inválidas' });
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const email = form.getValues('email');
+    if (!email) {
+      toast({ variant: 'destructive', title: 'Email requerido', description: 'Ingresa tu email.' });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth?type=recovery` });
       if (error) throw error;
-
-      toast({
-        title: 'Correo enviado',
-        description: 'Revisa tu bandeja de entrada para restablecer tu contraseña.',
-      });
+      toast({ title: 'Correo enviado', description: 'Revisa tu bandeja de entrada.' });
     } catch (err: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: err.message || 'No se pudo enviar el correo de recuperación.',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
     } finally {
       setIsLoading(false);
     }
@@ -173,334 +214,197 @@ export default function Auth() {
   const handleUpdatePassword = async () => {
     const password = form.getValues('password');
     const confirmPassword = form.getValues('confirmPassword');
-    
-    if (password.length < 6) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'La contraseña debe tener al menos 6 caracteres.',
-      });
+    if (password.length < 6 || password !== confirmPassword) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Verifica los datos.' });
       return;
     }
-    
-    if (password !== confirmPassword) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Las contraseñas no coinciden.',
-      });
-      return;
-    }
-
     setIsLoading(true);
     try {
-      // Verificar que tengamos una sesión activa
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        throw new Error('La sesión ha expirado. Por favor, solicita un nuevo correo de recuperación.');
-      }
-
-      const { error } = await supabase.auth.updateUser({
-        password: password,
-      });
-
+      const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-
-      // Cerrar sesión después de cambiar la contraseña
       await supabase.auth.signOut();
-
-      toast({
-        title: '✅ Contraseña actualizada',
-        description: 'Ya puedes iniciar sesión con tu nueva contraseña.',
-      });
-      
-      // Limpiar URL y volver al login (sin hash)
+      toast({ title: '✅ Actualizada', description: 'Inicia sesión con tu nueva contraseña.' });
       setIsResetMode(false);
       window.location.href = window.location.origin + '/auth';
     } catch (err: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: err.message || 'No se pudo actualizar la contraseña.',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
     } finally {
       setIsLoading(false);
     }
   };
 
-  const onSubmit = async (values: AuthFormValues) => {
-    setIsLoading(true);
-    try {
-      const { error } = await signIn(values.email, values.password);
-      if (error) {
-        let message = 'Error al iniciar sesión';
-        if (error.message.includes('Invalid login credentials')) {
-          message = 'Credenciales inválidas. Verifica tu email y contraseña.';
-        } else if (error.message.includes('Email not confirmed')) {
-          message = 'Por favor confirma tu email antes de iniciar sesión.';
-        }
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: message,
-        });
-        setIsLoading(false);
-      } else {
-        // Login exitoso, marcar para validación
-        setJustLoggedIn(true);
-        // El useEffect se encargará de validar y redirigir
-      }
-    } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Error inesperado al iniciar sesión',
-      });
-      setIsLoading(false);
-    }
-  };
-
-  // Splash Screen
-  if (showSplash) {
-    return <SplashScreen onComplete={() => setShowSplash(false)} />;
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  if (showSplash) return <SplashScreen onComplete={() => setShowSplash(false)} />;
+  if (authLoading && !isOnboarding) return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-brand-cream via-background to-brand-teal-light">
-      {/* Header con logo */}
       <header className="w-full pt-12 pb-0 px-4 flex justify-center">
-        <img 
-          src={limaCafeLogo} 
-          alt="Lima Café 28" 
-          className="h-24 w-auto object-contain mix-blend-multiply"
-        />
+        <img src={limaCafeLogo} alt="Logo" className="h-24 w-auto object-contain mix-blend-multiply" />
       </header>
 
-      {/* Contenido principal */}
       <main className="flex-1 flex items-start justify-center p-4 pt-2 pb-12">
-        <Card className="w-full max-w-md shadow-xl border-border/30 bg-card/95 backdrop-blur-sm">
-          <CardHeader className="text-center space-y-2 pb-4">
-            <CardTitle className="text-2xl font-semibold text-foreground">
-              {isResetMode ? 'Nueva Contraseña' : 'Portal de Acceso'}
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {isResetMode 
-                ? 'Escribe tu nueva contraseña de acceso' 
-                : 'Sistema de Gestión Lima Café 28'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* Botones de Login Social - Solo mostrar si NO estamos en reset mode */}
-            {!isResetMode && (
-              <div className="space-y-3 mb-6">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => handleSocialLogin('google')}
-                  disabled={isLoading}
-                >
-                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                    />
-                  </svg>
-                  Continuar con Google
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  disabled={true}
-                >
-                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M11.4 24H0V12.6L11.4 0v24zM24 24H12.6V12.6L24 0v24z"
-                    />
-                  </svg>
-                  Continuar con Microsoft (Próximamente)
-                </Button>
-
-                <div className="relative my-6">
-                  <Separator />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="bg-card px-2 text-xs text-muted-foreground">
-                      O continúa con email
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <Card className="w-full max-w-md shadow-xl border-border/30 bg-card/95 backdrop-blur-sm overflow-hidden">
+          
+          {!isOnboarding && (
+            <>
+              <CardHeader className="text-center space-y-2 pb-4">
+                <CardTitle className="text-2xl font-bold text-foreground">
+                  {isResetMode ? 'Nueva Contraseña' : 'Bienvenido'}
+                </CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  {isResetMode ? 'Escribe tu nueva contraseña' : 'Ingresa o crea tu cuenta en segundos'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 {!isResetMode && (
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-foreground">Email</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="correo@ejemplo.com"
-                            autoComplete="email"
-                            className="bg-background/50 border-border focus:border-primary"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center justify-between">
-                        <FormLabel className="text-foreground">
-                          {isResetMode ? 'Nueva Contraseña' : 'Contraseña'}
-                        </FormLabel>
-                        {!isResetMode && (
-                          <button
-                            type="button"
-                            onClick={handleForgotPassword}
-                            className="text-xs text-primary hover:underline font-medium"
-                            disabled={isLoading}
-                          >
-                            ¿Olvidaste tu contraseña?
-                          </button>
-                        )}
+                  <>
+                    <Button 
+                      variant="outline" 
+                      className="w-full h-14 text-lg font-bold shadow-sm hover:border-blue-500 transition-all border-2"
+                      onClick={() => handleSocialLogin('google')}
+                      disabled={isLoading}
+                    >
+                      <svg className="mr-3 h-5 w-5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                      </svg>
+                      Continuar con Google
+                    </Button>
+                    <div className="relative my-6">
+                      <Separator />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="bg-card px-3 text-xs text-muted-foreground font-medium uppercase tracking-wider">o con email</span>
                       </div>
-                      <FormControl>
-                        <div className="relative">
-                          <Input
-                            type={showPassword ? "text" : "password"}
-                            placeholder="••••••••"
-                            autoComplete="current-password"
-                            className="bg-background/50 border-border focus:border-primary pr-10"
-                            {...field}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            {showPassword ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                {isResetMode && (
-                  <FormField
-                    control={form.control}
-                    name="confirmPassword"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-foreground">Confirmar Contraseña</FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Input
-                              type={showConfirmPassword ? "text" : "password"}
-                              placeholder="Confirma tu contraseña"
-                              autoComplete="new-password"
-                              className="bg-background/50 border-border focus:border-primary pr-10"
-                              {...field}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              {showConfirmPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
+                    </div>
+                  </>
+                )}
+
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    {!isResetMode && (
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl><Input placeholder="tu@email.com" {...field} className="h-12" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     )}
-                  />
-                )}
-                
-                <Button 
-                  type={isResetMode ? "button" : "submit"}
-                  onClick={isResetMode ? handleUpdatePassword : undefined}
-                  className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium" 
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {isResetMode ? 'Actualizando...' : 'Iniciando sesión...'}
-                    </>
-                  ) : (
-                    isResetMode ? 'Cambiar Contraseña' : 'Iniciar Sesión'
-                  )}
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <div className="flex justify-between items-center">
+                            <FormLabel>{isResetMode ? 'Nueva Contraseña' : 'Contraseña'}</FormLabel>
+                            {!isResetMode && (
+                              <button type="button" onClick={handleForgotPassword} className="text-xs text-primary hover:underline font-bold" disabled={isLoading}>¿La olvidaste?</button>
+                            )}
+                          </div>
+                          <FormControl>
+                            <div className="relative">
+                              <Input type={showPassword ? "text" : "password"} {...field} className="h-12 pr-10" />
+                              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-4 text-muted-foreground">
+                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                              </button>
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {isResetMode && (
+                      <FormField
+                        control={form.control}
+                        name="confirmPassword"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Confirmar Contraseña</FormLabel>
+                            <FormControl><Input type="password" {...field} className="h-12" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                    <Button type={isResetMode ? "button" : "submit"} onClick={isResetMode ? handleUpdatePassword : undefined} className="w-full h-12 text-lg font-bold" disabled={isLoading}>
+                      {isLoading ? <Loader2 className="animate-spin" /> : (isResetMode ? 'Cambiar Contraseña' : 'Continuar')}
+                    </Button>
+                  </form>
+                </Form>
+              </CardContent>
+            </>
+          )}
+
+          {isOnboarding && onboardingStep === 'school' && (
+            <>
+              <CardHeader className="bg-emerald-600 text-white text-center pb-6">
+                <div className="flex justify-center mb-2"><CheckCircle2 size={48} /></div>
+                <CardTitle className="text-2xl font-bold">¡Bienvenido!</CardTitle>
+                <CardDescription className="text-emerald-50">Solo un paso más para completar tu cuenta</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-6">
+                <div>
+                  <Label className="text-base font-bold mb-2 block text-gray-700">Selecciona tu Colegio/Sede</Label>
+                  <Select value={selectedSchoolId} onValueChange={setSelectedSchoolId}>
+                    <SelectTrigger className="h-14 text-base border-2 focus:ring-emerald-500"><SelectValue placeholder="Busca tu sede..." /></SelectTrigger>
+                    <SelectContent>
+                      {schools.map(s => <SelectItem key={s.id} value={s.id} className="text-base">{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-start gap-3 p-4 bg-emerald-50 border-2 border-emerald-100 rounded-xl">
+                  <Checkbox id="terms" checked={acceptedTerms} onCheckedChange={(c) => setAcceptedTerms(!!c)} className="mt-1 data-[state=checked]:bg-emerald-600" />
+                  <label htmlFor="terms" className="text-sm text-emerald-900 leading-tight cursor-pointer">
+                    Acepto los <b>Términos y Condiciones</b> y autorizo el tratamiento de mis datos personales según la Ley N° 29733.
+                  </label>
+                </div>
+                <Button onClick={handleSchoolNext} className="w-full h-14 text-lg font-bold bg-emerald-600 hover:bg-emerald-700" disabled={isLoading}>
+                  {isLoading ? <Loader2 className="animate-spin" /> : 'Continuar'}
                 </Button>
-                
-                {isResetMode && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="w-full text-xs text-muted-foreground"
-                    onClick={() => setIsResetMode(false)}
-                  >
-                    Volver al inicio de sesión
-                  </Button>
-                )}
-              </form>
-            </Form>
-          </CardContent>
+              </CardContent>
+            </>
+          )}
+
+          {isOnboarding && onboardingStep === 'students' && (
+            <>
+              <CardHeader className="bg-orange-500 text-white text-center pb-6">
+                <div className="flex justify-center mb-2"><UserPlus size={48} /></div>
+                <CardTitle className="text-2xl font-bold">Agrega a tus Hijos</CardTitle>
+                <CardDescription className="text-orange-50">Ingresa los datos para ver sus consumos</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar">
+                {students.map((s, idx) => (
+                  <div key={s.id} className="p-4 border-2 border-orange-100 rounded-xl bg-orange-50/50 space-y-3 relative">
+                    <div className="flex justify-between items-center"><b className="text-orange-900">Estudiante {idx + 1}</b></div>
+                    <Input placeholder="Nombre Completo" value={s.full_name} onChange={e => setStudents(students.map(x => x.id === s.id ? {...x, full_name: e.target.value} : x))} className="h-11" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input placeholder="Grado" value={s.grade} onChange={e => setStudents(students.map(x => x.id === s.id ? {...x, grade: e.target.value} : x))} className="h-11" />
+                      <Input placeholder="Sección" value={s.section} onChange={e => setStudents(students.map(x => x.id === s.id ? {...x, section: e.target.value} : x))} className="h-11" />
+                    </div>
+                  </div>
+                ))}
+                <Button variant="ghost" onClick={() => setStudents([...students, { id: crypto.randomUUID(), full_name: '', grade: '', section: '' }])} className="w-full text-orange-700 hover:bg-orange-100 border-2 border-dashed border-orange-200">
+                  <UserPlus className="mr-2" size={18} /> Agregar otro hijo
+                </Button>
+                <Button onClick={handleOnboardingFinish} className="w-full h-14 text-lg font-bold bg-orange-500 hover:bg-orange-600" disabled={isLoading}>
+                  {isLoading ? <Loader2 className="animate-spin" /> : '🎉 Finalizar y Entrar al Portal'}
+                </Button>
+              </CardContent>
+            </>
+          )}
+
         </Card>
       </main>
 
-      {/* Footer sutil */}
-      <footer className="py-8 text-center space-y-2">
-        <p className="text-sm md:text-base font-medium text-muted-foreground px-4">
-          © 2026 ERP Profesional diseñado por <span className="text-primary/90 font-bold">{APP_CONFIG.designedBy}</span> para <span className="text-foreground/80 font-black">{APP_CONFIG.appName}</span> — 
-          <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground/70 font-bold ml-1">
-            Versión {APP_CONFIG.version} {APP_CONFIG.status}
-          </span>
-        </p>
+      <footer className="py-8 text-center space-y-1">
+        <p className="text-sm font-medium text-muted-foreground">© 2026 ERP Profesional diseñado por {APP_CONFIG.designedBy}</p>
+        <p className="text-[10px] text-muted-foreground/60">Versión {APP_CONFIG.version}</p>
       </footer>
     </div>
   );

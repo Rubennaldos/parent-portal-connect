@@ -2,15 +2,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PermissionProtectedRoute } from "@/components/PermissionProtectedRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
-import Register from "./pages/Register";
-import Onboarding from "./pages/Onboarding";
+// Eliminamos imports innecesarios para simplificar
 import SuperAdmin from "./pages/SuperAdmin";
 import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
@@ -24,7 +23,6 @@ import PaymentStats from "./pages/PaymentStats";
 import LunchCalendar from "./pages/LunchCalendar";
 import Logistics from "./pages/Logistics";
 import SchoolAdmin from "./pages/SchoolAdmin";
-import ParentsManagement from "./components/admin/ParentsManagement";
 import AccessControl from "./pages/AccessControl";
 import CombosPromotions from "./pages/CombosPromotions";
 import NotFound from "./pages/NotFound";
@@ -40,12 +38,12 @@ const App = () => (
         <BrowserRouter>
           <AuthProvider>
             <Routes>
-            {/* Rutas públicas */}
+            {/* Única puerta de entrada: Auth unificado */}
             <Route path="/auth" element={<Auth />} />
-            <Route path="/register" element={<Register />} />
             
-            {/* Onboarding - Permitimos acceso para que el componente maneje la carga */}
-            <Route path="/onboarding" element={<Onboarding />} />
+            {/* Redirecciones de rutas antiguas para no romper nada */}
+            <Route path="/register" element={<Navigate to="/auth" replace />} />
+            <Route path="/onboarding" element={<Navigate to="/auth" replace />} />
             
             {/* Dashboard de Padres - Solo para rol 'parent' */}
             <Route
