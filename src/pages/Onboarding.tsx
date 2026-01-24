@@ -280,6 +280,17 @@ export default function Onboarding() {
     }
   };
 
+  // Si todavía está cargando o no hay usuario, mostrar pantalla de carga
+  if (authLoading || (!user && !loading)) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4">
+        <Loader2 className="h-12 w-12 text-blue-600 animate-spin mb-4" />
+        <h2 className="text-xl font-semibold text-gray-700">Verificando sesión...</h2>
+        <p className="text-gray-500 text-sm">Esto tomará solo unos segundos.</p>
+      </div>
+    );
+  }
+
   if (currentStep === 'school') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50 flex items-center justify-center p-4">
