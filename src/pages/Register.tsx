@@ -63,51 +63,28 @@ export default function Register() {
   };
 
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
-    setLoading(true);
-    
-    // Obtener el school_id del URL para guardarlo para onboarding
-    const sedeCode = searchParams.get('sede') || searchParams.get('school');
-    let schoolId = null;
-    
-    if (sedeCode && schools.length > 0) {
-      const school = schools.find(s => s.code === sedeCode);
-      schoolId = school?.id || null;
-    }
-    
-    // GUARDAR EN LOCALSTORAGE para recuperarlo en Onboarding después del login
-    if (schoolId) {
-      console.log('💾 Guardando schoolId para onboarding:', schoolId);
-      localStorage.setItem('pending_school_id', schoolId);
-    }
-    
-    // Redirigir a /onboarding después de OAuth
-    const redirectUrl = `${window.location.origin}/onboarding`;
-    
-    console.log('🔐 Iniciando OAuth:', { provider, sedeCode, schoolId, redirectUrl });
-    
     try {
+      setLoading(true);
+      console.log(`🔐 Iniciando login con ${provider}...`);
+      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: redirectUrl,
+          redirectTo: `${window.location.origin}/onboarding`,
+          queryParams: {
+            prompt: 'select_account',
+            access_type: 'offline'
+          }
         },
       });
 
-      if (error) {
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: `No se pudo conectar con ${provider === 'google' ? 'Google' : 'Microsoft'}`,
-        });
-        setLoading(false);
-      }
-      // Si no hay error, el usuario será redirigido a Google/Microsoft
+      if (error) throw error;
     } catch (err: any) {
-      console.error('Error en OAuth:', err);
+      console.error('❌ Error OAuth:', err);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Error inesperado al iniciar sesión',
+        title: 'Error de Conexión',
+        description: err.message || 'No se pudo abrir la ventana de Google',
       });
       setLoading(false);
     }

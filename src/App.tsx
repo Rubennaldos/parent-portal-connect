@@ -44,15 +44,8 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/register" element={<Register />} />
             
-            {/* Onboarding - Solo para padres nuevos */}
-            <Route
-              path="/onboarding"
-              element={
-                <ProtectedRoute allowedRoles={['parent']}>
-                  <Onboarding />
-                </ProtectedRoute>
-              }
-            />
+            {/* Onboarding - Permitimos acceso para que el componente maneje la carga */}
+            <Route path="/onboarding" element={<Onboarding />} />
             
             {/* Dashboard de Padres - Solo para rol 'parent' */}
             <Route

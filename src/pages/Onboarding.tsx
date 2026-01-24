@@ -27,7 +27,7 @@ interface Student {
 export default function Onboarding() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth(); // Agregamos authLoading
   const { toast } = useToast();
 
   const [schools, setSchools] = useState<School[]>([]);
@@ -49,14 +49,21 @@ export default function Onboarding() {
   ]);
 
   useEffect(() => {
+    // Si todavía está cargando la autenticación, no hacemos nada
+    if (authLoading) return;
+
     if (!user) {
-      navigate('/auth');
-      return;
+      console.log('⚠️ No hay usuario en onboarding, esperando o redirigiendo...');
+      // Damos un pequeño margen para que Supabase procese el hash de la URL
+      const timeout = setTimeout(() => {
+        if (!user) navigate('/auth');
+      }, 2000);
+      return () => clearTimeout(timeout);
     }
     
     fetchSchools();
     checkExistingProfile();
-  }, [user]);
+  }, [user, authLoading]);
 
   useEffect(() => {
     // Intentar recuperar school_id del localStorage (de OAuth)
