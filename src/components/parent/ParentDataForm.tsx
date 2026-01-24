@@ -158,6 +158,7 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
           language: language,
           registration_ip: registrationIp,
           registration_timestamp: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);
 
@@ -172,6 +173,7 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
           address: address1,
           document_type: documentType1,
           document_number: documentNumber1,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
 

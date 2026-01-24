@@ -31,7 +31,8 @@ ADD COLUMN IF NOT EXISTS screen_resolution TEXT,
 ADD COLUMN IF NOT EXISTS timezone TEXT,
 ADD COLUMN IF NOT EXISTS language TEXT,
 ADD COLUMN IF NOT EXISTS registration_ip INET,
-ADD COLUMN IF NOT EXISTS registration_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ADD COLUMN IF NOT EXISTS registration_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
 -- Índices para búsqueda rápida
 CREATE INDEX IF NOT EXISTS idx_parent_profiles_dni ON public.parent_profiles (dni);
@@ -46,7 +47,8 @@ ALTER TABLE public.profiles
 ADD COLUMN IF NOT EXISTS phone_1 TEXT,
 ADD COLUMN IF NOT EXISTS address TEXT,
 ADD COLUMN IF NOT EXISTS document_type TEXT,
-ADD COLUMN IF NOT EXISTS document_number TEXT;
+ADD COLUMN IF NOT EXISTS document_number TEXT,
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
 -- Comentario informativo
 COMMENT ON COLUMN public.parent_profiles.legal_acceptance IS 'Acepta que sus datos sean usados para cobranza judicial';
