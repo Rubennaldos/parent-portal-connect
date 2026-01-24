@@ -81,7 +81,7 @@ export function FreeAccountOnboardingModal({
                 <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                   <Check className="h-4 w-4 text-emerald-600" />
                 </div>
-                <span><strong>Historial completo:</strong> Ve todos los consumos en tiempo real</span>
+                <span><strong>Historial completo:</strong> Ve todos los consumos con un retraso de 2 días (tiempo de registro manual del kiosco)</span>
               </li>
             </ul>
           </div>
