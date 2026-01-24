@@ -193,10 +193,28 @@ const Index = () => {
         .eq('id', user.id);
       
       setShowOnboarding(false);
-      toast({
-        title: '✅ ¡Bienvenido!',
-        description: 'Ya puedes comenzar a usar el portal',
-      });
+      
+      // Verificar si tiene hijos, si no, abrir modal para agregar
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('id')
+        .eq('parent_id', user.id)
+        .limit(1);
+      
+      if (!studentsData || studentsData.length === 0) {
+        // No tiene hijos, abrir modal para agregar el primero
+        toast({
+          title: '👨‍👩‍👧‍👦 Agregar tus hijos',
+          description: 'Por favor, agrega a tus hijos para comenzar a usar el portal',
+          duration: 5000,
+        });
+        setShowAddStudent(true);
+      } else {
+        toast({
+          title: '✅ ¡Bienvenido!',
+          description: 'Ya puedes comenzar a usar el portal',
+        });
+      }
     } catch (e) {
       console.error("Error completing onboarding:", e);
     }
