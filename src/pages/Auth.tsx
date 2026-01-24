@@ -50,16 +50,33 @@ export default function Auth() {
   const handleSocialLogin = async (provider: 'google' | 'azure') => {
     try {
       setIsLoading(true);
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
           redirectTo: `${window.location.origin}/`,
-          queryParams: { prompt: 'select_account' }
+          queryParams: { prompt: 'select_account' },
+          skipBrowserRedirect: true, // ✨ MODO POPUP: No salir de la página
         },
       });
+      
       if (error) throw error;
+
+      // Abrir la ventana emergente de Google
+      if (data?.url) {
+        const width = 500;
+        const height = 600;
+        const left = window.screenX + (window.outerWidth - width) / 2;
+        const top = window.screenY + (window.outerHeight - height) / 2;
+        
+        window.open(
+          data.url,
+          'oauth-popup',
+          `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no`
+        );
+      }
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error', description: err.message });
+    } finally {
       setIsLoading(false);
     }
   };
