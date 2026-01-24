@@ -207,7 +207,15 @@ export default function Auth() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="font-semibold text-sm text-gray-700">Correo Electrónico</FormLabel>
-                        <FormControl><Input placeholder="tu@email.com" {...field} className="h-12 border-2 focus:border-brand-teal" /></FormControl>
+                        <FormControl>
+                          <Input 
+                            placeholder="tu@email.com" 
+                            type="email"
+                            autoComplete="email"
+                            {...field} 
+                            className="h-12 border-2 focus:border-brand-teal" 
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -220,8 +228,18 @@ export default function Auth() {
                         <FormLabel className="font-semibold text-sm text-gray-700">Contraseña</FormLabel>
                         <FormControl>
                           <div className="relative">
-                            <Input type={showPassword ? "text" : "password"} {...field} className="h-12 pr-10 border-2 focus:border-brand-teal" />
-                            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-3 text-gray-400 hover:text-gray-600">
+                            <Input 
+                              type={showPassword ? "text" : "password"} 
+                              autoComplete="new-password"
+                              {...field} 
+                              className="h-12 pr-10 border-2 focus:border-brand-teal" 
+                            />
+                            <button 
+                              type="button" 
+                              onClick={() => setShowPassword(!showPassword)} 
+                              className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                              tabIndex={-1}
+                            >
                               {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                             </button>
                           </div>
