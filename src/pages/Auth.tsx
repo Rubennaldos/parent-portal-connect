@@ -37,7 +37,12 @@ export default function Auth() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('🚀 INICIO DEL PROCESO DE REGISTRO/LOGIN');
+    console.log('📧 Email:', email);
+    console.log('🔐 Modo:', isRegisterMode ? 'REGISTRO' : 'LOGIN');
+    
     if (!email || !password) {
+      console.log('❌ VALIDACIÓN FALLIDA: Campos vacíos');
       toast({
         variant: 'destructive',
         title: 'Campos incompletos',
@@ -47,6 +52,7 @@ export default function Auth() {
     }
 
     if (isRegisterMode && password !== confirmPassword) {
+      console.log('❌ VALIDACIÓN FALLIDA: Contraseñas no coinciden');
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -56,6 +62,7 @@ export default function Auth() {
     }
 
     if (password.length < 6) {
+      console.log('❌ VALIDACIÓN FALLIDA: Contraseña muy corta');
       toast({
         variant: 'destructive',
         title: 'Contraseña muy corta',
@@ -64,13 +71,27 @@ export default function Auth() {
       return;
     }
 
+    console.log('✅ VALIDACIONES PASADAS, iniciando llamada a Supabase...');
     setIsLoading(true);
+    
     try {
       if (isRegisterMode) {
+        console.log('📝 Llamando a signUp()...');
         const { data, error } = await signUp(email, password);
-        if (error) throw error;
+        
+        console.log('📦 RESPUESTA DE SUPABASE:');
+        console.log('   - data:', data);
+        console.log('   - error:', error);
+        console.log('   - user:', data?.user);
+        console.log('   - session:', data?.session);
+        
+        if (error) {
+          console.log('❌ ERROR EN SIGNUP:', error);
+          throw error;
+        }
 
         if (data.user && !data.session) {
+          console.log('📧 Usuario creado pero necesita confirmar email');
           toast({
             title: '📧 Revisa tu correo',
             description: 'Te hemos enviado un link para confirmar tu cuenta.',
@@ -81,14 +102,21 @@ export default function Auth() {
           setPassword('');
           setConfirmPassword('');
         } else {
+          console.log('✅ Usuario creado con sesión activa');
           toast({ 
             title: '✅ Cuenta creada', 
             description: 'Bienvenido al portal.' 
           });
         }
       } else {
+        console.log('🔑 Llamando a signIn()...');
         const { error } = await signIn(email, password);
+        
+        console.log('📦 RESPUESTA DE LOGIN:');
+        console.log('   - error:', error);
+        
         if (error) {
+          console.log('❌ ERROR EN LOGIN:', error);
           if (error.message.includes('Email not confirmed')) {
             toast({
               variant: 'destructive',
@@ -104,15 +132,21 @@ export default function Auth() {
           } else {
             throw error;
           }
+        } else {
+          console.log('✅ LOGIN EXITOSO');
         }
       }
     } catch (err: any) {
+      console.log('💥 EXCEPCIÓN CAPTURADA:', err);
+      console.log('   - message:', err.message);
+      console.log('   - stack:', err.stack);
       toast({
         variant: 'destructive',
         title: 'Error',
         description: err.message || 'Ocurrió un error inesperado.',
       });
     } finally {
+      console.log('🏁 FIN DEL PROCESO');
       setIsLoading(false);
     }
   };

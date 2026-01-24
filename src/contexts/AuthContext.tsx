@@ -73,7 +73,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUp = async (email: string, password: string) => {
+    console.log('🔵 AuthContext.signUp() - INICIO');
+    console.log('   - email:', email);
+    console.log('   - supabase existe:', !!supabase);
+    
     if (!supabase) {
+      console.log('❌ AuthContext: Supabase NO configurado');
       return {
         data: { user: null, session: null },
         error: {
@@ -86,7 +91,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Redirigir a la raíz del portal después de confirmar email
     const redirectUrl = `${window.location.origin}/`;
+    console.log('   - redirectUrl:', redirectUrl);
 
+    console.log('🔵 Llamando a supabase.auth.signUp()...');
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -94,6 +101,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         emailRedirectTo: redirectUrl,
       },
     });
+    
+    console.log('🔵 Respuesta de Supabase:');
+    console.log('   - data:', data);
+    console.log('   - error:', error);
+    console.log('   - user creado:', !!data?.user);
+    console.log('   - session creada:', !!data?.session);
+    
     return { data, error };
   };
 
