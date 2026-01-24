@@ -84,8 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    // Redirigir a /onboarding después de confirmar email
-    const redirectUrl = `${window.location.origin}/onboarding`;
+    // Redirigir a la raíz del portal después de confirmar email
+    const redirectUrl = `${window.location.origin}/`;
 
     const { data, error } = await supabase.auth.signUp({
       email,

@@ -28,7 +28,7 @@ type AuthFormValues = z.infer<typeof authSchema>;
 export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { signIn, user, loading: authLoading } = useAuth();
+  const { signIn, signUp, user, loading: authLoading } = useAuth();
   const { role, loading: roleLoading, getDefaultRoute } = useRole();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -66,9 +66,50 @@ export default function Auth() {
 
   const onSubmit = async (values: AuthFormValues) => {
     setIsLoading(true);
-    const { error } = await signIn(values.email, values.password);
-    if (error) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Credenciales inválidas' });
+    try {
+      if (isRegisterMode) {
+        // MODO REGISTRO
+        const { data, error } = await signUp(values.email, values.password);
+        if (error) throw error;
+
+        if (data.user && !data.session) {
+          toast({
+            title: '📧 ¡Revisa tu correo!',
+            description: 'Te hemos enviado un link para confirmar tu cuenta. Por favor, revísalo para poder ingresar.',
+            duration: 10000,
+          });
+          setIsRegisterMode(false); // Volver a login
+        } else {
+          toast({ title: '✅ Cuenta creada', description: 'Bienvenido al portal.' });
+        }
+      } else {
+        // MODO LOGIN
+        const { error } = await signIn(values.email, values.password);
+        if (error) {
+          if (error.message.includes('Email not confirmed')) {
+            toast({
+              variant: 'destructive',
+              title: 'Email no confirmado',
+              description: 'Por favor, confirma tu email desde el enlace que te enviamos.',
+            });
+          } else if (error.message.includes('Invalid login credentials')) {
+            toast({
+              variant: 'destructive',
+              title: 'Credenciales inválidas',
+              description: 'El correo o la contraseña son incorrectos.',
+            });
+          } else {
+            throw error;
+          }
+        }
+      }
+    } catch (err: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: err.message || 'Ocurrió un error inesperado.',
+      });
+    } finally {
       setIsLoading(false);
     }
   };
