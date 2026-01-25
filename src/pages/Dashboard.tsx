@@ -68,16 +68,60 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
+  const [schoolName, setSchoolName] = useState<string>('');
 
   useEffect(() => {
     // ✅ FIX: Solo cargar módulos cuando AMBOS user Y role estén disponibles
     if (user && role) {
       console.log('✅ Usuario y rol disponibles, cargando módulos...');
       fetchUserModules();
+      fetchSchoolInfo(); // Obtener nombre de la sede
     } else {
       console.log('⏳ Esperando user y role...', { user: !!user, role });
     }
   }, [user, role]);
+
+  const fetchSchoolInfo = async () => {
+    if (!user) return;
+
+    try {
+      // Obtener el school_id del perfil del usuario
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        console.warn('⚠️ No se pudo obtener school_id del usuario');
+        return;
+      }
+
+      if (!profile?.school_id) {
+        console.log('ℹ️ Usuario sin sede asignada (posiblemente admin general o supervisor de red)');
+        return;
+      }
+
+      // Obtener el nombre de la sede
+      const { data: school, error: schoolError } = await supabase
+        .from('schools')
+        .select('name')
+        .eq('id', profile.school_id)
+        .single();
+
+      if (schoolError) {
+        console.error('❌ Error obteniendo nombre de sede:', schoolError);
+        return;
+      }
+
+      if (school) {
+        setSchoolName(school.name);
+        console.log('✅ Sede del usuario:', school.name);
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de sede:', error);
+    }
+  };
 
   const fetchUserModules = async () => {
     // ✅ FIX: Verificación más robusta
@@ -367,7 +411,14 @@ const Dashboard = () => {
           <WelcomeHeader showRole={true} />
           <div className="flex items-center gap-4">
             <VersionBadge />
-            <span className="text-sm text-gray-600">{user?.email}</span>
+            <div className="text-right">
+              <p className="text-sm text-gray-600">{user?.email}</p>
+              {schoolName && (
+                <p className="text-xs font-semibold text-emerald-600 mt-0.5">
+                  📍 {schoolName}
+                </p>
+              )}
+            </div>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-2" />
               Salir
