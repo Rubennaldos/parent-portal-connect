@@ -201,12 +201,14 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
         .select('*')
         .eq('school_id', selectedSchoolId)
         .eq('level_id', levelId)
-        .eq('is_active', true)
+        // Removido temporalmente el filtro is_active para debugging
+        // .eq('is_active', true)
         .order('order_index');
 
       if (error) throw error;
 
       console.log('✅ [GradesManagement] Aulas encontradas:', data);
+      console.log('✅ [GradesManagement] Total de aulas:', data?.length || 0);
 
       // Contar estudiantes por aula
       const classroomsWithCount = await Promise.all(
