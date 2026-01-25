@@ -44,41 +44,81 @@ interface CreateProfileModalProps {
   onSuccess?: () => void;
 }
 
-// Esquema base para todos los roles
-const baseSchema = z.object({
+// Esquema base para todos los roles (sin validación de confirmación aún)
+const baseSchemaFields = {
   email: z.string().email('Email inválido'),
   full_name: z.string().min(3, 'El nombre debe tener al menos 3 caracteres'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
   confirmPassword: z.string().min(6, 'Debe confirmar la contraseña'),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Las contraseñas no coinciden",
-  path: ["confirmPassword"],
-});
+};
+
+// Esquema base simple
+const baseSchema = z.object(baseSchemaFields).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
 // Esquemas específicos por rol
-const supervisorRedSchema = baseSchema;
+const supervisorRedSchema = z.object(baseSchemaFields).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
-const gestorUnidadSchema = baseSchema.extend({
+const gestorUnidadSchema = z.object({
+  ...baseSchemaFields,
   school_id: z.string().uuid('Debe seleccionar una sede'),
-});
+}).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
-const operadorCajaSchema = baseSchema.extend({
+const operadorCajaSchema = z.object({
+  ...baseSchemaFields,
   school_id: z.string().uuid('Debe seleccionar una sede'),
   pos_number: z.number().min(1, 'Número de caja inválido'),
   ticket_prefix: z.string().min(1, 'El prefijo es requerido').max(5, 'Máximo 5 caracteres'),
-});
+}).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
-const operadorCocinaSchema = baseSchema.extend({
+const operadorCocinaSchema = z.object({
+  ...baseSchemaFields,
   school_id: z.string().uuid('Debe seleccionar una sede'),
-});
+}).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
-const parentSchema = baseSchema.extend({
+const parentSchema = z.object({
+  ...baseSchemaFields,
   school_id: z.string().uuid('Debe seleccionar una sede'),
   dni: z.string().min(8, 'DNI inválido').max(12, 'DNI inválido'),
   phone_1: z.string().min(9, 'Teléfono inválido'),
   address: z.string().min(5, 'Dirección inválida'),
   nickname: z.string().optional(),
-});
+}).refine(
+  (data) => data.password === data.confirmPassword,
+  {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  }
+);
 
 const ROLES = [
   { value: 'supervisor_red', label: 'Supervisor de Red', icon: '🌐', needsSchool: false, description: 'Puede ver todas las sedes' },
