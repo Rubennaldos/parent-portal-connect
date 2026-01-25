@@ -162,8 +162,6 @@ const POS = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [studentAccountStatuses, setStudentAccountStatuses] = useState<Map<string, { canPurchase: boolean; statusText: string; statusColor: string; reason?: string }>>(new Map());
   const [showStudentResults, setShowStudentResults] = useState(false);
-  const [studentWillPay, setStudentWillPay] = useState(false); // Switch para que estudiante pague
-  const [cashAmount, setCashAmount] = useState<number>(0); // Cantidad que el estudiante abona en efectivo
   const [showPhotoModal, setShowPhotoModal] = useState(false); // Para ampliar foto del estudiante
 
   // Estados de productos
@@ -325,13 +323,54 @@ const POS = () => {
     }
   }, [studentSearch, clientMode]);
 
-  // Efecto para Escucha Global de Teclado (Pistola de Código de Barras)
+  // Efecto para Escucha Global de Teclado (Pistola de Código de Barras + Atajos)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Si estamos en un modo de venta y el foco no está en un input
+      // Si estamos en un modo de venta
       if (clientMode) {
         const target = e.target as HTMLElement;
         const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+        // ⌨️ ATAJOS DE TECLADO (funcionan siempre, incluso en inputs)
+        
+        // ENTER → Cobrar (finalizar compra)
+        if (e.key === 'Enter' && cart.length > 0 && canCheckout()) {
+          e.preventDefault();
+          handleCheckoutClick();
+          return;
+        }
+
+        // + (teclado numérico) → Aumentar cantidad del primer item del carrito
+        if ((e.key === '+' || e.key === 'Add') && cart.length > 0 && !isInput) {
+          e.preventDefault();
+          const firstItem = cart[0];
+          setCart(cart.map((item, idx) => 
+            idx === 0 ? { ...item, quantity: item.quantity + 1 } : item
+          ));
+          return;
+        }
+
+        // - (teclado numérico) → Disminuir cantidad del primer item del carrito
+        if ((e.key === '-' || e.key === 'Subtract') && cart.length > 0 && !isInput) {
+          e.preventDefault();
+          const firstItem = cart[0];
+          if (firstItem.quantity > 1) {
+            setCart(cart.map((item, idx) => 
+              idx === 0 ? { ...item, quantity: item.quantity - 1 } : item
+            ));
+          } else {
+            // Si cantidad es 1, eliminar el item
+            setCart(cart.filter((_, idx) => idx !== 0));
+          }
+          return;
+        }
+
+        // DELETE o D → Borrar primer producto del carrito
+        if ((e.key === 'Delete' || e.key.toLowerCase() === 'd') && cart.length > 0 && !isInput) {
+          e.preventDefault();
+          setCart(cart.filter((_, idx) => idx !== 0));
+          return;
+        }
 
         // Si no estamos escribiendo en un cuadro de texto y presionamos una tecla alfanumérica
         // O si es una pistola que envía prefijos, esto capturará la primera tecla y enfocará
@@ -343,7 +382,7 @@ const POS = () => {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [clientMode]);
+  }, [clientMode, cart, canCheckout]);
 
   // Auto-focus cuando se selecciona un cliente
   useEffect(() => {
@@ -759,9 +798,8 @@ const POS = () => {
       if (selectedStudent.free_account) {
         return true;
       }
-      // Si no tiene cuenta libre, verificar saldo
-      const amountToDeduct = studentWillPay ? Math.max(0, getTotal() - cashAmount) : getTotal();
-      return selectedStudent.balance >= amountToDeduct;
+      // Si no tiene cuenta libre, verificar saldo suficiente
+      return selectedStudent.balance >= getTotal();
     }
     
     // Si es cliente genérico, permitir (el documento se elige en el modal de pago)
@@ -835,7 +873,7 @@ const POS = () => {
         clientType: clientMode,
         items: cart,
         total: total,
-        paymentMethod: clientMode === 'generic' ? paymentMethod : (studentWillPay ? 'efectivo' : 'credito'),
+        paymentMethod: clientMode === 'generic' ? paymentMethod : 'credito',
         documentType: clientMode === 'generic' ? (requiresInvoice ? 'factura' : 'ticket') : 'ticket',
         timestamp: new Date(),
         cashierEmail: user?.email || 'No disponible',
@@ -870,8 +908,8 @@ const POS = () => {
         }
         
         // Calcular montos
-        const amountToDeduct = studentWillPay ? Math.max(0, total - cashAmount) : total;
-        const cashPaid = studentWillPay ? cashAmount : 0;
+        // Siempre se descuenta el total completo (sin abonos parciales)
+        const amountToDeduct = total;
         
         // Si es cuenta libre, no descontamos del saldo, solo registramos como pendiente
         const newBalance = isFreeAccount ? selectedStudent.balance : selectedStudent.balance - amountToDeduct;
@@ -880,7 +918,6 @@ const POS = () => {
           studentId: selectedStudent.id,
           isFreeAccount,
           total,
-          cashPaid,
           amountToDeduct,
           balanceActual: selectedStudent.balance,
           newBalance
@@ -893,7 +930,7 @@ const POS = () => {
             student_id: selectedStudent.id,
             type: 'purchase',
             amount: -total,
-            description: `Compra POS${isFreeAccount ? ' (Cuenta Libre)' : ''} - Total: S/ ${total.toFixed(2)}${cashPaid > 0 ? ` (Abono efectivo: S/ ${cashPaid.toFixed(2)})` : ''}`,
+            description: `Compra POS${isFreeAccount ? ' (Cuenta Libre)' : ''} - Total: S/ ${total.toFixed(2)}`,
             balance_after: newBalance,
             created_by: user?.id,
             ticket_code: ticketCode,
@@ -1051,9 +1088,9 @@ const POS = () => {
   
   // Verificar saldo insuficiente en useEffect
   useEffect(() => {
-    const insufficient = selectedStudent && !studentWillPay && (selectedStudent.balance < total);
+    const insufficient = selectedStudent && !selectedStudent.free_account && (selectedStudent.balance < total);
     setInsufficientBalance(insufficient);
-  }, [selectedStudent, studentWillPay, total]);
+  }, [selectedStudent, total]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
@@ -1384,46 +1421,6 @@ const POS = () => {
                   <div className="flex justify-between items-center bg-emerald-700/50 rounded-lg px-3 py-2 mb-2">
                     <span className="text-sm">{selectedStudent.free_account !== false ? 'CONSUMO' : 'SALDO'}</span>
                     <span className="text-2xl font-black">S/ {selectedStudent.balance.toFixed(2)}</span>
-                  </div>
-                  
-                  {/* Switch: ¿Estudiante pagará? */}
-                  <div className="space-y-2 bg-emerald-700/30 rounded-lg px-3 py-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="student-pay" className="text-sm cursor-pointer uppercase font-bold">
-                        abonar al total
-                      </Label>
-                      <Switch
-                        id="student-pay"
-                        checked={studentWillPay}
-                        onCheckedChange={(checked) => {
-                          setStudentWillPay(checked);
-                          if (!checked) setCashAmount(0);
-                        }}
-                        className="data-[state=checked]:bg-yellow-400"
-                      />
-                    </div>
-                    
-                    {studentWillPay && (
-                      <div className="pt-2 border-t border-emerald-600/30 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-emerald-100 uppercase font-bold">Abono Efectivo</span>
-                          <div className="relative">
-                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-emerald-900 font-bold">S/</span>
-                            <input
-                              type="number"
-                              value={cashAmount || ''}
-                              onChange={(e) => setCashAmount(Number(e.target.value))}
-                              className="w-24 bg-white text-emerald-900 rounded px-2 py-1 pl-7 text-right font-bold text-sm focus:ring-2 focus:ring-yellow-400 outline-none"
-                              placeholder="0.00"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-emerald-100">
-                          <span className="uppercase font-bold">Saldo por pagar</span>
-                          <span className="font-bold">S/ {Math.max(0, getTotal() - cashAmount).toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
