@@ -80,17 +80,14 @@ export function SpendingLimitsModal({
       if (error) throw error;
 
       setCurrentConfig(data);
-      setSelectedType(data.limit_type || 'none');
-      setAccountMode(data.free_account !== false ? 'free' : 'prepaid'); // Cargar modo de cuenta
+      // ✅ SIEMPRE iniciar en "Compra Inteligente" (none)
+      setSelectedType('none');
+      // ✅ SIEMPRE iniciar en "Con Recargas" (prepaid)
+      setAccountMode('prepaid');
+      setLimitAmount('0');
       
-      // Establecer el monto según el tipo activo
-      if (data.limit_type === 'daily') {
-        setLimitAmount(data.daily_limit?.toString() || '0');
-      } else if (data.limit_type === 'weekly') {
-        setLimitAmount(data.weekly_limit?.toString() || '0');
-      } else if (data.limit_type === 'monthly') {
-        setLimitAmount(data.monthly_limit?.toString() || '0');
-      }
+      // Guardar la configuración antigua para referencia, pero no aplicarla
+      // El usuario tendrá que seleccionar manualmente si quiere un tope
     } catch (error: any) {
       console.error('Error fetching limit config:', error);
     } finally {
