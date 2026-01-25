@@ -1,55 +1,69 @@
--- Añadir campos de datos personales y tracking a parent_profiles
--- Incluye datos de DOS responsables de pago
+-- =====================================================
+-- AGREGAR CAMPOS DE TRACKING Y RESPONSABLES DE PAGO
+-- Para capturar datos completos del padre y responsables
+-- =====================================================
 
-ALTER TABLE public.parent_profiles
--- RESPONSABLE 1 (Principal)
-ADD COLUMN IF NOT EXISTS full_name TEXT,
-ADD COLUMN IF NOT EXISTS email TEXT,
-ADD COLUMN IF NOT EXISTS dni TEXT,
-ADD COLUMN IF NOT EXISTS phone_1 TEXT,
-ADD COLUMN IF NOT EXISTS address TEXT,
-ADD COLUMN IF NOT EXISTS document_type TEXT DEFAULT 'DNI',
-ADD COLUMN IF NOT EXISTS document_number TEXT,
+-- PASO 1: Agregar columnas para el responsable principal (padre que se registra)
+ALTER TABLE parent_profiles
+ADD COLUMN IF NOT EXISTS full_name VARCHAR(255),
+ADD COLUMN IF NOT EXISTS document_type VARCHAR(50) DEFAULT 'DNI',
+ADD COLUMN IF NOT EXISTS dni VARCHAR(20),
+ADD COLUMN IF NOT EXISTS phone_1 VARCHAR(20),
+ADD COLUMN IF NOT EXISTS address TEXT;
 
--- RESPONSABLE 2 (Secundario)
-ADD COLUMN IF NOT EXISTS full_name_2 TEXT,
-ADD COLUMN IF NOT EXISTS email_2 TEXT,
-ADD COLUMN IF NOT EXISTS dni_2 TEXT,
-ADD COLUMN IF NOT EXISTS phone_2 TEXT,
-ADD COLUMN IF NOT EXISTS address_2 TEXT, -- Opcional para el segundo
-ADD COLUMN IF NOT EXISTS document_type_2 TEXT DEFAULT 'DNI',
-ADD COLUMN IF NOT EXISTS document_number_2 TEXT,
+-- PASO 2: Agregar columnas para el segundo responsable de pago
+ALTER TABLE parent_profiles
+ADD COLUMN IF NOT EXISTS responsible_2_full_name VARCHAR(255),
+ADD COLUMN IF NOT EXISTS responsible_2_email VARCHAR(255),
+ADD COLUMN IF NOT EXISTS responsible_2_document_type VARCHAR(50) DEFAULT 'DNI',
+ADD COLUMN IF NOT EXISTS responsible_2_dni VARCHAR(20),
+ADD COLUMN IF NOT EXISTS responsible_2_phone_1 VARCHAR(20),
+ADD COLUMN IF NOT EXISTS responsible_2_address TEXT;
 
--- ACEPTACIÓN LEGAL
+-- PASO 3: Agregar campo para aceptación de cláusula legal
+ALTER TABLE parent_profiles
 ADD COLUMN IF NOT EXISTS legal_acceptance BOOLEAN DEFAULT FALSE,
-ADD COLUMN IF NOT EXISTS legal_acceptance_date TIMESTAMP WITH TIME ZONE,
+ADD COLUMN IF NOT EXISTS legal_acceptance_timestamp TIMESTAMPTZ;
 
--- TRACKING (captura automática discreta)
-ADD COLUMN IF NOT EXISTS browser_info TEXT,
-ADD COLUMN IF NOT EXISTS os_info TEXT,
-ADD COLUMN IF NOT EXISTS screen_resolution TEXT,
-ADD COLUMN IF NOT EXISTS timezone TEXT,
-ADD COLUMN IF NOT EXISTS language TEXT,
-ADD COLUMN IF NOT EXISTS registration_ip INET,
-ADD COLUMN IF NOT EXISTS registration_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+-- PASO 4: Agregar campo JSONB para metadata (navegador, OS, IP, etc.)
+-- Este campo almacenará de forma automática y sutil:
+-- - Navegador y versión
+-- - Sistema operativo
+-- - Resolución de pantalla
+-- - Zona horaria
+-- - Idioma del navegador
+-- - Timestamp de registro
+ALTER TABLE parent_profiles
+ADD COLUMN IF NOT EXISTS registration_metadata JSONB;
 
--- Índices para búsqueda rápida
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_dni ON public.parent_profiles (dni);
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_dni_2 ON public.parent_profiles (dni_2);
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_phone_1 ON public.parent_profiles (phone_1);
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_phone_2 ON public.parent_profiles (phone_2);
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_email ON public.parent_profiles (email);
-CREATE INDEX IF NOT EXISTS idx_parent_profiles_email_2 ON public.parent_profiles (email_2);
+-- PASO 5: Agregar campo updated_at para rastrear última actualización
+ALTER TABLE parent_profiles
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- Actualizar la tabla profiles para que también tenga los campos de contacto principales
-ALTER TABLE public.profiles
-ADD COLUMN IF NOT EXISTS phone_1 TEXT,
-ADD COLUMN IF NOT EXISTS address TEXT,
-ADD COLUMN IF NOT EXISTS document_type TEXT,
-ADD COLUMN IF NOT EXISTS document_number TEXT,
-ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+-- PASO 6: Crear índices para optimizar búsquedas
+CREATE INDEX IF NOT EXISTS idx_parent_profiles_dni ON parent_profiles(dni);
+CREATE INDEX IF NOT EXISTS idx_parent_profiles_phone ON parent_profiles(phone_1);
+CREATE INDEX IF NOT EXISTS idx_parent_profiles_legal ON parent_profiles(legal_acceptance);
 
--- Comentario informativo
-COMMENT ON COLUMN public.parent_profiles.legal_acceptance IS 'Acepta que sus datos sean usados para cobranza judicial';
-COMMENT ON COLUMN public.parent_profiles.address_2 IS 'Dirección del segundo responsable (opcional)';
+-- PASO 7: Comentarios para documentación
+COMMENT ON COLUMN parent_profiles.full_name IS 'Nombres completos del responsable principal';
+COMMENT ON COLUMN parent_profiles.document_type IS 'Tipo de documento: DNI, Pasaporte, Otro';
+COMMENT ON COLUMN parent_profiles.dni IS 'Número de documento de identidad';
+COMMENT ON COLUMN parent_profiles.phone_1 IS 'Teléfono del responsable principal';
+COMMENT ON COLUMN parent_profiles.address IS 'Dirección del responsable principal';
+
+COMMENT ON COLUMN parent_profiles.responsible_2_full_name IS 'Nombres completos del segundo responsable de pago';
+COMMENT ON COLUMN parent_profiles.responsible_2_email IS 'Email del segundo responsable (opcional)';
+COMMENT ON COLUMN parent_profiles.responsible_2_document_type IS 'Tipo de documento del segundo responsable';
+COMMENT ON COLUMN parent_profiles.responsible_2_dni IS 'Número de documento del segundo responsable';
+COMMENT ON COLUMN parent_profiles.responsible_2_phone_1 IS 'Teléfono del segundo responsable';
+COMMENT ON COLUMN parent_profiles.responsible_2_address IS 'Dirección del segundo responsable (opcional)';
+
+COMMENT ON COLUMN parent_profiles.legal_acceptance IS 'Aceptación de cláusula legal para cobranza judicial';
+COMMENT ON COLUMN parent_profiles.legal_acceptance_timestamp IS 'Fecha y hora de aceptación de la cláusula legal';
+COMMENT ON COLUMN parent_profiles.registration_metadata IS 'Metadata capturada automáticamente durante el registro';
+COMMENT ON COLUMN parent_profiles.updated_at IS 'Última actualización de los datos';
+
+-- =====================================================
+-- FIN DEL SCRIPT
+-- =====================================================

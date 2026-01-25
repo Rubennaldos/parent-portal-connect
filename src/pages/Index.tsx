@@ -42,6 +42,7 @@ import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { LunchCalendarView } from '@/components/parent/LunchCalendarView';
 import { LunchOrderCalendar } from '@/components/parent/LunchOrderCalendar';
+import { ParentDataForm } from '@/components/parent/ParentDataForm';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 
 interface Student {
@@ -79,6 +80,7 @@ const Index = () => {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [activeTab, setActiveTab] = useState('alumnos');
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showParentDataForm, setShowParentDataForm] = useState(false);
   const [isParentFormLoading, setIsParentFormLoading] = useState(false);
   
   // Modales
@@ -145,6 +147,26 @@ const Index = () => {
   const checkOnboardingStatus = async () => {
     if (!user) return;
     try {
+      // PASO 1: Verificar si los datos del padre están completos
+      const { data: parentData, error: parentError } = await supabase
+        .from('parent_profiles')
+        .select('full_name, dni, phone_1, address, legal_acceptance')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (parentError) {
+        console.error('Error checking parent data:', parentError);
+        return;
+      }
+
+      // Si faltan datos del padre o no ha aceptado la cláusula legal, mostrar formulario PRIMERO
+      if (!parentData || !parentData.full_name || !parentData.dni || !parentData.phone_1 || !parentData.address || !parentData.legal_acceptance) {
+        console.log('📋 Datos del padre incompletos, mostrando formulario...');
+        setShowParentDataForm(true);
+        return;
+      }
+
+      // PASO 2: Si los datos están completos, verificar el onboarding de cuenta libre
       const { data, error } = await supabase
         .from('profiles')
         .select('free_account_onboarding_completed')
@@ -833,7 +855,22 @@ const Index = () => {
         </div>
       </nav>
 
-      {/* Modal de Onboarding - Cuenta Libre */}
+      {/* Modal de Formulario de Datos del Padre (PRIMERO) */}
+      {showParentDataForm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <ParentDataForm
+            onSuccess={() => {
+              setShowParentDataForm(false);
+              // Después de completar datos, verificar onboarding de cuenta libre
+              checkOnboardingStatus();
+            }}
+            isLoading={isParentFormLoading}
+            setIsLoading={setIsParentFormLoading}
+          />
+        </div>
+      )}
+
+      {/* Modal de Onboarding - Cuenta Libre (DESPUÉS) */}
       <FreeAccountOnboardingModal
         open={showOnboarding}
         onAccept={handleOnboardingComplete}

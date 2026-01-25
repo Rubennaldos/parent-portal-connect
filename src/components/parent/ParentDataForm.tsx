@@ -1,195 +1,216 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, User, MapPin, Phone, FileText, Info, Users, Mail, Scale } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
-import { Separator } from '@/components/ui/separator';
+import { Loader2, UserCheck, Users, Scale, ShieldCheck } from 'lucide-react';
 
 interface ParentDataFormProps {
   onSuccess: () => void;
-  isLoading: boolean;
-  setIsLoading: (loading: boolean) => void;
+  isLoading?: boolean;
+  setIsLoading?: (loading: boolean) => void;
 }
 
-export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDataFormProps) {
+export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoading: setExternalLoading }: ParentDataFormProps) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [step, setStep] = useState(1);
+  const [internalLoading, setInternalLoading] = useState(false);
+  
+  const isLoading = externalLoading !== undefined ? externalLoading : internalLoading;
+  const setIsLoading = setExternalLoading || setInternalLoading;
 
-  // RESPONSABLE 1 (Principal - todos obligatorios)
-  const [firstName1, setFirstName1] = useState('');
-  const [lastName1, setLastName1] = useState('');
-  const [email1, setEmail1] = useState('');
-  const [documentType1, setDocumentType1] = useState('DNI');
-  const [documentNumber1, setDocumentNumber1] = useState('');
-  const [phone1, setPhone1] = useState('');
-  const [address1, setAddress1] = useState('');
+  // RESPONSABLE PRINCIPAL (quien se registra)
+  const [fullName, setFullName] = useState('');
+  const [documentType, setDocumentType] = useState('DNI');
+  const [dni, setDni] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
 
-  // RESPONSABLE 2 (Secundario - dirección opcional)
-  const [firstName2, setFirstName2] = useState('');
-  const [lastName2, setLastName2] = useState('');
-  const [email2, setEmail2] = useState('');
-  const [documentType2, setDocumentType2] = useState('DNI');
-  const [documentNumber2, setDocumentNumber2] = useState('');
-  const [phone2, setPhone2] = useState('');
-  const [address2, setAddress2] = useState(''); // Opcional
+  // SEGUNDO RESPONSABLE DE PAGO
+  const [resp2FullName, setResp2FullName] = useState('');
+  const [resp2Email, setResp2Email] = useState('');
+  const [resp2DocumentType, setResp2DocumentType] = useState('DNI');
+  const [resp2Dni, setResp2Dni] = useState('');
+  const [resp2Phone, setResp2Phone] = useState('');
+  const [resp2Address, setResp2Address] = useState('');
 
-  // Aceptación legal
-  const [legalAccepted, setLegalAccepted] = useState(false);
+  // CLÁUSULA LEGAL
+  const [legalAcceptance, setLegalAcceptance] = useState(false);
 
-  // Datos de tracking (captura silenciosa)
-  const [browserInfo, setBrowserInfo] = useState('');
-  const [osInfo, setOsInfo] = useState('');
-  const [screenResolution, setScreenResolution] = useState('');
-  const [timezone, setTimezone] = useState('');
-  const [language, setLanguage] = useState('');
-  const [registrationIp, setRegistrationIp] = useState('');
+  // Función para capturar metadata del navegador de forma automática y sutil
+  const captureMetadata = () => {
+    try {
+      const metadata = {
+        // Información del navegador
+        userAgent: navigator.userAgent,
+        browser: getBrowserInfo(),
+        os: getOSInfo(),
+        
+        // Información de pantalla
+        screenResolution: `${window.screen.width}x${window.screen.height}`,
+        viewportSize: `${window.innerWidth}x${window.innerHeight}`,
+        colorDepth: window.screen.colorDepth,
+        
+        // Información de localización
+        language: navigator.language,
+        languages: navigator.languages,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        
+        // Información temporal
+        registrationTimestamp: new Date().toISOString(),
+        localTime: new Date().toLocaleString('es-PE'),
+        
+        // Información de dispositivo
+        isMobile: /Mobile|Android|iPhone/i.test(navigator.userAgent),
+        isTablet: /iPad|Android/i.test(navigator.userAgent) && !/Mobile/i.test(navigator.userAgent),
+        
+        // Información de conexión (si está disponible)
+        ...(navigator.connection && {
+          connectionType: (navigator.connection as any).effectiveType,
+          downlink: (navigator.connection as any).downlink,
+        }),
+      };
 
-  useEffect(() => {
-    // Capturar información del navegador y sistema operativo
-    setBrowserInfo(navigator.userAgent);
-    setOsInfo(navigator.platform);
-    setScreenResolution(`${window.screen.width}x${window.screen.height}`);
-    setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    setLanguage(navigator.language);
-
-    // Pre-llenar email del responsable 1 con el email del usuario
-    if (user?.email) {
-      setEmail1(user.email);
+      console.log('📊 Metadata capturada automáticamente:', metadata);
+      return metadata;
+    } catch (error) {
+      console.error('Error capturando metadata:', error);
+      return {};
     }
+  };
 
-    // Capturar IP
-    const fetchIp = async () => {
-      try {
-        const response = await fetch('https://api.ipify.org?format=json');
-        const data = await response.json();
-        setRegistrationIp(data.ip);
-      } catch (error) {
-        console.error('Error fetching IP:', error);
-        setRegistrationIp('N/A');
+  const getBrowserInfo = () => {
+    const ua = navigator.userAgent;
+    if (ua.includes('Chrome')) return 'Chrome';
+    if (ua.includes('Firefox')) return 'Firefox';
+    if (ua.includes('Safari')) return 'Safari';
+    if (ua.includes('Edge')) return 'Edge';
+    if (ua.includes('Opera')) return 'Opera';
+    return 'Unknown';
+  };
+
+  const getOSInfo = () => {
+    const ua = navigator.userAgent;
+    if (ua.includes('Windows')) return 'Windows';
+    if (ua.includes('Mac')) return 'MacOS';
+    if (ua.includes('Linux')) return 'Linux';
+    if (ua.includes('Android')) return 'Android';
+    if (ua.includes('iOS') || ua.includes('iPhone') || ua.includes('iPad')) return 'iOS';
+    return 'Unknown';
+  };
+
+  const handleNextStep = () => {
+    // Validar Paso 1: Datos del responsable principal
+    if (step === 1) {
+      if (!fullName || !dni || !phone || !address) {
+        toast({
+          variant: 'destructive',
+          title: 'Campos incompletos',
+          description: 'Por favor completa todos los campos del responsable principal.',
+        });
+        return;
       }
-    };
-    fetchIp();
-  }, [user]);
+      setStep(2);
+    }
+    // Validar Paso 2: Segundo responsable
+    else if (step === 2) {
+      if (!resp2FullName || !resp2Dni || !resp2Phone) {
+        toast({
+          variant: 'destructive',
+          title: 'Campos incompletos',
+          description: 'Por favor completa los datos del segundo responsable (email y dirección son opcionales).',
+        });
+        return;
+      }
+      setStep(3);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!legalAcceptance) {
+      toast({
+        variant: 'destructive',
+        title: 'Aceptación requerida',
+        description: 'Debes aceptar la cláusula legal para continuar.',
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo identificar al usuario.',
+      });
+      return;
+    }
+
     setIsLoading(true);
 
-    if (!user) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Usuario no autenticado.' });
-      setIsLoading(false);
-      return;
-    }
-
-    // Validar Responsable 1 (todos obligatorios)
-    if (!firstName1 || !lastName1 || !email1 || !documentNumber1 || !phone1 || !address1) {
-      toast({ 
-        variant: 'destructive', 
-        title: 'Responsable 1 incompleto', 
-        description: 'Por favor, completa todos los campos del primer responsable (incluyendo dirección).' 
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    // Validar Responsable 2 (email y dirección son opcionales)
-    if (!firstName2 || !lastName2 || !documentNumber2 || !phone2) {
-      toast({ 
-        variant: 'destructive', 
-        title: 'Responsable 2 incompleto', 
-        description: 'Por favor, completa los datos obligatorios del segundo responsable (email y dirección son opcionales).' 
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    // Validar aceptación legal
-    if (!legalAccepted) {
-      toast({ 
-        variant: 'destructive', 
-        title: 'Aceptación requerida', 
-        description: 'Debes aceptar los términos legales para continuar.' 
-      });
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const fullName1 = `${firstName1} ${lastName1}`;
-      const fullName2 = `${firstName2} ${lastName2}`;
+      // Capturar metadata automáticamente
+      const metadata = captureMetadata();
 
-      // Actualizar parent_profiles con ambos responsables
-      const { error: parentProfileError } = await supabase
+      console.log('💾 Guardando datos del padre...');
+      
+      const { error } = await supabase
         .from('parent_profiles')
         .update({
-          // Responsable 1
-          full_name: fullName1,
-          email: email1,
-          dni: documentNumber1,
-          phone_1: phone1,
-          address: address1,
-          document_type: documentType1,
-          document_number: documentNumber1,
+          // Responsable principal
+          full_name: fullName,
+          document_type: documentType,
+          dni: dni,
+          phone_1: phone,
+          address: address,
           
-          // Responsable 2
-          full_name_2: fullName2,
-          email_2: email2 || null, // Opcional
-          dni_2: documentNumber2,
-          phone_2: phone2,
-          address_2: address2 || null, // Opcional
-          document_type_2: documentType2,
-          document_number_2: documentNumber2,
+          // Segundo responsable
+          responsible_2_full_name: resp2FullName,
+          responsible_2_email: resp2Email || null,
+          responsible_2_document_type: resp2DocumentType,
+          responsible_2_dni: resp2Dni,
+          responsible_2_phone_1: resp2Phone,
+          responsible_2_address: resp2Address || null,
           
-          // Aceptación legal
-          legal_acceptance: legalAccepted,
-          legal_acceptance_date: new Date().toISOString(),
+          // Cláusula legal
+          legal_acceptance: legalAcceptance,
+          legal_acceptance_timestamp: new Date().toISOString(),
           
-          // Tracking
-          browser_info: browserInfo,
-          os_info: osInfo,
-          screen_resolution: screenResolution,
-          timezone: timezone,
-          language: language,
-          registration_ip: registrationIp,
-          registration_timestamp: new Date().toISOString(),
+          // Metadata capturada automáticamente
+          registration_metadata: metadata,
+          
+          // Timestamp de actualización
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);
 
-      if (parentProfileError) throw parentProfileError;
+      if (error) {
+        console.error('❌ Error guardando datos:', error);
+        throw error;
+      }
 
-      // Actualizar profiles con datos del responsable principal
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          full_name: fullName1,
-          phone_1: phone1,
-          address: address1,
-          document_type: documentType1,
-          document_number: documentNumber1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
+      console.log('✅ Datos guardados exitosamente');
 
-      if (profileError) throw profileError;
-
-      toast({ 
-        title: '✅ Datos guardados', 
-        description: 'La información de ambos responsables ha sido registrada correctamente.' 
+      toast({
+        title: '✅ Datos guardados',
+        description: 'Tus datos han sido registrados correctamente.',
       });
+
       onSuccess();
     } catch (error: any) {
-      console.error('Error al guardar datos:', error);
-      toast({ 
-        variant: 'destructive', 
-        title: 'Error', 
-        description: error.message || 'No se pudieron guardar los datos. Intenta de nuevo.' 
+      console.error('Error en handleSubmit:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message || 'No se pudieron guardar los datos.',
       });
     } finally {
       setIsLoading(false);
@@ -197,283 +218,302 @@ export function ParentDataForm({ onSuccess, isLoading, setIsLoading }: ParentDat
   };
 
   return (
-    <Card className="w-full max-w-4xl mx-auto shadow-2xl border-t-4 border-t-brand-teal rounded-2xl bg-white max-h-[90vh] overflow-y-auto">
-      <CardHeader className="text-center space-y-2 pb-4 sticky top-0 bg-white z-10 border-b">
+    <Card className="w-full max-w-2xl mx-auto shadow-xl border border-stone-200/50 bg-white">
+      <CardHeader className="text-center space-y-3 pb-6 pt-8">
         <div className="flex justify-center mb-2">
-          <div className="bg-brand-teal/10 p-3 rounded-full">
-            <Users className="h-8 w-8 text-brand-teal" />
+          <div className="bg-gradient-to-br from-[#8B7355]/10 to-[#6B5744]/10 p-4 rounded-2xl">
+            {step === 1 && <UserCheck className="h-8 w-8 text-[#8B7355]" />}
+            {step === 2 && <Users className="h-8 w-8 text-[#8B7355]" />}
+            {step === 3 && <Scale className="h-8 w-8 text-[#8B7355]" />}
           </div>
         </div>
-        <CardTitle className="text-2xl font-bold text-foreground">
-          Datos de Responsables de Pago
+        <CardTitle className="text-2xl font-light text-stone-800 tracking-wide">
+          {step === 1 && 'Datos del Responsable Principal'}
+          {step === 2 && 'Segundo Responsable de Pago'}
+          {step === 3 && 'Aceptación Legal'}
         </CardTitle>
-        <CardDescription className="text-muted-foreground font-medium">
-          Registra los datos de ambos responsables de pago (obligatorio)
+        <CardDescription className="text-stone-500 font-normal text-sm tracking-wide">
+          {step === 1 && 'Información de quien crea la cuenta'}
+          {step === 2 && 'Datos adicionales del segundo responsable (email y dirección opcionales)'}
+          {step === 3 && 'Confirma los términos para continuar'}
         </CardDescription>
+        
+        {/* Indicador de pasos */}
+        <div className="flex justify-center gap-2 pt-4">
+          {[1, 2, 3].map((s) => (
+            <div
+              key={s}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                s === step ? 'w-8 bg-[#8B7355]' : s < step ? 'w-2 bg-[#8B7355]/50' : 'w-2 bg-stone-200'
+              }`}
+            />
+          ))}
+        </div>
       </CardHeader>
-      <CardContent className="space-y-6 p-6">
-        <form onSubmit={handleSubmit} className="space-y-8">
-          
-          {/* ========== RESPONSABLE 1 (Principal) ========== */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-4">
-              <User className="h-5 w-5 text-brand-teal" />
-              <h3 className="text-lg font-bold text-slate-800">Responsable Principal 1</h3>
-              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-bold">OBLIGATORIO</span>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Nombres *</Label>
-                <Input 
-                  value={firstName1}
-                  onChange={(e) => setFirstName1(e.target.value)}
+      <CardContent className="px-8 pb-8">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* PASO 1: RESPONSABLE PRINCIPAL */}
+          {step === 1 && (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                  Nombres Completos *
+                </Label>
+                <Input
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
                   placeholder="Ej: Juan Carlos"
-                  className="h-12 border-2 focus:border-brand-teal font-medium"
-                  required
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
                 />
               </div>
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Apellidos *</Label>
-                <Input 
-                  value={lastName1}
-                  onChange={(e) => setLastName1(e.target.value)}
-                  placeholder="Ej: Pérez García"
-                  className="h-12 border-2 focus:border-brand-teal font-medium"
-                  required
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                    Tipo de Documento *
+                  </Label>
+                  <Select value={documentType} onValueChange={setDocumentType} disabled={isLoading}>
+                    <SelectTrigger className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="DNI">DNI</SelectItem>
+                      <SelectItem value="Pasaporte">Pasaporte</SelectItem>
+                      <SelectItem value="Otro">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                    Número de Documento *
+                  </Label>
+                  <Input
+                    value={dni}
+                    onChange={(e) => setDni(e.target.value)}
+                    placeholder="Ej: 12345678"
+                    className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                  Teléfono *
+                </Label>
+                <Input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Ej: 987654321"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
                 />
               </div>
-            </div>
 
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <Mail className="h-4 w-4" /> Email *
-              </Label>
-              <Input 
-                type="email"
-                value={email1}
-                onChange={(e) => setEmail1(e.target.value)}
-                placeholder="Ej: juan.perez@gmail.com"
-                className="h-12 border-2 focus:border-brand-teal font-medium"
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Tipo de Documento *</Label>
-                <Select value={documentType1} onValueChange={setDocumentType1}>
-                  <SelectTrigger className="h-12 border-2 focus:border-brand-teal font-medium">
-                    <SelectValue placeholder="Selecciona" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="DNI">DNI</SelectItem>
-                    <SelectItem value="Pasaporte">Pasaporte</SelectItem>
-                    <SelectItem value="Carnet de Extranjería">Carnet de Extranjería</SelectItem>
-                    <SelectItem value="Otro">Otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Número de Documento *</Label>
-                <Input 
-                  value={documentNumber1}
-                  onChange={(e) => setDocumentNumber1(e.target.value)}
-                  placeholder="Ej: 12345678"
-                  className="h-12 border-2 focus:border-brand-teal font-medium"
-                  required
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                  Dirección *
+                </Label>
+                <Input
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="Ej: Av. Principal 123, Lima"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
                 />
               </div>
-            </div>
 
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <Phone className="h-4 w-4" /> Teléfono *
-              </Label>
-              <Input 
-                type="tel"
-                value={phone1}
-                onChange={(e) => setPhone1(e.target.value)}
-                placeholder="Ej: +51 987 654 321"
-                className="h-12 border-2 focus:border-brand-teal font-medium"
-                required
-              />
-            </div>
-
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> Dirección Completa *
-              </Label>
-              <Input 
-                value={address1}
-                onChange={(e) => setAddress1(e.target.value)}
-                placeholder="Ej: Av. La Molina 123, Urb. Santa Patricia, Lima"
-                className="h-12 border-2 focus:border-brand-teal font-medium"
-                required
-              />
-            </div>
-          </div>
-
-          <Separator className="my-8" />
-
-          {/* ========== RESPONSABLE 2 (Secundario) ========== */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-4">
-              <User className="h-5 w-5 text-blue-600" />
-              <h3 className="text-lg font-bold text-slate-800">Responsable Secundario 2</h3>
-              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-bold">OBLIGATORIO</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Nombres *</Label>
-                <Input 
-                  value={firstName2}
-                  onChange={(e) => setFirstName2(e.target.value)}
-                  placeholder="Ej: María Elena"
-                  className="h-12 border-2 focus:border-blue-500 font-medium"
-                  required
-                />
-              </div>
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Apellidos *</Label>
-                <Input 
-                  value={lastName2}
-                  onChange={(e) => setLastName2(e.target.value)}
-                  placeholder="Ej: López Vega"
-                  className="h-12 border-2 focus:border-blue-500 font-medium"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <Mail className="h-4 w-4" /> Email <span className="text-gray-400">(Opcional)</span>
-              </Label>
-              <Input 
-                type="email"
-                value={email2}
-                onChange={(e) => setEmail2(e.target.value)}
-                placeholder="Ej: maria.lopez@gmail.com (opcional)"
-                className="h-12 border-2 focus:border-blue-500 font-medium"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Tipo de Documento *</Label>
-                <Select value={documentType2} onValueChange={setDocumentType2}>
-                  <SelectTrigger className="h-12 border-2 focus:border-blue-500 font-medium">
-                    <SelectValue placeholder="Selecciona" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="DNI">DNI</SelectItem>
-                    <SelectItem value="Pasaporte">Pasaporte</SelectItem>
-                    <SelectItem value="Carnet de Extranjería">Carnet de Extranjería</SelectItem>
-                    <SelectItem value="Otro">Otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1">Número de Documento *</Label>
-                <Input 
-                  value={documentNumber2}
-                  onChange={(e) => setDocumentNumber2(e.target.value)}
-                  placeholder="Ej: 87654321"
-                  className="h-12 border-2 focus:border-blue-500 font-medium"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <Phone className="h-4 w-4" /> Teléfono *
-              </Label>
-              <Input 
-                type="tel"
-                value={phone2}
-                onChange={(e) => setPhone2(e.target.value)}
-                placeholder="Ej: +51 912 345 678"
-                className="h-12 border-2 focus:border-blue-500 font-medium"
-                required
-              />
-            </div>
-
-            <div>
-              <Label className="font-semibold text-xs uppercase tracking-wider text-gray-500 ml-1 flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> Dirección Completa <span className="text-gray-400">(Opcional)</span>
-              </Label>
-              <Input 
-                value={address2}
-                onChange={(e) => setAddress2(e.target.value)}
-                placeholder="Ej: Av. Javier Prado 456, La Molina, Lima (opcional)"
-                className="h-12 border-2 focus:border-blue-500 font-medium"
-              />
-            </div>
-          </div>
-
-          <Separator className="my-8" />
-
-          {/* ========== ACEPTACIÓN LEGAL ========== */}
-          <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-6 space-y-4">
-            <div className="flex items-center gap-3">
-              <Scale className="h-6 w-6 text-amber-700" />
-              <h3 className="text-lg font-bold text-amber-900">Aceptación Legal</h3>
-            </div>
-            
-            <p className="text-sm text-amber-900 leading-relaxed">
-              Al registrar mis datos como responsable(s) de pago, acepto y declaro que:
-            </p>
-            
-            <ul className="text-sm text-amber-900 space-y-2 list-disc list-inside ml-2">
-              <li>Soy responsable solidario del pago de los consumos de mi(s) hijo(s) en el kiosco escolar.</li>
-              <li>Autorizo el uso de mis datos personales para fines de cobranza administrativa y judicial en caso de incumplimiento de pago.</li>
-              <li>Los datos proporcionados son verídicos y pueden ser verificados legalmente.</li>
-              <li>En caso de morosidad, acepto procedimientos de cobranza extrajudicial o judicial según corresponda.</li>
-              <li>He leído y acepto la Política de Privacidad y Términos de Uso del servicio.</li>
-            </ul>
-
-            <div className="flex items-start gap-3 bg-white p-4 rounded-lg border-2 border-amber-300 mt-4">
-              <Checkbox 
-                id="legal"
-                checked={legalAccepted}
-                onCheckedChange={(checked) => setLegalAccepted(checked === true)}
-                className="mt-1"
-              />
-              <Label 
-                htmlFor="legal" 
-                className="text-sm font-bold text-slate-800 cursor-pointer leading-relaxed"
+              <Button
+                type="button"
+                onClick={handleNextStep}
+                className="w-full h-14 text-base font-medium bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl tracking-wide"
+                disabled={isLoading}
               >
-                He leído y acepto las condiciones legales mencionadas. Autorizo el uso de mis datos para fines de cobranza administrativa y judicial en caso de incumplimiento de pago.
-              </Label>
+                Continuar
+              </Button>
             </div>
-          </div>
+          )}
 
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3 text-sm text-blue-800">
-            <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <span>
-              Para tu seguridad y la de tus hijos, recopilamos información básica de tu dispositivo y conexión.
-            </span>
-          </div>
+          {/* PASO 2: SEGUNDO RESPONSABLE */}
+          {step === 2 && (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                  Nombres Completos *
+                </Label>
+                <Input
+                  value={resp2FullName}
+                  onChange={(e) => setResp2FullName(e.target.value)}
+                  placeholder="Ej: María Elena"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
+                />
+              </div>
 
-          <div className="flex justify-center pt-4">
-            <Button 
-              type="submit" 
-              className="h-14 px-12 text-lg font-bold bg-brand-teal hover:bg-brand-teal/90 text-white shadow-lg rounded-xl" 
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="animate-spin mr-2" />
-                  Guardando...
-                </>
-              ) : (
-                'Guardar y Continuar'
-              )}
-            </Button>
-          </div>
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider flex items-center gap-2">
+                  Email <span className="text-stone-400 text-[10px] normal-case">(opcional)</span>
+                </Label>
+                <Input
+                  type="email"
+                  value={resp2Email}
+                  onChange={(e) => setResp2Email(e.target.value)}
+                  placeholder="Ej: maria@email.com"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                    Tipo de Documento *
+                  </Label>
+                  <Select value={resp2DocumentType} onValueChange={setResp2DocumentType} disabled={isLoading}>
+                    <SelectTrigger className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="DNI">DNI</SelectItem>
+                      <SelectItem value="Pasaporte">Pasaporte</SelectItem>
+                      <SelectItem value="Otro">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                    Número de Documento *
+                  </Label>
+                  <Input
+                    value={resp2Dni}
+                    onChange={(e) => setResp2Dni(e.target.value)}
+                    placeholder="Ej: 87654321"
+                    className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider">
+                  Teléfono *
+                </Label>
+                <Input
+                  value={resp2Phone}
+                  onChange={(e) => setResp2Phone(e.target.value)}
+                  placeholder="Ej: 912345678"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="font-medium text-xs text-stone-600 uppercase tracking-wider flex items-center gap-2">
+                  Dirección <span className="text-stone-400 text-[10px] normal-case">(opcional)</span>
+                </Label>
+                <Input
+                  value={resp2Address}
+                  onChange={(e) => setResp2Address(e.target.value)}
+                  placeholder="Ej: Av. Secundaria 456, Lima"
+                  className="h-12 border border-stone-200 focus:border-[#8B7355] rounded-xl"
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  variant="outline"
+                  className="flex-1 h-12 border border-stone-200 rounded-xl"
+                  disabled={isLoading}
+                >
+                  Atrás
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleNextStep}
+                  className="flex-1 h-14 text-base font-medium bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl tracking-wide"
+                  disabled={isLoading}
+                >
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* PASO 3: CLÁUSULA LEGAL */}
+          {step === 3 && (
+            <div className="space-y-6">
+              <div className="bg-stone-50/50 border border-stone-200/50 rounded-2xl p-6 space-y-4">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="h-6 w-6 text-[#8B7355] flex-shrink-0 mt-1" />
+                  <div className="space-y-2">
+                    <h4 className="font-medium text-sm text-stone-800 tracking-wide">
+                      Cláusula Legal - Cobranza Judicial
+                    </h4>
+                    <p className="text-xs text-stone-600 leading-relaxed">
+                      Al aceptar estos términos, reconozco que en caso de incumplimiento de pago de los consumos realizados
+                      por mi(s) hijo(s) en el kiosco escolar <span className="font-medium">Lima Café 28</span>, autorizo
+                      expresamente a la institución a iniciar las acciones legales de cobranza judicial que correspondan,
+                      incluyendo el cobro de intereses moratorios y gastos administrativos.
+                    </p>
+                    <p className="text-xs text-stone-600 leading-relaxed">
+                      Los datos proporcionados serán utilizados exclusivamente para fines de gestión de pagos y comunicación
+                      con los responsables de pago, conforme a la Ley de Protección de Datos Personales.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 p-4 bg-white border border-stone-200 rounded-xl">
+                <Checkbox
+                  id="legal"
+                  checked={legalAcceptance}
+                  onCheckedChange={(checked) => setLegalAcceptance(checked as boolean)}
+                  className="mt-0.5"
+                  disabled={isLoading}
+                />
+                <label
+                  htmlFor="legal"
+                  className="text-sm text-stone-700 leading-relaxed cursor-pointer"
+                >
+                  He leído y acepto la cláusula legal de cobranza judicial en caso de impago, y confirmo que los datos
+                  proporcionados son correctos y veraces.
+                </label>
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  variant="outline"
+                  className="flex-1 h-12 border border-stone-200 rounded-xl"
+                  disabled={isLoading}
+                >
+                  Atrás
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 h-14 text-base font-medium bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl tracking-wide"
+                  disabled={isLoading || !legalAcceptance}
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="animate-spin mr-2" />
+                      Guardando...
+                    </>
+                  ) : (
+                    'Confirmar y Continuar'
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </form>
       </CardContent>
     </Card>
