@@ -186,9 +186,15 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
       // O si el seleccionado ya no existe en la nueva lista de niveles
       if (levelsWithCount.length > 0) {
         const selectedLevelExists = levelsWithCount.some(l => l.id === selectedLevel);
+        console.log('🔍 [fetchLevels] selectedLevel actual:', selectedLevel);
+        console.log('🔍 [fetchLevels] ¿El nivel seleccionado existe?:', selectedLevelExists);
+        console.log('🔍 [fetchLevels] Niveles disponibles:', levelsWithCount.map(l => ({ id: l.id, name: l.name })));
+        
         if (!selectedLevel || !selectedLevelExists) {
-          console.log('📌 [GradesManagement] Estableciendo nivel inicial:', levelsWithCount[0].id);
+          console.log('📌 [GradesManagement] Estableciendo nivel inicial:', levelsWithCount[0].id, levelsWithCount[0].name);
           setSelectedLevel(levelsWithCount[0].id);
+        } else {
+          console.log('✅ [GradesManagement] Manteniendo nivel seleccionado:', selectedLevel);
         }
       }
     } catch (error: any) {
@@ -309,19 +315,29 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
     if (!selectedSchoolId || !newLevelName.trim()) return;
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('school_levels')
         .insert({
           school_id: selectedSchoolId,
           name: newLevelName.trim(),
           order_index: levels.length,
-        });
+        })
+        .select()
+        .single();
 
       if (error) throw error;
 
       toast({ title: '✅ Grado creado', description: `${newLevelName} agregado correctamente` });
       setNewLevelName('');
       setShowNewLevelModal(false);
+      
+      // Primero establecer el nuevo grado como seleccionado
+      if (data) {
+        console.log('🆕 [createLevel] Seleccionando nuevo grado:', data.id, data.name);
+        setSelectedLevel(data.id);
+      }
+      
+      // Luego actualizar la lista
       fetchLevels();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
