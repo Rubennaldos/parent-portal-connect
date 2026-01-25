@@ -473,6 +473,8 @@ const POS = () => {
 
   const searchStudents = async (query: string) => {
     try {
+      console.log('🔍 Buscando estudiantes con query:', query);
+      
       const { data, error } = await supabase
         .from('students')
         .select('id, full_name, photo_url, balance, grade, section, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, is_blocked')
@@ -480,18 +482,50 @@ const POS = () => {
         .ilike('full_name', `%${query}%`)
         .limit(5);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Error en consulta de estudiantes:', error);
+        throw error;
+      }
+
+      console.log('✅ Estudiantes encontrados:', data?.length || 0);
       setStudents(data || []);
 
-      // Calcular estado de cuenta para cada estudiante
-      const statusMap = new Map();
-      for (const student of (data || [])) {
-        const status = await getAccountStatus(student);
-        statusMap.set(student.id, status);
+      // Calcular estado de cuenta para cada estudiante (con manejo robusto de errores)
+      if (data && data.length > 0) {
+        const statusMap = new Map();
+        
+        // Procesar cada estudiante de forma segura
+        const statusPromises = data.map(async (student) => {
+          try {
+            const status = await getAccountStatus(student);
+            statusMap.set(student.id, status);
+          } catch (err) {
+            console.warn(`⚠️ Error calculando estado para ${student.full_name}:`, err);
+            // Estado por defecto si falla
+            statusMap.set(student.id, {
+              canPurchase: true,
+              statusText: `💰 Saldo: S/ ${student.balance?.toFixed(2) || '0.00'}`,
+              statusColor: 'text-emerald-600'
+            });
+          }
+        });
+
+        await Promise.all(statusPromises);
+        setStudentAccountStatuses(statusMap);
       }
-      setStudentAccountStatuses(statusMap);
     } catch (error: any) {
-      console.error('Error searching students:', error);
+      console.error('❌ Error crítico buscando estudiantes:', error);
+      console.error('Detalles del error:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      toast({
+        variant: 'destructive',
+        title: 'Error al buscar estudiantes',
+        description: error.message || 'No se pudo realizar la búsqueda'
+      });
     }
   };
 
