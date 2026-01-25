@@ -331,11 +331,10 @@ const POS = () => {
         const target = e.target as HTMLElement;
         const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 
-        // ⌨️ ATAJOS DE TECLADO (funcionan siempre, incluso en inputs)
+        // ⌨️ ATAJOS DE TECLADO
         
-        // ENTER → Cobrar (finalizar compra)
-        // Verificar condiciones básicas sin llamar a canCheckout()
-        if (e.key === 'Enter' && cart.length > 0 && clientMode) {
+        // ENTER → Cobrar (finalizar compra) - SOLO si NO estás escribiendo en un input
+        if (e.key === 'Enter' && cart.length > 0 && clientMode && !isInput) {
           e.preventDefault();
           // Verificar si se puede hacer checkout
           const canProceed = 
