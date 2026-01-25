@@ -17,6 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { 
   Settings,
   Save,
@@ -24,7 +31,10 @@ import {
   MessageSquare,
   CreditCard,
   Loader2,
-  Check
+  Check,
+  Clock,
+  AlertTriangle,
+  Zap
 } from 'lucide-react';
 
 interface School {
@@ -59,6 +69,12 @@ export const BillingConfig = () => {
   const [yapeNumber, setYapeNumber] = useState('');
   const [plinNumber, setPlinNumber] = useState('');
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
+
+  // ✨ Delay de visibilidad
+  const [delayDays, setDelayDays] = useState<number>(2);
+  const [showLiveWarning, setShowLiveWarning] = useState(false);
+  const [showDelayWarning, setShowDelayWarning] = useState(false);
+  const [pendingDelayValue, setPendingDelayValue] = useState<number>(2);
 
   const canViewAllSchools = role === 'admin_general';
 
@@ -137,6 +153,7 @@ export const BillingConfig = () => {
     try {
       setLoading(true);
 
+      // ✅ 1. Cargar configuración de mensajes
       const { data, error } = await supabase
         .from('billing_config')
         .select('*')
@@ -163,6 +180,18 @@ Gracias.`);
         setPlinNumber('');
         setShowPaymentInfo(false);
       }
+
+      // ✅ 2. Cargar configuración de delay de visibilidad
+      const { data: delayData } = await supabase
+        .from('purchase_visibility_delay')
+        .select('delay_days')
+        .eq('school_id', selectedSchool)
+        .maybeSingle();
+
+      setDelayDays(delayData?.delay_days ?? 2);
+      setPendingDelayValue(delayData?.delay_days ?? 2);
+      
+      console.log('📅 Delay actual:', delayData?.delay_days ?? 2);
     } catch (error) {
       console.error('Error fetching config:', error);
     } finally {
@@ -221,6 +250,78 @@ Gracias.`);
     }
   };
 
+  // ✅ Funciones para manejar el delay
+  const handleDelayChange = (value: string) => {
+    const newValue = parseInt(value);
+    setPendingDelayValue(newValue);
+    
+    if (newValue === 0) {
+      setShowLiveWarning(true);
+    } else if (newValue !== delayDays) {
+      setShowDelayWarning(true);
+    }
+  };
+
+  const confirmLiveModeChange = async () => {
+    await saveDelayConfig(0);
+    setShowLiveWarning(false);
+  };
+
+  const confirmDelayChange = async () => {
+    await saveDelayConfig(pendingDelayValue);
+    setShowDelayWarning(false);
+  };
+
+  const saveDelayConfig = async (days: number) => {
+    if (!selectedSchool) return;
+
+    try {
+      setSaving(true);
+
+      // Verificar si existe configuración
+      const { data: existing } = await supabase
+        .from('purchase_visibility_delay')
+        .select('*')
+        .eq('school_id', selectedSchool)
+        .maybeSingle();
+
+      if (existing) {
+        // Actualizar
+        const { error } = await supabase
+          .from('purchase_visibility_delay')
+          .update({ delay_days: days })
+          .eq('school_id', selectedSchool);
+
+        if (error) throw error;
+      } else {
+        // Crear
+        const { error } = await supabase
+          .from('purchase_visibility_delay')
+          .insert({ school_id: selectedSchool, delay_days: days });
+
+        if (error) throw error;
+      }
+
+      setDelayDays(days);
+      
+      toast({
+        title: days === 0 ? '⚡ MODO EN VIVO ACTIVADO' : '✅ Delay configurado',
+        description: days === 0 
+          ? 'Los padres verán las compras en tiempo real'
+          : `Los padres verán las compras después de ${days} día${days > 1 ? 's' : ''}`,
+      });
+    } catch (error: any) {
+      console.error('Error saving delay config:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo guardar la configuración de delay',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -259,6 +360,77 @@ Gracias.`);
           </CardContent>
         </Card>
       )}
+
+      {/* ⏱️ Configuración de Delay de Visibilidad */}
+      <Card className="border-2 shadow-lg bg-white">
+        <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50 border-b-2">
+          <CardTitle className="flex items-center gap-3 text-xl">
+            <div className="p-2 bg-amber-600 rounded-lg">
+              <Clock className="h-6 w-6 text-white" />
+            </div>
+            Delay de Visibilidad de Compras (Portal de Padres)
+          </CardTitle>
+          <CardDescription className="text-base mt-2">
+            Controla cuántos días deben pasar antes de que los padres vean las compras de sus hijos en el portal.
+            Esta configuración <strong>NO afecta</strong> al módulo de cobranzas del admin (siempre en vivo).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <Label htmlFor="delay_days" className="text-base font-semibold">
+                Días de Delay
+              </Label>
+              <p className="text-sm text-gray-600">
+                Actualmente: <span className="font-bold text-amber-700">
+                  {delayDays === 0 ? '⚡ MODO EN VIVO' : `${delayDays} día${delayDays > 1 ? 's' : ''}`}
+                </span>
+              </p>
+            </div>
+            <Select 
+              value={delayDays.toString()} 
+              onValueChange={handleDelayChange}
+            >
+              <SelectTrigger className="w-[200px] h-12 border-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0" className="font-bold text-green-600">
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-4 w-4" />
+                    <span>⚡ EN VIVO (0 días)</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="1">1 día</SelectItem>
+                <SelectItem value="2">2 días (recomendado)</SelectItem>
+                <SelectItem value="3">3 días</SelectItem>
+                <SelectItem value="4">4 días</SelectItem>
+                <SelectItem value="5">5 días</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Explicación visual */}
+          <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-xl border-2 border-blue-200">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-blue-500 rounded-lg">
+                <AlertTriangle className="h-5 w-5 text-white" />
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-gray-900 mb-2">¿Qué hace el Delay?</p>
+                <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+                  <li>Los padres verán compras hechas hace <strong>{delayDays === 0 ? '0' : delayDays}+ días</strong></li>
+                  <li>Compras de hoy NO aparecen hasta dentro de <strong>{delayDays === 0 ? '0' : delayDays} día{delayDays > 1 ? 's' : ''}</strong></li>
+                  <li>Útil para evitar reclamos inmediatos y dar tiempo de verificación</li>
+                  {delayDays === 0 && (
+                    <li className="text-green-700 font-semibold">⚡ MODO EN VIVO: Los padres ven compras al instante</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Plantilla de Mensaje */}
       <Card className="border-2 shadow-lg bg-white">
@@ -400,6 +572,100 @@ Gracias.`);
           )}
         </Button>
       </div>
+
+      {/* ⚡ Modal de Confirmación: MODO EN VIVO */}
+      <Dialog open={showLiveWarning} onOpenChange={setShowLiveWarning}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Zap className="h-6 w-6 text-yellow-500" />
+              ⚡ Activar Modo EN VIVO
+            </DialogTitle>
+            <DialogDescription className="text-base pt-4 space-y-3">
+              <p className="font-semibold text-gray-900">
+                ¿Estás seguro de activar el modo EN VIVO?
+              </p>
+              <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+                <p className="text-sm text-gray-700">
+                  <strong>Esto significa que:</strong>
+                </p>
+                <ul className="text-sm text-gray-700 mt-2 space-y-1 list-disc list-inside">
+                  <li>Los padres verán <strong>todas las compras al instante</strong></li>
+                  <li>No habrá tiempo de verificación</li>
+                  <li>Pueden reclamar inmediatamente</li>
+                </ul>
+              </div>
+              <p className="text-sm text-gray-600">
+                Solo activa esto si estás seguro de que el sistema está funcionando correctamente.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowLiveWarning(false);
+                setPendingDelayValue(delayDays); // Revertir
+              }}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmLiveModeChange}
+              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              Activar EN VIVO
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ⏱️ Modal de Confirmación: Cambiar Delay */}
+      <Dialog open={showDelayWarning} onOpenChange={setShowDelayWarning}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Clock className="h-6 w-6 text-amber-600" />
+              Cambiar Delay de Visibilidad
+            </DialogTitle>
+            <DialogDescription className="text-base pt-4 space-y-3">
+              <p className="font-semibold text-gray-900">
+                ¿Confirmas el cambio a {pendingDelayValue} día{pendingDelayValue > 1 ? 's' : ''}?
+              </p>
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+                <p className="text-sm text-gray-700">
+                  <strong>Los padres verán:</strong>
+                </p>
+                <ul className="text-sm text-gray-700 mt-2 space-y-1 list-disc list-inside">
+                  <li>Compras de hace <strong>{pendingDelayValue}+ días</strong></li>
+                  <li>Compras de hoy NO aparecerán hasta dentro de <strong>{pendingDelayValue} día{pendingDelayValue > 1 ? 's' : ''}</strong></li>
+                </ul>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDelayWarning(false);
+                setPendingDelayValue(delayDays); // Revertir
+              }}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmDelayChange}
+              className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700"
+            >
+              <Check className="h-4 w-4 mr-2" />
+              Confirmar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
