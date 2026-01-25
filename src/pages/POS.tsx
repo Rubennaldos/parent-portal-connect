@@ -78,6 +78,11 @@ interface Student {
   grade: string;
   section: string;
   free_account?: boolean;
+  limit_type?: 'none' | 'daily' | 'weekly' | 'monthly';
+  daily_limit?: number;
+  weekly_limit?: number;
+  monthly_limit?: number;
+  is_blocked?: boolean;
 }
 
 interface Product {
@@ -156,6 +161,7 @@ const POS = () => {
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentAccountStatuses, setStudentAccountStatuses] = useState<Map<string, { canPurchase: boolean; statusText: string; statusColor: string; reason?: string }>>(new Map());
   const [showStudentResults, setShowStudentResults] = useState(false);
   const [studentWillPay, setStudentWillPay] = useState(false); // Switch para que estudiante pague
   const [cashAmount, setCashAmount] = useState<number>(0); // Cantidad que el estudiante abona en efectivo
@@ -469,16 +475,146 @@ const POS = () => {
     try {
       const { data, error } = await supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, is_blocked')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`)
         .limit(5);
 
       if (error) throw error;
       setStudents(data || []);
+
+      // Calcular estado de cuenta para cada estudiante
+      const statusMap = new Map();
+      for (const student of (data || [])) {
+        const status = await getAccountStatus(student);
+        statusMap.set(student.id, status);
+      }
+      setStudentAccountStatuses(statusMap);
     } catch (error: any) {
       console.error('Error searching students:', error);
     }
+  };
+
+  // ✅ Función helper para determinar el estado de cuenta del estudiante
+  const getAccountStatus = async (student: Student): Promise<{
+    canPurchase: boolean;
+    statusText: string;
+    statusColor: string;
+    reason?: string;
+  }> => {
+    // 1. Verificar si está bloqueado
+    if (student.is_blocked) {
+      return {
+        canPurchase: false,
+        statusText: '🚫 Cuenta Bloqueada',
+        statusColor: 'text-red-600',
+        reason: 'Cuenta bloqueada por el padre'
+      };
+    }
+
+    // 2. Cuenta Libre (sin topes)
+    if (student.free_account) {
+      const limitText = student.daily_limit && student.daily_limit > 0 
+        ? `Tope Diario: S/ ${student.daily_limit.toFixed(2)}`
+        : 'Sin tope';
+      
+      return {
+        canPurchase: true,
+        statusText: `✨ Cuenta Libre - ${limitText}`,
+        statusColor: 'text-emerald-600'
+      };
+    }
+
+    // 3. Con Recargas (sin cuenta libre)
+    const balance = student.balance || 0;
+    
+    if (balance <= 0) {
+      return {
+        canPurchase: false,
+        statusText: '💳 Sin Saldo - S/ 0.00',
+        statusColor: 'text-red-600',
+        reason: 'Sin saldo disponible'
+      };
+    }
+
+    // 4. Con Topes activos
+    if (student.limit_type && student.limit_type !== 'none') {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const startOfWeek = new Date();
+        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+
+        let limitAmount = 0;
+        let spentAmount = 0;
+        let periodText = '';
+
+        switch (student.limit_type) {
+          case 'daily':
+            limitAmount = student.daily_limit || 0;
+            const { data: todayData } = await supabase
+              .from('transactions')
+              .select('amount')
+              .eq('student_id', student.id)
+              .eq('type', 'purchase')
+              .gte('created_at', today);
+            spentAmount = todayData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+            periodText = 'Diario';
+            break;
+
+          case 'weekly':
+            limitAmount = student.weekly_limit || 0;
+            const { data: weekData } = await supabase
+              .from('transactions')
+              .select('amount')
+              .eq('student_id', student.id)
+              .eq('type', 'purchase')
+              .gte('created_at', startOfWeek.toISOString());
+            spentAmount = weekData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+            periodText = 'Semanal';
+            break;
+
+          case 'monthly':
+            limitAmount = student.monthly_limit || 0;
+            const { data: monthData } = await supabase
+              .from('transactions')
+              .select('amount')
+              .eq('student_id', student.id)
+              .eq('type', 'purchase')
+              .gte('created_at', startOfMonth.toISOString());
+            spentAmount = monthData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+            periodText = 'Mensual';
+            break;
+        }
+
+        const remaining = limitAmount - spentAmount;
+
+        if (remaining <= 0) {
+          return {
+            canPurchase: false,
+            statusText: `🚫 Tope ${periodText} Alcanzado`,
+            statusColor: 'text-red-600',
+            reason: `Ya alcanzó su límite de S/ ${limitAmount.toFixed(2)}`
+          };
+        }
+
+        return {
+          canPurchase: true,
+          statusText: `📊 Tope ${periodText}: S/ ${remaining.toFixed(2)} de S/ ${limitAmount.toFixed(2)}`,
+          statusColor: remaining < limitAmount * 0.3 ? 'text-orange-600' : 'text-blue-600'
+        };
+      } catch (error) {
+        console.error('Error calculating limits:', error);
+      }
+    }
+
+    // 5. Sin límites pero con saldo (default)
+    return {
+      canPurchase: true,
+      statusText: `💰 Saldo: S/ ${balance.toFixed(2)}`,
+      statusColor: 'text-emerald-600'
+    };
   };
 
   const selectStudent = (student: Student) => {
@@ -999,24 +1135,46 @@ const POS = () => {
 
             {showStudentResults && students.length > 0 && (
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {students.map((student) => (
-                  <button
-                    key={student.id}
-                    onClick={() => selectStudent(student)}
-                    className="w-full p-4 hover:bg-emerald-50 border-2 border-gray-200 hover:border-emerald-500 rounded-xl text-left flex items-center gap-4 transition-all"
-                  >
-                    <div className="flex-1">
-                      <p className="font-bold text-lg">{student.full_name}</p>
-                      <p className="text-sm text-gray-500">{student.grade} - {student.section}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">Saldo</p>
-                      <p className="text-2xl font-bold text-emerald-600">
-                        S/ {student.balance.toFixed(2)}
-                      </p>
-                    </div>
-                  </button>
-                ))}
+                {students.map((student) => {
+                  const accountStatus = studentAccountStatuses.get(student.id);
+                  const canPurchase = accountStatus?.canPurchase ?? true;
+                  const statusText = accountStatus?.statusText || `💰 Saldo: S/ ${student.balance.toFixed(2)}`;
+                  const statusColor = accountStatus?.statusColor || 'text-emerald-600';
+                  
+                  return (
+                    <button
+                      key={student.id}
+                      onClick={() => canPurchase && selectStudent(student)}
+                      disabled={!canPurchase}
+                      className={cn(
+                        "w-full p-4 border-2 rounded-xl text-left flex items-center gap-4 transition-all",
+                        canPurchase 
+                          ? "hover:bg-emerald-50 border-gray-200 hover:border-emerald-500 cursor-pointer"
+                          : "bg-gray-50 border-red-200 cursor-not-allowed opacity-70"
+                      )}
+                    >
+                      <div className="flex-1">
+                        <p className={cn("font-bold text-lg", !canPurchase && "text-gray-500")}>
+                          {student.full_name}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {student.grade} - {student.section}
+                        </p>
+                        {!canPurchase && accountStatus?.reason && (
+                          <p className="text-xs text-red-600 mt-1 font-medium">
+                            {accountStatus.reason}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-gray-500 mb-1">Estado</p>
+                        <p className={cn("text-sm font-bold", statusColor)}>
+                          {statusText}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
 

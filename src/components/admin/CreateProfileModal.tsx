@@ -30,7 +30,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowRight, ArrowLeft, Check, Users, Building2, FileText } from 'lucide-react';
+import { Loader2, ArrowRight, ArrowLeft, Check, Users, Building2, FileText, Eye, EyeOff } from 'lucide-react';
 
 interface School {
   id: string;
@@ -136,6 +136,8 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
   const [loading, setLoading] = useState(false);
   const [nextPosNumber, setNextPosNumber] = useState(1);
   const [suggestedPrefix, setSuggestedPrefix] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const { toast } = useToast();
 
   // Determinar el schema según el rol seleccionado
@@ -254,62 +256,49 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
   const onSubmit = async (values: any) => {
     setLoading(true);
     try {
-      // 1. Crear usuario en Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: values.email,
-        password: values.password,
-        options: {
-          data: {
-            full_name: values.full_name,
-            role: selectedRole, // 🔥 Enviar el rol para que el trigger lo respete
-          },
+      console.log('🚀 Llamando a Edge Function create-user...');
+
+      // Obtener el token de sesión actual
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('No hay sesión activa. Por favor, inicia sesión nuevamente.');
+      }
+
+      console.log('✅ Sesión obtenida, invocando función...');
+
+      // Llamar a la Edge Function para crear el usuario
+      const { data, error } = await supabase.functions.invoke('create-user', {
+        body: {
+          email: values.email,
+          password: values.password,
+          full_name: values.full_name,
+          role: selectedRole,
+          school_id: selectedSchool || null,
+          pos_number: values.pos_number || null,
+          ticket_prefix: values.ticket_prefix || null,
+          dni: values.dni || null,
+          phone_1: values.phone_1 || null,
+          address: values.address || null,
+          nickname: values.nickname || null,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
         },
       });
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('No se pudo crear el usuario');
+      console.log('📦 Respuesta de la función:', data);
 
-      // 2. Actualizar perfil en la tabla profiles (el trigger ya lo creó)
-      // Esperar un poco para que el trigger termine de ejecutarse
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const profileData: any = {
-        role: selectedRole,
-        school_id: selectedRole !== 'supervisor_red' ? selectedSchool : null,
-      };
-
-      // Agregar datos específicos según el rol
-      if (selectedRole === 'operador_caja') {
-        profileData.pos_number = values.pos_number;
-        profileData.ticket_prefix = values.ticket_prefix;
+      if (error) {
+        console.error('❌ Error desde Edge Function:', error);
+        throw new Error(error.message || 'Error al crear usuario');
       }
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update(profileData)
-        .eq('id', authData.user.id);
-
-      if (profileError) {
-        console.error('Error actualizando perfil:', profileError);
-        throw profileError;
+      if (!data?.success) {
+        throw new Error(data?.error || 'Error desconocido');
       }
 
-      // 3. Si es padre, crear también el parent_profile
-      if (selectedRole === 'parent') {
-        const { error: parentError } = await supabase
-          .from('parent_profiles')
-          .insert({
-            user_id: authData.user.id,
-            school_id: selectedSchool,
-            dni: values.dni,
-            phone_1: values.phone_1,
-            address: values.address,
-            nickname: values.nickname || null,
-            full_name: values.full_name,
-          });
-
-        if (parentError) throw parentError;
-      }
+      console.log('✅ Usuario creado exitosamente:', data.user);
 
       toast({
         title: '✅ Perfil creado exitosamente',
@@ -320,7 +309,7 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
       onOpenChange(false);
       onSuccess?.();
     } catch (error: any) {
-      console.error('Error creating profile:', error);
+      console.error('❌ Error creating profile:', error);
       toast({
         variant: 'destructive',
         title: 'Error al crear perfil',
@@ -500,7 +489,25 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
                     <FormItem>
                       <FormLabel>Contraseña *</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="Mínimo 6 caracteres" {...field} />
+                        <div className="relative">
+                          <Input 
+                            type={showPassword ? "text" : "password"} 
+                            placeholder="Mínimo 6 caracteres" 
+                            {...field} 
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -514,7 +521,25 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
                     <FormItem>
                       <FormLabel>Confirmar Contraseña *</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="Repite la contraseña" {...field} />
+                        <div className="relative">
+                          <Input 
+                            type={showConfirmPassword ? "text" : "password"} 
+                            placeholder="Repite la contraseña" 
+                            {...field} 
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                          >
+                            {showConfirmPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormDescription>
                         El usuario podrá cambiarla después
