@@ -75,6 +75,7 @@ const Index = () => {
   const { isChecking } = useOnboardingCheck();
   
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentDebts, setStudentDebts] = useState<Record<string, number>>({}); // 💰 Deudas por estudiante
   const [loading, setLoading] = useState(true);
   const [parentName, setParentName] = useState<string>('');
   const [showAddStudent, setShowAddStudent] = useState(false);
@@ -236,11 +237,16 @@ const Index = () => {
         .select('*')
         .eq('parent_id', user.id)
         .eq('is_active', true)
-        .order('full_name', { ascending: true });
+        .order('full_name', { ascending: true});
 
       if (error) throw error;
       
       setStudents(data || []);
+      
+      // ✅ Calcular deudas con delay para cada estudiante
+      if (data && data.length > 0) {
+        await calculateStudentDebts(data);
+      }
     } catch (error: any) {
       console.error('Error fetching students:', error);
       toast({
@@ -251,6 +257,52 @@ const Index = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ✅ Calcular deuda de cada estudiante respetando el delay
+  const calculateStudentDebts = async (studentsData: Student[]) => {
+    const debtsMap: Record<string, number> = {};
+    
+    for (const student of studentsData) {
+      // Solo calcular deuda para estudiantes con cuenta libre
+      if (student.free_account === false) {
+        debtsMap[student.id] = 0;
+        continue;
+      }
+
+      try {
+        // Obtener delay configurado para la sede del estudiante
+        const { data: delayData } = await supabase
+          .from('purchase_visibility_delay')
+          .select('delay_days')
+          .eq('school_id', student.school_id)
+          .maybeSingle();
+
+        const delayDays = delayData?.delay_days ?? 2;
+        
+        // Calcular fecha límite
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - delayDays);
+        const cutoffDateISO = cutoffDate.toISOString();
+
+        // Obtener transacciones pendientes con filtro de delay
+        const { data: transactions } = await supabase
+          .from('transactions')
+          .select('amount')
+          .eq('student_id', student.id)
+          .eq('type', 'purchase')
+          .eq('payment_status', 'pending')
+          .lte('created_at', cutoffDateISO);
+
+        const totalDebt = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+        debtsMap[student.id] = totalDebt;
+      } catch (error) {
+        console.error(`Error calculating debt for student ${student.id}:`, error);
+        debtsMap[student.id] = 0;
+      }
+    }
+    
+    setStudentDebts(debtsMap);
   };
 
   const handleRecharge = async (amount: number, method: string) => {
@@ -602,6 +654,7 @@ const Index = () => {
                     <StudentCard
                       key={student.id}
                       student={student}
+                      totalDebt={studentDebts[student.id] || 0} // 💰 Pasar deuda calculada con delay
                       onRecharge={() => openRechargeModal(student)}
                       onViewHistory={() => openHistoryModal(student)}
                       onLunchFast={() => handleLunchFast(student)}

@@ -33,6 +33,7 @@ interface Student {
 
 interface StudentCardProps {
   student: Student;
+  totalDebt?: number; // 💰 Deuda calculada con delay
   onRecharge: () => void;
   onViewHistory: () => void;
   onLunchFast: () => void;
@@ -44,6 +45,7 @@ interface StudentCardProps {
 
 export function StudentCard({
   student,
+  totalDebt = 0, // 💰 Default 0 si no se pasa
   onRecharge,
   onViewHistory,
   onLunchFast,
@@ -54,8 +56,9 @@ export function StudentCard({
 }: StudentCardProps) {
   const isFreeAccount = student.free_account !== false;
   
-  // LÓGICA SIMPLIFICADA: Si debe (balance < 0) → Pagar Deudas, si es prepago → Recargar
-  const hasDebt = student.balance < 0;
+  // ✅ Usar totalDebt pasado como prop (con filtro de delay) en vez de balance
+  const hasDebt = isFreeAccount ? totalDebt > 0 : student.balance < 0;
+  const displayAmount = isFreeAccount ? totalDebt : Math.abs(student.balance);
   const showPaymentButton = hasDebt || !isFreeAccount;
   const buttonText = hasDebt ? 'Pagar Deudas' : 'Recargar Saldo';
 
@@ -165,7 +168,7 @@ export function StudentCard({
               <p className={`text-3xl font-light tracking-tight ${
                 hasDebt ? 'text-rose-600' : 'text-emerald-600'
               }`}>
-                S/ {Math.abs(student.balance).toFixed(2)}
+                S/ {displayAmount.toFixed(2)}
               </p>
             </div>
             <div className={`p-3 rounded-xl ${
