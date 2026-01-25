@@ -70,11 +70,21 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchUserModules();
+    // ✅ FIX: Solo cargar módulos cuando AMBOS user Y role estén disponibles
+    if (user && role) {
+      console.log('✅ Usuario y rol disponibles, cargando módulos...');
+      fetchUserModules();
+    } else {
+      console.log('⏳ Esperando user y role...', { user: !!user, role });
+    }
   }, [user, role]);
 
   const fetchUserModules = async () => {
-    if (!user) return;
+    // ✅ FIX: Verificación más robusta
+    if (!user || !role) {
+      console.log('⚠️ No se puede cargar módulos: user o role faltante', { user: !!user, role });
+      return;
+    }
 
     try {
       setLoading(true);
