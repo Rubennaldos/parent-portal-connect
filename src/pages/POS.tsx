@@ -334,9 +334,19 @@ const POS = () => {
         // ⌨️ ATAJOS DE TECLADO (funcionan siempre, incluso en inputs)
         
         // ENTER → Cobrar (finalizar compra)
-        if (e.key === 'Enter' && cart.length > 0 && canCheckout()) {
+        // Verificar condiciones básicas sin llamar a canCheckout()
+        if (e.key === 'Enter' && cart.length > 0 && clientMode) {
           e.preventDefault();
-          handleCheckoutClick();
+          // Verificar si se puede hacer checkout
+          const canProceed = 
+            (clientMode === 'generic') || 
+            (clientMode === 'student' && selectedStudent && (
+              selectedStudent.free_account || selectedStudent.balance >= getTotal()
+            ));
+          
+          if (canProceed) {
+            handleCheckoutClick();
+          }
           return;
         }
 
@@ -382,7 +392,7 @@ const POS = () => {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [clientMode, cart, canCheckout]);
+  }, [clientMode, cart, selectedStudent]);
 
   // Auto-focus cuando se selecciona un cliente
   useEffect(() => {
