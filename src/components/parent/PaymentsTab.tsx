@@ -53,7 +53,7 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
       // Obtener todos los estudiantes del padre con cuenta libre
       const { data: students, error: studentsError } = await supabase
         .from('students')
-        .select('id, full_name, photo_url, free_account')
+        .select('id, full_name, photo_url, free_account, school_id')
         .eq('parent_id', userId)
         .eq('free_account', true)
         .eq('is_active', true);
