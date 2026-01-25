@@ -155,6 +155,9 @@ const POS = () => {
   console.log('👤 POS - Usuario:', user?.email);
   console.log('🎭 POS - Rol:', role);
 
+  // Estado para la sede del usuario (cajero)
+  const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
+
   // Estados de cliente
   const [clientMode, setClientMode] = useState<'student' | 'generic' | null>(null);
   const [studentSearch, setStudentSearch] = useState('');
@@ -419,6 +422,9 @@ const POS = () => {
 
       const schoolId = profile?.school_id || null;
       console.log('🏫 POS - Sede del usuario:', schoolId);
+      
+      // Guardar el school_id del usuario para filtrar estudiantes
+      setUserSchoolId(schoolId);
 
       // Usar la función de pricing inteligente
       const productsData = await getProductsForSchool(schoolId);
@@ -521,13 +527,24 @@ const POS = () => {
   const searchStudents = async (query: string) => {
     try {
       console.log('🔍 Buscando estudiantes con query:', query);
+      console.log('🏫 Filtrando por sede:', userSchoolId);
       
-      const { data, error } = await supabase
+      // Construir la consulta base
+      let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, limit_type, daily_limit, weekly_limit, monthly_limit')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, school_id')
         .eq('is_active', true)
-        .ilike('full_name', `%${query}%`)
-        .limit(5);
+        .ilike('full_name', `%${query}%`);
+      
+      // Si el usuario tiene una sede asignada, filtrar solo estudiantes de esa sede
+      if (userSchoolId) {
+        studentsQuery = studentsQuery.eq('school_id', userSchoolId);
+        console.log('✅ Aplicando filtro de sede:', userSchoolId);
+      } else {
+        console.warn('⚠️ Usuario sin sede asignada, mostrando todos los estudiantes');
+      }
+      
+      const { data, error } = await studentsQuery.limit(5);
 
       if (error) {
         console.error('❌ Error en consulta de estudiantes:', error);
