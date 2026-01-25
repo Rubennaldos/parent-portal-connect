@@ -57,7 +57,7 @@ export function SpendingLimitsModal({
   const [spentThisMonth, setSpentThisMonth] = useState(0);
   const [showWarning, setShowWarning] = useState(false);
   const [pendingType, setPendingType] = useState<LimitType | null>(null);
-  const [accountMode, setAccountMode] = useState<'free' | 'prepaid'>('prepaid'); // Por defecto: Con Recargas
+  const [accountMode, setAccountMode] = useState<'free' | 'prepaid'>('free'); // Por defecto: Cuenta Libre
   const [showModeChangeWarning, setShowModeChangeWarning] = useState(false);
   const [pendingMode, setPendingMode] = useState<'free' | 'prepaid' | null>(null);
 
@@ -82,8 +82,8 @@ export function SpendingLimitsModal({
       setCurrentConfig(data);
       // ✅ SIEMPRE iniciar en "Compra Inteligente" (none)
       setSelectedType('none');
-      // ✅ SIEMPRE iniciar en "Con Recargas" (prepaid)
-      setAccountMode('prepaid');
+      // ✅ SIEMPRE iniciar en "Cuenta Libre" (free)
+      setAccountMode('free');
       setLimitAmount('0');
       
       // Guardar la configuración antigua para referencia, pero no aplicarla
