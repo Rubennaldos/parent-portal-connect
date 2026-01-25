@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -781,6 +781,9 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Crear Nuevo Grado/Nivel</DialogTitle>
+            <DialogDescription>
+              Configura un nuevo grado o nivel para tu sede educativa
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -807,6 +810,9 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Crear Nueva Aula/Sección</DialogTitle>
+            <DialogDescription>
+              Configura una nueva aula o sección para el grado seleccionado
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
