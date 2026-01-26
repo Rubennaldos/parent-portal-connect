@@ -1,0 +1,94 @@
+🚀 *PARENT PORTAL v1.3.5 - DESPLEGADO*
+
+📅 *26 Enero 2026*
+
+━━━━━━━━━━━━━━━━━━━━━
+
+✨ *NUEVO: MÓDULO FINANZAS*
+
+Para Admin General - Todo en tiempo real:
+
+📊 *Dashboard EN VIVO* (auto-refresh 10 seg)
+• Efectivo hoy por sede (DESTACADO)
+• Total ventas + ticket promedio
+• Medios de pago (efectivo/tarjeta/yape)
+• Top cajeros del día
+• Insights automáticos
+
+📋 *4 Pestañas*
+1. Dashboard principal
+2. Movimientos de Caja (auditoría por cajero)
+3. Auditoría de Boletas (todas las ventas)
+4. Ventas por Día
+
+🎨 *Diseño*
+• Ultra compacto (50% menos espacio)
+• Responsive (móvil + PC)
+• Filtros avanzados
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🍽️ *ALMUERZOS - FUNCIONAL*
+
+✅ Portal padres puede pedir almuerzos
+✅ Calendario mensual con menús
+✅ Previene pedidos duplicados
+✅ Precio configurable por sede
+✅ Integrado con finanzas (deuda/prepago)
+✅ RLS y permisos corregidos
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💾 *TABLA SALES*
+
+Nueva tabla para tracking de ventas:
+• Se registra automática desde POS
+• Captura efectivo/cambio/métodos pago
+• Items en JSONB
+• Para estudiantes + clientes genéricos
+
+━━━━━━━━━━━━━━━━━━━━━
+
+📱 *DASHBOARD RESPONSIVE*
+
+Móvil: círculos dinámicos 🔵
+Desktop: cuadrados (sin cambios) ⬜
+
+━━━━━━━━━━━━━━━━━━━━━
+
+✅ *DESPLIEGUE EXITOSO*
+• GitHub: ✅ Push completado
+• Vercel: ✅ Deploy automático
+• URL: parent-portal-connect.vercel.app
+
+━━━━━━━━━━━━━━━━━━━━━
+
+📊 *STATS*
+• 15 archivos modificados
+• +1,958 líneas de código
+• 1 nuevo módulo completo
+• 8 scripts SQL
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🎯 *LO MÁS IMPORTANTE*
+
+1. La REINA ya puede ver:
+   • Cuánto efectivo tiene cada sede AL INSTANTE
+   • Todos los movimientos de caja
+   • Auditoría completa de ventas
+
+2. Los PADRES ya pueden:
+   • Pedir almuerzos desde el portal
+   • Ver menús del mes
+   • Sistema previene errores
+
+3. El POS ahora:
+   • Registra TODO en tabla sales
+   • Perfecto para Finanzas
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🚀 *TODO LISTO PARA USAR*
+
+Sistema completo, probado y en producción ✨
