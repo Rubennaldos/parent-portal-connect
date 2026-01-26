@@ -106,10 +106,13 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
   const loadData = async () => {
     setLoading(true);
     try {
-      await Promise.all([
-        fetchStudents(),
-        fetchMonthlyData()
-      ]);
+      // PRIMERO cargar estudiantes, LUEGO los menús
+      const studentsData = await fetchStudents();
+      if (studentsData && studentsData.length > 0) {
+        await fetchMonthlyData(studentsData);
+      } else {
+        console.warn('⚠️ No se encontraron estudiantes para cargar menús');
+      }
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -118,39 +121,88 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
   };
 
   const fetchStudents = async () => {
+    console.log('👨‍👩‍👧‍👦 fetchStudents iniciado, parentId:', parentId);
+    
     const { data, error } = await supabase
       .from('students')
       .select('id, full_name, photo_url, school_id')
       .eq('parent_id', parentId)
       .eq('is_active', true);
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Error cargando estudiantes:', error);
+      throw error;
+    }
+    
+    console.log('✅ Estudiantes cargados:', data);
     setStudents(data || []);
     
     // Auto-seleccionar todos los estudiantes
     setSelectedStudents(new Set(data?.map(s => s.id) || []));
+    
+    return data || [];
   };
 
-  const fetchMonthlyData = async () => {
-    if (students.length === 0) return;
+  const fetchMonthlyData = async (studentsData?: Student[]) => {
+    // Usar studentsData si se pasa como parámetro, si no, usar el estado
+    const dataToUse = studentsData || students;
+    
+    if (dataToUse.length === 0) {
+      console.log('🍽️ fetchMonthlyData: NO hay estudiantes, abortando');
+      return;
+    }
 
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
-    const schoolId = students[0]?.school_id;
+    const schoolId = dataToUse[0]?.school_id;
 
-    if (!schoolId) return;
+    console.log('🍽️ fetchMonthlyData iniciado:', {
+      estudiantesCount: dataToUse.length,
+      primerEstudiante: dataToUse[0]?.full_name,
+      schoolId,
+      monthStart: format(monthStart, 'yyyy-MM-dd'),
+      monthEnd: format(monthEnd, 'yyyy-MM-dd')
+    });
+
+    if (!schoolId) {
+      console.error('❌ fetchMonthlyData: schoolId es NULL o undefined');
+      return;
+    }
 
     // Fetch configuración
-    const { data: configData } = await supabase
+    const { data: configData, error: configError } = await supabase
       .from('lunch_configuration')
       .select('*')
       .eq('school_id', schoolId)
-      .single();
+      .maybeSingle(); // Cambiar a maybeSingle para que no falle si no hay config
 
-    setConfig(configData);
+    if (configError) {
+      console.error('❌ Error cargando configuración de almuerzos:', configError);
+    } else if (!configData) {
+      console.warn('⚠️ No hay configuración de almuerzos para esta sede. Usando valores por defecto.');
+      // Configuración por defecto si no existe
+      const defaultConfig: LunchConfig = {
+        lunch_price: 5.00,
+        order_deadline_time: '09:00:00',
+        order_deadline_days: 1,
+        cancellation_deadline_time: '09:00:00',
+        cancellation_deadline_days: 1,
+        orders_enabled: true
+      };
+      setConfig(defaultConfig);
+    } else {
+      console.log('✅ Configuración de almuerzos cargada:', configData);
+      setConfig(configData);
+    }
 
     // Fetch menús del mes
-    const { data: menusData } = await supabase
+    console.log('📋 Fetching menús con:', {
+      schoolId,
+      desde: format(monthStart, 'yyyy-MM-dd'),
+      hasta: format(monthEnd, 'yyyy-MM-dd')
+    });
+
+    const { data: menusData, error: menusError } = await supabase
       .from('lunch_menus')
       .select('*')
       .eq('school_id', schoolId)
@@ -158,10 +210,26 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       .lte('date', format(monthEnd, 'yyyy-MM-dd'))
       .order('date');
 
+    if (menusError) {
+      console.error('❌ ERROR fetching menús:', menusError);
+    } else {
+      console.log('✅ Menús obtenidos:', {
+        count: menusData?.length || 0,
+        menus: menusData
+      });
+    }
+
     const menusMap = new Map<string, LunchMenu>();
     menusData?.forEach(menu => {
+      console.log('📌 Agregando menú al Map:', menu.date, menu);
       menusMap.set(menu.date, menu);
     });
+    
+    console.log('🗺️ Map de menús final:', {
+      size: menusMap.size,
+      fechas: Array.from(menusMap.keys())
+    });
+    
     setMenus(menusMap);
 
     // Fetch días especiales
@@ -182,7 +250,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
     const { data: ordersData } = await supabase
       .from('lunch_orders')
       .select('order_date, student_id, status')
-      .in('student_id', students.map(s => s.id))
+      .in('student_id', dataToUse.map(s => s.id))
       .gte('order_date', format(monthStart, 'yyyy-MM-dd'))
       .lte('order_date', format(monthEnd, 'yyyy-MM-dd'))
       .neq('status', 'cancelled');
@@ -226,6 +294,16 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       return;
     }
 
+    // No permitir seleccionar días que YA tienen pedido
+    if (existingOrders.has(dateStr)) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Ya tienes un pedido para este día',
+        description: `Ya realizaste un pedido de almuerzo para el ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}. No puedes pedir dos veces el mismo día.`,
+      });
+      return;
+    }
+
     setSelectedDates(prev => {
       const newSet = new Set(prev);
       if (newSet.has(dateStr)) {
@@ -238,6 +316,16 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
   };
 
   const handleDayClick = (dateStr: string) => {
+    // Si ya tiene pedido, mostrar mensaje en lugar de abrir modal
+    if (existingOrders.has(dateStr)) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Ya tienes un pedido para este día',
+        description: `Ya realizaste un pedido de almuerzo para el ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}. No puedes pedir dos veces el mismo día.`,
+      });
+      return;
+    }
+
     const menu = menus.get(dateStr);
     if (menu) {
       setSelectedMenuDate(dateStr);
@@ -405,30 +493,125 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       return;
     }
 
+    if (!config) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo cargar la configuración de almuerzos',
+      });
+      return;
+    }
+
+    // Validar que ningún día seleccionado ya tenga pedido
+    const daysWithExistingOrders: string[] = [];
+    for (const dateStr of selectedDates) {
+      if (existingOrders.has(dateStr)) {
+        daysWithExistingOrders.push(new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' }));
+      }
+    }
+
+    if (daysWithExistingOrders.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Algunos días ya tienen pedidos',
+        description: `Ya tienes pedidos para: ${daysWithExistingOrders.join(', ')}. Por favor deselecciónalos.`,
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
+      console.log('🍽️ Iniciando proceso de pedidos de almuerzos...');
+      
       // Crear pedidos
       const orders = [];
+      const transactions = [];
+      
       for (const dateStr of selectedDates) {
         for (const studentId of selectedStudents) {
+          const student = students.find(s => s.id === studentId);
+          
           orders.push({
             student_id: studentId,
             order_date: dateStr,
             status: 'confirmed',
             created_at: new Date().toISOString(),
           });
+
+          // Si el estudiante tiene CUENTA LIBRE, crear transacción (deuda)
+          if (student) {
+            // Obtener datos completos del estudiante para saber si es cuenta libre
+            const { data: studentData } = await supabase
+              .from('students')
+              .select('free_account')
+              .eq('id', studentId)
+              .single();
+
+            if (studentData?.free_account === true) {
+              console.log(`💳 Estudiante ${student.full_name} tiene CUENTA LIBRE - Creando transacción`);
+              
+              transactions.push({
+                student_id: studentId,
+                type: 'purchase',
+                amount: -config.lunch_price, // Negativo = deuda
+                payment_status: 'pending',
+                description: `Almuerzo - ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+                created_at: new Date().toISOString(),
+              });
+            } else {
+              console.log(`💰 Estudiante ${student.full_name} tiene SALDO PREPAGADO - Descontando del balance`);
+              
+              // Para cuentas con saldo, descontar del balance
+              const { data: currentStudent } = await supabase
+                .from('students')
+                .select('balance')
+                .eq('id', studentId)
+                .single();
+
+              if (currentStudent) {
+                const newBalance = (currentStudent.balance || 0) - config.lunch_price;
+                
+                await supabase
+                  .from('students')
+                  .update({ balance: newBalance })
+                  .eq('id', studentId);
+
+                transactions.push({
+                  student_id: studentId,
+                  type: 'purchase',
+                  amount: -config.lunch_price,
+                  payment_status: 'paid',
+                  description: `Almuerzo - ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+                  created_at: new Date().toISOString(),
+                });
+              }
+            }
+          }
         }
       }
 
-      const { error } = await supabase
+      console.log('📋 Insertando pedidos:', orders.length);
+      const { error: ordersError } = await supabase
         .from('lunch_orders')
         .insert(orders);
 
-      if (error) throw error;
+      if (ordersError) throw ordersError;
+
+      console.log('💰 Insertando transacciones:', transactions.length);
+      if (transactions.length > 0) {
+        const { error: transError } = await supabase
+          .from('transactions')
+          .insert(transactions);
+
+        if (transError) {
+          console.error('❌ Error insertando transacciones:', transError);
+          throw transError;
+        }
+      }
 
       toast({
-        title: '¡Pedidos realizados!',
-        description: `Se realizaron ${orders.length} pedido(s) de almuerzo exitosamente`,
+        title: '✅ ¡Pedidos realizados!',
+        description: `${orders.length} almuerzo(s) pedido(s) • ${transactions.filter(t => t.payment_status === 'pending').length} registrado(s) como deuda`,
       });
 
       // Recargar datos y limpiar selección
@@ -436,7 +619,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       setSelectedDates(new Set());
       onClose();
     } catch (error: any) {
-      console.error('Error submitting orders:', error);
+      console.error('❌ Error submitting orders:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -760,13 +943,15 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                         <div
                           key={dateStr}
                           className={cn(
-                            'aspect-square border rounded-md sm:rounded-lg p-1 sm:p-2 transition-all cursor-pointer',
+                            'aspect-square border rounded-md sm:rounded-lg p-1 sm:p-2 transition-all',
                             bgClass,
                             borderClass,
                             isToday(day) && 'ring-1 sm:ring-2 ring-orange-500',
-                            isPast && 'opacity-50 cursor-not-allowed'
+                            isPast && 'opacity-50 cursor-not-allowed',
+                            hasOrders && 'cursor-not-allowed', // Días con pedidos no son clicables
+                            !hasOrders && !isPast && 'cursor-pointer' // Solo clickable si no tiene pedido y no es pasado
                           )}
-                          onClick={() => !isPast && handleDayClick(dateStr)}
+                          onClick={() => !isPast && !hasOrders && handleDayClick(dateStr)}
                         >
                           <div className="h-full flex flex-col">
                             <div className="flex justify-between items-start">

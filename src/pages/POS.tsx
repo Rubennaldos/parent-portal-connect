@@ -984,6 +984,34 @@ const POS = () => {
 
         if (itemsError) throw itemsError;
 
+        // **NUEVO: Registrar en tabla SALES para módulo de Finanzas**
+        const salesItems = cart.map(item => ({
+          product_id: item.product.id,
+          product_name: item.product.name,
+          barcode: item.product.barcode || null,
+          quantity: item.quantity,
+          price: item.product.price,
+          subtotal: item.product.price * item.quantity,
+        }));
+
+        await supabase
+          .from('sales')
+          .insert({
+            transaction_id: ticketCode,
+            student_id: selectedStudent.id,
+            school_id: selectedStudent.school_id,
+            cashier_id: user?.id,
+            total: total,
+            subtotal: total,
+            discount: 0,
+            payment_method: isFreeAccount ? 'debt' : 'cash', // Si es cuenta libre, es "fiado"
+            cash_received: isFreeAccount ? null : cashAmount,
+            change_given: isFreeAccount ? null : (cashAmount - total),
+            items: salesItems,
+          });
+        
+        console.log('✅ Venta registrada en tabla sales');
+
         // Actualizar saldo solo si NO es cuenta libre y hubo descuento
         if (!isFreeAccount && amountToDeduct > 0) {
           const { error: updateError } = await supabase
@@ -1031,6 +1059,41 @@ const POS = () => {
         }));
 
         await supabase.from('transaction_items').insert(items);
+
+        // **NUEVO: Registrar en tabla SALES para módulo de Finanzas**
+        // Obtener school_id del cajero actual
+        const { data: cashierProfile } = await supabase
+          .from('profiles')
+          .select('school_id')
+          .eq('id', user?.id)
+          .single();
+
+        const salesItems = cart.map(item => ({
+          product_id: item.product.id,
+          product_name: item.product.name,
+          barcode: item.product.barcode || null,
+          quantity: item.quantity,
+          price: item.product.price,
+          subtotal: item.product.price * item.quantity,
+        }));
+
+        await supabase
+          .from('sales')
+          .insert({
+            transaction_id: ticketCode,
+            student_id: null, // Cliente genérico
+            school_id: cashierProfile?.school_id || null,
+            cashier_id: user?.id,
+            total: total,
+            subtotal: total,
+            discount: 0,
+            payment_method: 'cash',
+            cash_received: cashAmount,
+            change_given: cashAmount - total,
+            items: salesItems,
+          });
+        
+        console.log('✅ Venta genérica registrada en tabla sales');
       }
 
       // Mostrar notificación rápida (sin modal)

@@ -17,6 +17,7 @@ import POS from "./pages/POS";
 import Comedor from "./pages/Comedor";
 import SalesList from "./pages/SalesList";
 import Cobranzas from "./pages/Cobranzas";
+import Finanzas from "./pages/Finanzas";
 import ParentConfiguration from "./pages/ParentConfiguration";
 import Products from "./pages/Products";
 import PaymentStats from "./pages/PaymentStats";
@@ -118,6 +119,16 @@ const App = () => (
                 <PermissionProtectedRoute moduleCode="cobranzas">
                   <Cobranzas />
                 </PermissionProtectedRoute>
+              }
+            />
+
+            {/* Finanzas/Tesorería - Admin General y Superadmin */}
+            <Route
+              path="/finanzas"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'superadmin']}>
+                  <Finanzas />
+                </ProtectedRoute>
               }
             />
             

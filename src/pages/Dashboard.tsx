@@ -21,7 +21,9 @@ import {
   ShieldCheck,
   CreditCard,
   UtensilsCrossed,
-  BarChart3
+  BarChart3,
+  LineChart,
+  Clock
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -49,10 +51,12 @@ const ICON_MAP: { [key: string]: any } = {
   CreditCard,
   UtensilsCrossed,
   BarChart3,
+  LineChart,
 };
 
 const COLOR_MAP: { [key: string]: string } = {
   green: 'bg-green-500/10 text-green-600 border-green-500/30',
+  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
   red: 'bg-red-500/10 text-red-600 border-red-500/30',
   blue: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
   purple: 'bg-purple-500/10 text-purple-600 border-purple-500/30',
@@ -259,14 +263,14 @@ const Dashboard = () => {
         {
           id: '6',
           code: 'finanzas',
-          name: 'Finanzas',
-          description: 'Reportes financieros y análisis',
-          icon: 'TrendingUp',
-          color: 'yellow',
+          name: 'Finanzas y Tesorería',
+          description: 'Efectivo por sede, auditoría de caja y ventas',
+          icon: 'LineChart',
+          color: 'emerald',
           route: '/finanzas',
           is_active: true,
           is_enabled: false,
-          status: 'coming_soon' as const,
+          status: 'functional' as const,
         },
         {
           id: '7',
@@ -439,8 +443,59 @@ const Dashboard = () => {
           </p>
         </div>
 
-        {/* Modules Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Modules Grid - Desktop: cuadrados, Móvil: bolitas */}
+        
+        {/* VISTA MÓVIL - Bolitas circulares */}
+        <div className="grid grid-cols-3 gap-4 sm:hidden">
+          {modules.map((module) => {
+            const IconComponent = ICON_MAP[module.icon];
+            const colorClass = COLOR_MAP[module.color];
+
+            return (
+              <div
+                key={module.id}
+                className={`flex flex-col items-center cursor-pointer transition-all ${
+                  module.is_enabled ? 'opacity-100' : 'opacity-40'
+                }`}
+                onClick={() => handleModuleClick(module)}
+              >
+                {/* Círculo con icono */}
+                <div
+                  className={`w-20 h-20 rounded-full flex items-center justify-center mb-2 ${
+                    module.is_enabled ? colorClass : 'bg-gray-300 text-gray-500'
+                  } shadow-lg hover:scale-110 transition-transform relative`}
+                >
+                  <IconComponent className="h-8 w-8" />
+                  
+                  {/* Badge pequeño en esquina */}
+                  {module.status === 'functional' && module.is_enabled && (
+                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                      <CheckCircle2 className="h-3 w-3 text-white" />
+                    </div>
+                  )}
+                  {module.status === 'coming_soon' && (
+                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center">
+                      <Clock className="h-3 w-3 text-white" />
+                    </div>
+                  )}
+                  {!module.is_enabled && (
+                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
+                      <Lock className="h-3 w-3 text-white" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Nombre del módulo */}
+                <p className="text-xs font-semibold text-center text-gray-800 leading-tight">
+                  {module.name}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* VISTA DESKTOP - Cuadrados (original) */}
+        <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((module) => {
             const IconComponent = ICON_MAP[module.icon];
             const colorClass = COLOR_MAP[module.color];
