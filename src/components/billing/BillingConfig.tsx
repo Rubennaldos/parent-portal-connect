@@ -280,7 +280,12 @@ Gracias.`);
   };
 
   const saveDelayConfig = async (days: number) => {
-    if (!selectedSchool) return;
+    console.log('🎯 saveDelayConfig llamado con:', { days, selectedSchool });
+    
+    if (!selectedSchool) {
+      console.error('❌ No hay selectedSchool, abortando');
+      return;
+    }
 
     try {
       setSaving(true);
