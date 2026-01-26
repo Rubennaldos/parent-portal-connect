@@ -78,29 +78,41 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
 
         const delayDays = delayData?.delay_days ?? 2;
         
-        // ✅ Calcular fecha límite
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-        const cutoffDateISO = cutoffDate.toISOString();
-        
-        console.log('📅 Filtro de delay aplicado (Pagos):', {
-          studentName: student.full_name,
-          schoolId: student.school_id,
-          delayDays,
-          hoy: new Date().toLocaleString('es-PE'),
-          cutoffDate: cutoffDate.toLocaleString('es-PE'),
-          cutoffDateISO,
-          message: `Solo compras HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
-        });
-
-        // ✅ Obtener transacciones con filtro de fecha
-        const { data: transactions, error: transError } = await supabase
+        // ✅ Construir query base
+        let query = supabase
           .from('transactions')
           .select('*')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .eq('payment_status', 'pending')
-          .lte('created_at', cutoffDateISO) // ✅ Solo hasta fecha límite
+          .eq('payment_status', 'pending');
+
+        // ✅ Solo aplicar filtro de fecha si delay > 0
+        if (delayDays > 0) {
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
+          const cutoffDateISO = cutoffDate.toISOString();
+          
+          console.log('📅 Filtro de delay aplicado (Pagos):', {
+            studentName: student.full_name,
+            schoolId: student.school_id,
+            delayDays,
+            hoy: new Date().toLocaleString('es-PE'),
+            cutoffDate: cutoffDate.toLocaleString('es-PE'),
+            cutoffDateISO,
+            message: `Solo compras HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
+          });
+
+          query = query.lte('created_at', cutoffDateISO);
+        } else {
+          console.log('⚡ Modo EN VIVO (Pagos) - Sin filtro de delay:', {
+            studentName: student.full_name,
+            schoolId: student.school_id,
+            message: 'Mostrando TODAS las compras pendientes'
+          });
+        }
+
+        // ✅ Ejecutar query
+        const { data: transactions, error: transError } = await query
           .order('created_at', { ascending: false });
 
         if (transError) throw transError;

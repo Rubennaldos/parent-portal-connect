@@ -71,27 +71,40 @@ export const PurchaseHistoryModal = ({
       // Si no hay configuración, usar 2 días por defecto
       const delayDays = delayData?.delay_days ?? 2;
       
-      // ✅ PASO 3: Calcular fecha límite (hoy - delay_days)
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-      const cutoffDateISO = cutoffDate.toISOString();
-
-      console.log('📅 Filtro de delay aplicado (Historial):', {
-        studentName,
-        delayDays,
-        hoy: new Date().toLocaleString('es-PE'),
-        cutoffDate: cutoffDate.toLocaleString('es-PE'),
-        cutoffDateISO,
-        message: `Solo compras HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
-      });
-
-      // ✅ PASO 4: Obtener compras con filtro de fecha
-      const { data: transactions, error: transError } = await supabase
+      // ✅ Construir query base
+      let query = supabase
         .from('transactions')
         .select('*')
         .eq('student_id', studentId)
-        .eq('type', 'purchase')
-        .lte('created_at', cutoffDateISO) // ✅ Solo hasta la fecha límite
+        .eq('type', 'purchase');
+
+      // ✅ Solo aplicar filtro de fecha si delay > 0
+      if (delayDays > 0) {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - delayDays);
+        const cutoffDateISO = cutoffDate.toISOString();
+
+        console.log('📅 Filtro de delay aplicado (Historial):', {
+          studentName,
+          schoolId: studentData.school_id,
+          delayDays,
+          hoy: new Date().toLocaleString('es-PE'),
+          cutoffDate: cutoffDate.toLocaleString('es-PE'),
+          cutoffDateISO,
+          message: `Solo compras HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
+        });
+
+        query = query.lte('created_at', cutoffDateISO);
+      } else {
+        console.log('⚡ Modo EN VIVO (Historial) - Sin filtro de delay:', {
+          studentName,
+          schoolId: studentData.school_id,
+          message: 'Mostrando TODAS las compras'
+        });
+      }
+
+      // ✅ Ejecutar query
+      const { data: transactions, error: transError } = await query
         .order('created_at', { ascending: false })
         .limit(50);
 

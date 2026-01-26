@@ -280,22 +280,50 @@ const Index = () => {
 
         const delayDays = delayData?.delay_days ?? 2;
         
-        // Calcular fecha límite
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-        const cutoffDateISO = cutoffDate.toISOString();
-
-        // Obtener transacciones pendientes con filtro de delay
-        const { data: transactions } = await supabase
+        // ✅ Construir query base
+        let query = supabase
           .from('transactions')
           .select('amount')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .eq('payment_status', 'pending')
-          .lte('created_at', cutoffDateISO);
+          .eq('payment_status', 'pending');
+
+        // ✅ Solo aplicar filtro de fecha si delay > 0
+        if (delayDays > 0) {
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
+          const cutoffDateISO = cutoffDate.toISOString();
+
+          console.log('📅 Filtro de delay aplicado (StudentCard):', {
+            studentName: student.full_name,
+            schoolId: student.school_id,
+            delayDays,
+            hoy: new Date().toLocaleString('es-PE'),
+            cutoffDate: cutoffDate.toLocaleString('es-PE'),
+            cutoffDateISO,
+            message: `Solo deudas HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
+          });
+
+          query = query.lte('created_at', cutoffDateISO);
+        } else {
+          console.log('⚡ Modo EN VIVO (StudentCard) - Sin filtro de delay:', {
+            studentName: student.full_name,
+            schoolId: student.school_id,
+            message: 'Mostrando TODAS las deudas pendientes'
+          });
+        }
+
+        // ✅ Ejecutar query
+        const { data: transactions } = await query;
 
         const totalDebt = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
         debtsMap[student.id] = totalDebt;
+        
+        console.log('💰 Deuda calculada (StudentCard):', {
+          studentName: student.full_name,
+          totalDebt,
+          transaccionesPendientes: transactions?.length || 0
+        });
       } catch (error) {
         console.error(`Error calculating debt for student ${student.id}:`, error);
         debtsMap[student.id] = 0;
