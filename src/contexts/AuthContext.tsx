@@ -33,9 +33,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('🔔 Auth Event:', event, session ? '✅ Sesión activa' : '❌ Sin sesión');
       
-      // Actualizamos siempre que haya un cambio, sin importar el tipo de evento
-      setSession(session);
-      setUser(session?.user ?? null);
+      // Solo actualizar si realmente cambió la sesión (evitar re-renders innecesarios)
+      setSession((prevSession) => {
+        // Si no hay cambio en el ID de usuario, no actualizar
+        if (prevSession?.user?.id === session?.user?.id) {
+          return prevSession;
+        }
+        return session;
+      });
+      
+      setUser((prevUser) => {
+        // Si no hay cambio en el ID de usuario, no actualizar
+        if (prevUser?.id === session?.user?.id) {
+          return prevUser;
+        }
+        return session?.user ?? null;
+      });
+      
       setLoading(false);
     });
 
