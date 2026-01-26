@@ -70,11 +70,23 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
 
       for (const student of students) {
         // ✅ Obtener delay configurado para la sede del estudiante
-        const { data: delayData } = await supabase
+        console.log('🔍 Buscando delay para:', {
+          studentName: student.full_name,
+          schoolId: student.school_id
+        });
+
+        const { data: delayData, error: delayError } = await supabase
           .from('purchase_visibility_delay')
           .select('delay_days')
           .eq('school_id', student.school_id)
           .maybeSingle();
+
+        console.log('📦 Resultado de búsqueda de delay:', {
+          studentName: student.full_name,
+          delayData,
+          delayError,
+          valorFinal: delayData?.delay_days ?? 2
+        });
 
         const delayDays = delayData?.delay_days ?? 2;
         
