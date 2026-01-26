@@ -658,7 +658,8 @@ const Index = () => {
 
       {/* Main Content - Padding responsivo */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
-        {activeTab === 'alumnos' && (
+        {/* Pestaña Alumnos */}
+        <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
           <div className="space-y-6 sm:space-y-8">
             {/* Título - Más pequeño en móvil */}
             <div className="mb-4 sm:mb-6 md:mb-8">
@@ -719,20 +720,26 @@ const Index = () => {
               </>
             )}
           </div>
-        )}
+        </div>
 
-        {activeTab === 'pagos' && user?.id && <PaymentsTab userId={user.id} />}
+        {/* Pestaña Pagos */}
+        <div className={activeTab !== 'pagos' ? 'hidden' : ''}>
+          {user?.id && <PaymentsTab userId={user.id} />}
+        </div>
 
-        {activeTab === 'almuerzos' && user && (
-          <div className="px-4">
-            <LunchOrderCalendar
-              isOpen={true}
-              onClose={() => {}}
-              parentId={user.id}
-              embedded={true}
-            />
-          </div>
-        )}
+        {/* Pestaña Almuerzos */}
+        <div className={activeTab !== 'almuerzos' ? 'hidden' : ''}>
+          {user && (
+            <div className="px-4">
+              <LunchOrderCalendar
+                isOpen={true}
+                onClose={() => {}}
+                parentId={user.id}
+                embedded={true}
+              />
+            </div>
+          )}
+        </div>
 
       </main>
 
