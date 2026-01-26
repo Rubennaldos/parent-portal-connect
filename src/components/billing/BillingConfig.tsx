@@ -42,6 +42,13 @@ interface School {
   name: string;
 }
 
+interface SchoolDelayConfig {
+  school_id: string;
+  school_name: string;
+  enabled: boolean;
+  delay_days: number;
+}
+
 interface BillingConfig {
   id: string;
   school_id: string;
@@ -70,11 +77,9 @@ export const BillingConfig = () => {
   const [plinNumber, setPlinNumber] = useState('');
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
 
-  // ✨ Delay de visibilidad
-  const [delayDays, setDelayDays] = useState<number>(2);
-  const [showLiveWarning, setShowLiveWarning] = useState(false);
-  const [showDelayWarning, setShowDelayWarning] = useState(false);
-  const [pendingDelayValue, setPendingDelayValue] = useState<number>(2);
+  // ✨ Delay de visibilidad - NUEVO: Lista de todas las sedes
+  const [schoolDelays, setSchoolDelays] = useState<SchoolDelayConfig[]>([]);
+  const [savingDelays, setSavingDelays] = useState(false);
 
   console.log('🎭 Rol actual:', role);
   console.log('🔐 canViewAllSchools del hook:', canViewAllSchoolsFromHook);
@@ -112,6 +117,7 @@ export const BillingConfig = () => {
 
   useEffect(() => {
     fetchSchools();
+    fetchAllSchoolDelays(); // ✨ Cargar delays de todas las sedes
   }, []);
 
   useEffect(() => {
@@ -164,6 +170,55 @@ export const BillingConfig = () => {
     }
   };
 
+  // ✨ NUEVA FUNCIÓN: Cargar delays de TODAS las sedes
+  const fetchAllSchoolDelays = async () => {
+    try {
+      // 1. Obtener todas las sedes
+      const { data: schoolsData, error: schoolsError } = await supabase
+        .from('schools')
+        .select('id, name')
+        .order('name');
+
+      if (schoolsError) throw schoolsError;
+
+      if (!schoolsData || schoolsData.length === 0) {
+        setSchoolDelays([]);
+        return;
+      }
+
+      // 2. Obtener configuraciones de delay existentes
+      const { data: delaysData, error: delaysError } = await supabase
+        .from('purchase_visibility_delay')
+        .select('school_id, delay_days');
+
+      if (delaysError) throw delaysError;
+
+      // 3. Crear mapa de delays
+      const delaysMap = new Map<string, number>();
+      delaysData?.forEach(d => {
+        delaysMap.set(d.school_id, d.delay_days);
+      });
+
+      // 4. Combinar sedes con sus delays
+      const configs: SchoolDelayConfig[] = schoolsData.map(school => ({
+        school_id: school.id,
+        school_name: school.name,
+        enabled: delaysMap.has(school.id) && delaysMap.get(school.id)! > 0,
+        delay_days: delaysMap.get(school.id) ?? 0,
+      }));
+
+      setSchoolDelays(configs);
+      console.log('✅ Delays de todas las sedes cargados:', configs);
+    } catch (error) {
+      console.error('❌ Error loading school delays:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudieron cargar las configuraciones de delay',
+      });
+    }
+  };
+
   const fetchConfig = async () => {
     try {
       setLoading(true);
@@ -196,21 +251,79 @@ Gracias.`);
         setShowPaymentInfo(false);
       }
 
-      // ✅ 2. Cargar configuración de delay de visibilidad
-      const { data: delayData } = await supabase
-        .from('purchase_visibility_delay')
-        .select('delay_days')
-        .eq('school_id', selectedSchool)
-        .maybeSingle();
-
-      setDelayDays(delayData?.delay_days ?? 2);
-      setPendingDelayValue(delayData?.delay_days ?? 2);
-      
-      console.log('📅 Delay actual:', delayData?.delay_days ?? 2);
+      // ✅ 2. Ya no necesitamos cargar delay aquí, se carga en fetchAllSchoolDelays
+      console.log('📅 Config cargado para sede:', selectedSchool);
     } catch (error) {
       console.error('Error fetching config:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ✅ NUEVA FUNCIÓN: Cambiar switch de delay para una sede
+  const handleDelayToggle = async (schoolId: string, enabled: boolean) => {
+    try {
+      const newDelayDays = enabled ? 2 : 0; // Si activa, usa 2 días por defecto; si desactiva, 0 días
+
+      await saveSchoolDelay(schoolId, newDelayDays);
+      
+      // Actualizar estado local
+      setSchoolDelays(prev => prev.map(s => 
+        s.school_id === schoolId 
+          ? { ...s, enabled, delay_days: newDelayDays }
+          : s
+      ));
+    } catch (error) {
+      console.error('Error toggling delay:', error);
+    }
+  };
+
+  // ✅ NUEVA FUNCIÓN: Cambiar días de delay para una sede
+  const handleDelayDaysChange = async (schoolId: string, days: number) => {
+    try {
+      await saveSchoolDelay(schoolId, days);
+      
+      // Actualizar estado local
+      setSchoolDelays(prev => prev.map(s => 
+        s.school_id === schoolId 
+          ? { ...s, delay_days: days, enabled: days > 0 }
+          : s
+      ));
+    } catch (error) {
+      console.error('Error changing delay days:', error);
+    }
+  };
+
+  // ✅ NUEVA FUNCIÓN: Guardar delay de una sede en la base de datos
+  const saveSchoolDelay = async (schoolId: string, days: number) => {
+    try {
+      console.log('💾 Guardando delay:', { schoolId, days });
+
+      const { data, error } = await supabase
+        .from('purchase_visibility_delay')
+        .upsert({
+          school_id: schoolId,
+          delay_days: days,
+        }, {
+          onConflict: 'school_id'
+        });
+
+      if (error) throw error;
+
+      const school = schoolDelays.find(s => s.school_id === schoolId);
+      toast({
+        title: '✅ Delay actualizado',
+        description: `${school?.school_name}: ${days === 0 ? 'EN VIVO' : `${days} día(s)`}`,
+      });
+
+      console.log('✅ Delay guardado correctamente');
+    } catch (error) {
+      console.error('❌ Error guardando delay:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo guardar el delay',
+      });
     }
   };
 
@@ -259,101 +372,6 @@ Gracias.`);
         variant: 'destructive',
         title: 'Error',
         description: 'No se pudo guardar la configuración',
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // ✅ Funciones para manejar el delay
-  const handleDelayChange = (value: string) => {
-    console.log('🔄 Select cambió a:', value);
-    const newValue = parseInt(value);
-    setPendingDelayValue(newValue);
-    
-    console.log('📝 Nuevo valor:', newValue, 'Valor actual:', delayDays);
-    
-    if (newValue === 0) {
-      console.log('⚡ Abriendo modal EN VIVO');
-      setShowLiveWarning(true);
-    } else if (newValue !== delayDays) {
-      console.log('⏱️ Abriendo modal de cambio de delay');
-      setShowDelayWarning(true);
-    }
-  };
-
-  const confirmLiveModeChange = async () => {
-    console.log('⚡ Confirmando modo EN VIVO...');
-    await saveDelayConfig(0);
-    setShowLiveWarning(false);
-  };
-
-  const confirmDelayChange = async () => {
-    console.log('⏱️ Confirmando cambio de delay a:', pendingDelayValue);
-    await saveDelayConfig(pendingDelayValue);
-    setShowDelayWarning(false);
-  };
-
-  const saveDelayConfig = async (days: number) => {
-    console.log('🎯 saveDelayConfig llamado con:', { days, selectedSchool });
-    
-    if (!selectedSchool) {
-      console.error('❌ No hay selectedSchool, abortando');
-      return;
-    }
-
-    try {
-      setSaving(true);
-      
-      console.log('💾 Guardando delay config:', { school_id: selectedSchool, delay_days: days });
-
-      // Verificar si existe configuración
-      const { data: existing } = await supabase
-        .from('purchase_visibility_delay')
-        .select('*')
-        .eq('school_id', selectedSchool)
-        .maybeSingle();
-
-      console.log('📦 Configuración existente:', existing);
-
-      if (existing) {
-        // Actualizar
-        const { error, data } = await supabase
-          .from('purchase_visibility_delay')
-          .update({ delay_days: days })
-          .eq('school_id', selectedSchool)
-          .select();
-
-        console.log('✏️ Resultado UPDATE:', { error, data });
-        if (error) throw error;
-      } else {
-        // Crear
-        const { error, data } = await supabase
-          .from('purchase_visibility_delay')
-          .insert({ school_id: selectedSchool, delay_days: days })
-          .select();
-
-        console.log('➕ Resultado INSERT:', { error, data });
-        if (error) throw error;
-      }
-
-      setDelayDays(days);
-      setPendingDelayValue(days);
-      
-      console.log('✅ Delay guardado correctamente:', days);
-      
-      toast({
-        title: days === 0 ? '⚡ MODO EN VIVO ACTIVADO' : '✅ Delay configurado',
-        description: days === 0 
-          ? 'Los padres verán las compras en tiempo real'
-          : `Los padres verán las compras después de ${days} día${days > 1 ? 's' : ''}`,
-      });
-    } catch (error: any) {
-      console.error('❌ Error saving delay config:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo guardar la configuración de delay',
       });
     } finally {
       setSaving(false);
@@ -413,59 +431,76 @@ Gracias.`);
             Esta configuración <strong>NO afecta</strong> al módulo de cobranzas del admin (siempre en vivo).
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-2">
-              <Label htmlFor="delay_days" className="text-base font-semibold">
-                Días de Delay
-              </Label>
-              <p className="text-sm text-gray-600">
-                Actualmente: <span className="font-bold text-amber-700">
-                  {delayDays === 0 ? '⚡ MODO EN VIVO' : `${delayDays} día${delayDays > 1 ? 's' : ''}`}
-                </span>
-              </p>
-            </div>
-            <Select 
-              value={delayDays.toString()} 
-              onValueChange={handleDelayChange}
-            >
-              <SelectTrigger className="w-[200px] h-12 border-2">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0" className="font-bold text-green-600">
-                  <div className="flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    <span>⚡ EN VIVO (0 días)</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="1">1 día</SelectItem>
-                <SelectItem value="2">2 días (recomendado)</SelectItem>
-                <SelectItem value="3">3 días</SelectItem>
-                <SelectItem value="4">4 días</SelectItem>
-                <SelectItem value="5">5 días</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Explicación visual */}
-          <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-xl border-2 border-blue-200">
+        <CardContent className="p-6 space-y-4">
+          {/* Explicación */}
+          <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-4 rounded-lg border-2 border-blue-200">
             <div className="flex items-start gap-3">
               <div className="p-2 bg-blue-500 rounded-lg">
                 <AlertTriangle className="h-5 w-5 text-white" />
               </div>
               <div className="flex-1">
-                <p className="font-semibold text-gray-900 mb-2">¿Qué hace el Delay?</p>
-                <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
-                  <li>Los padres verán compras hechas hace <strong>{delayDays === 0 ? '0' : delayDays}+ días</strong></li>
-                  <li>Compras de hoy NO aparecen hasta dentro de <strong>{delayDays === 0 ? '0' : delayDays} día{delayDays > 1 ? 's' : ''}</strong></li>
-                  <li>Útil para evitar reclamos inmediatos y dar tiempo de verificación</li>
-                  {delayDays === 0 && (
-                    <li className="text-green-700 font-semibold">⚡ MODO EN VIVO: Los padres ven compras al instante</li>
-                  )}
+                <p className="font-semibold text-gray-900 mb-1">¿Qué hace el Delay?</p>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  <li>• <strong>Switch OFF (0 días):</strong> Los padres ven las compras al instante ⚡</li>
+                  <li>• <strong>Switch ON:</strong> Las compras aparecen después del número de días configurado</li>
+                  <li>• Útil para dar tiempo de verificación antes de que los padres reclamen</li>
                 </ul>
               </div>
             </div>
+          </div>
+
+          {/* Lista de sedes */}
+          <div className="space-y-3">
+            {schoolDelays.map((school) => (
+              <div 
+                key={school.school_id} 
+                className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border-2 hover:border-amber-300 transition-colors"
+              >
+                {/* Nombre de la sede */}
+                <div className="flex items-center gap-3 flex-1">
+                  <Building2 className="h-5 w-5 text-gray-400" />
+                  <span className="font-semibold text-gray-900">{school.school_name}</span>
+                </div>
+
+                {/* Switch ON/OFF */}
+                <div className="flex items-center gap-2">
+                  <Label htmlFor={`delay-switch-${school.school_id}`} className="text-sm text-gray-600 cursor-pointer">
+                    {school.enabled ? 'Activado' : 'Desactivado'}
+                  </Label>
+                  <Switch
+                    id={`delay-switch-${school.school_id}`}
+                    checked={school.enabled}
+                    onCheckedChange={(checked) => handleDelayToggle(school.school_id, checked)}
+                  />
+                </div>
+
+                {/* Selector de días */}
+                <Select 
+                  value={school.delay_days.toString()} 
+                  onValueChange={(value) => handleDelayDaysChange(school.school_id, parseInt(value))}
+                  disabled={!school.enabled}
+                >
+                  <SelectTrigger className={`w-[140px] ml-4 ${!school.enabled ? 'opacity-50' : ''}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0 días (EN VIVO)</SelectItem>
+                    <SelectItem value="1">1 día</SelectItem>
+                    <SelectItem value="2">2 días</SelectItem>
+                    <SelectItem value="3">3 días</SelectItem>
+                    <SelectItem value="4">4 días</SelectItem>
+                    <SelectItem value="5">5 días</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+
+            {schoolDelays.length === 0 && (
+              <div className="text-center py-8 text-gray-500">
+                <Building2 className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                <p>No hay sedes configuradas</p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -610,100 +645,6 @@ Gracias.`);
           )}
         </Button>
       </div>
-
-      {/* ⚡ Modal de Confirmación: MODO EN VIVO */}
-      <Dialog open={showLiveWarning} onOpenChange={setShowLiveWarning}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Zap className="h-6 w-6 text-yellow-500" />
-              ⚡ Activar Modo EN VIVO
-            </DialogTitle>
-            <DialogDescription className="text-base pt-4">
-              <span className="block font-semibold text-gray-900 mb-3">
-                ¿Estás seguro de activar el modo EN VIVO?
-              </span>
-              <span className="block bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
-                <span className="block text-sm text-gray-700 mb-2">
-                  <strong>Esto significa que:</strong>
-                </span>
-                <span className="block text-sm text-gray-700 space-y-1">
-                  <span className="block">• Los padres verán <strong>todas las compras al instante</strong></span>
-                  <span className="block">• No habrá tiempo de verificación</span>
-                  <span className="block">• Pueden reclamar inmediatamente</span>
-                </span>
-              </span>
-              <span className="block text-sm text-gray-600 mt-3">
-                Solo activa esto si estás seguro de que el sistema está funcionando correctamente.
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-3 mt-4">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowLiveWarning(false);
-                setPendingDelayValue(delayDays); // Revertir
-              }}
-              className="flex-1"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={confirmLiveModeChange}
-              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-            >
-              <Zap className="h-4 w-4 mr-2" />
-              Activar EN VIVO
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ⏱️ Modal de Confirmación: Cambiar Delay */}
-      <Dialog open={showDelayWarning} onOpenChange={setShowDelayWarning}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Clock className="h-6 w-6 text-amber-600" />
-              Cambiar Delay de Visibilidad
-            </DialogTitle>
-            <DialogDescription className="text-base pt-4">
-              <span className="block font-semibold text-gray-900 mb-3">
-                ¿Confirmas el cambio a {pendingDelayValue} día{pendingDelayValue > 1 ? 's' : ''}?
-              </span>
-              <span className="block bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
-                <span className="block text-sm text-gray-700 mb-2">
-                  <strong>Los padres verán:</strong>
-                </span>
-                <span className="block text-sm text-gray-700 space-y-1">
-                  <span className="block">• Compras de hace <strong>{pendingDelayValue}+ días</strong></span>
-                  <span className="block">• Compras de hoy NO aparecerán hasta dentro de <strong>{pendingDelayValue} día{pendingDelayValue > 1 ? 's' : ''}</strong></span>
-                </span>
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-3 mt-4">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowDelayWarning(false);
-                setPendingDelayValue(delayDays); // Revertir
-              }}
-              className="flex-1"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={confirmDelayChange}
-              className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700"
-            >
-              <Check className="h-4 w-4 mr-2" />
-              Confirmar
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
