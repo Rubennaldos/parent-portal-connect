@@ -277,6 +277,8 @@ Gracias.`);
 
     try {
       setSaving(true);
+      
+      console.log('💾 Guardando delay config:', { school_id: selectedSchool, delay_days: days });
 
       // Verificar si existe configuración
       const { data: existing } = await supabase
@@ -285,24 +287,33 @@ Gracias.`);
         .eq('school_id', selectedSchool)
         .maybeSingle();
 
+      console.log('📦 Configuración existente:', existing);
+
       if (existing) {
         // Actualizar
-        const { error } = await supabase
+        const { error, data } = await supabase
           .from('purchase_visibility_delay')
           .update({ delay_days: days })
-          .eq('school_id', selectedSchool);
+          .eq('school_id', selectedSchool)
+          .select();
 
+        console.log('✏️ Resultado UPDATE:', { error, data });
         if (error) throw error;
       } else {
         // Crear
-        const { error } = await supabase
+        const { error, data } = await supabase
           .from('purchase_visibility_delay')
-          .insert({ school_id: selectedSchool, delay_days: days });
+          .insert({ school_id: selectedSchool, delay_days: days })
+          .select();
 
+        console.log('➕ Resultado INSERT:', { error, data });
         if (error) throw error;
       }
 
       setDelayDays(days);
+      setPendingDelayValue(days);
+      
+      console.log('✅ Delay guardado correctamente:', days);
       
       toast({
         title: days === 0 ? '⚡ MODO EN VIVO ACTIVADO' : '✅ Delay configurado',
@@ -311,7 +322,7 @@ Gracias.`);
           : `Los padres verán las compras después de ${days} día${days > 1 ? 's' : ''}`,
       });
     } catch (error: any) {
-      console.error('Error saving delay config:', error);
+      console.error('❌ Error saving delay config:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
