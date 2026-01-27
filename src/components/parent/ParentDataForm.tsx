@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -19,11 +19,22 @@ interface ParentDataFormProps {
 export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoading: setExternalLoading }: ParentDataFormProps) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [step, setStep] = useState(1);
+  
+  // Recuperar el paso guardado o iniciar en 1
+  const [step, setStep] = useState(() => {
+    const savedStep = sessionStorage.getItem('parentFormStep');
+    return savedStep ? parseInt(savedStep) : 1;
+  });
+  
   const [internalLoading, setInternalLoading] = useState(false);
   
   const isLoading = externalLoading !== undefined ? externalLoading : internalLoading;
   const setIsLoading = setExternalLoading || setInternalLoading;
+
+  // Guardar el paso actual cuando cambia
+  useEffect(() => {
+    sessionStorage.setItem('parentFormStep', step.toString());
+  }, [step]);
 
   // RESPONSABLE PRINCIPAL (quien se registra)
   const [fullName, setFullName] = useState('');
@@ -198,6 +209,9 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
       }
 
       console.log('✅ Datos guardados exitosamente');
+
+      // Limpiar el paso guardado en sessionStorage
+      sessionStorage.removeItem('parentFormStep');
 
       toast({
         title: '✅ Datos guardados',

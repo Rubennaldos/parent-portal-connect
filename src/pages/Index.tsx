@@ -163,10 +163,10 @@ const Index = () => {
   const checkOnboardingStatus = async () => {
     if (!user) return;
     try {
-      // PASO 1: Verificar si los datos del padre están completos
+      // PASO 1: Verificar si los datos del padre están completos (incluyendo segundo responsable)
       const { data: parentData, error: parentError } = await supabase
         .from('parent_profiles')
-        .select('full_name, dni, phone_1, address, legal_acceptance')
+        .select('full_name, dni, phone_1, address, legal_acceptance, responsible_2_full_name, responsible_2_dni, responsible_2_phone_1')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -175,9 +175,17 @@ const Index = () => {
         return;
       }
 
-      // Si faltan datos del padre o no ha aceptado la cláusula legal, mostrar formulario PRIMERO
-      if (!parentData || !parentData.full_name || !parentData.dni || !parentData.phone_1 || !parentData.address || !parentData.legal_acceptance) {
-        console.log('📋 Datos del padre incompletos, mostrando formulario...');
+      // Verificar RESPONSABLE PRINCIPAL
+      const mainResponsibleComplete = parentData?.full_name && parentData?.dni && parentData?.phone_1 && parentData?.address && parentData?.legal_acceptance;
+      
+      // Verificar SEGUNDO RESPONSABLE
+      const secondResponsibleComplete = parentData?.responsible_2_full_name && parentData?.responsible_2_dni && parentData?.responsible_2_phone_1;
+
+      // Si faltan datos de CUALQUIERA de los dos responsables, mostrar formulario PRIMERO
+      if (!parentData || !mainResponsibleComplete || !secondResponsibleComplete) {
+        console.log('📋 Datos del padre o segundo responsable incompletos, mostrando formulario...');
+        console.log('  - Responsable principal completo:', mainResponsibleComplete);
+        console.log('  - Segundo responsable completo:', secondResponsibleComplete);
         setShowParentDataForm(true);
         return;
       }
