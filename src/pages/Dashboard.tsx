@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import { useUserProfile } from '@/hooks/useUserProfile';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { WelcomeHeader } from '@/components/WelcomeHeader';
 import { ViewAsSelector } from '@/components/ViewAsSelector';
 import { VersionBadge } from '@/components/VersionBadge';
+import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import { 
   ShoppingCart, 
   DollarSign, 
@@ -69,6 +71,7 @@ const COLOR_MAP: { [key: string]: string } = {
 const Dashboard = () => {
   const { user, signOut } = useAuth();
   const { role, isStaff } = useRole();
+  const { full_name } = useUserProfile();
   const navigate = useNavigate();
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
@@ -413,7 +416,7 @@ const Dashboard = () => {
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <WelcomeHeader showRole={true} />
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <VersionBadge />
             <div className="text-right">
               <p className="text-sm text-gray-600">{user?.email}</p>
@@ -423,10 +426,11 @@ const Dashboard = () => {
                 </p>
               )}
             </div>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Salir
-            </Button>
+            <UserProfileMenu
+              userEmail={user?.email || ''}
+              userName={full_name || undefined}
+              onLogout={handleLogout}
+            />
           </div>
         </div>
       </header>

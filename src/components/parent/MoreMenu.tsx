@@ -25,6 +25,7 @@ import {
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { ChangePasswordModal } from '@/components/admin/ChangePasswordModal';
 
 interface MoreMenuProps {
   userEmail: string;
@@ -176,24 +177,10 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
       </Button>
 
       {/* Modal Cambiar Contraseña */}
-      <Dialog open={showChangePassword} onOpenChange={setShowChangePassword}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cambiar Contraseña</DialogTitle>
-            <DialogDescription>
-              Próximamente podrás cambiar tu contraseña desde aquí
-            </DialogDescription>
-          </DialogHeader>
-          <div className="text-center py-8">
-            <Lock className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-600">
-              Esta funcionalidad estará disponible pronto.
-              <br />
-              Por ahora, contacta al administrador.
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ChangePasswordModal
+        open={showChangePassword}
+        onOpenChange={setShowChangePassword}
+      />
 
       {/* Modal Datos del Padre */}
       <Dialog open={showParentData} onOpenChange={setShowParentData}>

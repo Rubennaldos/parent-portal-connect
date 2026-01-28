@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import { useUserProfile } from '@/hooks/useUserProfile';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import { 
   DollarSign, 
   Calendar,
@@ -35,8 +37,9 @@ interface TabPermissions {
 
 const Cobranzas = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { role } = useRole();
+  const { full_name } = useUserProfile();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [permissions, setPermissions] = useState<TabPermissions>({
     dashboard: false,
@@ -198,6 +201,11 @@ const Cobranzas = () => {
               </p>
             </div>
           </div>
+          <UserProfileMenu
+            userEmail={user?.email || ''}
+            userName={full_name || undefined}
+            onLogout={signOut}
+          />
         </div>
 
         {/* Tabs Principal */}

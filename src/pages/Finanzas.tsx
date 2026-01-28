@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserProfile } from '@/hooks/useUserProfile';
 import { useToast } from '@/hooks/use-toast';
+import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import {
   DollarSign,
   TrendingUp,
@@ -63,7 +65,8 @@ interface DashboardMetrics {
 }
 
 export default function Finanzas() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const { full_name } = useUserProfile();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -394,6 +397,11 @@ export default function Finanzas() {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            <UserProfileMenu
+              userEmail={user?.email || ''}
+              userName={full_name || undefined}
+              onLogout={signOut}
+            />
             <Button
               variant={autoRefresh ? 'default' : 'outline'}
               size="sm"

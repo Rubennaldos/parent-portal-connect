@@ -2,11 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import { useUserProfile } from '@/hooks/useUserProfile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import {
   Dialog,
   DialogContent,
@@ -147,6 +149,7 @@ const getCategoryIcon = (categoryName: string) => {
 const POS = () => {
   const { signOut, user } = useAuth();
   const { role } = useRole();
+  const { full_name } = useUserProfile();
   const { toast } = useToast();
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1203,10 +1206,13 @@ const POS = () => {
             </svg>
             Volver al Panel
           </Button>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:bg-slate-800">
-            <LogOut className="h-5 w-5 mr-2" />
-            Salir
-          </Button>
+          <div className="text-white">
+            <UserProfileMenu
+              userEmail={user?.email || ''}
+              userName={full_name || undefined}
+              onLogout={handleLogout}
+            />
+          </div>
         </div>
       </header>
 
