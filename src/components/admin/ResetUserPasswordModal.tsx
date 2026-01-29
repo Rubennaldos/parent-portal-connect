@@ -61,59 +61,75 @@ export const ResetUserPasswordModal = ({
     try {
       console.log('🔐 Reseteando contraseña para:', userEmail);
 
-      // Obtener el user_id del email
-      const { data: userData, error: userError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', userEmail)
-        .single();
-
-      if (userError || !userData) {
-        throw new Error('Usuario no encontrado');
+      // Obtener el token de sesión actual
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('No hay sesión activa');
       }
 
-      console.log('👤 Usuario encontrado:', userData.id);
-
-      // NOTA: Esta es la parte complicada. Supabase NO permite a los admins cambiar 
-      // contraseñas de otros usuarios directamente desde el cliente.
-      // Necesitarías una Edge Function o usar el Admin API desde el backend.
-      
-      // POR AHORA, voy a mostrar un mensaje indicando que deben usar el Admin Dashboard de Supabase
-      // O podemos implementar una Edge Function para esto.
-
-      toast({
-        variant: 'destructive',
-        title: '⚠️ Limitación de Supabase',
-        description: (
-          <div className="space-y-2">
-            <p>Por razones de seguridad, Supabase no permite resetear contraseñas de otros usuarios desde el cliente.</p>
-            <p className="font-bold">Opciones disponibles:</p>
-            <ul className="list-disc list-inside text-xs">
-              <li>Usar el Admin Dashboard de Supabase</li>
-              <li>Implementar una Edge Function</li>
-              <li>Usar el Admin API de Supabase</li>
-            </ul>
-          </div>
-        ),
-        duration: 10000,
+      // Llamar a la Edge Function
+      const { data, error } = await supabase.functions.invoke('reset-user-password', {
+        body: { 
+          userEmail: userEmail,
+          newPassword: newPassword 
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
       });
 
-      // ALTERNATIVA TEMPORAL: Mostrar la contraseña generada para que el admin
-      // la comparta manualmente con el usuario
+      if (error) {
+        console.error('❌ Error en Edge Function:', error);
+        throw error;
+      }
+
+      console.log('✅ Respuesta de Edge Function:', data);
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Éxito
       toast({
-        title: '💡 Solución Temporal',
-        description: `Comparte esta contraseña con ${userName || userEmail}: ${newPassword}`,
-        duration: 15000,
+        title: '✅ Contraseña Reseteada',
+        description: `La contraseña de ${userName || userEmail} ha sido actualizada exitosamente.`,
       });
+
+      // Copiar contraseña al portapapeles para compartir
+      try {
+        await navigator.clipboard.writeText(newPassword);
+        toast({
+          title: '📋 Contraseña Copiada',
+          description: 'Comparte la contraseña temporal con el usuario.',
+          duration: 5000,
+        });
+      } catch (clipError) {
+        console.warn('No se pudo copiar al portapapeles:', clipError);
+      }
 
       onSuccess?.();
+      handleClose();
       
     } catch (error: any) {
       console.error('❌ Error al resetear contraseña:', error);
+      
+      // Mensajes de error específicos
+      let errorMessage = 'No se pudo resetear la contraseña';
+      
+      if (error.message?.includes('not found')) {
+        errorMessage = 'Usuario no encontrado en el sistema';
+      } else if (error.message?.includes('FunctionsRelayError')) {
+        errorMessage = 'La Edge Function no está desplegada. Por favor, despliégala en Supabase.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         variant: 'destructive',
         title: '❌ Error',
-        description: error.message || 'No se pudo resetear la contraseña',
+        description: errorMessage,
+        duration: 7000,
       });
     } finally {
       setLoading(false);
@@ -233,14 +249,14 @@ export const ResetUserPasswordModal = ({
             </ol>
           </div>
 
-          {/* Limitación temporal */}
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+          {/* Información técnica */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <div className="flex gap-2">
-              <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-red-800">
-                <strong>Nota Técnica:</strong> Por limitaciones de Supabase, actualmente debes
-                resetear la contraseña manualmente desde el Admin Dashboard de Supabase, o usar
-                esta contraseña generada como referencia para compartir con el usuario.
+              <CheckCircle2 className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <div className="text-xs text-blue-800">
+                <strong>Sistema Automático:</strong> Al hacer clic en "Resetear Contraseña", 
+                el sistema actualizará la contraseña del usuario inmediatamente usando una 
+                Edge Function segura. La contraseña se copiará al portapapeles para que puedas compartirla.
               </div>
             </div>
           </div>
