@@ -7,7 +7,7 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUp: (email: string, password: string) => Promise<{ data: { user: User | null; session: Session | null }; error: AuthError | null }>;
+  signUp: (email: string, password: string, metadata?: any) => Promise<{ data: { user: User | null; session: Session | null }; error: AuthError | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -86,9 +86,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error };
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (email: string, password: string, metadata: any = {}) => {
     console.log('🔵 AuthContext.signUp() - INICIO');
     console.log('   - email:', email);
+    console.log('   - metadata:', metadata);
     console.log('   - supabase existe:', !!supabase);
     
     if (!supabase) {
@@ -113,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: {
         emailRedirectTo: redirectUrl,
+        data: metadata, // Guardar rol y otros datos en user_metadata
       },
     });
     

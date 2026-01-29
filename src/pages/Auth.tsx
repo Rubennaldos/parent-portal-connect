@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Eye, EyeOff, ShieldCheck, HelpCircle, Phone, Mail, AlertCircle } from 'lucide-react';
+import { Loader2, Eye, EyeOff, ShieldCheck, HelpCircle, Phone, Mail, AlertCircle, Users, UtensilsCrossed } from 'lucide-react';
 import SplashScreen from '@/components/SplashScreen';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { APP_CONFIG } from '@/config/app.config';
@@ -29,6 +29,7 @@ export default function Auth() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [selectedRole, setSelectedRole] = useState<'parent' | 'teacher'>('parent');
 
   useEffect(() => {
     if (!authLoading && !roleLoading && user && role) {
@@ -79,7 +80,10 @@ export default function Auth() {
     try {
       if (isRegisterMode) {
         console.log('📝 Llamando a signUp()...');
-        const { data, error } = await signUp(email, password);
+        const { data, error } = await signUp(email, password, { 
+          role: selectedRole,
+          full_name: '', // Se completará en el onboarding
+        });
         
         console.log('📦 RESPUESTA DE SUPABASE:');
         console.log('   - data:', data);
@@ -198,6 +202,42 @@ export default function Auth() {
           {/* Content - Padding responsivo */}
           <CardContent className="space-y-5 sm:space-y-6 px-4 sm:px-6 md:px-8 pb-6 sm:pb-8">
             <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
+              
+              {/* Selector de Rol (Solo en registro) */}
+              {isRegisterMode && (
+                <div className="space-y-2">
+                  <label className="font-medium text-[10px] sm:text-xs text-stone-600 uppercase tracking-wider block text-center mb-3">
+                    ¿Qué tipo de cuenta deseas crear?
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRole('parent')}
+                      className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${
+                        selectedRole === 'parent'
+                          ? 'border-[#8B7355] bg-[#8B7355]/5 text-[#8B7355]'
+                          : 'border-stone-100 bg-stone-50 text-stone-400 hover:border-stone-200'
+                      }`}
+                    >
+                      <Users className="h-6 w-6" />
+                      <span className="text-xs font-bold uppercase tracking-tighter">Padre de Familia</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRole('teacher')}
+                      className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${
+                        selectedRole === 'teacher'
+                          ? 'border-purple-600 bg-purple-50 text-purple-600'
+                          : 'border-stone-100 bg-stone-50 text-stone-400 hover:border-stone-200'
+                      }`}
+                    >
+                      <UtensilsCrossed className="h-6 w-6" />
+                      <span className="text-xs font-bold uppercase tracking-tighter">Profesor / Personal</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Email */}
               <div className="space-y-1.5 sm:space-y-2">
                 <label className="font-medium text-[10px] sm:text-xs text-stone-600 uppercase tracking-wider">
