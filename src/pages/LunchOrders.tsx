@@ -124,13 +124,13 @@ export default function LunchOrders() {
 
       // Si no puede ver todas las sedes, filtrar por sus sedes asignadas
       if (!canViewAllSchools && user) {
-        const { data: profileData } = await supabase
+        const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('assigned_schools')
           .eq('id', user.id)
-          .single();
+          .maybeSingle();
 
-        if (profileData?.assigned_schools && profileData.assigned_schools.length > 0) {
+        if (!profileError && profileData?.assigned_schools && profileData.assigned_schools.length > 0) {
           // Necesitamos filtrar por school_id del estudiante
           // Esto requiere una subconsulta, lo haremos en el cliente
           const { data: allOrders, error } = await query;
@@ -141,6 +141,11 @@ export default function LunchOrders() {
           ) || [];
 
           setOrders(filtered);
+        } else {
+          // Si no tiene sedes asignadas o hay error, mostrar todos los pedidos
+          const { data, error } = await query;
+          if (error) throw error;
+          setOrders(data || []);
         }
       } else {
         const { data, error } = await query;
