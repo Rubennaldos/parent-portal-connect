@@ -313,12 +313,12 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
           {/* Segunda Escuela (Opcional) */}
           <div>
             <Label htmlFor="school2">Segunda Escuela (Opcional)</Label>
-            <Select value={schoolId2} onValueChange={setSchoolId2}>
+            <Select value={schoolId2 || 'none'} onValueChange={(val) => setSchoolId2(val === 'none' ? '' : val)}>
               <SelectTrigger id="school2">
                 <SelectValue placeholder="Selecciona si trabajas en otra escuela" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Ninguna</SelectItem>
+                <SelectItem value="none">Ninguna</SelectItem>
                 {schools
                   .filter((s) => s.id !== schoolId1)
                   .map((school) => (
