@@ -10,8 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
-import { Lock, Users, Shield, ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Loader2, Building2, UserPlus, Eye, EyeOff } from "lucide-react";
+import { Lock, Users, Shield, ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Loader2, Building2, UserPlus, Eye, EyeOff, Edit2, Key } from "lucide-react";
 import { CreateProfileModal } from './CreateProfileModal';
+import { ResetUserPasswordModal } from './ResetUserPasswordModal';
 
 interface School {
   id: string;
@@ -193,6 +194,8 @@ export const AccessControlModuleV2 = () => {
   const [schools, setSchools] = useState<School[]>([]);
   const [activeTab, setActiveTab] = useState('roles');
   const [createProfileModalOpen, setCreateProfileModalOpen] = useState(false);
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false);
+  const [userToResetPassword, setUserToResetPassword] = useState<UserProfile | null>(null);
 
   // State for Role Permissions Tab
   const [selectedRole, setSelectedRole] = useState<string>('gestor_unidad');
@@ -212,6 +215,22 @@ export const AccessControlModuleV2 = () => {
       fetchRolePermissions(selectedRole);
     }
   }, [selectedRole, permissions]);
+
+  // Funciones para gestión de usuarios
+  const handleResetPassword = (user: UserProfile) => {
+    console.log('🔐 Abriendo modal de reseteo para:', user.email);
+    setUserToResetPassword(user);
+    setResetPasswordModalOpen(true);
+  };
+
+  const handleEditUser = (user: UserProfile) => {
+    console.log('✏️ Editando usuario:', user.email);
+    toast({
+      title: '🚧 Función en desarrollo',
+      description: 'La edición de usuarios estará disponible próximamente.',
+    });
+    // TODO: Implementar modal de edición de usuario
+  };
 
   const fetchInitialData = async () => {
     try {
@@ -786,12 +805,38 @@ export const AccessControlModuleV2 = () => {
                         </div>
                       </CardHeader>
                       <CardContent>
-                        {user.school && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Building2 className="h-4 w-4" />
-                            <span>{user.school.name}</span>
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            {user.school && (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Building2 className="h-4 w-4" />
+                                <span>{user.school.name}</span>
+                              </div>
+                            )}
                           </div>
-                        )}
+                          
+                          {/* Botones de acción */}
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleEditUser(user)}
+                              className="gap-2"
+                            >
+                              <Edit2 className="h-4 w-4" />
+                              Editar
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleResetPassword(user)}
+                              className="gap-2"
+                            >
+                              <Key className="h-4 w-4" />
+                              Cambiar Contraseña
+                            </Button>
+                          </div>
+                        </div>
                       </CardContent>
                     </Card>
                   ))}
@@ -814,6 +859,20 @@ export const AccessControlModuleV2 = () => {
           });
         }}
       />
+
+      {/* Modal de Reseteo de Contraseña */}
+      {userToResetPassword && (
+        <ResetUserPasswordModal
+          open={resetPasswordModalOpen}
+          onOpenChange={setResetPasswordModalOpen}
+          userEmail={userToResetPassword.email}
+          userName={userToResetPassword.full_name}
+          onSuccess={() => {
+            console.log('✅ Contraseña reseteada exitosamente');
+            fetchUsers(); // Refrescar la lista si es necesario
+          }}
+        />
+      )}
     </div>
   );
 };
