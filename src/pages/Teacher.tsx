@@ -9,6 +9,7 @@ import { LogOut, User, ShoppingBag, UtensilsCrossed, Home, MoreHorizontal, Loade
 import { useToast } from '@/hooks/use-toast';
 import { TeacherOnboardingModal } from '@/components/teacher/TeacherOnboardingModal';
 import { TeacherMoreMenu } from '@/components/teacher/TeacherMoreMenu';
+import { TeacherLunchCalendar } from '@/components/teacher/TeacherLunchCalendar';
 
 interface TeacherProfile {
   id: string;
@@ -37,6 +38,7 @@ export default function Teacher() {
   const [activeTab, setActiveTab] = useState('home');
   const [purchaseHistory, setPurchaseHistory] = useState<any[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
+  const [delayDays, setDelayDays] = useState<number>(0);
 
   useEffect(() => {
     if (user) {
@@ -103,8 +105,23 @@ export default function Teacher() {
     try {
       console.log('📊 Cargando historial de compras del profesor');
 
-      // Obtener transacciones del profesor
-      const { data: transactions, error } = await supabase
+      // 1. Obtener el delay configurado para la sede del profesor
+      const { data: delayData, error: delayError } = await supabase
+        .from('purchase_visibility_delay')
+        .select('delay_days')
+        .eq('school_id', teacherProfile.school_id_1)
+        .maybeSingle();
+
+      if (delayError) {
+        console.error('❌ Error obteniendo delay:', delayError);
+      }
+
+      const configuredDelayDays = delayData?.delay_days ?? 0;
+      setDelayDays(configuredDelayDays);
+      console.log('⏱️ Delay configurado:', configuredDelayDays, 'días');
+
+      // 2. Calcular la fecha de corte (si hay delay)
+      let query = supabase
         .from('transactions')
         .select(`
           id,
@@ -121,8 +138,21 @@ export default function Teacher() {
           )
         `)
         .eq('teacher_id', teacherProfile.id)
-        .eq('type', 'purchase')
-        .order('created_at', { ascending: false });
+        .eq('type', 'purchase');
+
+      // Aplicar filtro de delay solo si es mayor a 0
+      if (configuredDelayDays > 0) {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - configuredDelayDays);
+        const cutoffDateISO = cutoffDate.toISOString();
+        
+        console.log('📅 Mostrando compras hasta:', cutoffDate.toLocaleDateString());
+        query = query.lte('created_at', cutoffDateISO);
+      } else {
+        console.log('⚡ Modo EN VIVO: Mostrando todas las compras sin delay');
+      }
+
+      const { data: transactions, error } = await query.order('created_at', { ascending: false });
 
       if (error) throw error;
 
@@ -446,23 +476,12 @@ export default function Teacher() {
 
             {/* TAB: MENÚ */}
             <TabsContent value="menu">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Menú de Almuerzo</CardTitle>
-                  <CardDescription>
-                    Próximamente: Ver y pedir el menú del día
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center py-12 text-gray-500">
-                    <UtensilsCrossed className="h-16 w-16 mx-auto mb-4 opacity-30" />
-                    <p className="text-lg font-semibold mb-2">Función en desarrollo</p>
-                    <p className="text-sm">
-                      Pronto podrás ver el menú del día y hacer pedidos de almuerzo.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+              {teacherProfile.school_id_1 && (
+                <TeacherLunchCalendar 
+                  teacherId={teacherProfile.id}
+                  schoolId={teacherProfile.school_id_1}
+                />
+              )}
             </TabsContent>
           </Tabs>
         ) : (
