@@ -5,8 +5,9 @@
 -- Solución: Permitir que los profesores inserten SU PROPIO perfil (auth.uid() = id)
 -- =====================================================
 
--- 1. Eliminar la política restrictiva de INSERT
+-- 1. Eliminar políticas viejas de INSERT
 DROP POLICY IF EXISTS "Only admins can create teachers" ON public.teacher_profiles;
+DROP POLICY IF EXISTS "Teachers can insert their own profile, admins can insert any" ON public.teacher_profiles;
 
 -- 2. Crear nueva política que permita:
 --    - A los profesores insertar SU PROPIO perfil

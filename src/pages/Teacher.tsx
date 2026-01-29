@@ -20,8 +20,8 @@ interface TeacherProfile {
   phone_1: string;
   corporate_phone: string | null;
   area: string;
-  school_id_1: string;
-  school_id_2: string | null;
+  school_1_id: string; // ⬅️ Corregido de school_id_1 a school_1_id
+  school_2_id: string | null; // ⬅️ Corregido de school_id_2 a school_2_id
   school_1_name?: string;
   school_2_name?: string;
   onboarding_completed: boolean;
@@ -109,7 +109,7 @@ export default function Teacher() {
       const { data: delayData, error: delayError } = await supabase
         .from('purchase_visibility_delay')
         .select('delay_days')
-        .eq('school_id', teacherProfile.school_id_1)
+        .eq('school_id', teacherProfile.school_1_id) // ⬅️ Corregido
         .maybeSingle();
 
       if (delayError) {
@@ -476,10 +476,10 @@ export default function Teacher() {
 
             {/* TAB: MENÚ */}
             <TabsContent value="menu">
-              {teacherProfile.school_id_1 && (
+              {teacherProfile.school_1_id && (
                 <TeacherLunchCalendar 
                   teacherId={teacherProfile.id}
-                  schoolId={teacherProfile.school_id_1}
+                  schoolId={teacherProfile.school_1_id} // ⬅️ Corregido
                 />
               )}
             </TabsContent>
