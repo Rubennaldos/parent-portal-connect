@@ -1009,34 +1009,35 @@ const Products = () => {
                     </CardContent>
                   </Card>
 
+                  {/* Card de Reportes */}
                   <Card>
-                  <CardHeader>
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <CardTitle>Reportes y Exportación</CardTitle>
-                        <CardDescription>Descarga reportes de inventario</CardDescription>
+                    <CardHeader>
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <CardTitle>Reportes y Exportación</CardTitle>
+                          <CardDescription>Descarga reportes de inventario</CardDescription>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" onClick={exportToCSV}>
+                            <Download className="h-4 w-4 mr-2" />Excel/CSV
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" onClick={exportToCSV}>
-                          <Download className="h-4 w-4 mr-2" />Excel/CSV
-                        </Button>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer" onClick={exportToCSV}>
+                          <h4 className="font-semibold mb-1">Inventario Completo</h4>
+                          <p className="text-xs text-gray-500">Todos los productos y stocks</p>
+                        </div>
+                        <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                          <h4 className="font-semibold mb-1">Análisis de Ventas</h4>
+                          <p className="text-xs text-gray-500">Reporte de productos más vendidos</p>
+                        </div>
                       </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer" onClick={exportToCSV}>
-                        <h4 className="font-semibold mb-1">Inventario Completo</h4>
-                        <p className="text-xs text-gray-500">Todos los productos y stocks</p>
-                      </div>
-                      <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                        <h4 className="font-semibold mb-1">Análisis de Ventas</h4>
-                        <p className="text-xs text-gray-500">Reporte de productos más vendidos</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
+                    </CardContent>
+                  </Card>
+                </div>
             )}
           </TabsContent>
 
