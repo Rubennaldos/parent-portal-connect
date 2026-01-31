@@ -120,6 +120,7 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
   const handleNextStep = () => {
     // Validar Paso 1: Datos del responsable principal
     if (step === 1) {
+      // Validación de campos vacíos
       if (!fullName || !dni || !phone || !address) {
         toast({
           variant: 'destructive',
@@ -128,10 +129,60 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
         });
         return;
       }
+      
+      // Validación de longitudes
+      if (fullName.length > 255) {
+        toast({
+          variant: 'destructive',
+          title: 'Nombre muy largo',
+          description: 'El nombre completo no puede tener más de 255 caracteres.',
+        });
+        return;
+      }
+      
+      if (dni.length > 20) {
+        toast({
+          variant: 'destructive',
+          title: 'DNI muy largo',
+          description: 'El DNI no puede tener más de 20 caracteres.',
+        });
+        return;
+      }
+      
+      if (phone.length > 20) {
+        toast({
+          variant: 'destructive',
+          title: 'Teléfono muy largo',
+          description: 'El teléfono no puede tener más de 20 caracteres.',
+        });
+        return;
+      }
+      
+      // Validación de formato DNI (solo números)
+      if (documentType === 'DNI' && !/^\d+$/.test(dni)) {
+        toast({
+          variant: 'destructive',
+          title: 'DNI inválido',
+          description: 'El DNI solo debe contener números.',
+        });
+        return;
+      }
+      
+      // Validación de formato teléfono (solo números)
+      if (!/^\d+$/.test(phone)) {
+        toast({
+          variant: 'destructive',
+          title: 'Teléfono inválido',
+          description: 'El teléfono solo debe contener números.',
+        });
+        return;
+      }
+      
       setStep(2);
     }
     // Validar Paso 2: Segundo responsable
     else if (step === 2) {
+      // Validación de campos vacíos
       if (!resp2FullName || !resp2Dni || !resp2Phone) {
         toast({
           variant: 'destructive',
@@ -140,6 +191,65 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
         });
         return;
       }
+      
+      // Validación de longitudes
+      if (resp2FullName.length > 255) {
+        toast({
+          variant: 'destructive',
+          title: 'Nombre muy largo',
+          description: 'El nombre del segundo responsable no puede tener más de 255 caracteres.',
+        });
+        return;
+      }
+      
+      if (resp2Dni.length > 20) {
+        toast({
+          variant: 'destructive',
+          title: 'DNI muy largo',
+          description: 'El DNI del segundo responsable no puede tener más de 20 caracteres.',
+        });
+        return;
+      }
+      
+      if (resp2Phone.length > 20) {
+        toast({
+          variant: 'destructive',
+          title: 'Teléfono muy largo',
+          description: 'El teléfono del segundo responsable no puede tener más de 20 caracteres.',
+        });
+        return;
+      }
+      
+      // Validación de formato DNI (solo números)
+      if (resp2DocumentType === 'DNI' && !/^\d+$/.test(resp2Dni)) {
+        toast({
+          variant: 'destructive',
+          title: 'DNI inválido',
+          description: 'El DNI del segundo responsable solo debe contener números.',
+        });
+        return;
+      }
+      
+      // Validación de formato teléfono (solo números)
+      if (!/^\d+$/.test(resp2Phone)) {
+        toast({
+          variant: 'destructive',
+          title: 'Teléfono inválido',
+          description: 'El teléfono del segundo responsable solo debe contener números.',
+        });
+        return;
+      }
+      
+      // Validación de email si se proporciona
+      if (resp2Email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resp2Email)) {
+        toast({
+          variant: 'destructive',
+          title: 'Email inválido',
+          description: 'Por favor ingresa un email válido para el segundo responsable.',
+        });
+        return;
+      }
+      
       setStep(3);
     }
   };
@@ -224,10 +334,54 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
       onSuccess();
     } catch (error: any) {
       console.error('Error en handleSubmit:', error);
+      
+      // Mensajes de error más claros y específicos
+      let errorMessage = 'Hubo un problema al guardar tus datos.';
+      let errorTitle = 'Error al guardar';
+      
+      if (error?.message) {
+        // Error de longitud de campo
+        if (error.message.includes('value too long')) {
+          errorTitle = 'Datos demasiado largos';
+          errorMessage = 'Uno de los campos tiene demasiados caracteres. Por favor verifica que no hayas copiado texto adicional.';
+          
+          // Intentar identificar el campo problemático
+          if (error.message.includes('dni')) {
+            errorMessage = 'El DNI no puede tener más de 20 caracteres. Verifica que solo contenga números.';
+          } else if (error.message.includes('phone')) {
+            errorMessage = 'El teléfono no puede tener más de 20 caracteres. Verifica el formato.';
+          } else if (error.message.includes('address')) {
+            errorMessage = 'La dirección es demasiado larga. Por favor acórtala.';
+          } else if (error.message.includes('full_name')) {
+            errorMessage = 'El nombre completo es demasiado largo. Verifica que no haya texto adicional.';
+          }
+        }
+        // Error de formato
+        else if (error.message.includes('invalid input syntax')) {
+          errorTitle = 'Formato de datos incorrecto';
+          errorMessage = 'Uno de los campos tiene un formato incorrecto. Por favor revisa los datos.';
+        }
+        // Error de duplicado
+        else if (error.message.includes('duplicate') || error.message.includes('unique')) {
+          errorTitle = 'Datos duplicados';
+          errorMessage = 'Ya existe un registro con estos datos. Si es un error, contacta al administrador.';
+        }
+        // Error de conexión
+        else if (error.message.includes('fetch') || error.message.includes('network')) {
+          errorTitle = 'Error de conexión';
+          errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión a internet.';
+        }
+        // Mostrar el error original si no hay coincidencia
+        else {
+          errorMessage = `${error.message}`;
+        }
+      }
+      
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: error.message || 'No se pudieron guardar los datos.',
+        title: errorTitle,
+        description: errorMessage,
+        duration: 7000, // Mostrar por más tiempo para que pueda leer
       });
     } finally {
       setIsLoading(false);
@@ -275,13 +429,14 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
             <div className="space-y-4 sm:space-y-5">
               <div className="space-y-1.5 sm:space-y-2">
                 <Label className="font-medium text-[10px] sm:text-xs text-stone-600 uppercase tracking-wider">
-                  Nombres Completos *
+                  Nombres Completos * <span className="text-stone-400 text-[9px] normal-case">({fullName.length}/255)</span>
                 </Label>
                 <Input
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Ej: Juan Carlos"
-                  className="h-11 sm:h-12 border border-stone-200 focus:border-emerald-500/50 rounded-xl text-sm sm:text-base"
+                  maxLength={255}
+                  className={`h-11 sm:h-12 border ${fullName.length > 250 ? 'border-amber-500' : 'border-stone-200'} focus:border-emerald-500/50 rounded-xl text-sm sm:text-base`}
                   disabled={isLoading}
                 />
               </div>
@@ -305,13 +460,14 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
 
                 <div className="space-y-1.5 sm:space-y-2">
                   <Label className="font-medium text-[10px] sm:text-xs text-stone-600 uppercase tracking-wider">
-                    Número de Documento *
+                    Número de Documento * <span className="text-stone-400 text-[9px] normal-case">({dni.length}/20)</span>
                   </Label>
                   <Input
                     value={dni}
                     onChange={(e) => setDni(e.target.value)}
                     placeholder="Ej: 12345678"
-                    className="h-11 sm:h-12 border border-stone-200 focus:border-emerald-500/50 rounded-xl text-sm sm:text-base"
+                    maxLength={20}
+                    className={`h-11 sm:h-12 border ${dni.length > 18 ? 'border-amber-500' : 'border-stone-200'} focus:border-emerald-500/50 rounded-xl text-sm sm:text-base`}
                     disabled={isLoading}
                   />
                 </div>
@@ -319,13 +475,14 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
 
               <div className="space-y-1.5 sm:space-y-2">
                 <Label className="font-medium text-[10px] sm:text-xs text-stone-600 uppercase tracking-wider">
-                  Teléfono *
+                  Teléfono * <span className="text-stone-400 text-[9px] normal-case">({phone.length}/20)</span>
                 </Label>
                 <Input
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="Ej: 987654321"
-                  className="h-11 sm:h-12 border border-stone-200 focus:border-emerald-500/50 rounded-xl text-sm sm:text-base"
+                  maxLength={20}
+                  className={`h-11 sm:h-12 border ${phone.length > 18 ? 'border-amber-500' : 'border-stone-200'} focus:border-emerald-500/50 rounded-xl text-sm sm:text-base`}
                   disabled={isLoading}
                 />
               </div>
