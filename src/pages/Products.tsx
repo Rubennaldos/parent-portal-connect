@@ -1038,6 +1038,7 @@ const Products = () => {
                     </CardContent>
                   </Card>
                 </div>
+              </div>
             )}
           </TabsContent>
 
