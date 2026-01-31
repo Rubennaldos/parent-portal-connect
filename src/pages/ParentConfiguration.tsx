@@ -30,8 +30,12 @@ interface Student {
   grade: string;
   section: string;
   photo_url?: string;
-  account_type?: 'cash' | 'credit';
-  credit_balance?: number;
+  free_account?: boolean; // true = cuenta libre, false = con recarga
+  limit_type?: 'none' | 'daily' | 'weekly' | 'monthly';
+  daily_limit?: number;
+  weekly_limit?: number;
+  monthly_limit?: number;
+  balance?: number; // Saldo actual (si es con recarga)
   school_id?: string;
 }
 
@@ -272,7 +276,7 @@ const ParentConfiguration = () => {
       if (userIds.length > 0) {
         const { data, error: studentsError } = await supabase
           .from('students')
-          .select('id, full_name, grade, section, parent_id, photo_url, account_type, credit_balance, school_id')
+          .select('id, full_name, grade, section, parent_id, photo_url, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, balance, school_id')
           .in('parent_id', userIds);
         
         if (studentsError) {
@@ -1102,21 +1106,22 @@ const ParentConfiguration = () => {
                           </div>
                         </div>
 
-                        {/* Tipo de Cuenta y Saldo */}
+                        {/* Tipo de Cuenta y Límites */}
                         <div className="grid grid-cols-2 gap-4">
+                          {/* Tipo de Cuenta */}
                           <div className={`rounded-lg p-4 border-2 ${
-                            child.account_type === 'credit' 
-                              ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300' 
-                              : 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-300'
+                            child.free_account !== false
+                              ? 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-300' 
+                              : 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300'
                           }`}>
                             <div className="flex items-center gap-2 mb-2">
-                              {child.account_type === 'credit' ? (
-                                <CreditCard className="h-5 w-5 text-blue-600" />
+                              {child.free_account !== false ? (
+                                <Wallet className="h-5 w-5 text-emerald-600" />
                               ) : (
-                                <Wallet className="h-5 w-5 text-amber-600" />
+                                <CreditCard className="h-5 w-5 text-blue-600" />
                               )}
                               <p className={`text-sm font-bold ${
-                                child.account_type === 'credit' ? 'text-blue-700' : 'text-amber-700'
+                                child.free_account !== false ? 'text-emerald-700' : 'text-blue-700'
                               }`}>
                                 Tipo de Cuenta
                               </p>
@@ -1124,30 +1129,64 @@ const ParentConfiguration = () => {
                             <Badge 
                               variant="secondary" 
                               className={`text-sm ${
-                                child.account_type === 'credit' 
-                                  ? 'bg-blue-100 text-blue-800 border-blue-300' 
-                                  : 'bg-amber-100 text-amber-800 border-amber-300'
+                                child.free_account !== false
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                  : 'bg-blue-100 text-blue-800 border-blue-300'
                               }`}
                             >
-                              {child.account_type === 'credit' ? '💳 Cuenta Crédito' : '💵 Pago en Efectivo'}
+                              {child.free_account !== false ? '🆓 Cuenta Libre' : '💳 Con Recarga'}
                             </Badge>
+                            
+                            {/* Mostrar tipo de límite si existe */}
+                            {child.limit_type && child.limit_type !== 'none' && (
+                              <div className="mt-3 pt-3 border-t border-emerald-200">
+                                <p className="text-xs font-medium text-emerald-600 mb-1">Límite de Gasto</p>
+                                <p className="text-base font-bold text-emerald-900">
+                                  {child.limit_type === 'daily' && `Diario: S/ ${child.daily_limit?.toFixed(2)}`}
+                                  {child.limit_type === 'weekly' && `Semanal: S/ ${child.weekly_limit?.toFixed(2)}`}
+                                  {child.limit_type === 'monthly' && `Mensual: S/ ${child.monthly_limit?.toFixed(2)}`}
+                                </p>
+                                <p className="text-xs text-emerald-600 mt-1">
+                                  {child.limit_type === 'daily' && '⏰ Se reinicia cada día'}
+                                  {child.limit_type === 'weekly' && '📅 Se reinicia cada semana'}
+                                  {child.limit_type === 'monthly' && '📆 Se reinicia cada mes'}
+                                </p>
+                              </div>
+                            )}
                           </div>
 
-                          {child.account_type === 'credit' && (
+                          {/* Saldo (solo si es con recarga) */}
+                          {child.free_account === false && (
                             <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border-2 border-green-300">
                               <div className="flex items-center gap-2 mb-2">
                                 <Wallet className="h-5 w-5 text-green-600" />
                                 <p className="text-sm font-bold text-green-700">Saldo Actual</p>
                               </div>
                               <p className="text-2xl font-black text-green-900">
-                                S/ {(child.credit_balance || 0).toFixed(2)}
+                                S/ {(child.balance || 0).toFixed(2)}
                               </p>
                               <p className={`text-xs mt-1 font-medium ${
-                                (child.credit_balance || 0) < 0 
+                                (child.balance || 0) < 0 
                                   ? 'text-red-600' 
                                   : 'text-green-600'
                               }`}>
-                                {(child.credit_balance || 0) < 0 ? '⚠️ Deuda Pendiente' : '✅ Saldo Disponible'}
+                                {(child.balance || 0) < 0 ? '⚠️ Deuda Pendiente' : '✅ Saldo Disponible'}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Información de cuenta libre sin límite */}
+                          {child.free_account !== false && (!child.limit_type || child.limit_type === 'none') && (
+                            <div className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-lg p-4 border-2 border-amber-300">
+                              <div className="flex items-center gap-2 mb-2">
+                                <CreditCard className="h-5 w-5 text-amber-600" />
+                                <p className="text-sm font-bold text-amber-700">Sin Límites</p>
+                              </div>
+                              <p className="text-base text-amber-900 font-semibold">
+                                ∞ Sin tope de gasto
+                              </p>
+                              <p className="text-xs text-amber-600 mt-1">
+                                ✨ Puede consumir libremente
                               </p>
                             </div>
                           )}
