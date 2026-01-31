@@ -2,9 +2,16 @@
 -- CORRECCIÓN: RLS POLICIES PARA COMBOS
 -- =============================================
 
--- 1. Eliminar políticas existentes que pueden causar conflictos
+-- 1. Eliminar TODAS las políticas existentes
 DROP POLICY IF EXISTS "admin_can_manage_combos" ON combos;
+DROP POLICY IF EXISTS "admin_can_insert_combos" ON combos;
+DROP POLICY IF EXISTS "admin_can_update_delete_combos" ON combos;
+DROP POLICY IF EXISTS "admin_can_delete_combos" ON combos;
+
 DROP POLICY IF EXISTS "admin_can_manage_combo_items" ON combo_items;
+DROP POLICY IF EXISTS "admin_can_insert_combo_items" ON combo_items;
+DROP POLICY IF EXISTS "admin_can_update_delete_combo_items" ON combo_items;
+DROP POLICY IF EXISTS "admin_can_delete_combo_items" ON combo_items;
 
 -- 2. Crear políticas separadas para INSERT con WITH CHECK
 -- COMBOS: Permitir INSERT a admin_general y supervisor_red

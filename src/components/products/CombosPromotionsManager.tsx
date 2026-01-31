@@ -175,6 +175,7 @@ export const CombosPromotionsManager = () => {
   };
 
   const addProductToCombo = () => {
+    setSearchQuery(''); // Limpiar búsqueda al agregar nuevo producto
     setComboForm({
       ...comboForm,
       products: [...comboForm.products, { product_id: '', quantity: 1 }],
@@ -305,6 +306,7 @@ export const CombosPromotionsManager = () => {
       applyToAllSchools: true,
       active: true 
     });
+    setSearchQuery(''); // Limpiar búsqueda al resetear
     setStep(1);
   };
 
@@ -533,68 +535,113 @@ export const CombosPromotionsManager = () => {
                     <ShoppingCart className="h-10 w-10 text-blue-600" />
                   </div>
                   <h3 className="text-2xl font-bold">Selecciona los productos</h3>
-                </div>
-
-                {/* Buscador Inteligente */}
-                <div className="relative mb-4">
-                  <Input
-                    type="text"
-                    placeholder="🔍 Buscar productos por nombre o categoría..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-12 text-base pl-4 pr-10"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    >
-                      ✕
-                    </button>
-                  )}
+                  <p className="text-gray-500 text-sm mt-2">Busca y selecciona cada producto para tu combo</p>
                 </div>
                 
                 {comboForm.products.map((item, index) => (
-                  <div key={index} className="flex gap-2 items-center p-4 bg-gray-50 rounded-lg">
-                    <div className="flex-1">
-                      <Select
-                        value={item.product_id}
-                        onValueChange={(v) => updateComboProduct(index, 'product_id', v)}
-                      >
-                        <SelectTrigger className="h-12">
-                          <SelectValue placeholder="Selecciona producto" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-60">
-                          {filteredProducts.length === 0 ? (
-                            <div className="p-4 text-center text-gray-500 text-sm">
-                              {searchQuery ? `No se encontraron productos con "${searchQuery}"` : 'No hay productos disponibles'}
-                            </div>
-                          ) : (
-                            filteredProducts.map(p => (
-                              <SelectItem key={p.id} value={p.id}>
-                                {getCategoryEmoji(p.category)} {p.name} - S/ {p.price_sale}
-                                {p.has_stock && ' 📦'}
-                              </SelectItem>
-                            ))
+                  <div key={index} className="space-y-2">
+                    {/* Producto seleccionado o buscador */}
+                    {item.product_id ? (
+                      <div className="flex gap-2 items-center p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border-2 border-purple-200">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-bold">
+                              {getCategoryEmoji(products.find(p => p.id === item.product_id)?.category || '')} 
+                              {products.find(p => p.id === item.product_id)?.name}
+                            </span>
+                            <Badge variant="secondary">
+                              S/ {products.find(p => p.id === item.product_id)?.price_sale}
+                            </Badge>
+                          </div>
+                        </div>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => updateComboProduct(index, 'quantity', parseInt(e.target.value))}
+                          className="w-20 h-12 text-center text-lg font-bold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-12 w-12"
+                          onClick={() => updateComboProduct(index, 'product_id', '')}
+                        >
+                          <X className="h-5 w-5" />
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="h-12 w-12"
+                          onClick={() => removeProductFromCombo(index)}
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="border-2 border-dashed rounded-lg p-4">
+                        {/* Input de búsqueda */}
+                        <div className="relative mb-2">
+                          <Input
+                            type="text"
+                            placeholder="🔍 Escribe para buscar productos..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="h-12 text-base pl-4 pr-10"
+                            autoFocus
+                          />
+                          {searchQuery && (
+                            <button
+                              onClick={() => setSearchQuery('')}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            >
+                              ✕
+                            </button>
                           )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={item.quantity}
-                      onChange={(e) => updateComboProduct(index, 'quantity', parseInt(e.target.value))}
-                      className="w-20 h-12 text-center text-lg font-bold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      className="h-12 w-12"
-                      onClick={() => removeProductFromCombo(index)}
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </Button>
+                        </div>
+
+                        {/* Lista de productos filtrados */}
+                        {searchQuery && (
+                          <div className="max-h-64 overflow-y-auto space-y-1 mt-2">
+                            {filteredProducts.length === 0 ? (
+                              <div className="p-4 text-center text-gray-500 text-sm">
+                                No se encontraron productos con "{searchQuery}"
+                              </div>
+                            ) : (
+                              filteredProducts.map(p => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  onClick={() => {
+                                    updateComboProduct(index, 'product_id', p.id);
+                                    setSearchQuery('');
+                                  }}
+                                  className="w-full flex items-center justify-between p-3 hover:bg-purple-50 rounded-lg border border-transparent hover:border-purple-200 transition-all text-left"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-2xl">{getCategoryEmoji(p.category)}</span>
+                                    <div>
+                                      <p className="font-semibold text-sm">{p.name}</p>
+                                      <p className="text-xs text-gray-500 capitalize">{p.category}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="secondary">S/ {p.price_sale}</Badge>
+                                    {p.has_stock && <Package className="h-4 w-4 text-green-600" />}
+                                  </div>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
+
+                        {!searchQuery && (
+                          <p className="text-sm text-gray-400 text-center mt-2">
+                            Empieza a escribir para buscar productos
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
 
