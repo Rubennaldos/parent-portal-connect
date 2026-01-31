@@ -73,7 +73,7 @@ export const PhotoConsentModal = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-3 bg-[#8B4513]/10 rounded-full">
@@ -88,16 +88,16 @@ export const PhotoConsentModal = ({
           </div>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          <div className="bg-[#FFF8E7] border-2 border-[#D2691E] rounded-xl p-4">
-            <h4 className="font-bold text-[#8B4513] mb-2 flex items-center gap-2">
-              <Shield className="h-5 w-5" />
+        <div className="space-y-3 py-2">
+          <div className="bg-[#FFF8E7] border-2 border-[#D2691E] rounded-lg p-3">
+            <h4 className="font-bold text-[#8B4513] text-sm mb-2 flex items-center gap-2">
+              <Shield className="h-4 w-4" />
               ¿Para qué se usa la fotografía?
             </h4>
-            <p className="text-sm text-gray-700">
+            <p className="text-xs text-gray-700">
               La fotografía de tu hijo/a se utiliza <strong>exclusivamente</strong> para:
             </p>
-            <ul className="text-sm text-gray-700 mt-2 space-y-1 list-disc list-inside ml-2">
+            <ul className="text-xs text-gray-700 mt-2 space-y-0.5 list-disc list-inside ml-2">
               <li><strong>Identificación visual</strong> en el punto de venta (POS)</li>
               <li><strong>Reconocimiento rápido</strong> del estudiante por el personal del kiosco</li>
               <li><strong>Seguridad</strong> en la entrega del servicio</li>
@@ -105,12 +105,12 @@ export const PhotoConsentModal = ({
             </ul>
           </div>
 
-          <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4">
-            <h4 className="font-bold text-green-900 mb-2 flex items-center gap-2">
-              <Lock className="h-5 w-5" />
+          <div className="bg-green-50 border-2 border-green-200 rounded-lg p-3">
+            <h4 className="font-bold text-green-900 text-sm mb-2 flex items-center gap-2">
+              <Lock className="h-4 w-4" />
               Protección de Datos Personales
             </h4>
-            <div className="text-sm text-green-800 space-y-1">
+            <div className="text-xs text-green-800 space-y-0.5">
               <p>✓ Las fotos <strong>NO se comparten</strong> con terceros</p>
               <p>✓ Solo el <strong>personal autorizado</strong> puede verlas</p>
               <p>✓ Puedes <strong>cambiar o eliminar</strong> la foto en cualquier momento</p>
@@ -119,10 +119,10 @@ export const PhotoConsentModal = ({
             </div>
           </div>
 
-          <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4">
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-800">
                 <strong>Importante:</strong> Esta autorización es <strong>voluntaria</strong>. 
                 Si decides no proporcionar la foto, tu hijo/a podrá seguir usando el servicio 
                 normalmente siendo identificado por su nombre.
@@ -130,7 +130,7 @@ export const PhotoConsentModal = ({
             </div>
           </div>
 
-          <div className="border-2 border-[#8B4513] rounded-xl p-4 bg-white">
+          <div className="border-2 border-[#8B4513] rounded-lg p-3 bg-white">
             <div className="flex items-start gap-3">
               <Checkbox 
                 id="consent-check" 
@@ -138,7 +138,7 @@ export const PhotoConsentModal = ({
                 onCheckedChange={(checked) => setConsentAccepted(checked as boolean)}
                 className="mt-1"
               />
-              <Label htmlFor="consent-check" className="text-sm leading-relaxed cursor-pointer flex-1">
+              <Label htmlFor="consent-check" className="text-xs leading-relaxed cursor-pointer flex-1">
                 <strong className="text-[#8B4513]">Yo, {' '}</strong>
                 <span className="text-gray-900">
                   en mi calidad de padre/madre/tutor legal de <strong>{studentName}</strong>, 
@@ -152,18 +152,18 @@ export const PhotoConsentModal = ({
           </div>
         </div>
 
-        <div className="flex gap-3 pt-4 border-t">
+        <div className="flex gap-3 pt-3 border-t">
           <Button
             onClick={() => onOpenChange(false)}
             variant="outline"
-            className="flex-1 h-12 text-base"
+            className="flex-1 h-11 text-sm"
           >
             Cancelar
           </Button>
           <Button
             onClick={handleAcceptConsent}
             disabled={!consentAccepted || loading}
-            className="flex-1 h-12 text-base font-bold bg-[#8B4513] hover:bg-[#A0522D]"
+            className="flex-1 h-11 text-sm font-bold bg-[#8B4513] hover:bg-[#A0522D]"
           >
             {loading ? 'Guardando...' : '✓ Aceptar y Continuar'}
           </Button>

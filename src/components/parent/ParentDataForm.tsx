@@ -10,8 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, UserCheck, Users, Scale, ShieldCheck } from 'lucide-react';
 
-// v1.4.6 - Improved scroll and responsive design
-
 interface ParentDataFormProps {
   onSuccess: () => void;
   isLoading?: boolean;
@@ -624,77 +622,21 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
 
           {/* PASO 3: CLÁUSULA LEGAL */}
           {step === 3 && (
-            <div className="space-y-3 sm:space-y-4 md:space-y-5">
-              {/* Información de Autorización de Foto */}
-              <div className="bg-gradient-to-br from-amber-50/80 to-orange-50/50 border border-amber-200/60 rounded-lg sm:rounded-xl p-3 sm:p-4 space-y-2 sm:space-y-3">
-                <div className="flex items-start gap-2">
-                  <ShieldCheck className="h-4 w-4 sm:h-5 sm:w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-1 sm:space-y-1.5">
-                    <h4 className="font-semibold text-[11px] sm:text-xs text-amber-900 tracking-wide">
-                      📸 Autorización de Fotografía
-                    </h4>
-                    <ul className="text-[10px] sm:text-[11px] text-amber-800 space-y-1 pl-1">
-                      <li>• <span className="font-medium">Identificación visual</span> en el punto de venta (POS)</li>
-                      <li>• <span className="font-medium">Reconocimiento rápido</span> del estudiante por el personal del kiosco</li>
-                      <li>• <span className="font-medium">Seguridad</span> en la entrega del servicio</li>
-                      <li>• <span className="font-medium">Mejor experiencia</span> para tu hijo/a</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              {/* Protección de Datos */}
-              <div className="bg-gradient-to-br from-emerald-50/80 to-teal-50/50 border border-emerald-200/60 rounded-lg sm:rounded-xl p-3 sm:p-4 space-y-1.5 sm:space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="bg-emerald-100 p-1.5 rounded-md">
-                    <ShieldCheck className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-700" />
-                  </div>
-                  <h4 className="font-semibold text-[11px] sm:text-xs text-emerald-900">
-                    🔒 Protección de Datos Personales
-                  </h4>
-                </div>
-                <ul className="text-[10px] sm:text-[11px] text-emerald-800 space-y-0.5 pl-1">
-                  <li>✓ Las fotos <span className="font-medium">NO se comparten</span> con terceros</li>
-                  <li>✓ Solo el <span className="font-medium">personal autorizado</span> puede verlas</li>
-                  <li>✓ Puedes <span className="font-medium">cambiar o eliminar</span> la foto en cualquier momento</li>
-                  <li>✓ Almacenamiento <span className="font-medium">seguro y encriptado</span> en servidores certificados</li>
-                  <li>✓ Cumplimos con la <span className="font-medium">Ley de Protección de Datos Personales</span> del Perú</li>
-                </ul>
-              </div>
-
-              {/* Importante */}
-              <div className="bg-gradient-to-br from-orange-50/80 to-amber-50/50 border border-orange-200/60 rounded-lg sm:rounded-xl p-3 sm:p-4">
-                <div className="flex items-start gap-2">
-                  <div className="bg-orange-100 p-1.5 rounded-md flex-shrink-0">
-                    <span className="text-[11px] sm:text-xs font-bold text-orange-700">⚠️</span>
-                  </div>
-                  <div className="space-y-1">
-                    <h4 className="font-semibold text-[11px] sm:text-xs text-orange-900">
-                      Importante:
-                    </h4>
-                    <p className="text-[10px] sm:text-[11px] text-orange-800 leading-relaxed">
-                      Esta autorización es <span className="font-medium">voluntaria</span>. Si decides no proporcionar la foto, 
-                      tu hijo/a podrá seguir usando el servicio normalmente siendo identificado por su nombre.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Cláusula Legal de Cobranza */}
-              <div className="bg-gradient-to-br from-stone-50/80 to-stone-100/50 border border-stone-200/60 rounded-lg sm:rounded-xl p-3 sm:p-4 space-y-2 sm:space-y-2.5">
-                <div className="flex items-start gap-2">
-                  <Scale className="h-4 w-4 sm:h-5 sm:w-5 text-stone-600 flex-shrink-0 mt-0.5" />
+            <div className="space-y-4 sm:space-y-5 md:space-y-6">
+              <div className="bg-stone-50/50 border border-stone-200/50 rounded-xl sm:rounded-2xl p-4 sm:p-5 md:p-6 space-y-3 sm:space-y-4">
+                <div className="flex items-start gap-2 sm:gap-3">
+                  <ShieldCheck className="h-5 w-5 sm:h-6 sm:w-6 text-emerald-600 flex-shrink-0 mt-0.5 sm:mt-1" />
                   <div className="space-y-1.5 sm:space-y-2">
-                    <h4 className="font-semibold text-[11px] sm:text-xs text-stone-800 tracking-wide">
+                    <h4 className="font-medium text-xs sm:text-sm text-stone-800 tracking-wide">
                       Cláusula Legal - Cobranza Judicial
                     </h4>
-                    <p className="text-[10px] sm:text-[11px] text-stone-700 leading-relaxed">
+                    <p className="text-[11px] sm:text-xs text-stone-600 leading-relaxed">
                       Al aceptar estos términos, reconozco que en caso de incumplimiento de pago de los consumos realizados
                       por mi(s) hijo(s) en el kiosco escolar <span className="font-medium">Lima Café 28</span>, autorizo
                       expresamente a la institución a iniciar las acciones legales de cobranza judicial que correspondan,
                       incluyendo el cobro de intereses moratorios y gastos administrativos.
                     </p>
-                    <p className="text-[10px] sm:text-[11px] text-stone-700 leading-relaxed">
+                    <p className="text-[11px] sm:text-xs text-stone-600 leading-relaxed">
                       Los datos proporcionados serán utilizados exclusivamente para fines de gestión de pagos y comunicación
                       con los responsables de pago, conforme a la Ley de Protección de Datos Personales.
                     </p>
@@ -702,45 +644,41 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
                 </div>
               </div>
 
-              {/* Checkbox de Aceptación */}
-              <div className="flex items-start gap-2 sm:gap-3 p-3 sm:p-4 bg-white border-2 border-stone-300 rounded-lg sm:rounded-xl shadow-sm">
+              <div className="flex items-start gap-2 sm:gap-3 p-3 sm:p-4 bg-white border border-stone-200 rounded-xl">
                 <Checkbox
                   id="legal"
                   checked={legalAcceptance}
                   onCheckedChange={(checked) => setLegalAcceptance(checked as boolean)}
-                  className="mt-0.5 h-5 w-5 sm:h-5 sm:w-5"
+                  className="mt-0.5"
                   disabled={isLoading}
                 />
                 <label
                   htmlFor="legal"
-                  className="text-[11px] sm:text-xs text-stone-800 leading-relaxed cursor-pointer font-medium"
+                  className="text-xs sm:text-sm text-stone-700 leading-relaxed cursor-pointer"
                 >
-                  Yo, en mi calidad de padre/madre/tutor legal de <span className="font-semibold text-emerald-700">Hijo prueba 2</span>, 
-                  <span className="font-semibold"> AUTORIZO</span> expresamente a Lima Café 28 el uso de la fotografía de mi hijo/a 
-                  para los fines de identificación en el punto de venta, y confirmo que los datos proporcionados son correctos y veraces.
-                  He leído y acepto la cláusula legal de cobranza judicial en caso de impago.
+                  He leído y acepto la cláusula legal de cobranza judicial en caso de impago, y confirmo que los datos
+                  proporcionados son correctos y veraces.
                 </label>
               </div>
 
-              {/* Botones */}
-              <div className="flex gap-2 sm:gap-3 pt-2 sm:pt-3">
+              <div className="flex gap-2 sm:gap-3 pt-2">
                 <Button
                   type="button"
                   onClick={() => setStep(2)}
                   variant="outline"
-                  className="flex-1 h-11 sm:h-12 border-2 border-stone-300 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium"
+                  className="flex-1 h-11 sm:h-12 border border-stone-200 rounded-xl text-sm sm:text-base"
                   disabled={isLoading}
                 >
                   Atrás
                 </Button>
                 <Button
                   type="submit"
-                  className="flex-1 h-11 sm:h-12 text-xs sm:text-sm font-semibold bg-gradient-to-r from-emerald-600/90 via-[#8B7355] to-[#6B5744] hover:from-emerald-700/90 hover:via-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-lg sm:rounded-xl tracking-wide"
+                  className="flex-1 h-12 sm:h-14 text-sm sm:text-base font-medium bg-gradient-to-r from-emerald-600/90 via-[#8B7355] to-[#6B5744] hover:from-emerald-700/90 hover:via-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl tracking-wide"
                   disabled={isLoading || !legalAcceptance}
                 >
                   {isLoading ? (
                     <>
-                      <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                      <Loader2 className="animate-spin mr-2 h-4 w-4 sm:h-5 sm:w-5" />
                       Guardando...
                     </>
                   ) : (

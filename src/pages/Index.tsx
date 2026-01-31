@@ -998,8 +998,8 @@ const Index = () => {
             <ParentDataForm
               onSuccess={() => {
                 setShowParentDataForm(false);
-                // Después de completar datos, verificar onboarding de cuenta libre
-                checkOnboardingStatus();
+                // Ir directamente al modal de cuenta libre sin volver a verificar
+                setShowOnboarding(true);
               }}
               isLoading={isParentFormLoading}
               setIsLoading={setIsParentFormLoading}

@@ -291,11 +291,17 @@ export const CreateProfileModal = ({ open, onOpenChange, onSuccess }: CreateProf
 
       if (error) {
         console.error('❌ Error desde Edge Function:', error);
+        
+        // Verificar si es error 404 (función no existe) o 400 (bad request)
+        if (error.message?.includes('404') || error.message?.includes('FunctionsRelayError')) {
+          throw new Error('❌ La Edge Function "create-user" no está desplegada en Supabase.\n\n📋 Pasos para desplegarla:\n1. Instala Supabase CLI\n2. Ejecuta: supabase functions deploy create-user\n\n⚠️ Contacta al desarrollador para ayuda.');
+        }
+        
         throw new Error(error.message || 'Error al crear usuario');
       }
 
       if (!data?.success) {
-        throw new Error(data?.error || 'Error desconocido');
+        throw new Error(data?.error || 'Error desconocido al crear usuario');
       }
 
       console.log('✅ Usuario creado exitosamente:', data.user);
