@@ -50,6 +50,7 @@ interface DashboardStats {
   activeProducts: number;
   totalValue: number;
   lowStock: number;
+  expiringProducts: Array<{name: string; days_left: number; expiry_date: string}>;
   topSelling: Array<{name: string; sales: number}>;
   byCategory: Array<{category: string; count: number}>;
 }
@@ -82,6 +83,7 @@ const Products = () => {
     activeProducts: 0,
     totalValue: 0,
     lowStock: 0,
+    expiringProducts: [],
     topSelling: [],
     byCategory: [],
   });
@@ -224,6 +226,33 @@ const Products = () => {
 
     const byCategory = Object.entries(categoryCounts).map(([category, count]) => ({ category, count }));
 
+    // 🆕 Calcular productos próximos a vencer
+    const expiringProducts: Array<{name: string; days_left: number; expiry_date: string}> = [];
+    const today = new Date();
+    
+    products.forEach(product => {
+      if (product.has_expiry && product.expiry_days) {
+        // Calcular fecha de vencimiento (asumiendo que se ingresó hoy)
+        // En producción, esto debería venir de un campo created_at o purchase_date
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + product.expiry_days);
+        
+        const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        
+        // Solo mostrar productos que vencen en 7 días o menos
+        if (daysLeft <= 7 && daysLeft >= 0) {
+          expiringProducts.push({
+            name: product.name,
+            days_left: daysLeft,
+            expiry_date: expiryDate.toLocaleDateString('es-PE'),
+          });
+        }
+      }
+    });
+
+    // Ordenar por días restantes (más urgente primero)
+    expiringProducts.sort((a, b) => a.days_left - b.days_left);
+
     // Obtener los más vendidos reales desde la BD
     const { data: topData } = await supabase
       .from('products')
@@ -236,6 +265,7 @@ const Products = () => {
       activeProducts: active,
       totalValue: totalVal,
       lowStock: lowStockCount,
+      expiringProducts: expiringProducts.slice(0, 5),
       topSelling: topData?.map(p => ({ name: p.name, sales: p.total_sales || 0 })) || [],
       byCategory,
     });
@@ -884,6 +914,49 @@ const Products = () => {
 
                 {/* Charts */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* 🆕 Card de Productos Próximos a Vencer */}
+                  <Card className="border-orange-200 bg-orange-50/50">
+                    <CardHeader>
+                      <div className="flex justify-between items-center">
+                        <CardTitle className="text-orange-900">Próximos a Vencer</CardTitle>
+                        <AlertTriangle className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <CardDescription>Productos con fecha de vencimiento cercana</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {dashStats.expiringProducts.length > 0 ? (
+                          dashStats.expiringProducts.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center p-3 bg-white rounded-lg border border-orange-200">
+                              <div className="flex-1">
+                                <span className="font-semibold text-gray-900">{item.name}</span>
+                                <p className="text-xs text-gray-500">Vence: {item.expiry_date}</p>
+                              </div>
+                              <Badge 
+                                variant="outline" 
+                                className={`font-bold ${
+                                  item.days_left <= 2 
+                                    ? 'bg-red-100 text-red-800 border-red-300' 
+                                    : item.days_left <= 5 
+                                    ? 'bg-orange-100 text-orange-800 border-orange-300'
+                                    : 'bg-yellow-100 text-yellow-800 border-yellow-300'
+                                }`}
+                              >
+                                {item.days_left === 0 ? '¡HOY!' : item.days_left === 1 ? '1 día' : `${item.days_left} días`}
+                              </Badge>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-gray-500">
+                            <div className="mb-3">✅</div>
+                            <p className="text-sm">No hay productos próximos a vencer</p>
+                            <p className="text-xs text-gray-400 mt-1">Productos con control de vencimiento aparecerán aquí</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+
                   <Card>
                     <CardHeader>
                       <CardTitle>Productos por Categoría</CardTitle>
@@ -906,7 +979,10 @@ const Products = () => {
                       </div>
                     </CardContent>
                   </Card>
+                </div>
 
+                {/* Segunda fila de charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <Card>
                     <CardHeader>
                       <CardTitle>Productos Más Vendidos</CardTitle>
@@ -932,10 +1008,8 @@ const Products = () => {
                       </div>
                     </CardContent>
                   </Card>
-                </div>
 
-                {/* Exportar */}
-                <Card>
+                  <Card>
                   <CardHeader>
                     <div className="flex justify-between items-center">
                       <div>

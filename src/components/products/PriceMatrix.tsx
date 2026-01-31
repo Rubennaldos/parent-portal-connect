@@ -11,6 +11,8 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { Building2, DollarSign, Save, X, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useRole } from '@/hooks/useRole';
 
 interface School {
   id: string;
@@ -42,10 +44,13 @@ interface PriceMatrixProps {
 
 export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const { role } = useRole();
   const [schools, setSchools] = useState<School[]>([]);
   const [schoolPrices, setSchoolPrices] = useState<Map<string, SchoolPrice>>(new Map());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen && product) {
@@ -58,11 +63,30 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
     
     setLoading(true);
     try {
-      // Obtener todas las sedes
-      const { data: schoolsData, error: schoolsError } = await supabase
+      // Obtener la sede del usuario (si no es admin_general)
+      let userSchool = null;
+      if (role !== 'admin_general' && user) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('school_id')
+          .eq('id', user.id)
+          .maybeSingle();
+        
+        userSchool = profileData?.school_id || null;
+        setUserSchoolId(userSchool);
+      }
+
+      // Obtener sedes (todas para admin_general, solo la del usuario para otros roles)
+      let schoolsQuery = supabase
         .from('schools')
         .select('id, name')
         .order('name');
+      
+      if (userSchool) {
+        schoolsQuery = schoolsQuery.eq('id', userSchool);
+      }
+
+      const { data: schoolsData, error: schoolsError } = await schoolsQuery;
 
       if (schoolsError) throw schoolsError;
 
@@ -188,6 +212,23 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
     }
   };
 
+  // Función para obtener diminutivo de la sede
+  const getSchoolAcronym = (schoolName: string): string => {
+    // Extraer iniciales de palabras significativas
+    const words = schoolName
+      .split(' ')
+      .filter(word => !['de', 'la', 'el', 'y', 'del'].includes(word.toLowerCase()));
+    
+    if (words.length === 1) {
+      return words[0].substring(0, 3).toUpperCase();
+    }
+    
+    return words
+      .map(word => word.charAt(0).toUpperCase())
+      .join('')
+      .substring(0, 4);
+  };
+
   const getEffectivePrice = (schoolId: string, field: 'price_sale' | 'price_cost'): number => {
     const schoolPrice = schoolPrices.get(schoolId);
     if (!schoolPrice || !product) return 0;
@@ -251,8 +292,8 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
                         Sede
                       </div>
                     </TableHead>
-                    <TableHead className="w-[20%]">Precio Venta</TableHead>
                     <TableHead className="w-[20%]">Precio Costo</TableHead>
+                    <TableHead className="w-[20%]">Precio Venta</TableHead>
                     <TableHead className="w-[15%] text-center">Disponible</TableHead>
                     <TableHead className="w-[15%] text-center">Estado</TableHead>
                   </TableRow>
@@ -267,26 +308,16 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
                     return (
                       <TableRow key={school.id} className={isCustom ? 'bg-amber-50/50' : ''}>
                         <TableCell className="font-medium">
-                          {school.name}
-                          {isCustom && (
-                            <Badge variant="secondary" className="ml-2 text-xs bg-amber-100 text-amber-800">
-                              Personalizado
+                          <div className="flex items-center gap-2">
+                            <span>{school.name}</span>
+                            <Badge variant="outline" className="text-xs bg-gray-100">
+                              {getSchoolAcronym(school.name)}
                             </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <Input
-                              type="number"
-                              step="0.01"
-                              placeholder={product.price_sale?.toFixed(2)}
-                              value={schoolPrice.price_sale || ''}
-                              onChange={(e) => handlePriceChange(school.id, 'price_sale', e.target.value)}
-                              className="w-full"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Efectivo: S/ {effectivePriceSale.toFixed(2)}
-                            </p>
+                            {isCustom && (
+                              <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-800">
+                                Personalizado
+                              </Badge>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -301,6 +332,21 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
                             />
                             <p className="text-xs text-muted-foreground">
                               Efectivo: S/ {effectivePriceCost.toFixed(2)}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              placeholder={product.price_sale?.toFixed(2)}
+                              value={schoolPrice.price_sale || ''}
+                              onChange={(e) => handlePriceChange(school.id, 'price_sale', e.target.value)}
+                              className="w-full"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Efectivo: S/ {effectivePriceSale.toFixed(2)}
                             </p>
                           </div>
                         </TableCell>
