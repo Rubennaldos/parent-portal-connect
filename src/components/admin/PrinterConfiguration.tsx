@@ -21,7 +21,8 @@ import {
   XCircle,
   Building2,
   Eye,
-  UtensilsCrossed
+  UtensilsCrossed,
+  PrinterIcon
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -318,6 +319,147 @@ export function PrinterConfiguration() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrintTest = () => {
+    const testOrderCode = `${config.qr_prefix}-${Math.floor(Math.random() * 99999).toString().padStart(5, '0')}`;
+    
+    // Crear contenido del ticket
+    const ticketContent = `
+      <div style="width: ${config.paper_width * 3}px; font-family: ${config.font_family}; font-size: ${config.font_size === 'small' ? '12px' : config.font_size === 'large' ? '16px' : '14px'}; padding: 20px;">
+        ${logoPreview ? `<div style="text-align: center; margin-bottom: 20px;"><img src="${logoPreview}" style="width: ${config.logo_width}px; height: ${config.logo_height}px; object-fit: contain;" /></div>` : ''}
+        
+        <div style="text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px;">
+          <div style="font-weight: bold; font-size: 16px;">${config.business_name || selectedSchoolName}</div>
+          ${config.business_ruc ? `<div style="font-size: 11px;">RUC: ${config.business_ruc}</div>` : ''}
+          ${config.business_address ? `<div style="font-size: 11px;">${config.business_address}</div>` : ''}
+          ${config.business_phone ? `<div style="font-size: 11px;">Tel: ${config.business_phone}</div>` : ''}
+        </div>
+
+        ${config.print_header ? `<div style="text-align: center; font-weight: bold; margin-bottom: 15px;">${config.header_text}</div>` : ''}
+
+        <div style="margin-bottom: 15px; font-size: 11px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span>Fecha:</span>
+            <span>${new Date().toLocaleString('es-PE')}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span>Ticket:</span>
+            <span><strong>${testOrderCode}</strong></span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span>Cajero:</span>
+            <span>PRUEBA</span>
+          </div>
+        </div>
+
+        <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 5px;">
+            <span>1x Producto de Prueba</span>
+            <span>S/ 10.00</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span>1x Combo de Prueba</span>
+            <span>S/ 15.00</span>
+          </div>
+        </div>
+
+        <div style="text-align: right; font-weight: bold; font-size: 16px; margin-bottom: 15px;">
+          TOTAL: S/ 25.00
+        </div>
+
+        ${(config.show_qr_code || config.auto_generate_qr) ? `
+          <div style="text-align: center; border: 2px solid #000; padding: 10px; margin-bottom: 10px;">
+            <div style="font-weight: bold; font-family: monospace;">QR: ${testOrderCode}</div>
+            <div style="font-size: 10px; color: #666;">Código para seguimiento</div>
+          </div>
+        ` : ''}
+
+        ${config.print_footer ? `<div style="text-align: center; font-size: 11px; border-top: 1px solid #000; padding-top: 10px;">${config.footer_text}</div>` : ''}
+      </div>
+    `;
+
+    // Crear contenido de la comanda (si está activada)
+    const comandaContent = config.print_comanda ? `
+      <div style="width: ${config.paper_width * 3}px; font-family: ${config.font_family}; font-size: ${config.font_size === 'small' ? '12px' : config.font_size === 'large' ? '16px' : '14px'}; padding: 20px; background: #fff3e0;">
+        <div style="text-align: center; font-weight: bold; font-size: 18px; margin-bottom: 20px; border-bottom: 3px solid #ff9800; padding-bottom: 10px;">
+          ${config.comanda_header}
+        </div>
+
+        <div style="margin-bottom: 20px; font-size: 11px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span style="font-weight: bold;">PEDIDO:</span>
+            <span style="font-weight: bold; font-family: monospace;">${testOrderCode}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span style="font-weight: bold;">HORA:</span>
+            <span>${new Date().toLocaleTimeString('es-PE')}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="font-weight: bold;">MESA/CLIENTE:</span>
+            <span>PRUEBA</span>
+          </div>
+        </div>
+
+        <div style="border-top: 2px solid #ff9800; border-bottom: 2px solid #ff9800; padding: 15px 0; margin-bottom: 15px;">
+          <div style="font-weight: bold; margin-bottom: 10px; font-size: 12px;">PRODUCTOS:</div>
+          <div style="margin-bottom: 10px;">
+            <div style="font-weight: bold;">1x Producto de Prueba</div>
+            <div style="color: #666; margin-left: 15px; font-size: 10px;">- Sin observaciones</div>
+          </div>
+          <div>
+            <div style="font-weight: bold;">1x Combo de Prueba</div>
+            <div style="color: #666; margin-left: 15px; font-size: 10px;">- Incluye bebida</div>
+          </div>
+        </div>
+
+        ${config.auto_generate_qr ? `
+          <div style="text-align: center; border: 3px solid #ff9800; padding: 15px; background: white;">
+            <div style="font-weight: bold; font-family: monospace; font-size: 14px;">QR: ${testOrderCode}</div>
+            <div style="font-size: 10px; color: #666; margin-top: 5px;">Escanear para confirmar entrega</div>
+          </div>
+        ` : ''}
+
+        <div style="text-align: center; margin-top: 15px; font-size: 11px; color: #666;">
+          ⏰ Preparar y entregar
+        </div>
+      </div>
+    ` : '';
+
+    // Abrir ventana de impresión
+    const printWindow = window.open('', '', 'width=400,height=600');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Ticket de Prueba - ${testOrderCode}</title>
+            <style>
+              body { margin: 0; padding: 20px; font-family: monospace; }
+              @media print {
+                body { margin: 0; padding: 0; }
+                .page-break { page-break-after: always; }
+              }
+            </style>
+          </head>
+          <body>
+            ${ticketContent}
+            ${config.print_comanda && config.print_separate_comanda ? `<div class="page-break"></div>${comandaContent}` : ''}
+            <script>
+              window.onload = function() {
+                window.print();
+                setTimeout(function() { window.close(); }, 100);
+              }
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+
+      toast({
+        title: '🖨️ Imprimiendo ticket de prueba',
+        description: `Código: ${testOrderCode}${config.print_comanda ? ' (Ticket + Comanda)' : ''}`
+      });
     }
   };
 
@@ -1052,32 +1194,44 @@ export function PrinterConfiguration() {
       </Tabs>
 
       {/* Botones de acción */}
-      <div className="flex justify-end gap-3">
+      <div className="flex justify-between items-center">
         <Button
           variant="outline"
-          onClick={() => loadPrinterConfig(selectedSchool)}
-          disabled={saving || uploadingLogo}
+          onClick={handlePrintTest}
+          disabled={!selectedSchool}
+          className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
         >
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Recargar
+          <PrinterIcon className="h-4 w-4 mr-2" />
+          Imprimir Ticket de Prueba
         </Button>
-        <Button
-          onClick={handleSave}
-          disabled={saving || uploadingLogo}
-          className="bg-purple-600 hover:bg-purple-700"
-        >
-          {saving || uploadingLogo ? (
-            <>
-              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-              Guardando...
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-2" />
-              Guardar Configuración
-            </>
-          )}
-        </Button>
+
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => loadPrinterConfig(selectedSchool)}
+            disabled={saving || uploadingLogo}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Recargar
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving || uploadingLogo}
+            className="bg-purple-600 hover:bg-purple-700"
+          >
+            {saving || uploadingLogo ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Guardando...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-2" />
+                Guardar Configuración
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );
