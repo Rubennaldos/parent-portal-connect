@@ -1,0 +1,37 @@
+# Configuración de QZ Tray - Sin certificados
+# Archivo: qz-tray.properties
+# Ubicación: C:\Users\TU_USUARIO\.qz\
+
+# ========================================
+# DESACTIVAR REQUERIMIENTO DE CERTIFICADOS
+# ========================================
+security.require-certificate=false
+security.require-signature=false
+allow.insecure=true
+trust.anonymous=true
+
+# ========================================
+# SITIOS CONFIABLES (WHITELIST)
+# ========================================
+whitelist=localhost,127.0.0.1,parent-portal-connect,*.supabase.co
+
+# ========================================
+# CONFIGURACIÓN ADICIONAL
+# ========================================
+# Permitir todas las conexiones locales
+allow.localhost=true
+
+# No verificar certificados SSL
+security.verify-signature=false
+
+# Modo de desarrollo (menos restricciones)
+development-mode=true
+
+# Auto-aprobar conexiones conocidas
+auto-allow-trusted=true
+
+# ========================================
+# LOGGING (para debug)
+# ========================================
+log.level=DEBUG
+log.file=qz-tray.log
