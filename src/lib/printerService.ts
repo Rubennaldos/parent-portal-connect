@@ -5,6 +5,7 @@
  */
 
 import qz from 'qz-tray';
+import { setupQZBasic } from './qzConfig';
 
 // Comandos ESC/POS para impresoras térmicas
 export const ESC_POS = {
@@ -51,6 +52,10 @@ export const connectQZ = async (): Promise<boolean> => {
     }
 
     console.log('🔌 Conectando con QZ Tray...');
+    
+    // Configurar certificados básicos (sin pop-up persistente)
+    setupQZBasic();
+    
     await qz.websocket.connect();
     console.log('✅ QZ Tray conectado exitosamente');
     return true;
