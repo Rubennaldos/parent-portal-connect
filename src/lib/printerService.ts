@@ -53,10 +53,12 @@ export const connectQZ = async (): Promise<boolean> => {
 
     console.log('🔌 Conectando con QZ Tray...');
     
-    // Configurar certificados básicos (sin pop-up persistente)
+    // Configurar modo básico ANTES de conectar
     setupQZBasic();
     
+    // Conectar (usará el puerto inseguro por defecto: ws://localhost:8182)
     await qz.websocket.connect();
+    
     console.log('✅ QZ Tray conectado exitosamente');
     return true;
   } catch (error) {

@@ -56,17 +56,24 @@ export const setupQZCertificates = async () => {
  * Usa firma vacía para permitir que QZ Tray guarde la preferencia
  */
 export const setupQZBasic = () => {
+  // Configuración que permite conexiones anónimas pero recordables
   qz.security.setCertificatePromise(function(resolve, reject) {
-    resolve(); // Sin certificado
+    // Resolver sin certificado - QZ Tray permitirá "Remember"
+    resolve();
   });
 
-  qz.security.setSignatureAlgorithm("SHA512"); // Algoritmo por defecto
+  // NO establecer algoritmo de firma - usar por defecto de QZ
+  // qz.security.setSignatureAlgorithm("SHA512");
   
+  // Firma simple que retorna vacío
   qz.security.setSignaturePromise(function(toSign) {
     return function(resolve, reject) {
-      resolve(); // Firma vacía - permite "Remember"
+      // Firma vacía - QZ Tray manejará esto
+      resolve();
     };
   });
+  
+  console.log('✅ QZ Tray configurado en modo básico (permite Remember)');
 };
 
 /**
