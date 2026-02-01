@@ -22,7 +22,11 @@ import {
   Building2,
   Eye,
   UtensilsCrossed,
-  PrinterIcon
+  PrinterIcon,
+  Wifi,
+  Bluetooth,
+  Cable,
+  Network
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -54,13 +58,22 @@ interface PrinterConfig {
   show_barcode: boolean;
   auto_print: boolean;
   copies: number;
-  // Nuevos campos para comanda
+  // Campos para comanda
   print_comanda: boolean;
   comanda_header: string;
   comanda_copies: number;
   auto_generate_qr: boolean;
   qr_prefix: string;
   print_separate_comanda: boolean;
+  // Campos para conexión física
+  connection_type: 'usb' | 'network' | 'bluetooth' | 'wifi';
+  printer_device_name: string | null;
+  network_ip: string | null;
+  network_port: number;
+  bluetooth_address: string | null;
+  wifi_ssid: string | null;
+  is_thermal_printer: boolean;
+  connection_timeout: number;
 }
 
 export function PrinterConfiguration() {
@@ -101,7 +114,16 @@ export function PrinterConfiguration() {
     comanda_copies: 1,
     auto_generate_qr: true,
     qr_prefix: 'ORD',
-    print_separate_comanda: true
+    print_separate_comanda: true,
+    // Valores por defecto para conexión
+    connection_type: 'usb',
+    printer_device_name: null,
+    network_ip: null,
+    network_port: 9100,
+    bluetooth_address: null,
+    wifi_ssid: null,
+    is_thermal_printer: true,
+    connection_timeout: 5000
   });
 
   // Cargar sedes
@@ -636,6 +658,182 @@ export function PrinterConfiguration() {
                   checked={config.is_active}
                   onCheckedChange={(checked) => setConfig({ ...config, is_active: checked })}
                 />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Card de Conexión de Impresora */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Network className="h-5 w-5 text-blue-600" />
+                Conexión de Impresora
+              </CardTitle>
+              <CardDescription>
+                Configura cómo se conectará la impresora (USB, Red, Bluetooth, WiFi)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Tipo de Impresora */}
+              <div className="flex items-center justify-between p-4 border rounded-lg bg-blue-50 dark:bg-blue-950/20">
+                <div>
+                  <Label className="font-semibold">Impresora Térmica (Tickets)</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Activar si es impresora térmica de tickets (80mm, 58mm)
+                  </p>
+                </div>
+                <Switch
+                  checked={config.is_thermal_printer}
+                  onCheckedChange={(checked) => setConfig({ ...config, is_thermal_printer: checked })}
+                />
+              </div>
+
+              {/* Tipo de Conexión */}
+              <div className="space-y-2">
+                <Label htmlFor="connection-type">Tipo de Conexión</Label>
+                <Select 
+                  value={config.connection_type} 
+                  onValueChange={(val: 'usb' | 'network' | 'bluetooth' | 'wifi') => 
+                    setConfig({ ...config, connection_type: val })
+                  }
+                >
+                  <SelectTrigger id="connection-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="usb">
+                      <div className="flex items-center gap-2">
+                        <Cable className="h-4 w-4" />
+                        USB (Cable directo)
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="network">
+                      <div className="flex items-center gap-2">
+                        <Network className="h-4 w-4" />
+                        Red / IP (Ethernet/LAN)
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="bluetooth">
+                      <div className="flex items-center gap-2">
+                        <Bluetooth className="h-4 w-4" />
+                        Bluetooth
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="wifi">
+                      <div className="flex items-center gap-2">
+                        <Wifi className="h-4 w-4" />
+                        WiFi (Inalámbrica)
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Configuración USB */}
+              {config.connection_type === 'usb' && (
+                <div className="space-y-2 p-4 border-2 border-blue-200 rounded-lg bg-blue-50/50 dark:bg-blue-950/10">
+                  <Label htmlFor="printer-device" className="flex items-center gap-2">
+                    <Cable className="h-4 w-4" />
+                    Nombre del Dispositivo (Opcional)
+                  </Label>
+                  <Input
+                    id="printer-device"
+                    value={config.printer_device_name || ''}
+                    onChange={(e) => setConfig({ ...config, printer_device_name: e.target.value })}
+                    placeholder="Ej: EPSON TM-T20, Star TSP100, etc."
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    💡 Si está vacío, se usará la impresora predeterminada del sistema
+                  </p>
+                </div>
+              )}
+
+              {/* Configuración Red/IP */}
+              {config.connection_type === 'network' && (
+                <div className="space-y-4 p-4 border-2 border-green-200 rounded-lg bg-green-50/50 dark:bg-green-950/10">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="network-ip" className="flex items-center gap-2">
+                        <Network className="h-4 w-4" />
+                        Dirección IP
+                      </Label>
+                      <Input
+                        id="network-ip"
+                        value={config.network_ip || ''}
+                        onChange={(e) => setConfig({ ...config, network_ip: e.target.value })}
+                        placeholder="192.168.1.100"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="network-port">Puerto</Label>
+                      <Input
+                        id="network-port"
+                        type="number"
+                        value={config.network_port}
+                        onChange={(e) => setConfig({ ...config, network_port: parseInt(e.target.value) || 9100 })}
+                        placeholder="9100"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    💡 Puerto por defecto: 9100 (impresoras térmicas), 515 (LPR), 631 (IPP)
+                  </p>
+                </div>
+              )}
+
+              {/* Configuración Bluetooth */}
+              {config.connection_type === 'bluetooth' && (
+                <div className="space-y-2 p-4 border-2 border-purple-200 rounded-lg bg-purple-50/50 dark:bg-purple-950/10">
+                  <Label htmlFor="bluetooth-addr" className="flex items-center gap-2">
+                    <Bluetooth className="h-4 w-4" />
+                    Dirección MAC Bluetooth
+                  </Label>
+                  <Input
+                    id="bluetooth-addr"
+                    value={config.bluetooth_address || ''}
+                    onChange={(e) => setConfig({ ...config, bluetooth_address: e.target.value })}
+                    placeholder="00:11:22:33:44:55"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    💡 Empareja la impresora Bluetooth con esta PC primero
+                  </p>
+                </div>
+              )}
+
+              {/* Configuración WiFi */}
+              {config.connection_type === 'wifi' && (
+                <div className="space-y-2 p-4 border-2 border-orange-200 rounded-lg bg-orange-50/50 dark:bg-orange-950/10">
+                  <Label htmlFor="wifi-ssid" className="flex items-center gap-2">
+                    <Wifi className="h-4 w-4" />
+                    SSID de Red WiFi
+                  </Label>
+                  <Input
+                    id="wifi-ssid"
+                    value={config.wifi_ssid || ''}
+                    onChange={(e) => setConfig({ ...config, wifi_ssid: e.target.value })}
+                    placeholder="Nombre de la red WiFi"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    💡 Asegúrate de que la impresora esté conectada a la misma red
+                  </p>
+                </div>
+              )}
+
+              {/* Timeout */}
+              <div className="space-y-2">
+                <Label htmlFor="connection-timeout">Tiempo de Espera (ms)</Label>
+                <Input
+                  id="connection-timeout"
+                  type="number"
+                  value={config.connection_timeout}
+                  onChange={(e) => setConfig({ ...config, connection_timeout: parseInt(e.target.value) || 5000 })}
+                  min={1000}
+                  max={30000}
+                  step={1000}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tiempo máximo para intentar conectar con la impresora (por defecto 5000ms = 5 segundos)
+                </p>
               </div>
             </CardContent>
           </Card>
