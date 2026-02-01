@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { 
+  connectQZ, 
+  printTicketDirect, 
+  generateTicketContent, 
+  generateComandaContent,
+  isQZTrayAvailable,
+  ESC_POS
+} from '@/lib/printerService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -361,6 +369,85 @@ export function PrinterConfiguration() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrintTestQZ = async () => {
+    const testOrderCode = `${config.qr_prefix}-${Math.floor(Math.random() * 99999).toString().padStart(5, '0')}`;
+    
+    try {
+      const qzAvailable = await isQZTrayAvailable();
+      
+      if (!qzAvailable) {
+        toast({
+          variant: 'destructive',
+          title: '❌ QZ Tray no detectado',
+          description: 'Descarga e instala QZ Tray desde qz.io/download'
+        });
+        return;
+      }
+
+      toast({
+        title: '🔌 Conectando...',
+        description: 'Preparando impresión directa'
+      });
+
+      const testItems = [
+        { name: 'Producto de Prueba', price: 10.00, quantity: 1 },
+        { name: 'Combo de Prueba', price: 15.00, quantity: 1 }
+      ];
+
+      const ticketContent = generateTicketContent(
+        config.business_name || selectedSchoolName,
+        config.business_ruc,
+        config.business_address,
+        config.business_phone,
+        testOrderCode,
+        testItems,
+        25.00,
+        config.print_header ? config.header_text : undefined,
+        config.print_footer ? config.footer_text : undefined
+      );
+
+      await printTicketDirect(
+        config.printer_device_name,
+        ticketContent,
+        config.auto_cut_paper,
+        config.cut_mode
+      );
+
+      if (config.print_comanda && config.print_separate_comanda) {
+        const comandaItems = [
+          { name: 'Producto de Prueba', quantity: 1, notes: 'Sin observaciones' },
+          { name: 'Combo de Prueba', quantity: 1, notes: 'Incluye bebida' }
+        ];
+
+        const comandaContent = generateComandaContent(
+          config.comanda_header,
+          testOrderCode,
+          comandaItems,
+          'Cliente PRUEBA'
+        );
+
+        await printTicketDirect(
+          config.printer_device_name,
+          comandaContent,
+          config.auto_cut_paper,
+          config.cut_mode
+        );
+      }
+
+      toast({
+        title: '✅ Impresión exitosa',
+        description: `Código: ${testOrderCode}`
+      });
+
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: '❌ Error de impresión',
+        description: error.message
+      });
     }
   };
 
@@ -1670,7 +1757,7 @@ export function PrinterConfiguration() {
       <div className="flex justify-between items-center">
         <Button
           variant="outline"
-          onClick={handlePrintTest}
+          onClick={handlePrintTestQZ}
           disabled={!selectedSchool}
           className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
         >
