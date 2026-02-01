@@ -54,17 +54,37 @@ export const setupQZCertificates = () => {
 };
 
 /**
- * Configuración ALTERNATIVA sin certificados (para desarrollo)
- * Mostrará el diálogo "Allow" cada vez
+ * Configuración sin certificados (permite "Remember this decision")
+ * Usa firma vacía para permitir que QZ Tray guarde la preferencia
  */
 export const setupQZBasic = () => {
-  qz.security.setCertificatePromise(function(resolve) {
-    // Sin certificado - mostrará diálogo
-    resolve();
+  qz.security.setCertificatePromise(function(resolve, reject) {
+    resolve(); // Sin certificado
   });
+
+  qz.security.setSignatureAlgorithm("SHA512"); // Algoritmo por defecto
+  
+  qz.security.setSignaturePromise(function(toSign) {
+    return function(resolve, reject) {
+      resolve(); // Firma vacía - permite "Remember"
+    };
+  });
+};
+
+/**
+ * Verificar si QZ Tray tiene certificados configurados
+ */
+export const hasQZCertificates = (): boolean => {
+  try {
+    // @ts-ignore - Verificar si hay certificados configurados
+    return qz.security.hasCertificate && qz.security.hasCertificate();
+  } catch {
+    return false;
+  }
 };
 
 export default {
   setupQZCertificates,
-  setupQZBasic
+  setupQZBasic,
+  hasQZCertificates
 };

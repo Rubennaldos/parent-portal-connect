@@ -389,7 +389,7 @@ export function PrinterConfiguration() {
 
       toast({
         title: '🔌 Conectando...',
-        description: 'Preparando impresión directa'
+        description: 'Si aparece un diálogo, haz click en "Allow" y marca "Remember"'
       });
 
       const testItems = [
@@ -439,15 +439,26 @@ export function PrinterConfiguration() {
 
       toast({
         title: '✅ Impresión exitosa',
-        description: `Código: ${testOrderCode}`
+        description: `Código: ${testOrderCode} - Ticket impreso correctamente`
       });
 
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: '❌ Error de impresión',
-        description: error.message
-      });
+      console.error('❌ Error de impresión:', error);
+      
+      // Error específico para problema de certificados
+      if (error.message && error.message.includes('certificate')) {
+        toast({
+          variant: 'destructive',
+          title: '🔐 Certificado requerido',
+          description: 'Haz click en "Allow" cuando QZ Tray lo solicite y marca "Remember this decision"'
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: '❌ Error de impresión',
+          description: error.message || 'Verifica que QZ Tray esté activo y la impresora conectada'
+        });
+      }
     }
   };
 
