@@ -323,7 +323,7 @@ const ParentConfiguration = () => {
       // Aplicar filtro de sede según permisos
       if (!canViewAllSchools && userSchoolId) {
         console.log('🔒 Filtrando profesores por sede:', userSchoolId);
-        teachersQuery = teachersQuery.or(`school_1.eq.${userSchoolId},school_2.eq.${userSchoolId}`);
+        teachersQuery = teachersQuery.or(`school_id_1.eq.${userSchoolId},school_id_2.eq.${userSchoolId}`);
       } else {
         console.log('🌍 Viendo todos los profesores');
       }
