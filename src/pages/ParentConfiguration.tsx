@@ -316,6 +316,8 @@ const ParentConfiguration = () => {
       setParents(parentsWithChildren);
 
       // ==================== CARGAR PROFESORES ====================
+      console.log('📚 Iniciando carga de profesores...');
+      
       let teachersQuery = supabase
         .from('teacher_profiles')
         .select('*');
@@ -329,6 +331,12 @@ const ParentConfiguration = () => {
       }
 
       const { data: teachersData, error: teachersError } = await teachersQuery.order('full_name');
+      
+      console.log('📊 Resultado de consulta profesores:', {
+        count: teachersData?.length || 0,
+        data: teachersData,
+        error: teachersError
+      });
       
       if (teachersError) {
         console.error('❌ Error al cargar profesores:', teachersError);
