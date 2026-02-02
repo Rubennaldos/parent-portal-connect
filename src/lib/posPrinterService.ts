@@ -10,6 +10,8 @@ import {
   generateComandaContent,
   isQZTrayAvailable 
 } from './printerService';
+import { printTicketHTML, isHTMLPrintAvailable } from './htmlPrinterService';
+import type { TicketData } from './htmlPrinterService';
 
 interface PrintConfig {
   printer_device_name: string;
@@ -121,21 +123,25 @@ function shouldPrintComanda(config: PrintConfig, saleType: string): boolean {
 /**
  * Imprimir venta desde POS
  * Se ejecuta automáticamente después de completar una venta
+ * Intenta usar QZ Tray primero, si falla usa impresión HTML
  */
 export async function printPOSSale(saleData: SaleData): Promise<void> {
   try {
     // Verificar si QZ Tray está disponible
     const qzAvailable = await isQZTrayAvailable();
-    if (!qzAvailable) {
-      console.warn('⚠️ QZ Tray no disponible - Impresión omitida');
-      return;
-    }
-
+    
     // Obtener configuración de impresora
     const config = await getPrinterConfig(saleData.schoolId);
+    
+    // Si QZ Tray NO está disponible, usar impresión HTML
+    if (!qzAvailable) {
+      console.warn('⚠️ QZ Tray no disponible - Usando impresión HTML');
+      return await printPOSSaleHTML(saleData, config);
+    }
+    
     if (!config) {
-      console.warn('⚠️ Sin configuración de impresora - Impresión omitida');
-      return;
+      console.warn('⚠️ Sin configuración de impresora - Usando impresión HTML');
+      return await printPOSSaleHTML(saleData, null);
     }
 
     const printTicket = shouldPrintTicket(config, saleData.saleType);
@@ -220,6 +226,51 @@ export async function printPOSSale(saleData: SaleData): Promise<void> {
   } catch (error) {
     console.error('❌ Error general en printPOSSale:', error);
     // No lanzar error - la venta ya se completó exitosamente
+  }
+}
+
+/**
+ * Imprimir venta usando HTML (fallback cuando QZ Tray no está disponible)
+ */
+async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null): Promise<void> {
+  try {
+    console.log('🖨️ Imprimiendo con HTML (sin QZ Tray)');
+    
+    // Preparar datos del ticket para HTML
+    const ticketData: TicketData = {
+      businessName: config?.business_name || 'LIMA CAFÉ 28',
+      businessRuc: config?.business_ruc || null,
+      businessAddress: config?.business_address || null,
+      businessPhone: config?.business_phone || null,
+      ticketCode: saleData.ticketCode,
+      date: new Date().toLocaleString('es-PE'),
+      clientName: saleData.clientName,
+      items: saleData.cart.map(item => ({
+        name: item.product.name,
+        quantity: item.quantity,
+        price: item.product.price,
+        total: item.product.price * item.quantity
+      })),
+      subtotal: saleData.total / 1.18, // Sin IGV
+      tax: saleData.total - (saleData.total / 1.18), // IGV 18%
+      total: saleData.total,
+      paymentMethod: saleData.paymentMethod === 'cash' ? 'Efectivo' : 
+                     saleData.paymentMethod === 'card' ? 'Tarjeta' :
+                     saleData.paymentMethod === 'credit' ? 'Crédito' :
+                     saleData.paymentMethod === 'teacher' ? 'Profesor' : 'Otro',
+      headerText: config?.print_header ? config.header_text : undefined,
+      footerText: config?.print_footer ? config.footer_text : undefined
+    };
+    
+    // Imprimir usando HTML
+    printTicketHTML(ticketData);
+    
+    console.log('✅ Ticket HTML generado exitosamente');
+    console.log('ℹ️  Ventana de impresión abierta - El usuario puede imprimir con Ctrl+P');
+    
+  } catch (error) {
+    console.error('❌ Error al imprimir con HTML:', error);
+    throw error;
   }
 }
 
