@@ -384,6 +384,61 @@ export function PrinterConfiguration() {
     }
   };
 
+  const handleTestCashDrawer = async () => {
+    try {
+      const qzAvailable = await isQZTrayAvailable();
+      
+      if (!qzAvailable) {
+        toast({
+          variant: 'destructive',
+          title: '❌ QZ Tray no detectado',
+          description: 'QZ Tray es necesario para abrir el cajón. Descárgalo desde qz.io/download'
+        });
+        return;
+      }
+
+      if (!config.open_cash_drawer) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Cajón desactivado',
+          description: 'Activa "Habilitar Apertura del Cajón" primero'
+        });
+        return;
+      }
+
+      toast({
+        title: '💰 Probando cajón de dinero...',
+        description: `Enviando comando al pin ${config.cash_drawer_pin || 2}`
+      });
+
+      // Comando para abrir el cajón según el pin configurado
+      const drawerCommand = config.cash_drawer_pin === 5 
+        ? ESC_POS.OPEN_DRAWER_2  // Pin 5
+        : ESC_POS.OPEN_DRAWER_1; // Pin 2 (default)
+
+      await printTicketDirect(
+        config.printer_device_name,
+        [drawerCommand], // Solo el comando del cajón
+        false, // No cortar papel
+        'partial',
+        false // No abrir cajón (ya lo estamos haciendo directamente)
+      );
+
+      toast({
+        title: '✅ Comando enviado',
+        description: `Cajón de dinero (Pin ${config.cash_drawer_pin || 2}) - Si no se abrió, verifica la conexión RJ-11`
+      });
+
+    } catch (error: any) {
+      console.error('❌ Error al probar cajón:', error);
+      toast({
+        variant: 'destructive',
+        title: '❌ Error al abrir cajón',
+        description: error.message || 'Verifica que el cajón esté conectado a la impresora con cable RJ-11'
+      });
+    }
+  };
+
   const handlePrintTestQZ = async () => {
     const testOrderCode = `${config.qr_prefix}-${Math.floor(Math.random() * 99999).toString().padStart(5, '0')}`;
     
@@ -425,7 +480,8 @@ export function PrinterConfiguration() {
         config.printer_device_name,
         ticketContent,
         config.auto_cut_paper,
-        config.cut_mode
+        config.cut_mode,
+        config.open_cash_drawer && config.open_drawer_on_general // Abrir cajón si está configurado
       );
 
       if (config.print_comanda && config.print_separate_comanda) {
@@ -1916,16 +1972,29 @@ export function PrinterConfiguration() {
       </Tabs>
 
       {/* Botones de acción */}
-      <div className="flex justify-between items-center">
-        <Button
-          variant="outline"
-          onClick={handlePrintTestQZ}
-          disabled={!selectedSchool}
-          className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
-        >
-          <PrinterIcon className="h-4 w-4 mr-2" />
-          Imprimir Ticket de Prueba
-        </Button>
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={handlePrintTestQZ}
+            disabled={!selectedSchool}
+            className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+          >
+            <PrinterIcon className="h-4 w-4 mr-2" />
+            Imprimir Ticket de Prueba
+          </Button>
+
+          {config.open_cash_drawer && (
+            <Button
+              variant="outline"
+              onClick={handleTestCashDrawer}
+              disabled={!selectedSchool}
+              className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+            >
+              💰 Probar Cajón de Dinero
+            </Button>
+          )}
+        </div>
 
         <div className="flex gap-3">
           <Button
