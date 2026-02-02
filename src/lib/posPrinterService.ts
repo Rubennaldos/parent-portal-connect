@@ -318,7 +318,16 @@ async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null):
                        saleData.paymentMethod === 'credit' ? 'Crédito' :
                        saleData.paymentMethod === 'teacher' ? 'Profesor' : 'Otro',
         headerText: config?.print_header ? config.header_text : undefined,
-        footerText: config?.print_footer ? config.footer_text : undefined
+        footerText: config?.print_footer ? config.footer_text : undefined,
+        // 🎨 Configuración de formato (respetando módulo de impresoras)
+        logoUrl: config?.logo_url,
+        logoWidth: config?.logo_width || 120,
+        logoHeight: config?.logo_height || 60,
+        paperWidth: config?.paper_width || 80,
+        fontSize: config?.font_size || 'normal',
+        fontFamily: config?.font_family || 'monospace',
+        showQr: config?.show_qr_code || config?.auto_generate_qr || false,
+        qrPrefix: config?.qr_prefix || 'TKT'
       };
       
       // Imprimir ticket
@@ -338,7 +347,13 @@ async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null):
             name: item.product.name,
             quantity: item.quantity
           })),
-          headerText: config?.comanda_header || '🍽️ COMANDA COCINA'
+          headerText: config?.comanda_header || '🍽️ COMANDA COCINA',
+          // 🎨 Configuración de formato (respetando módulo de impresoras)
+          paperWidth: config?.paper_width || 80,
+          fontSize: config?.font_size || 'normal',
+          fontFamily: config?.font_family || 'monospace',
+          showQr: config?.auto_generate_qr || false,
+          qrPrefix: config?.qr_prefix || 'CMD'
         };
         
         printComandaHTML(comandaData);

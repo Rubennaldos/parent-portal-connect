@@ -24,6 +24,15 @@ export interface TicketData {
   paymentMethod: string;
   headerText?: string;
   footerText?: string;
+  // Configuración adicional de formato
+  logoUrl?: string | null;
+  logoWidth?: number;
+  logoHeight?: number;
+  paperWidth?: number;
+  fontSize?: string;
+  fontFamily?: string;
+  showQr?: boolean;
+  qrPrefix?: string;
 }
 
 export interface ComandaData {
@@ -36,12 +45,22 @@ export interface ComandaData {
     notes?: string;
   }>;
   headerText?: string;
+  // Configuración adicional de formato
+  paperWidth?: number;
+  fontSize?: string;
+  fontFamily?: string;
+  showQr?: boolean;
+  qrPrefix?: string;
 }
 
 /**
  * Generar HTML del ticket con estilos para impresora térmica
  */
 function generateTicketHTML(data: TicketData): string {
+  const paperWidth = data.paperWidth || 80;
+  const fontSize = data.fontSize === 'small' ? '11px' : data.fontSize === 'large' ? '14px' : '12px';
+  const fontFamily = data.fontFamily || 'Courier New, monospace';
+  
   const itemsHTML = data.items.map(item => `
     <tr>
       <td style="padding: 4px 0;">${item.quantity}x ${item.name}</td>
@@ -57,7 +76,7 @@ function generateTicketHTML(data: TicketData): string {
       <title>Ticket ${data.ticketCode}</title>
       <style>
         @page {
-          size: 80mm auto;
+          size: ${paperWidth}mm auto;
           margin: 0;
         }
         
@@ -79,10 +98,10 @@ function generateTicketHTML(data: TicketData): string {
         }
         
         body {
-          font-family: 'Courier New', monospace;
-          font-size: 12px;
+          font-family: ${fontFamily};
+          font-size: ${fontSize};
           line-height: 1.4;
-          max-width: 80mm;
+          max-width: ${paperWidth}mm;
           margin: 0 auto;
           padding: 10px;
           background: white;
@@ -218,6 +237,15 @@ function generateTicketHTML(data: TicketData): string {
     </head>
     <body>
       <div class="ticket">
+        <!-- Logo -->
+        ${data.logoUrl ? `
+          <div style="text-align: center; margin-bottom: 10px;">
+            <img src="${data.logoUrl}" 
+                 style="width: ${data.logoWidth || 120}px; height: ${data.logoHeight || 60}px; object-fit: contain;" 
+                 alt="Logo" />
+          </div>
+        ` : ''}
+        
         <!-- Header -->
         <div class="header">
           <div class="business-name">${data.businessName}</div>
@@ -274,6 +302,14 @@ function generateTicketHTML(data: TicketData): string {
             <span>S/ ${data.total.toFixed(2)}</span>
           </div>
         </div>
+        
+        <!-- QR Code -->
+        ${data.showQr ? `
+          <div style="text-align: center; border: 2px solid #000; padding: 10px; margin: 10px 0;">
+            <div style="font-weight: bold; font-family: monospace;">QR: ${data.ticketCode}</div>
+            <div style="font-size: 10px; color: #666;">Código para validación</div>
+          </div>
+        ` : ''}
         
         <!-- Footer -->
         <div class="footer">
@@ -376,6 +412,10 @@ export function isHTMLPrintAvailable(): boolean {
  * Generar HTML de la comanda (para cocina)
  */
 function generateComandaHTML(data: ComandaData): string {
+  const paperWidth = data.paperWidth || 80;
+  const fontSize = data.fontSize === 'small' ? '12px' : data.fontSize === 'large' ? '16px' : '14px';
+  const fontFamily = data.fontFamily || 'Courier New, monospace';
+  
   const itemsHTML = data.items.map(item => `
     <div class="comanda-item">
       <div class="item-quantity">${item.quantity}x</div>
@@ -392,7 +432,7 @@ function generateComandaHTML(data: ComandaData): string {
       <title>Comanda ${data.ticketCode}</title>
       <style>
         @page {
-          size: 80mm auto;
+          size: ${paperWidth}mm auto;
           margin: 0;
         }
         
@@ -404,10 +444,10 @@ function generateComandaHTML(data: ComandaData): string {
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-          font-family: 'Courier New', monospace;
-          font-size: 14px;
+          font-family: ${fontFamily};
+          font-size: ${fontSize};
           line-height: 1.5;
-          max-width: 80mm;
+          max-width: ${paperWidth}mm;
           margin: 0 auto;
           padding: 10px;
         }
@@ -536,6 +576,14 @@ function generateComandaHTML(data: ComandaData): string {
       <div>
         ${itemsHTML}
       </div>
+      
+      <!-- QR Code -->
+      ${data.showQr ? `
+        <div style="text-align: center; border: 3px solid #ff9800; padding: 15px; background: white; margin-top: 15px;">
+          <div style="font-weight: bold; font-family: monospace; font-size: 14px;">QR: ${data.ticketCode}</div>
+          <div style="font-size: 10px; color: #666; margin-top: 5px;">Escanear para confirmar entrega</div>
+        </div>
+      ` : ''}
       
       <!-- Footer -->
       <div class="footer-comanda">
