@@ -302,8 +302,25 @@ function generateTicketHTML(data: TicketData): string {
       </div>
       
       <script>
-        // NO auto-print - el usuario debe hacer click en el botón
-        // Esto evita que se abra el diálogo de impresión en la ventana equivocada
+        // Auto-cerrar ventana después de imprimir
+        window.addEventListener('afterprint', function() {
+          console.log('✅ Impresión completada - Cerrando ventana en 1 segundo...');
+          setTimeout(function() {
+            window.close();
+          }, 1000);
+        });
+        
+        // También cerrar si el usuario cancela la impresión
+        let printDialogClosed = false;
+        window.addEventListener('focus', function() {
+          if (!printDialogClosed) {
+            printDialogClosed = true;
+            setTimeout(function() {
+              // Si no imprimió, cerrar después de 2 segundos
+              console.log('ℹ️  Si no vas a imprimir, la ventana se cerrará automáticamente');
+            }, 2000);
+          }
+        });
       </script>
     </body>
     </html>
@@ -537,6 +554,16 @@ function generateComandaHTML(data: ComandaData): string {
           ✖️ Cerrar
         </button>
       </div>
+      
+      <script>
+        // Auto-cerrar ventana después de imprimir
+        window.addEventListener('afterprint', function() {
+          console.log('✅ Comanda impresa - Cerrando ventana...');
+          setTimeout(function() {
+            window.close();
+          }, 1000);
+        });
+      </script>
     </body>
     </html>
   `;
