@@ -34,3 +34,7 @@ yarn-error.log*
 
 .vercel
 .env*.local
+
+# QZ Tray certificates (private keys must not be shared)
+qz-certificates/
+*.pem

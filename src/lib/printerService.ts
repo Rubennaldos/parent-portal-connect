@@ -6,6 +6,7 @@
 
 import qz from 'qz-tray';
 import { setupQZBasic } from './qzConfig';
+import { setupQZSigning } from './qzSigning';
 
 // Comandos ESC/POS para impresoras térmicas
 export const ESC_POS = {
@@ -53,14 +54,21 @@ export const connectQZ = async (): Promise<boolean> => {
 
     console.log('🔌 Conectando con QZ Tray...');
     
-    // Configurar modo básico ANTES de conectar
-    setupQZBasic();
-    
-    // Conectar (usará el puerto inseguro por defecto: ws://localhost:8182)
-    await qz.websocket.connect();
-    
-    console.log('✅ QZ Tray conectado exitosamente');
-    return true;
+    // 🔐 Intentar primero con firma digital (impresión silenciosa)
+    try {
+      setupQZSigning();
+      await qz.websocket.connect();
+      console.log('✅ QZ Tray conectado con firma digital (sin popups)');
+      return true;
+    } catch (signingError) {
+      console.warn('⚠️ Firma digital no disponible, usando modo básico');
+      
+      // Fallback: modo básico (con popup)
+      setupQZBasic();
+      await qz.websocket.connect();
+      console.log('✅ QZ Tray conectado en modo básico');
+      return true;
+    }
   } catch (error) {
     console.error('❌ Error al conectar con QZ Tray:', error);
     return false;
@@ -227,14 +235,19 @@ export const isQZTrayAvailable = async (): Promise<boolean> => {
     
     console.log('🔍 Verificando disponibilidad de QZ Tray...');
     
-    // Configurar modo básico ANTES de intentar conectar
-    setupQZBasic();
-    
-    // Intentar conectar
-    await qz.websocket.connect();
-    
-    console.log('✅ QZ Tray disponible y conectado');
-    return true;
+    // 🔐 Intentar con firma digital primero
+    try {
+      setupQZSigning();
+      await qz.websocket.connect();
+      console.log('✅ QZ Tray disponible con firma digital');
+      return true;
+    } catch (signingError) {
+      // Fallback: modo básico
+      setupQZBasic();
+      await qz.websocket.connect();
+      console.log('✅ QZ Tray disponible en modo básico');
+      return true;
+    }
   } catch (error) {
     console.error('❌ QZ Tray no está disponible:', error);
     return false;
