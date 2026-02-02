@@ -210,8 +210,7 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
         .insert({
           teacher_id: teacherId,
           order_date: selectedDate,
-          status: 'confirmed',
-          ordered_at: new Date().toISOString()
+          status: 'confirmed'
         });
 
       if (orderError) throw orderError;

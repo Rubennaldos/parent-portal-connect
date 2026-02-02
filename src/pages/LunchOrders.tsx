@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 import { 
   Calendar, 
   UtensilsCrossed, 
@@ -45,9 +46,11 @@ interface LunchOrder {
     photo_url: string | null;
     is_temporary: boolean;
     temporary_classroom_name: string | null;
+    school_id: string;
   };
   teacher?: {
     full_name: string;
+    school_id_1: string;
   };
 }
 
@@ -59,7 +62,7 @@ interface School {
 
 export default function LunchOrders() {
   const { user } = useAuth();
-  const { role, canViewAllSchools } = useRole();
+  const { role, canViewAllSchools, loading: roleLoading } = useRole();
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -67,7 +70,11 @@ export default function LunchOrders() {
   const [filteredOrders, setFilteredOrders] = useState<LunchOrder[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
-  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  
+  // Fecha por defecto: basada en configuración de entrega
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [defaultDeliveryDate, setDefaultDeliveryDate] = useState<string>('');
+  
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -77,13 +84,90 @@ export default function LunchOrders() {
   const [showActionsModal, setShowActionsModal] = useState(false);
 
   useEffect(() => {
-    fetchSchools();
-    fetchOrders();
+    if (!roleLoading && role && user) {
+      fetchConfigAndInitialize();
+    }
+  }, [role, roleLoading, user]);
+
+  useEffect(() => {
+    if (selectedDate) {
+      fetchOrders();
+    }
   }, [selectedDate]);
 
   useEffect(() => {
     filterOrders();
   }, [orders, selectedSchool, selectedStatus, searchTerm]);
+
+  const fetchConfigAndInitialize = async () => {
+    try {
+      console.log('📅 Cargando configuración de entrega...');
+      
+      // Obtener configuración de lunch
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user?.id)
+        .single();
+
+      const schoolId = profileData?.school_id;
+
+      if (schoolId) {
+        const { data: config, error: configError } = await supabase
+          .from('lunch_configuration')
+          .select('delivery_start_time, delivery_end_time')
+          .eq('school_id', schoolId)
+          .maybeSingle();
+
+        if (configError) {
+          console.error('Error cargando configuración:', configError);
+        }
+
+        console.log('🕐 Configuración de entrega:', config);
+
+        // Calcular fecha por defecto basada en la hora de entrega
+        const now = new Date();
+        const peruTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Lima' }));
+        const currentHour = peruTime.getHours();
+        
+        // Convertir delivery_start_time a horas (ej: "11:00:00" -> 11)
+        const deliveryStartHour = config?.delivery_start_time 
+          ? parseInt(config.delivery_start_time.split(':')[0]) 
+          : 11; // Default 11 AM
+
+        // Si ya pasó la hora de entrega, mostrar pedidos de mañana
+        // Si no ha pasado, mostrar pedidos de hoy
+        let defaultDate = new Date(peruTime);
+        if (currentHour >= deliveryStartHour) {
+          defaultDate.setDate(defaultDate.getDate() + 1);
+        }
+
+        const formattedDate = format(defaultDate, 'yyyy-MM-dd');
+        console.log('📅 Fecha por defecto calculada:', formattedDate);
+        
+        setDefaultDeliveryDate(formattedDate);
+        setSelectedDate(formattedDate);
+      } else {
+        // Si no tiene school_id (admin general), usar mañana por defecto
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const formattedDate = format(tomorrow, 'yyyy-MM-dd');
+        setDefaultDeliveryDate(formattedDate);
+        setSelectedDate(formattedDate);
+      }
+
+      await fetchSchools();
+    } catch (error: any) {
+      console.error('Error inicializando:', error);
+      // En caso de error, usar mañana como fallback
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const formattedDate = format(tomorrow, 'yyyy-MM-dd');
+      setDefaultDeliveryDate(formattedDate);
+      setSelectedDate(formattedDate);
+      setLoading(false);
+    }
+  };
 
   const fetchSchools = async () => {
     try {
@@ -103,6 +187,8 @@ export default function LunchOrders() {
     try {
       setLoading(true);
       console.log('📅 Cargando pedidos de almuerzo para:', selectedDate);
+      console.log('👤 Usuario:', user?.id);
+      console.log('🎭 Rol:', role);
 
       let query = supabase
         .from('lunch_orders')
@@ -116,19 +202,22 @@ export default function LunchOrders() {
             school_id
           ),
           teacher:teacher_profiles!lunch_orders_teacher_id_fkey (
-            full_name
+            full_name,
+            school_id_1
           )
         `)
         .eq('order_date', selectedDate)
         .order('created_at', { ascending: false });
 
-      // Ejecutar el query directamente
-      // TODO: Implementar filtrado por sedes asignadas cuando la columna esté disponible
       const { data, error } = await query;
-      if (error) throw error;
+      
+      if (error) {
+        console.error('❌ ERROR EN QUERY:', error);
+        throw error;
+      }
+      
+      console.log('✅ Pedidos cargados:', data?.length || 0);
       setOrders(data || []);
-
-      console.log('✅ Pedidos cargados:', orders.length);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
       toast({
@@ -146,7 +235,13 @@ export default function LunchOrders() {
 
     // Filtrar por sede
     if (selectedSchool !== 'all') {
-      filtered = filtered.filter(order => order.student?.school_id === selectedSchool);
+      filtered = filtered.filter(order => {
+        // Incluir pedidos de estudiantes de la sede seleccionada
+        if (order.student?.school_id === selectedSchool) return true;
+        // Incluir pedidos de profesores de la sede seleccionada
+        if (order.teacher?.school_id_1 === selectedSchool) return true;
+        return false;
+      });
     }
 
     // Filtrar por estado
@@ -238,7 +333,7 @@ export default function LunchOrders() {
     fetchOrders(); // Recargar los pedidos
   };
 
-  if (loading) {
+  if (loading || roleLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
         <div className="text-center">
@@ -292,12 +387,25 @@ export default function LunchOrders() {
             {/* Fecha */}
             <div>
               <label className="text-sm font-medium mb-2 block">Fecha</label>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full"
-              />
+              <div className="flex gap-2">
+                <Input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="w-full"
+                />
+                {selectedDate !== defaultDeliveryDate && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setSelectedDate(defaultDeliveryDate)}
+                    className="whitespace-nowrap"
+                    title="Volver a fecha de entrega configurada"
+                  >
+                    <Calendar className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Sede */}
@@ -396,11 +504,17 @@ export default function LunchOrders() {
                         <img
                           src={order.student.photo_url}
                           alt={order.student.full_name}
-                          className="h-12 w-12 rounded-full object-cover"
+                          className="h-14 w-14 rounded-full object-cover border-2 border-blue-200"
                         />
                       ) : (
-                        <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                          <span className="text-blue-600 font-bold text-lg">
+                        <div className={cn(
+                          "h-14 w-14 rounded-full flex items-center justify-center border-2",
+                          order.teacher ? "bg-green-100 border-green-300" : "bg-blue-100 border-blue-200"
+                        )}>
+                          <span className={cn(
+                            "font-bold text-xl",
+                            order.teacher ? "text-green-700" : "text-blue-600"
+                          )}>
                             {order.student?.full_name[0] || order.teacher?.full_name[0] || '?'}
                           </span>
                         </div>
@@ -410,20 +524,37 @@ export default function LunchOrders() {
                           <UserPlus className="h-3 w-3 text-white" />
                         </div>
                       )}
+                      {order.teacher && (
+                        <div className="absolute -bottom-1 -right-1 bg-green-600 rounded-full p-1">
+                          <span className="text-white text-[10px] font-bold px-1">👨‍🏫</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Info */}
                     <div className="flex-1">
-                      <p className="font-semibold text-gray-900">
-                        {order.student?.full_name || order.teacher?.full_name || 'Desconocido'}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-lg text-gray-900">
+                          {order.student?.full_name || order.teacher?.full_name || 'Desconocido'}
+                        </p>
+                        {order.teacher && (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 text-xs">
+                            Profesor
+                          </Badge>
+                        )}
+                        {order.student && !order.student.is_temporary && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 text-xs">
+                            Alumno
+                          </Badge>
+                        )}
+                      </div>
                       {order.student?.is_temporary && order.student.temporary_classroom_name && (
-                        <p className="text-sm text-purple-600">
-                          Temporal - {order.student.temporary_classroom_name}
+                        <p className="text-sm font-medium text-purple-600">
+                          🎫 Puente Temporal - {order.student.temporary_classroom_name}
                         </p>
                       )}
                       <p className="text-sm text-gray-500">
-                        Pedido: {format(new Date(order.created_at), "HH:mm", { locale: es })}
+                        Pedido a las {format(new Date(order.created_at), "HH:mm", { locale: es })}
                       </p>
                     </div>
 

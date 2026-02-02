@@ -123,19 +123,31 @@ const MODULE_CONFIG = {
     ]
   },
   config_padres: {
-    name: 'Configuración Padres',
+    name: 'Config. Padres y Profesores',
     icon: '👥',
     color: 'indigo',
-    description: 'Gestión de padres y estudiantes',
+    description: 'Gestión de padres, profesores y estudiantes',
     permissions: [
       { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder al módulo' },
       { action: 'ver_dashboard', label: 'Ver dashboard', description: 'Ver estadísticas' },
-      { action: 'crear_padre', label: 'Crear padre', description: 'Registrar nuevos padres' },
-      { action: 'editar_padre', label: 'Editar padre', description: 'Modificar datos de padres' },
-      { action: 'eliminar_padre', label: 'Eliminar padre', description: 'Eliminar padres' },
-      { action: 'crear_estudiante', label: 'Crear estudiante', description: 'Registrar nuevos estudiantes' },
-      { action: 'editar_estudiante', label: 'Editar estudiante', description: 'Modificar datos de estudiantes' },
-      { action: 'eliminar_estudiante', label: 'Eliminar estudiante', description: 'Eliminar estudiantes' }
+      
+      // PERMISOS DE PADRES
+      { action: 'crear_padre', label: 'Crear padre', description: 'Registrar nuevos padres', group: 'padres' },
+      { action: 'editar_padre', label: 'Editar padre', description: 'Modificar datos de padres', group: 'padres' },
+      { action: 'eliminar_padre', label: 'Eliminar padre', description: 'Eliminar padres', group: 'padres' },
+      
+      // PERMISOS DE ESTUDIANTES
+      { action: 'crear_estudiante', label: 'Crear estudiante', description: 'Registrar nuevos estudiantes', group: 'estudiantes' },
+      { action: 'editar_estudiante', label: 'Editar estudiante', description: 'Modificar datos de estudiantes', group: 'estudiantes' },
+      { action: 'eliminar_estudiante', label: 'Eliminar estudiante', description: 'Eliminar estudiantes', group: 'estudiantes' },
+      
+      // PERMISOS DE PROFESORES (NUEVOS)
+      { action: 'view_teachers', label: 'Ver profesores', description: 'Permite ver la lista de profesores', group: 'profesores' },
+      { action: 'view_teacher_details', label: 'Ver detalles de profesor', description: 'Ver información detallada de profesores', group: 'profesores' },
+      { action: 'create_teacher', label: 'Crear profesor', description: 'Registrar nuevos profesores', group: 'profesores' },
+      { action: 'edit_teacher', label: 'Editar profesor', description: 'Modificar datos de profesores', group: 'profesores' },
+      { action: 'delete_teacher', label: 'Eliminar profesor', description: 'Eliminar profesores del sistema', group: 'profesores' },
+      { action: 'export_teachers', label: 'Exportar profesores', description: 'Exportar datos de profesores a Excel/PDF', group: 'profesores' }
     ]
   },
   almuerzos: {

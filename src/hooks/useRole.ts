@@ -49,13 +49,20 @@ export function useRole(): UseRoleReturn {
           return;
         }
 
+        console.log('🔍 useRole: Buscando rol para usuario:', user.id);
+        
         const { data, error } = await supabase
           .from('profiles')
           .select('role')
           .eq('id', user.id)
           .single();
 
-        if (error) throw error;
+        if (error) {
+          console.error('❌ useRole: Error al buscar rol:', error);
+          throw error;
+        }
+        
+        console.log('✅ useRole: Rol encontrado:', data?.role);
         setRole(data?.role || 'parent');
       } catch (err) {
         console.error('Error al obtener rol:', err);

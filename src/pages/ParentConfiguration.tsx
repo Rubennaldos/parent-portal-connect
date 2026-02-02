@@ -71,12 +71,12 @@ interface TeacherProfile {
   document_type?: string;
   phone_1: string;
   corporate_phone?: string;
-  email: string;
+  personal_email?: string;
   corporate_email?: string;
   address?: string;
-  work_area?: string;
-  school_1?: string;
-  school_2?: string;
+  area?: string;
+  school_id_1?: string;
+  school_id_2?: string;
   school_1_data?: School | null;
   school_2_data?: School | null;
   created_at: string;
@@ -106,6 +106,13 @@ const ParentConfiguration = () => {
     canEditParent: false,
     canCreateStudent: false,
     canEditStudent: false,
+    // Permisos de profesores
+    canViewTeachers: false,
+    canViewTeacherDetails: false,
+    canCreateTeacher: false,
+    canEditTeacher: false,
+    canDeleteTeacher: false,
+    canExportTeachers: false,
   });
   
   // Modales
@@ -154,6 +161,13 @@ const ParentConfiguration = () => {
           canEditParent: true,
           canCreateStudent: true,
           canEditStudent: true,
+          // Permisos de profesores
+          canViewTeachers: true,
+          canViewTeacherDetails: true,
+          canCreateTeacher: true,
+          canEditTeacher: true,
+          canDeleteTeacher: true,
+          canExportTeachers: true,
         });
         setLoading(false);
         return;
@@ -197,6 +211,13 @@ const ParentConfiguration = () => {
         canEditParent: false,
         canCreateStudent: false,
         canEditStudent: false,
+        // Permisos de profesores
+        canViewTeachers: false,
+        canViewTeacherDetails: false,
+        canCreateTeacher: false,
+        canEditTeacher: false,
+        canDeleteTeacher: false,
+        canExportTeachers: false,
       };
 
       data?.forEach((perm: any) => {
@@ -206,24 +227,44 @@ const ParentConfiguration = () => {
             case 'ver_todas_sedes':
               canViewAll = true;
               break;
+            // Permisos de padres
             case 'crear_padre':
               perms.canCreateParent = true;
               break;
             case 'editar_padre':
               perms.canEditParent = true;
               break;
+            // Permisos de estudiantes
             case 'crear_estudiante':
               perms.canCreateStudent = true;
               break;
             case 'editar_estudiante':
               perms.canEditStudent = true;
               break;
+            // Permisos de profesores
+            case 'view_teachers':
+              perms.canViewTeachers = true;
+              break;
+            case 'view_teacher_details':
+              perms.canViewTeacherDetails = true;
+              break;
+            case 'create_teacher':
+              perms.canCreateTeacher = true;
+              break;
+            case 'edit_teacher':
+              perms.canEditTeacher = true;
+              break;
+            case 'delete_teacher':
+              perms.canDeleteTeacher = true;
+              break;
+            case 'export_teachers':
+              perms.canExportTeachers = true;
+              break;
           }
         }
       });
 
-      console.log('✅ Permisos finales:', perms);
-      console.log('✅ Puede ver todas las sedes:', canViewAll);
+      console.log('✅ Permisos finales de Config Padres:', perms);
       
       setPermissions(perms);
       setCanViewAllSchools(canViewAll);
@@ -247,73 +288,117 @@ const ParentConfiguration = () => {
       if (schoolsError) throw schoolsError;
       setSchools(schoolsData || []);
 
-      // Construir query de padres con filtro de sede
-      let query = supabase
-        .from('parent_profiles')
-        .select(`
-          *,
-          school:schools(id, name, code),
-          responsible_2_full_name,
-          responsible_2_dni,
-          responsible_2_document_type,
-          responsible_2_phone_1,
-          responsible_2_email,
-          responsible_2_address
-        `);
-
-      // Aplicar filtro de sede según permisos
-      if (!canViewAllSchools && userSchoolId) {
-        console.log('🔒 Filtrando por sede:', userSchoolId);
-        query = query.eq('school_id', userSchoolId);
-      } else {
-        console.log('🌍 Viendo todas las sedes');
-      }
-
-      const { data: parentsData, error: parentsError } = await query.order('full_name');
+      // ==================== CARGAR PADRES ====================
+      console.log('👨‍👩‍👧 Cargando padres...');
       
-      if (parentsError) {
-        console.error('❌ Error al cargar padres:', parentsError);
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: `Error al cargar padres: ${parentsError.message}`,
-        });
-        throw parentsError;
+      let parentsData = [];
+      
+      if (!canViewAllSchools && userSchoolId) {
+        console.log('🔒 Filtrando padres por sede (a través de sus hijos):', userSchoolId);
+        
+        // PASO 1: Obtener estudiantes de la sede
+        const { data: studentsInSchool, error: studentsError } = await supabase
+          .from('students')
+          .select('parent_id')
+          .eq('school_id', userSchoolId);
+        
+        if (studentsError) {
+          console.error('❌ Error al obtener estudiantes:', studentsError);
+        } else {
+          // PASO 2: Extraer los parent_id únicos
+          const parentIds = [...new Set(studentsInSchool?.map(s => s.parent_id).filter(Boolean))];
+          console.log('📋 Parent IDs encontrados:', parentIds.length);
+          
+          if (parentIds.length > 0) {
+            // PASO 3: Obtener solo los padres de esos estudiantes
+            const { data: filteredParents, error: parentsError } = await supabase
+              .from('parent_profiles')
+              .select(`
+                *,
+                school:schools(id, name, code),
+                responsible_2_full_name,
+                responsible_2_dni,
+                responsible_2_document_type,
+                responsible_2_phone_1,
+                responsible_2_email,
+                responsible_2_address
+              `)
+              .in('user_id', parentIds)
+              .order('full_name');
+            
+            if (parentsError) {
+              console.error('❌ Error al cargar padres:', parentsError);
+              toast({
+                variant: 'destructive',
+                title: 'Error',
+                description: `Error al cargar padres: ${parentsError.message}`,
+              });
+            } else {
+              parentsData = filteredParents || [];
+            }
+          }
+        }
+      } else {
+        // Ver todos los padres (admin general)
+        console.log('🌍 Viendo todos los padres');
+        const { data: allParents, error: parentsError } = await supabase
+          .from('parent_profiles')
+          .select(`
+            *,
+            school:schools(id, name, code),
+            responsible_2_full_name,
+            responsible_2_dni,
+            responsible_2_document_type,
+            responsible_2_phone_1,
+            responsible_2_email,
+            responsible_2_address
+          `)
+          .order('full_name');
+        
+        if (parentsError) {
+          console.error('❌ Error al cargar padres:', parentsError);
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: `Error al cargar padres: ${parentsError.message}`,
+          });
+        } else {
+          parentsData = allParents || [];
+        }
       }
       
       console.log('📊 Padres encontrados:', parentsData?.length || 0);
       
       if (!parentsData || parentsData.length === 0) {
-        console.log('⚠️ No hay padres en la base de datos');
+        console.log('⚠️ No hay padres en la base de datos para esta sede');
         setParents([]);
-        setLoading(false);
-        return;
-      }
-      
-      // Obtener todos los hijos en una sola consulta
-      const userIds = parentsData.map(p => p.user_id).filter(Boolean);
-      
-      let studentsData = [];
-      if (userIds.length > 0) {
-        const { data, error: studentsError } = await supabase
-          .from('students')
-          .select('id, full_name, grade, section, parent_id, photo_url, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, balance, school_id')
-          .in('parent_id', userIds);
+        // NO hacer return aquí para que siga cargando profesores
+      } else {
+        // Obtener todos los hijos en una sola consulta
+        const userIds = parentsData.map(p => p.user_id).filter(Boolean);
         
-        if (studentsError) {
-          console.error('❌ Error al cargar estudiantes:', studentsError);
-        } else {
-          studentsData = data || [];
+        let studentsData = [];
+        if (userIds.length > 0) {
+          const { data, error: studentsError } = await supabase
+            .from('students')
+            .select('id, full_name, grade, section, parent_id, photo_url, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, balance, school_id')
+            .in('parent_id', userIds);
+          
+          if (studentsError) {
+            console.error('❌ Error al cargar estudiantes:', studentsError);
+          } else {
+            studentsData = data || [];
+          }
         }
+        
+        // Mapear hijos a sus padres
+        const parentsWithChildren = parentsData.map(parent => ({
+          ...parent,
+          children: studentsData.filter((s: any) => s.parent_id === parent.user_id)
+        }));
+        
+        setParents(parentsWithChildren);
       }
-      
-      // Mapear hijos a sus padres
-      const parentsWithChildren = parentsData.map(parent => ({
-        ...parent,
-        children: studentsData.filter((s: any) => s.parent_id === parent.user_id)
-      }));
-      
-      setParents(parentsWithChildren);
 
       // ==================== CARGAR PROFESORES ====================
       console.log('📚 Iniciando carga de profesores...');
@@ -349,20 +434,20 @@ const ParentConfiguration = () => {
             let school_1_data = null;
             let school_2_data = null;
 
-            if (teacher.school_1) {
+            if (teacher.school_id_1) {
               const { data: s1 } = await supabase
                 .from('schools')
                 .select('id, name, code')
-                .eq('id', teacher.school_1)
+                .eq('id', teacher.school_id_1)
                 .single();
               school_1_data = s1;
             }
 
-            if (teacher.school_2) {
+            if (teacher.school_id_2) {
               const { data: s2 } = await supabase
                 .from('schools')
                 .select('id, name, code')
-                .eq('id', teacher.school_2)
+                .eq('id', teacher.school_id_2)
                 .single();
               school_2_data = s2;
             }
@@ -568,12 +653,12 @@ const ParentConfiguration = () => {
       'Nombre Completo': teacher.full_name,
       'DNI': teacher.dni,
       'Tipo de Documento': teacher.document_type || 'DNI',
-      'Email Personal': teacher.email || '-',
+      'Email Personal': teacher.personal_email || '-',
       'Email Corporativo': teacher.corporate_email || '-',
       'Teléfono Personal': teacher.phone_1 || '-',
       'Teléfono Empresa': teacher.corporate_phone || '-',
       'Dirección': teacher.address || '-',
-      'Área de Trabajo': teacher.work_area || '-',
+      'Área de Trabajo': teacher.area || '-',
       'Sede Principal': teacher.school_1_data?.name || '-',
       'Sede Secundaria': teacher.school_2_data?.name || '-',
     }));
@@ -605,9 +690,9 @@ const ParentConfiguration = () => {
     const tableData = filteredTeachers.map(teacher => [
       teacher.full_name,
       teacher.dni,
-      teacher.email || '-',
+      teacher.personal_email || teacher.corporate_email || '-',
       teacher.phone_1 || '-',
-      teacher.work_area || '-',
+      teacher.area || '-',
       teacher.school_1_data?.name || '-',
     ]);
 
@@ -669,12 +754,12 @@ const ParentConfiguration = () => {
   const filteredTeachers = teachers.filter(teacher => {
     const matchesSearch = teacher.full_name.toLowerCase().includes(searchTermTeacher.toLowerCase()) ||
                          teacher.dni.includes(searchTermTeacher) ||
-                         (teacher.email && teacher.email.toLowerCase().includes(searchTermTeacher.toLowerCase())) ||
+                         (teacher.personal_email && teacher.personal_email.toLowerCase().includes(searchTermTeacher.toLowerCase())) ||
                          (teacher.corporate_email && teacher.corporate_email.toLowerCase().includes(searchTermTeacher.toLowerCase()));
     
     const matchesSchool = selectedSchoolTeacher === 'all' || 
-                         teacher.school_1 === selectedSchoolTeacher || 
-                         teacher.school_2 === selectedSchoolTeacher;
+                         teacher.school_id_1 === selectedSchoolTeacher || 
+                         teacher.school_id_2 === selectedSchoolTeacher;
     
     return matchesSearch && matchesSchool;
   });
@@ -721,10 +806,15 @@ const ParentConfiguration = () => {
               <Users className="h-4 w-4 mr-2" />
               Gestión de Padres
             </TabsTrigger>
-            <TabsTrigger value="teachers" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
-              <User2 className="h-4 w-4 mr-2" />
-              Gestión de Profesores
-            </TabsTrigger>
+            
+            {/* Solo mostrar pestaña de profesores si tiene permiso */}
+            {permissions.canViewTeachers && (
+              <TabsTrigger value="teachers" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
+                <User2 className="h-4 w-4 mr-2" />
+                Gestión de Profesores
+              </TabsTrigger>
+            )}
+            
             <TabsTrigger value="analytics" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
               <BarChart3 className="h-4 w-4 mr-2" />
               Lima Analytics
@@ -985,7 +1075,8 @@ const ParentConfiguration = () => {
             </Card>
           </TabsContent>
 
-          {/* Pestaña de Gestión de Profesores */}
+          {/* Pestaña de Gestión de Profesores - Solo visible con permiso */}
+          {permissions.canViewTeachers && (
           <TabsContent value="teachers" className="mt-6">
             <Card className="border-2 border-emerald-200 bg-white/80 backdrop-blur-sm shadow-lg">
               <CardHeader className="bg-gradient-to-r from-emerald-100/60 to-teal-100/40 border-b-2 border-emerald-200">
@@ -1056,7 +1147,7 @@ const ParentConfiguration = () => {
                             <div className="flex items-center gap-2 text-sm">
                               <Mail className="h-4 w-4 text-emerald-600" />
                               <span className="font-medium text-emerald-800">Personal:</span>
-                              <span className="text-emerald-700">{teacher.email || 'No registrado'}</span>
+                              <span className="text-emerald-700">{teacher.personal_email || 'No registrado'}</span>
                             </div>
                             {teacher.corporate_email && (
                               <div className="flex items-center gap-2 text-sm">
@@ -1090,11 +1181,11 @@ const ParentConfiguration = () => {
                             </div>
                           )}
 
-                          {teacher.work_area && (
+                          {teacher.area && (
                             <div className="flex items-center gap-2 text-sm">
                               <Users className="h-4 w-4 text-emerald-600" />
                               <span className="font-medium text-emerald-800">Área:</span>
-                              <span className="text-emerald-700">{teacher.work_area}</span>
+                              <span className="text-emerald-700">{teacher.area}</span>
                             </div>
                           )}
                         </div>
@@ -1149,6 +1240,7 @@ const ParentConfiguration = () => {
               </CardContent>
             </Card>
           </TabsContent>
+          )}
 
           {/* Pestaña de Analytics */}
           <TabsContent value="analytics" className="mt-6">

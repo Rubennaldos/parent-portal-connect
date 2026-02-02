@@ -645,37 +645,38 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
             <p className="text-gray-500 text-sm sm:text-base">Cargando calendario...</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 md:gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
             {/* Panel lateral: Estudiantes y Acciones Rápidas */}
-            <aside className="lg:col-span-3 space-y-3 sm:space-y-4">
+            <aside className="lg:col-span-3 space-y-2 sm:space-y-3 md:space-y-4">
               {/* Selección de Estudiantes */}
               <Card className="border-stone-200/50">
-                <CardHeader className="pb-2 sm:pb-3 px-3 sm:px-6">
-                  <CardTitle className="text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2">
-                    <Users className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <CardHeader className="pb-2 px-3 sm:px-4 md:px-6 py-2 sm:py-3">
+                  <CardTitle className="text-xs sm:text-sm md:text-base flex items-center gap-1.5">
+                    <Users className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
                     Seleccionar Estudiantes
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-1.5 sm:space-y-2 px-3 sm:px-6">
+                <CardContent className="space-y-1.5 px-3 sm:px-4 md:px-6 py-2 sm:py-3">
                   {students.map(student => (
-                    <div key={student.id} className="flex items-center space-x-2">
+                    <div key={student.id} className="flex items-center space-x-1.5 sm:space-x-2">
                       <Checkbox
                         id={`student-${student.id}`}
                         checked={selectedStudents.has(student.id)}
                         onCheckedChange={() => toggleStudent(student.id)}
+                        className="h-3.5 w-3.5 sm:h-4 sm:w-4"
                       />
                       <label
                         htmlFor={`student-${student.id}`}
-                        className="text-xs sm:text-sm cursor-pointer flex items-center gap-1.5 sm:gap-2"
+                        className="text-[10px] sm:text-xs md:text-sm cursor-pointer flex items-center gap-1 sm:gap-1.5"
                       >
                         {student.photo_url && (
                           <img
                             src={student.photo_url}
                             alt={student.full_name}
-                            className="w-5 h-5 sm:w-6 sm:h-6 rounded-full object-cover"
+                            className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 rounded-full object-cover"
                           />
                         )}
-                        {student.full_name}
+                        <span className="truncate">{student.full_name}</span>
                       </label>
                     </div>
                   ))}
@@ -684,62 +685,62 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
 
               {/* Acciones Rápidas */}
               <Card className="border-stone-200/50">
-                <CardHeader className="pb-2 sm:pb-3 px-3 sm:px-6">
-                  <CardTitle className="text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2">
-                    <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-orange-500" />
+                <CardHeader className="pb-2 px-3 sm:px-4 md:px-6 py-2 sm:py-3">
+                  <CardTitle className="text-xs sm:text-sm md:text-base flex items-center gap-1.5">
+                    <Zap className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 text-orange-500" />
                     Selección Rápida
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-1.5 sm:space-y-2 px-3 sm:px-6">
+                <CardContent className="space-y-1.5 px-3 sm:px-4 md:px-6 py-2 sm:py-3">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full justify-start h-9 text-xs sm:text-sm"
+                    className="w-full justify-start h-7 sm:h-8 md:h-9 text-[10px] sm:text-xs md:text-sm px-2 sm:px-3"
                     onClick={selectAllMonth}
                   >
-                    <CalendarDays className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
+                    <CalendarDays className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 mr-1 sm:mr-1.5" />
                     Todo el Mes
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full justify-start h-9 text-xs sm:text-sm"
+                    className="w-full justify-start h-7 sm:h-8 md:h-9 text-[10px] sm:text-xs md:text-sm px-2 sm:px-3"
                     onClick={selectFromToday}
                   >
-                    <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
+                    <Clock className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 mr-1 sm:mr-1.5" />
                     Desde Hoy
                   </Button>
                   
                   {/* Selector inteligente con rango */}
-                  <div className="pt-1.5 sm:pt-2 border-t">
+                  <div className="pt-1.5 border-t">
                     <Button
                       variant={showRangeSelector ? "default" : "outline"}
                       size="sm"
-                      className="w-full justify-start mb-1.5 sm:mb-2 h-9 text-xs sm:text-sm"
+                      className="w-full justify-start mb-1.5 h-7 sm:h-8 md:h-9 text-[10px] sm:text-xs md:text-sm px-2 sm:px-3"
                       onClick={() => setShowRangeSelector(!showRangeSelector)}
                     >
-                      <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
+                      <Zap className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 mr-1 sm:mr-1.5" />
                       Selección Inteligente
                     </Button>
                     
                     {showRangeSelector && (
-                      <div className="space-y-2 sm:space-y-3 p-2 sm:p-3 bg-orange-50 rounded-lg border border-orange-200">
-                        <div className="space-y-1.5 sm:space-y-2">
+                      <div className="space-y-1.5 sm:space-y-2 p-2 bg-orange-50 rounded-lg border border-orange-200">
+                        <div className="space-y-1">
                           <Label className="text-[10px] sm:text-xs font-bold">Desde:</Label>
                           <Input
                             type="date"
                             value={rangeStartDate}
                             onChange={(e) => setRangeStartDate(e.target.value)}
-                            className="text-xs sm:text-sm h-9"
+                            className="text-[10px] sm:text-xs md:text-sm h-7 sm:h-8 md:h-9"
                           />
                         </div>
-                        <div className="space-y-1.5 sm:space-y-2">
+                        <div className="space-y-1">
                           <Label className="text-[10px] sm:text-xs font-bold">Hasta:</Label>
                           <Input
                             type="date"
                             value={rangeEndDate}
                             onChange={(e) => setRangeEndDate(e.target.value)}
-                            className="text-xs sm:text-sm h-9"
+                            className="text-[10px] sm:text-xs md:text-sm h-7 sm:h-8 md:h-9"
                           />
                         </div>
                         <div className="space-y-1.5 sm:space-y-2">
@@ -770,7 +771,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                         <Button
                           onClick={selectCustomRange}
                           size="sm"
-                          className="w-full bg-orange-600 hover:bg-orange-700 h-9 text-xs sm:text-sm"
+                          className="w-full bg-orange-600 hover:bg-orange-700 h-7 sm:h-8 md:h-9 text-[10px] sm:text-xs md:text-sm"
                         >
                           Aplicar Selección
                         </Button>
@@ -778,14 +779,14 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                     )}
                   </div>
                   
-                  <div className="pt-1.5 sm:pt-2 border-t">
-                    <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1.5 sm:mb-2 block">Rápido del mes actual:</Label>
-                    <div className="grid grid-cols-2 gap-1 sm:gap-2">
-                      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => selectAllWeekday(1)}>Lun</Button>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => selectAllWeekday(2)}>Mar</Button>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => selectAllWeekday(3)}>Mié</Button>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => selectAllWeekday(4)}>Jue</Button>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => selectAllWeekday(5)}>Vie</Button>
+                  <div className="pt-1.5 border-t">
+                    <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1.5 block">Rápido del mes actual:</Label>
+                    <div className="grid grid-cols-2 gap-1">
+                      <Button variant="outline" size="sm" className="h-6 sm:h-7 md:h-8 text-[10px] sm:text-xs" onClick={() => selectAllWeekday(1)}>Lun</Button>
+                      <Button variant="outline" size="sm" className="h-6 sm:h-7 md:h-8 text-[10px] sm:text-xs" onClick={() => selectAllWeekday(2)}>Mar</Button>
+                      <Button variant="outline" size="sm" className="h-6 sm:h-7 md:h-8 text-[10px] sm:text-xs" onClick={() => selectAllWeekday(3)}>Mié</Button>
+                      <Button variant="outline" size="sm" className="h-6 sm:h-7 md:h-8 text-[10px] sm:text-xs" onClick={() => selectAllWeekday(4)}>Jue</Button>
+                      <Button variant="outline" size="sm" className="h-6 sm:h-7 md:h-8 text-[10px] sm:text-xs" onClick={() => selectAllWeekday(5)}>Vie</Button>
                     </div>
                   </div>
                 </CardContent>
@@ -794,10 +795,10 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               {/* Resumen */}
               {config && (
                 <Card className="border-2 border-green-500">
-                  <CardHeader className="pb-2 sm:pb-3 bg-green-50 px-3 sm:px-6">
-                    <CardTitle className="text-xs sm:text-sm">Resumen del Pedido</CardTitle>
+                  <CardHeader className="pb-2 bg-green-50 px-3 sm:px-4 md:px-6 py-2 sm:py-3">
+                    <CardTitle className="text-xs sm:text-sm md:text-base">Resumen del Pedido</CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-3 sm:pt-4 space-y-1.5 sm:space-y-2 text-xs sm:text-sm px-3 sm:px-6">
+                  <CardContent className="pt-2 sm:pt-3 space-y-1.5 text-[10px] sm:text-xs md:text-sm px-3 sm:px-4 md:px-6">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Días:</span>
                       <span className="font-bold">{selectedDates.size}</span>
@@ -810,27 +811,27 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                       <span className="text-muted-foreground">Precio unitario:</span>
                       <span>S/ {config.lunch_price.toFixed(2)}</span>
                     </div>
-                    <div className="pt-1.5 sm:pt-2 border-t flex justify-between">
-                      <span className="font-bold text-sm sm:text-base">TOTAL:</span>
-                      <span className="text-lg sm:text-xl font-black text-green-600">
+                    <div className="pt-1.5 border-t flex justify-between">
+                      <span className="font-bold text-xs sm:text-sm md:text-base">TOTAL:</span>
+                      <span className="text-base sm:text-lg md:text-xl font-black text-green-600">
                         S/ {calculateTotal().toFixed(2)}
                       </span>
                     </div>
                     <Button
                       onClick={handleSubmitOrders}
                       disabled={submitting || selectedDates.size === 0 || selectedStudents.size === 0}
-                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 sm:h-16 text-sm sm:text-lg font-black shadow-lg animate-pulse"
+                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-10 sm:h-12 md:h-14 text-xs sm:text-sm md:text-base font-black shadow-lg animate-pulse"
                     >
                       {submitting ? (
                         <>Procesando...</>
                       ) : (
                         <div className="flex flex-col items-center">
-                          <div className="flex items-center gap-1.5 sm:gap-2">
-                            <CheckCircle2 className="h-4 w-4 sm:h-6 sm:w-6" />
-                            <span className="hidden sm:inline">CONFIRMAR PEDIDO DE ALMUERZOS</span>
-                            <span className="sm:hidden">CONFIRMAR PEDIDO</span>
+                          <div className="flex items-center gap-1 sm:gap-1.5">
+                            <CheckCircle2 className="h-3 w-3 sm:h-4 sm:w-4 md:h-5 md:w-5" />
+                            <span className="hidden md:inline">CONFIRMAR PEDIDO DE ALMUERZOS</span>
+                            <span className="md:hidden">CONFIRMAR PEDIDO</span>
                           </div>
-                          <span className="text-[10px] sm:text-xs font-normal mt-0.5 sm:mt-1">
+                          <span className="text-[9px] sm:text-[10px] md:text-xs font-normal mt-0.5">
                             {selectedDates.size} día(s) • {selectedStudents.size} estudiante(s)
                           </span>
                         </div>
@@ -838,9 +839,9 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                     </Button>
                     
                     {(selectedDates.size > 0 || selectedStudents.size > 0) && (
-                      <div className="mt-2 sm:mt-3 p-2 sm:p-3 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
-                        <p className="text-xs sm:text-sm font-bold text-yellow-900 mb-1 sm:mb-2">📋 Resumen:</p>
-                        <div className="space-y-0.5 sm:space-y-1 text-[10px] sm:text-xs text-yellow-800">
+                      <div className="mt-2 p-2 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
+                        <p className="text-[10px] sm:text-xs md:text-sm font-bold text-yellow-900 mb-1">📋 Resumen:</p>
+                        <div className="space-y-0.5 text-[9px] sm:text-[10px] md:text-xs text-yellow-800">
                           <p><strong>Estudiantes:</strong> {Array.from(selectedStudents).map(id => students.find(s => s.id === id)?.full_name).join(', ')}</p>
                           <p><strong>Días:</strong> {selectedDates.size} • <strong>Almuerzos:</strong> {selectedDates.size * selectedStudents.size}</p>
                         </div>
@@ -853,13 +854,13 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               {/* Info de límites */}
               {config && (
                 <Card className="bg-blue-50 border-blue-200">
-                  <CardContent className="pt-3 sm:pt-4 text-[10px] sm:text-xs space-y-0.5 sm:space-y-1 px-3 sm:px-6">
+                  <CardContent className="pt-2 sm:pt-3 text-[9px] sm:text-[10px] md:text-xs space-y-0.5 px-3 sm:px-4 md:px-6">
                     <p className="flex items-center gap-1 text-blue-800">
-                      <Clock className="h-3 w-3" />
+                      <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                       Pedidos hasta {config.order_deadline_time.slice(0, 5)} ({config.order_deadline_days} día(s) antes)
                     </p>
                     <p className="flex items-center gap-1 text-blue-800">
-                      <AlertCircle className="h-3 w-3" />
+                      <AlertCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                       Cancelaciones hasta {config.cancellation_deadline_time.slice(0, 5)}
                     </p>
                   </CardContent>
@@ -870,34 +871,34 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
             {/* Calendario */}
             <div className="lg:col-span-9">
               <Card className="border-stone-200/50">
-                <CardHeader className="px-3 sm:px-6 py-3 sm:py-6">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+                <CardHeader className="px-2 sm:px-3 md:px-6 py-2 sm:py-3 md:py-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
                     <div>
-                      <CardTitle className="text-lg sm:text-xl md:text-2xl">
+                      <CardTitle className="text-sm sm:text-lg md:text-xl lg:text-2xl">
                         {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
                       </CardTitle>
-                      <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                        Haz clic en los días con menú para seleccionarlos
+                      <p className="text-[10px] sm:text-xs md:text-sm text-muted-foreground mt-1">
+                        Haz clic en los días con menú
                       </p>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <Button variant="outline" size="icon" className="h-8 w-8 sm:h-10 sm:w-10" onClick={handlePreviousMonth}>
-                        <ChevronLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <Button variant="outline" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 md:h-10 md:w-10" onClick={handlePreviousMonth}>
+                        <ChevronLeft className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
                       </Button>
-                      <Button variant="outline" size="sm" className="h-8 sm:h-10 text-xs sm:text-sm px-2 sm:px-4" onClick={() => setCurrentDate(new Date())}>
+                      <Button variant="outline" size="sm" className="h-7 sm:h-8 md:h-10 text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 md:px-4" onClick={() => setCurrentDate(new Date())}>
                         Hoy
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8 sm:h-10 sm:w-10" onClick={handleNextMonth}>
-                        <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      <Button variant="outline" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 md:h-10 md:w-10" onClick={handleNextMonth}>
+                        <ChevronRight className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
                       </Button>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="px-2 sm:px-6">
-                  <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                <CardContent className="px-1 sm:px-2 md:px-4 lg:px-6">
+                  <div className="grid grid-cols-7 gap-0.5 sm:gap-1 md:gap-2">
                     {/* Encabezados */}
                     {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map((day) => (
-                      <div key={day} className="text-center text-[10px] sm:text-xs md:text-sm font-medium text-muted-foreground py-1 sm:py-2">
+                      <div key={day} className="text-center text-[9px] sm:text-[10px] md:text-xs lg:text-sm font-medium text-muted-foreground py-1">
                         {day}
                       </div>
                     ))}
@@ -943,33 +944,33 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                         <div
                           key={dateStr}
                           className={cn(
-                            'aspect-square border rounded-md sm:rounded-lg p-1 sm:p-2 transition-all',
+                            'aspect-square border rounded-sm sm:rounded-md md:rounded-lg p-0.5 sm:p-1 md:p-2 transition-all',
                             bgClass,
                             borderClass,
-                            isToday(day) && 'ring-1 sm:ring-2 ring-orange-500',
+                            isToday(day) && 'ring-1 ring-orange-500',
                             isPast && 'opacity-50 cursor-not-allowed',
-                            hasOrders && 'cursor-not-allowed', // Días con pedidos no son clicables
-                            !hasOrders && !isPast && 'cursor-pointer' // Solo clickable si no tiene pedido y no es pasado
+                            hasOrders && 'cursor-not-allowed',
+                            !hasOrders && !isPast && 'cursor-pointer'
                           )}
                           onClick={() => !isPast && !hasOrders && handleDayClick(dateStr)}
                         >
                           <div className="h-full flex flex-col">
                             <div className="flex justify-between items-start">
-                              <span className="text-[10px] sm:text-xs md:text-sm font-bold">{day.getDate()}</span>
+                              <span className="text-[8px] sm:text-[10px] md:text-xs lg:text-sm font-bold">{day.getDate()}</span>
                               {hasOrders && (
-                                <CheckCircle2 className="h-2.5 w-2.5 sm:h-3 sm:w-3 md:h-4 md:w-4 text-green-600" />
+                                <CheckCircle2 className="h-2 w-2 sm:h-2.5 sm:w-2.5 md:h-3 md:w-3 lg:h-4 lg:w-4 text-green-600" />
                               )}
                             </div>
                             
                             <div className="flex-1 flex items-center justify-center">
                               {specialDay ? (
-                                <span className="text-[7px] sm:text-[8px] md:text-[10px] font-bold text-center leading-tight">
+                                <span className="text-[6px] sm:text-[7px] md:text-[8px] lg:text-[10px] font-bold text-center leading-tight">
                                   {specialDay.title}
                                 </span>
                               ) : hasMenu ? (
-                                <UtensilsCrossed className="h-3 w-3 sm:h-4 sm:w-4 md:h-5 md:w-5 text-blue-600" />
+                                <UtensilsCrossed className="h-2.5 w-2.5 sm:h-3 sm:w-3 md:h-4 md:w-4 lg:h-5 lg:w-5 text-blue-600" />
                               ) : (
-                                <span className="text-[7px] sm:text-[8px] md:text-[10px] text-muted-foreground text-center hidden sm:block">Sin menú</span>
+                                <span className="text-[6px] sm:text-[7px] md:text-[8px] lg:text-[10px] text-muted-foreground text-center hidden md:block">Sin menú</span>
                               )}
                             </div>
                           </div>
@@ -979,25 +980,25 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                   </div>
 
                   {/* Leyenda */}
-                  <div className="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 md:gap-4 text-[10px] sm:text-xs">
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-3 h-3 sm:w-4 sm:h-4 bg-blue-50 border border-blue-200 rounded"></div>
+                  <div className="mt-3 sm:mt-4 md:mt-6 pt-2 sm:pt-3 md:pt-4 border-t grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 sm:gap-2 md:gap-3 lg:gap-4 text-[9px] sm:text-[10px] md:text-xs">
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-4 md:h-4 bg-blue-50 border border-blue-200 rounded"></div>
                       <span>Con menú</span>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-3 h-3 sm:w-4 sm:h-4 bg-green-100 border-2 border-green-500 rounded"></div>
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-4 md:h-4 bg-green-100 border-2 border-green-500 rounded"></div>
                       <span>Seleccionado</span>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-3 h-3 sm:w-4 sm:h-4 bg-emerald-200 border-2 border-emerald-500 rounded"></div>
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-4 md:h-4 bg-emerald-200 border-2 border-emerald-500 rounded"></div>
                       <span className="font-bold text-emerald-700">Ya pedido</span>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-3 h-3 sm:w-4 sm:h-4 bg-red-100 border border-red-300 rounded"></div>
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-4 md:h-4 bg-red-100 border border-red-300 rounded"></div>
                       <span>Feriado</span>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-3 h-3 sm:w-4 sm:h-4 bg-gray-200 border border-gray-400 rounded"></div>
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-4 md:h-4 bg-gray-200 border border-gray-400 rounded"></div>
                       <span>No laborable</span>
                     </div>
                   </div>

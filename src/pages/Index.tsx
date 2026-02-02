@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { 
@@ -748,17 +749,35 @@ const Index = () => {
         {/* Pestaña Almuerzos */}
         <div className={activeTab !== 'almuerzos' ? 'hidden' : ''}>
           {user && (
-            <div className="px-4 space-y-6">
-              {/* Mis Pedidos de Almuerzo */}
-              <ParentLunchOrders parentId={user.id} />
-              
-              {/* Calendario para Hacer Pedidos */}
-              <LunchOrderCalendar
-                isOpen={true}
-                onClose={() => {}}
-                parentId={user.id}
-                embedded={true}
-              />
+            <div className="px-2 sm:px-4 space-y-4 sm:space-y-6">
+              {/* Sub-pestañas para Almuerzos */}
+              <Tabs defaultValue="hacer-pedido" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 h-auto">
+                  <TabsTrigger value="hacer-pedido" className="text-xs sm:text-sm py-2 sm:py-3">
+                    <UtensilsCrossed className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    Hacer Pedido
+                  </TabsTrigger>
+                  <TabsTrigger value="mis-pedidos" className="text-xs sm:text-sm py-2 sm:py-3">
+                    <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    Mis Pedidos
+                  </TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="hacer-pedido" className="mt-4 sm:mt-6">
+                  {/* Calendario para Hacer Pedidos */}
+                  <LunchOrderCalendar
+                    isOpen={true}
+                    onClose={() => {}}
+                    parentId={user.id}
+                    embedded={true}
+                  />
+                </TabsContent>
+                
+                <TabsContent value="mis-pedidos" className="mt-4 sm:mt-6">
+                  {/* Mis Pedidos de Almuerzo */}
+                  <ParentLunchOrders parentId={user.id} />
+                </TabsContent>
+              </Tabs>
             </div>
           )}
         </div>

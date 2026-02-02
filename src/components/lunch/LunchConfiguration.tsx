@@ -29,6 +29,10 @@ interface LunchConfig {
   cancellation_deadline_time: string;
   cancellation_deadline_days: number;
   orders_enabled: boolean;
+  delivery_start_time?: string;
+  delivery_end_time?: string;
+  auto_close_day?: boolean;
+  auto_mark_as_delivered?: boolean;
 }
 
 export function LunchConfiguration({ schoolId, canEdit }: LunchConfigurationProps) {
@@ -70,6 +74,10 @@ export function LunchConfiguration({ schoolId, canEdit }: LunchConfigurationProp
             cancellation_deadline_time: '07:00:00',
             cancellation_deadline_days: 0,
             orders_enabled: true,
+            delivery_start_time: '07:00:00',
+            delivery_end_time: '17:00:00',
+            auto_close_day: true,
+            auto_mark_as_delivered: true,
           })
           .select()
           .single();
@@ -94,6 +102,8 @@ export function LunchConfiguration({ schoolId, canEdit }: LunchConfigurationProp
 
     setSaving(true);
     try {
+      console.log('💾 Guardando configuración:', config);
+      
       const { error } = await supabase
         .from('lunch_configuration')
         .update({
@@ -103,17 +113,26 @@ export function LunchConfiguration({ schoolId, canEdit }: LunchConfigurationProp
           cancellation_deadline_time: config.cancellation_deadline_time,
           cancellation_deadline_days: config.cancellation_deadline_days,
           orders_enabled: config.orders_enabled,
+          delivery_start_time: config.delivery_start_time,
+          delivery_end_time: config.delivery_end_time,
+          auto_close_day: config.auto_close_day,
+          auto_mark_as_delivered: config.auto_mark_as_delivered,
         })
         .eq('id', config.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ ERROR al guardar:', error);
+        throw error;
+      }
 
+      console.log('✅ Configuración guardada exitosamente');
+      
       toast({
         title: '✅ Configuración Guardada',
         description: 'Los cambios se aplicaron correctamente',
       });
     } catch (error: any) {
-      console.error('Error saving configuration:', error);
+      console.error('❌ Error saving configuration:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -330,6 +349,119 @@ export function LunchConfiguration({ schoolId, canEdit }: LunchConfigurationProp
               .
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Cierre Automático del Día */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5 text-purple-600" />
+            Cierre Automático del Día
+          </CardTitle>
+          <CardDescription>
+            Configura el horario de entregas y el cierre automático al final del día
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Switch de cierre automático */}
+          <div className="flex items-center justify-between p-4 bg-purple-50 rounded-lg">
+            <div>
+              <Label htmlFor="auto_close_day" className="text-base font-semibold">
+                Cerrar día automáticamente
+              </Label>
+              <p className="text-sm text-gray-600 mt-1">
+                Al llegar a la hora configurada, el sistema cierra el día y pasa al siguiente
+              </p>
+            </div>
+            <Switch
+              id="auto_close_day"
+              checked={config.auto_close_day ?? true}
+              onCheckedChange={(checked) =>
+                setConfig({ ...config, auto_close_day: checked })
+              }
+              disabled={!canEdit}
+            />
+          </div>
+
+          {/* Horario de entregas */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="delivery_start_time">Hora de Inicio de Entregas</Label>
+              <Input
+                id="delivery_start_time"
+                type="time"
+                value={(config.delivery_start_time ?? '07:00:00').slice(0, 5)}
+                onChange={(e) =>
+                  setConfig({ ...config, delivery_start_time: e.target.value + ':00' })
+                }
+                disabled={!canEdit}
+              />
+              <p className="text-xs text-gray-500">
+                Hora en que comienza la entrega de almuerzos
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="delivery_end_time">Hora de Cierre del Día</Label>
+              <Input
+                id="delivery_end_time"
+                type="time"
+                value={(config.delivery_end_time ?? '17:00:00').slice(0, 5)}
+                onChange={(e) =>
+                  setConfig({ ...config, delivery_end_time: e.target.value + ':00' })
+                }
+                disabled={!canEdit}
+              />
+              <p className="text-xs text-gray-500">
+                Después de esta hora, el sistema pasa al día siguiente
+              </p>
+            </div>
+          </div>
+
+          {/* Opción de marcar como entregado */}
+          <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
+            <div className="flex-1">
+              <Label htmlFor="auto_mark_as_delivered" className="text-base font-semibold">
+                Marcar automáticamente como "Entregado"
+              </Label>
+              <p className="text-sm text-gray-600 mt-1">
+                Al cerrar el día, los pedidos "Confirmados" se marcarán como "Entregados" automáticamente
+              </p>
+            </div>
+            <Switch
+              id="auto_mark_as_delivered"
+              checked={config.auto_mark_as_delivered ?? true}
+              onCheckedChange={(checked) =>
+                setConfig({ ...config, auto_mark_as_delivered: checked })
+              }
+              disabled={!canEdit || !config.auto_close_day}
+            />
+          </div>
+
+          {/* Ejemplo visual */}
+          {config.auto_close_day && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <p className="text-sm text-purple-800">
+                <strong>🕐 Funcionamiento:</strong>
+              </p>
+              <ul className="text-sm text-purple-800 mt-2 space-y-1 list-disc list-inside">
+                <li>
+                  Las entregas comienzan a las <strong>{(config.delivery_start_time ?? '07:00:00').slice(0, 5)}</strong>
+                </li>
+                <li>
+                  A las <strong>{(config.delivery_end_time ?? '17:00:00').slice(0, 5)}</strong>, el sistema cierra el día automáticamente
+                </li>
+                {config.auto_mark_as_delivered && (
+                  <li>
+                    Los pedidos "Confirmados" se marcarán como "Entregados"
+                  </li>
+                )}
+                <li>
+                  La pantalla del admin pasará automáticamente a mostrar los pedidos del día siguiente
+                </li>
+              </ul>
+            </div>
+          )}
         </CardContent>
       </Card>
 
