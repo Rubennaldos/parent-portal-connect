@@ -133,6 +133,7 @@ export function LunchCategoryWizard({
     if (step === 2) {
       setStep(1);
       setSelectedCategory(null);
+      setSelectedTargetType(null); // Limpiar también el tipo seleccionado
     }
   };
 
@@ -144,31 +145,50 @@ export function LunchCategoryWizard({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-yellow-500" />
-            Crear Nuevo Menú del Día
-          </DialogTitle>
-          <DialogDescription>
-            Sigue los pasos para crear el menú de almuerzo para el{' '}
-            <strong>{selectedDate.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-          </DialogDescription>
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+                <Sparkles className="h-6 w-6 text-yellow-500" />
+                Crear Nuevo Menú del Día
+              </DialogTitle>
+              <DialogDescription>
+                Sigue los pasos para crear el menú de almuerzo para el{' '}
+                <strong>{selectedDate.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+              </DialogDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClose}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              Cancelar
+            </Button>
+          </div>
         </DialogHeader>
 
-        {/* Indicador de pasos */}
+        {/* Indicador de pasos - Mejorado */}
         <div className="flex items-center justify-center gap-2 my-4">
-          <div className={cn(
-            "flex items-center gap-2 px-4 py-2 rounded-lg transition-all",
-            step === 1 ? "bg-blue-100 border-2 border-blue-500" : "bg-gray-100"
-          )}>
+          <button
+            onClick={() => step === 2 && handleBack()}
+            disabled={step === 1}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg transition-all",
+              step === 1 ? "bg-blue-100 border-2 border-blue-500" : "bg-gray-100 hover:bg-gray-200 cursor-pointer"
+            )}
+          >
             <div className={cn(
               "w-8 h-8 rounded-full flex items-center justify-center font-bold",
               step === 1 ? "bg-blue-500 text-white" : "bg-gray-300 text-gray-600"
             )}>
-              1
+              {step === 1 ? "1" : "✓"}
             </div>
             <span className="font-semibold hidden sm:inline">¿Para quién?</span>
-          </div>
+            <span className="font-semibold sm:hidden">Paso 1</span>
+          </button>
+          
           <ChevronRight className="h-5 w-5 text-gray-400" />
+          
           <div className={cn(
             "flex items-center gap-2 px-4 py-2 rounded-lg transition-all",
             step === 2 ? "bg-blue-100 border-2 border-blue-500" : "bg-gray-100"
@@ -180,6 +200,7 @@ export function LunchCategoryWizard({
               2
             </div>
             <span className="font-semibold hidden sm:inline">¿Qué tipo de almuerzo?</span>
+            <span className="font-semibold sm:hidden">Paso 2</span>
           </div>
         </div>
 
@@ -329,23 +350,25 @@ export function LunchCategoryWizard({
             )}
 
             {/* Botones de navegación */}
-            <div className="flex justify-between pt-6 border-t">
+            <div className="flex justify-between pt-6 border-t gap-3">
               <Button
                 variant="outline"
                 onClick={handleBack}
-                className="gap-2"
+                className="gap-2 flex-1 sm:flex-none"
+                size="lg"
               >
-                <ChevronLeft className="h-4 w-4" />
-                Atrás
+                <ChevronLeft className="h-5 w-5" />
+                Volver atrás
               </Button>
 
               <Button
                 onClick={handleComplete}
                 disabled={!selectedCategory}
-                className="gap-2 bg-green-600 hover:bg-green-700"
+                className="gap-2 bg-green-600 hover:bg-green-700 flex-1 sm:flex-none"
+                size="lg"
               >
                 Continuar con este menú
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-5 w-5" />
               </Button>
             </div>
           </div>
