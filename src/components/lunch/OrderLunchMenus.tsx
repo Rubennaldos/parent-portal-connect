@@ -153,11 +153,18 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
 
       if (menusError) throw menusError;
 
+      console.log('📊 Menús cargados desde DB:', menusData);
+      console.log('👤 Tipo de usuario:', userType);
+
       // Filtrar menús según el tipo de usuario
       const targetType = userType === 'parent' ? 'students' : 'teachers';
+      console.log('🎯 Filtrando por target_type:', targetType);
+      
       const filteredMenus = (menusData || []).filter(
-        menu => menu.target_type === targetType || menu.target_type === 'both'
+        menu => menu.target_type === targetType
       );
+
+      console.log('✅ Menús después del filtro:', filteredMenus);
 
       // Cargar categorías
       if (filteredMenus.length > 0) {
@@ -171,6 +178,8 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
             .select('*')
             .in('id', categoryIds);
 
+          console.log('📂 Categorías cargadas:', categoriesData);
+
           const categoriesMap = new Map(
             (categoriesData || []).map(cat => [cat.id, cat])
           );
@@ -179,6 +188,8 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
             ...menu,
             category: menu.category_id ? categoriesMap.get(menu.category_id) : null
           }));
+
+          console.log('🍽️ Menús con categorías:', menusWithCategories);
 
           setWeekMenus(menusWithCategories);
         } else {
