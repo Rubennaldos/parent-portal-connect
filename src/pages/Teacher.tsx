@@ -9,7 +9,7 @@ import { LogOut, User, ShoppingBag, UtensilsCrossed, Home, MoreHorizontal, Loade
 import { useToast } from '@/hooks/use-toast';
 import { TeacherOnboardingModal } from '@/components/teacher/TeacherOnboardingModal';
 import { TeacherMoreMenu } from '@/components/teacher/TeacherMoreMenu';
-import { TeacherLunchCalendar } from '@/components/teacher/TeacherLunchCalendar';
+import { OrderLunchMenus } from '@/components/lunch/OrderLunchMenus';
 
 interface TeacherProfile {
   id: string;
@@ -623,9 +623,10 @@ export default function Teacher() {
             {/* TAB: MENÚ */}
             <TabsContent value="menu">
               {teacherProfile.school_1_id && (
-                <TeacherLunchCalendar 
-                  teacherId={teacherProfile.id}
-                  schoolId={teacherProfile.school_1_id} // ⬅️ Corregido
+                <OrderLunchMenus 
+                  userType="teacher"
+                  userId={teacherProfile.id}
+                  userSchoolId={teacherProfile.school_1_id}
                 />
               )}
             </TabsContent>
