@@ -136,6 +136,7 @@ const LunchCalendar = () => {
   const [isMassUploadModalOpen, setIsMassUploadModalOpen] = useState(false);
   const [isSpecialDayModalOpen, setIsSpecialDayModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isCreateAnotherMenuOpen, setIsCreateAnotherMenuOpen] = useState(false); // Nuevo modal
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   
@@ -345,31 +346,14 @@ const LunchCalendar = () => {
     if (dayData.menus.length > 1) {
       // Preguntar si quiere ver los menús existentes o crear uno nuevo
       if (canCreate) {
-        const response = window.confirm(
-          `Este día ya tiene ${dayData.menus.length} menús.\n\n¿Deseas crear un nuevo menú adicional?\n\nPresiona "Aceptar" para crear uno nuevo o "Cancelar" para ver los existentes.`
-        );
-        if (response) {
-          setSelectedMenuId(null);
-          setIsWizardOpen(true);
-        } else {
-          setIsDetailModalOpen(true);
-        }
+        setIsCreateAnotherMenuOpen(true);
       } else {
         setIsDetailModalOpen(true);
       }
     } else if (dayData.menus.length === 1) {
       // Si hay 1 menú, preguntar si quiere crear otro o editar el existente
       if (canCreate) {
-        const response = window.confirm(
-          `Este día ya tiene un menú creado.\n\n¿Deseas crear un nuevo menú adicional?\n\nPresiona "Aceptar" para crear uno nuevo o "Cancelar" para editar el existente.`
-        );
-        if (response) {
-          setSelectedMenuId(null);
-          setIsWizardOpen(true);
-        } else if (canEdit) {
-          setSelectedMenuId(dayData.menus[0].id);
-          setIsMenuModalOpen(true);
-        }
+        setIsCreateAnotherMenuOpen(true);
       } else if (canEdit) {
         // Si solo puede editar, abrir el menú existente
         setSelectedMenuId(dayData.menus[0].id);
@@ -379,6 +363,22 @@ const LunchCalendar = () => {
       // Si no hay menús, abrir wizard para seleccionar categoría
       setSelectedMenuId(null);
       setIsWizardOpen(true);
+    }
+  };
+
+  const handleCreateAnotherMenu = () => {
+    setIsCreateAnotherMenuOpen(false);
+    setSelectedMenuId(null);
+    setIsWizardOpen(true);
+  };
+
+  const handleViewExistingMenus = () => {
+    setIsCreateAnotherMenuOpen(false);
+    if (selectedDay?.menus.length === 1) {
+      setSelectedMenuId(selectedDay.menus[0].id);
+      setIsMenuModalOpen(true);
+    } else if (selectedDay && selectedDay.menus.length > 1) {
+      setIsDetailModalOpen(true);
     }
   };
 
@@ -1029,6 +1029,64 @@ const LunchCalendar = () => {
           setCurrentDate(new Date(currentDate));
         }}
       />
+
+      {/* Modal para preguntar si crear otro menú */}
+      <Dialog open={isCreateAnotherMenuOpen} onOpenChange={setIsCreateAnotherMenuOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <UtensilsCrossed className="h-6 w-6 text-green-600" />
+              Este día ya tiene menú creado
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-gray-700">
+                {selectedDay && selectedDay.menus.length > 1 
+                  ? `Este día ya tiene ${selectedDay.menus.length} menús registrados.`
+                  : 'Este día ya tiene un menú creado.'
+                }
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                ¿Qué deseas hacer?
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Button 
+                onClick={handleCreateAnotherMenu}
+                className="w-full gap-2 bg-green-600 hover:bg-green-700"
+                size="lg"
+              >
+                <Plus className="h-5 w-5" />
+                Crear un nuevo menú adicional
+              </Button>
+              
+              <Button 
+                onClick={handleViewExistingMenus}
+                variant="outline"
+                className="w-full gap-2"
+                size="lg"
+              >
+                <Eye className="h-5 w-5" />
+                {selectedDay && selectedDay.menus.length > 1 
+                  ? 'Ver los menús existentes'
+                  : 'Editar el menú existente'
+                }
+              </Button>
+
+              <Button 
+                onClick={() => setIsCreateAnotherMenuOpen(false)}
+                variant="ghost"
+                className="w-full"
+              >
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Detalle de Menús del Día */}
       <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
