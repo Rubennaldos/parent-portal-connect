@@ -1618,10 +1618,10 @@ const POS = () => {
 
       {/* Layout de 3 Zonas (Solo si hay cliente seleccionado) */}
       {(clientMode === 'generic' || (clientMode === 'student' && selectedStudent) || (clientMode === 'teacher' && selectedTeacher)) && (
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden print:hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden print:hidden h-[calc(100vh-64px)]">
           
-          {/* ZONA 1: CATEGORÍAS */}
-          <aside className="w-full lg:w-[15%] bg-slate-800 p-2 sm:p-4 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto scrollbar-thin">
+          {/* ZONA 1: CATEGORÍAS - Compacto en móvil */}
+          <aside className="w-full lg:w-[15%] bg-slate-800 p-1 sm:p-2 lg:p-4 flex lg:flex-col gap-1 sm:gap-2 overflow-x-auto lg:overflow-y-auto scrollbar-thin flex-shrink-0">
             {orderedCategories.map((cat, index) => {
               const Icon = cat.icon;
               const isActive = selectedCategory === cat.id;
@@ -1634,83 +1634,83 @@ const POS = () => {
                   onDragOver={(e) => onDragOver(e, index)}
                   onClick={() => setSelectedCategory(cat.id)}
                   className={cn(
-                    "flex flex-col items-center justify-center gap-1 sm:gap-2 py-4 sm:py-6 lg:py-8 px-4 sm:px-6 rounded-xl font-semibold transition-all cursor-move select-none touch-manipulation shrink-0",
+                    "flex flex-col items-center justify-center gap-0.5 py-1.5 px-2 sm:py-4 sm:px-4 lg:py-8 lg:px-6 rounded-md sm:rounded-xl font-semibold transition-all cursor-move select-none touch-manipulation shrink-0",
                     "hover:bg-slate-700 active:scale-95",
                     isActive 
                       ? "bg-emerald-500 text-white shadow-lg" 
                       : "bg-slate-700 text-gray-300"
                   )}
-                  style={{ minHeight: '80px' }}
+                  style={{ minHeight: '50px' }}
                 >
-                  <Icon className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8" />
-                  <span className="text-xs sm:text-sm whitespace-nowrap">{cat.label}</span>
+                  <Icon className="h-4 w-4 sm:h-6 sm:w-6 lg:h-8 lg:w-8" />
+                  <span className="text-[9px] sm:text-xs lg:text-sm whitespace-nowrap">{cat.label}</span>
                 </button>
               );
             })}
           </aside>
 
-          {/* ZONA 2: PRODUCTOS */}
-          <main className="w-full lg:w-[55%] bg-white flex flex-col">
-            <div className="p-2 sm:p-4 border-b bg-gray-50">
+          {/* ZONA 2: PRODUCTOS - Más compacto en móvil */}
+          <main className="w-full lg:w-[55%] bg-white flex flex-col overflow-hidden">
+            <div className="p-1.5 sm:p-2 border-b bg-gray-50 flex-shrink-0">
               <div className="relative">
-                <Search className="absolute left-3 sm:left-4 top-3 sm:top-4 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
+                <Search className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 h-3 w-3 sm:h-4 sm:w-4 text-gray-400" />
                 <Input
                   ref={searchInputRef}
                   placeholder="Buscar productos..."
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
-                  className="pl-10 sm:pl-12 h-12 sm:h-14 text-base sm:text-lg border-2"
+                  className="pl-7 sm:pl-9 h-7 sm:h-10 lg:h-12 text-xs sm:text-base border-2"
                 />
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 sm:p-4">
+            <div className="flex-1 overflow-y-auto p-1 sm:p-2">
               {filteredProducts.length === 0 && combos.length === 0 && selectedCategory !== 'combos' ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <Search className="h-16 w-16 sm:h-24 sm:w-24 mb-4 opacity-30" />
-                  <p className="text-lg sm:text-xl font-semibold">No hay productos disponibles</p>
+                  <Search className="h-8 w-8 sm:h-16 sm:w-16 mb-2 sm:mb-4 opacity-30" />
+                  <p className="text-xs sm:text-lg font-semibold">No hay productos disponibles</p>
                 </div>
               ) : selectedCategory === 'combos' ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-2 sm:gap-4">
+                <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
                   {combos.map((combo) => (
                     <button
                       key={combo.id}
                       onClick={() => addComboToCart(combo)}
-                      className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl sm:rounded-2xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 hover:-translate-y-1 active:scale-95 p-3 sm:p-4 min-h-[120px] sm:min-h-[140px] flex flex-col justify-center"
+                      className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center"
                     >
-                      <div className="flex items-center gap-2 mb-2">
-                        <Gift className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
-                        <h3 className="font-black text-base sm:text-xl line-clamp-2 leading-tight text-left">
+                      <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
+                        <Gift className="h-2.5 w-2.5 sm:h-4 sm:w-4 text-purple-600 flex-shrink-0" />
+                        <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
                           {combo.name}
                         </h3>
                       </div>
-                      <p className="text-xl sm:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
+                      <p className="text-[10px] sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
                         S/ {combo.combo_price.toFixed(2)}
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
                         {combo.combo_items?.length || 0} productos
                       </p>
                     </button>
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-2 sm:gap-4">{filteredProducts.map((product) => (
+                <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => (
                     <button
                       key={product.id}
                       onClick={() => addToCart(product)}
-                      className="group bg-white border-2 rounded-xl sm:rounded-2xl overflow-hidden transition-all hover:shadow-xl hover:border-emerald-500 hover:-translate-y-1 active:scale-95 p-3 sm:p-4 min-h-[140px] sm:min-h-[160px] flex flex-col justify-between"
+                      className="group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-emerald-500 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between"
                     >
                       <div>
-                        <h3 className="font-black text-base sm:text-xl mb-1 sm:mb-2 line-clamp-2 leading-tight">
+                        <h3 className="font-bold text-[8px] sm:text-base mb-0.5 sm:mb-1 line-clamp-2 leading-tight">
                           {product.name}
                         </h3>
                         {product.description && (
-                          <p className="text-xs sm:text-sm text-gray-500 mb-2 sm:mb-3 line-clamp-2">
+                          <p className="text-[7px] sm:text-xs text-gray-500 mb-0.5 sm:mb-2 line-clamp-1">
                             {product.description}
                           </p>
                         )}
                       </div>
-                      <p className="text-base sm:text-lg font-semibold text-emerald-600">
+                      <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
                         S/ {product.price.toFixed(2)}
                       </p>
                     </button>
@@ -1720,17 +1720,17 @@ const POS = () => {
             </div>
           </main>
 
-          {/* ZONA 3: CARRITO */}
-          <aside className="w-full lg:w-[30%] bg-slate-50 flex flex-col border-t-2 lg:border-t-0 lg:border-l-2 border-slate-200 max-h-[50vh] lg:max-h-none">
-            {/* Info del Cliente */}
-            <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white p-3 sm:p-4">
+          {/* ZONA 3: CARRITO - Más compacto y visible en móvil */}
+          <aside className="w-full lg:w-[30%] bg-slate-50 flex flex-col border-t-2 lg:border-t-0 lg:border-l-2 border-slate-200 max-h-[45vh] lg:max-h-none">
+            {/* Info del Cliente - Compacta en móvil */}
+            <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white p-2 sm:p-3">
               {clientMode === 'generic' ? (
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-bold text-base sm:text-lg text-white">CLIENTE GENÉRICO</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-xs sm:text-base text-white">CLIENTE GENÉRICO</h3>
                     <button
                       onClick={resetClient}
-                      className="hover:bg-emerald-700 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg transition-colors font-semibold text-xs sm:text-sm text-white border border-emerald-400"
+                      className="hover:bg-emerald-700 px-2 py-1 rounded-lg transition-colors font-semibold text-[10px] sm:text-xs text-white border border-emerald-400"
                     >
                       CAMBIAR
                     </button>
@@ -1738,47 +1738,77 @@ const POS = () => {
                 </div>
               ) : selectedStudent && (
                 <div>
-                  <div className="flex items-center gap-2 sm:gap-4 mb-2">
-                    {/* Foto del estudiante */}
+                  <div className="flex items-center gap-2 mb-1">
+                    {/* Foto del estudiante - más pequeña en móvil */}
                     {selectedStudent.photo_url && (
                       <div 
-                        className="relative w-20 h-20 flex-shrink-0 cursor-pointer group"
+                        className="relative w-12 h-12 sm:w-16 sm:h-16 flex-shrink-0 cursor-pointer group"
                         onClick={() => setShowPhotoModal(true)}
                       >
                         <img 
                           src={selectedStudent.photo_url} 
                           alt={selectedStudent.full_name}
-                          className="w-full h-full object-cover rounded-xl border-3 border-white shadow-lg"
+                          className="w-full h-full object-cover rounded-lg border-2 border-white shadow-lg"
                         />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center">
-                          <Maximize2 className="h-6 w-6 text-white" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                          <Maximize2 className="h-4 w-4 text-white" />
                         </div>
                       </div>
                     )}
                     
-                    <div className="flex-1">
-                      <h3 className="font-black text-2xl text-white leading-tight">{selectedStudent.full_name}</h3>
-                      <p className="text-sm text-emerald-100 font-medium mt-1">{selectedStudent.grade} - {selectedStudent.section}</p>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-xs sm:text-lg text-white leading-tight truncate">{selectedStudent.full_name}</h3>
+                      <p className="text-[10px] sm:text-xs text-emerald-100 font-medium">{selectedStudent.grade} - {selectedStudent.section}</p>
                       {selectedStudent.free_account !== false && (
-                        <div className="mt-2">
-                          <span className="text-xs bg-green-400 text-green-900 px-3 py-1 rounded-full font-bold shadow-md">
+                        <div className="mt-1">
+                          <span className="text-[8px] sm:text-xs bg-green-400 text-green-900 px-2 py-0.5 rounded-full font-bold shadow-md">
                             ✓ CUENTA LIBRE
                           </span>
                         </div>
                       )}
                     </div>
                     
-                    {/* Botón CAMBIAR en círculo */}
+                    {/* Botón CAMBIAR más pequeño en móvil */}
                     <button
                       onClick={resetClient}
-                      className="w-16 h-16 rounded-full bg-white/20 hover:bg-white/30 border-2 border-white/40 flex items-center justify-center transition-all hover:scale-105 shadow-lg backdrop-blur-sm"
+                      className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-white/20 hover:bg-white/30 border-2 border-white/40 flex items-center justify-center transition-all hover:scale-105 shadow-lg backdrop-blur-sm shrink-0"
                       title="Cambiar estudiante"
                     >
                       <div className="text-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                         </svg>
-                        <span className="text-[9px] font-bold text-white uppercase">Cambiar</span>
+                        <span className="text-[7px] sm:text-[9px] font-bold text-white uppercase">Cambiar</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              ) : selectedTeacher && (
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-xs sm:text-lg text-white leading-tight truncate">{selectedTeacher.full_name}</h3>
+                      <p className="text-[10px] sm:text-xs text-purple-100 font-medium">
+                        {selectedTeacher.area && `${selectedTeacher.area.charAt(0).toUpperCase() + selectedTeacher.area.slice(1)}`}
+                      </p>
+                      <div className="mt-1">
+                        <span className="text-[8px] sm:text-xs bg-purple-400 text-purple-900 px-2 py-0.5 rounded-full font-bold shadow-md">
+                          ✓ CUENTA LIBRE
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Botón CAMBIAR más pequeño en móvil */}
+                    <button
+                      onClick={resetClient}
+                      className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-white/20 hover:bg-white/30 border-2 border-white/40 flex items-center justify-center transition-all hover:scale-105 shadow-lg backdrop-blur-sm shrink-0"
+                      title="Cambiar profesor"
+                    >
+                      <div className="text-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                        <span className="text-[7px] sm:text-[9px] font-bold text-white uppercase">Cambiar</span>
                       </div>
                     </button>
                   </div>
@@ -1786,47 +1816,47 @@ const POS = () => {
               )}
             </div>
 
-            {/* Items del Carrito */}
-            <div className="flex-1 overflow-y-auto p-3">
+            {/* Items del Carrito - Más compacto en móvil */}
+            <div className="flex-1 overflow-y-auto p-1.5 sm:p-2">
               {cart.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <ShoppingCart className="h-20 w-20 mb-3 opacity-30" />
-                  <p className="font-semibold">Carrito vacío</p>
+                  <ShoppingCart className="h-8 w-8 sm:h-16 sm:w-16 mb-2 opacity-30" />
+                  <p className="font-semibold text-xs sm:text-sm">Carrito vacío</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1 sm:space-y-2">
                   {cart.map((item) => (
                     <div
                       key={item.product.id}
-                      className="bg-white border-2 border-gray-200 rounded-xl p-2 sm:p-3"
+                      className="bg-white border-2 border-gray-200 rounded-lg p-1 sm:p-2"
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="font-bold text-xs sm:text-sm flex-1">{item.product.name}</p>
+                      <div className="flex justify-between items-start mb-0.5 sm:mb-1">
+                        <p className="font-bold text-[9px] sm:text-sm flex-1 leading-tight">{item.product.name}</p>
                         <button
                           onClick={() => removeFromCart(item.product.id)}
-                          className="text-red-600 hover:bg-red-50 p-1 sm:p-2 rounded-full"
+                          className="text-red-600 hover:bg-red-50 p-0.5 sm:p-1 rounded-full shrink-0"
                           title="Eliminar del carrito"
                         >
-                          <Trash2 className="h-4 w-4 sm:h-6 sm:w-6" />
+                          <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
                         </button>
                       </div>
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1 sm:gap-2 bg-gray-100 rounded-xl p-1 sm:p-1.5">
+                        <div className="flex items-center gap-0.5 sm:gap-1 bg-gray-100 rounded-lg p-0.5">
                           <button
                             onClick={() => updateQuantity(item.product.id, -1)}
-                            className="w-8 h-8 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-lg shadow-sm hover:bg-red-50 hover:text-red-600 transition-colors"
+                            className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-red-50 hover:text-red-600 transition-colors"
                           >
-                            <Minus className="h-4 w-4 sm:h-6 sm:w-6" />
+                            <Minus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
                           </button>
-                          <span className="w-10 sm:w-14 text-center font-black text-lg sm:text-2xl">{item.quantity}</span>
+                          <span className="w-7 sm:w-10 text-center font-bold text-[10px] sm:text-base">{item.quantity}</span>
                           <button
                             onClick={() => updateQuantity(item.product.id, 1)}
-                            className="w-8 h-8 sm:w-12 sm:h-12 flex items-center justify-center bg-white rounded-lg shadow-sm hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                            className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
                           >
-                            <Plus className="h-4 w-4 sm:h-6 sm:w-6" />
+                            <Plus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
                           </button>
                         </div>
-                        <p className="text-base sm:text-lg font-bold text-emerald-600">
+                        <p className="text-[10px] sm:text-sm font-bold text-emerald-600">
                           S/ {(item.product.price * item.quantity).toFixed(2)}
                         </p>
                       </div>
@@ -1837,25 +1867,25 @@ const POS = () => {
             </div>
 
             {/* Total y Botón */}
-            <div className="bg-white border-t-2 border-slate-300 p-2 sm:p-3 lg:p-4 space-y-2 sm:space-y-3">
+            <div className="bg-white border-t-2 border-slate-300 p-1.5 sm:p-3 lg:p-4 space-y-1.5 sm:space-y-3">
               {cart.length > 0 ? (
                 <>
-                  <div className="bg-slate-900 text-white rounded-xl p-3 sm:p-4">
+                  <div className="bg-slate-900 text-white rounded-xl p-2 sm:p-4">
                     <div className="flex justify-between items-start">
                       <div>
-                        <p className="text-xs sm:text-sm mb-1 uppercase font-bold text-gray-400">Total Compra</p>
-                        <p className="text-2xl sm:text-3xl lg:text-4xl font-black">S/ {total.toFixed(2)}</p>
+                        <p className="text-[9px] sm:text-sm mb-0.5 sm:mb-1 uppercase font-bold text-gray-400">Total Compra</p>
+                        <p className="text-lg sm:text-3xl lg:text-4xl font-black">S/ {total.toFixed(2)}</p>
                       </div>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">{cart.length} productos</p>
+                    <p className="text-[9px] sm:text-xs text-gray-400 mt-1 sm:mt-2">{cart.length} productos</p>
                   </div>
 
                   {selectedStudent && insufficientBalance && !selectedStudent.free_account && (
-                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-2 sm:p-3 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-600 flex-shrink-0" />
+                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
+                      <AlertCircle className="h-3 w-3 sm:h-5 sm:w-5 text-red-600 flex-shrink-0" />
                       <div>
-                        <p className="font-bold text-red-800 text-xs sm:text-sm">Saldo Insuficiente</p>
-                        <p className="text-xs text-red-600">
+                        <p className="font-bold text-red-800 text-[9px] sm:text-sm">Saldo Insuficiente</p>
+                        <p className="text-[8px] sm:text-xs text-red-600">
                           Falta: S/ {(total - selectedStudent.balance).toFixed(2)}
                         </p>
                       </div>
@@ -1863,11 +1893,11 @@ const POS = () => {
                   )}
                   
                   {selectedStudent && selectedStudent.free_account && (
-                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-2 sm:p-3 flex items-center gap-2">
-                      <Check className="h-4 w-4 sm:h-5 sm:w-5 text-green-600 flex-shrink-0" />
+                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
+                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-green-600 flex-shrink-0" />
                       <div>
-                        <p className="font-bold text-green-800 text-xs sm:text-sm">✓ Cuenta Libre</p>
-                        <p className="text-xs text-green-700">
+                        <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
+                        <p className="text-[8px] sm:text-xs text-green-700">
                           La compra se registrará como deuda para pagar después
                         </p>
                       </div>
@@ -1877,13 +1907,13 @@ const POS = () => {
                   <Button
                     onClick={handleCheckoutClick}
                     disabled={!canCheckout() || isProcessing}
-                    className="w-full h-14 sm:h-16 lg:h-20 text-lg sm:text-xl lg:text-2xl font-black rounded-xl shadow-lg bg-emerald-500 hover:bg-emerald-600 active:scale-95 disabled:bg-gray-300"
+                    className="w-full h-12 sm:h-16 lg:h-20 text-base sm:text-xl lg:text-2xl font-black rounded-xl shadow-lg bg-emerald-500 hover:bg-emerald-600 active:scale-95 disabled:bg-gray-300"
                   >
                     {isProcessing ? 'PROCESANDO...' : 'COBRAR'}
                   </Button>
                 </>
               ) : (
-                <div className="text-center py-6 sm:py-8 text-gray-400">
+                <div className="text-center py-4 sm:py-8 text-gray-400">
                   <p className="text-xs sm:text-sm">Agrega productos para continuar</p>
                 </div>
               )}
