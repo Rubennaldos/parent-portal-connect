@@ -211,6 +211,18 @@ export const LunchMenuModal = ({
     }
   }, [menuId, isOpen, initialDate, userSchoolId, preSelectedCategoryId, preSelectedTargetType]);
 
+  // Actualizar category_id cuando llegue del wizard (después de que el modal ya esté abierto)
+  useEffect(() => {
+    if (!menuId && isOpen && preSelectedCategoryId) {
+      console.log('🔄 Actualizando category_id desde wizard:', preSelectedCategoryId);
+      setFormData(prev => ({
+        ...prev,
+        category_id: preSelectedCategoryId,
+        target_type: preSelectedTargetType || 'students',
+      }));
+    }
+  }, [preSelectedCategoryId, preSelectedTargetType, isOpen, menuId]);
+
   const loadMenuData = async () => {
     if (!menuId) return;
 
