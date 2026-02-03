@@ -39,8 +39,11 @@ interface LunchOrder {
   cancellation_reason: string | null;
   postponement_reason: string | null;
   is_no_order_delivery: boolean;
-  student_id: string;
+  student_id: string | null;
   teacher_id: string | null;
+  manual_name: string | null;
+  payment_method: string | null;
+  payment_details: any;
   student?: {
     full_name: string;
     photo_url: string | null;
@@ -240,6 +243,9 @@ export default function LunchOrders() {
         if (order.student?.school_id === selectedSchool) return true;
         // Incluir pedidos de profesores de la sede seleccionada
         if (order.teacher?.school_id_1 === selectedSchool) return true;
+        // Incluir pedidos con nombre manual (sin crédito) - no tienen school_id
+        // TODO: En el futuro, podríamos agregar school_id a los pedidos manuales
+        if (order.manual_name) return true;
         return false;
       });
     }
@@ -255,6 +261,7 @@ export default function LunchOrders() {
       filtered = filtered.filter(order => 
         order.student?.full_name.toLowerCase().includes(term) ||
         order.teacher?.full_name.toLowerCase().includes(term) ||
+        order.manual_name?.toLowerCase().includes(term) ||
         order.student?.temporary_classroom_name?.toLowerCase().includes(term)
       );
     }
@@ -515,7 +522,7 @@ export default function LunchOrders() {
                             "font-bold text-xl",
                             order.teacher ? "text-green-700" : "text-blue-600"
                           )}>
-                            {order.student?.full_name[0] || order.teacher?.full_name[0] || '?'}
+                            {order.student?.full_name[0] || order.teacher?.full_name[0] || order.manual_name?.[0] || '?'}
                           </span>
                         </div>
                       )}
@@ -535,11 +542,16 @@ export default function LunchOrders() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-lg text-gray-900">
-                          {order.student?.full_name || order.teacher?.full_name || 'Desconocido'}
+                          {order.student?.full_name || order.teacher?.full_name || order.manual_name || 'Desconocido'}
                         </p>
                         {order.teacher && (
                           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 text-xs">
                             Profesor
+                          </Badge>
+                        )}
+                        {order.manual_name && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 text-xs">
+                            💵 Pago Físico
                           </Badge>
                         )}
                         {order.student && !order.student.is_temporary && (

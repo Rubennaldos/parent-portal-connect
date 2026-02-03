@@ -54,6 +54,21 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, onSuccess }: Ph
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
   const [cashPaymentMethod, setCashPaymentMethod] = useState<'efectivo' | 'tarjeta' | 'yape' | 'transferencia' | null>(null);
+  
+  // Detalles de pago
+  const [paymentDetails, setPaymentDetails] = useState({
+    // Efectivo
+    currency: 'soles',
+    amountReceived: '',
+    change: 0,
+    // Tarjeta
+    operationNumber: '',
+    cardType: '',
+    // Yape/Plin
+    yapeType: 'yape',
+    // Transferencia
+    bankName: '',
+  });
 
   // Listas
   const [people, setPeople] = useState<Person[]>([]);
@@ -70,11 +85,47 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, onSuccess }: Ph
     setSelectedCategory(null);
     setSelectedMenu(null);
     setCashPaymentMethod(null);
+    setPaymentDetails({
+      currency: 'soles',
+      amountReceived: '',
+      change: 0,
+      operationNumber: '',
+      cardType: '',
+      yapeType: 'yape',
+      bankName: '',
+    });
     setPeople([]);
     setCategories([]);
     setMenus([]);
     setSearchTerm('');
     onClose();
+  };
+
+  // Calcular vuelto automáticamente
+  useEffect(() => {
+    if (cashPaymentMethod === 'efectivo' && selectedCategory?.price && paymentDetails.amountReceived) {
+      const received = parseFloat(paymentDetails.amountReceived) || 0;
+      const price = selectedCategory.price;
+      const change = received - price;
+      setPaymentDetails(prev => ({ ...prev, change: change >= 0 ? change : 0 }));
+    }
+  }, [paymentDetails.amountReceived, selectedCategory, cashPaymentMethod]);
+
+  const isPaymentDetailsComplete = () => {
+    if (!cashPaymentMethod) return false;
+
+    switch (cashPaymentMethod) {
+      case 'efectivo':
+        return paymentDetails.amountReceived && paymentDetails.change >= 0;
+      case 'tarjeta':
+        return paymentDetails.cardType && paymentDetails.operationNumber.trim();
+      case 'yape':
+        return paymentDetails.operationNumber.trim();
+      case 'transferencia':
+        return paymentDetails.bankName.trim() && paymentDetails.operationNumber.trim();
+      default:
+        return false;
+    }
   };
 
   // Paso 2: Cargar personas
@@ -182,6 +233,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, onSuccess }: Ph
         } else {
           orderData.teacher_id = selectedPerson?.id;
         }
+      } else {
+        // Sin crédito: guardar nombre manual y detalles de pago
+        orderData.manual_name = manualName;
+        orderData.payment_method = cashPaymentMethod;
+        orderData.payment_details = paymentDetails;
       }
 
       const { error: orderError } = await supabase
@@ -486,33 +542,273 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, onSuccess }: Ph
         {/* PASO 6: Método de pago (solo sin crédito) */}
         {step === 6 && paymentType === 'cash' && (
           <div className="space-y-4 py-4">
-            <p className="text-center text-gray-600">¿Cómo pagó?</p>
-            <div className="grid grid-cols-2 gap-4">
-              {[
-                { value: 'efectivo', label: 'Efectivo', icon: '💵' },
-                { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
-                { value: 'yape', label: 'Yape/Plin', icon: '📱' },
-                { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
-              ].map((method) => (
-                <Card
-                  key={method.value}
-                  className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
-                    cashPaymentMethod === method.value ? 'ring-2 ring-green-500' : ''
-                  }`}
-                  onClick={() => setCashPaymentMethod(method.value as any)}
-                >
-                  <div className="text-center">
-                    <span className="text-3xl mb-2 block">{method.icon}</span>
-                    <p className="font-medium">{method.label}</p>
+            <p className="text-center text-gray-600 font-medium">Selecciona el método de pago</p>
+            
+            {/* Selector de método */}
+            {!cashPaymentMethod && (
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { value: 'efectivo', label: 'Efectivo', icon: '💵' },
+                  { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
+                  { value: 'yape', label: 'Yape/Plin', icon: '📱' },
+                  { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
+                ].map((method) => (
+                  <Card
+                    key={method.value}
+                    className="p-4 cursor-pointer hover:shadow-lg transition-all"
+                    onClick={() => setCashPaymentMethod(method.value as any)}
+                  >
+                    <div className="text-center">
+                      <span className="text-3xl mb-2 block">{method.icon}</span>
+                      <p className="font-medium">{method.label}</p>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {/* FORMULARIO: EFECTIVO */}
+            {cashPaymentMethod === 'efectivo' && (
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">💵 Pago en Efectivo</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCashPaymentMethod(null);
+                      setPaymentDetails(prev => ({ ...prev, currency: 'soles', amountReceived: '', change: 0 }));
+                    }}
+                  >
+                    Cambiar
+                  </Button>
+                </div>
+
+                {/* Monto del almuerzo */}
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600">Monto a pagar:</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                  </p>
+                </div>
+
+                {/* Tipo de moneda */}
+                <div>
+                  <Label>Tipo de moneda</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Button
+                      type="button"
+                      variant={paymentDetails.currency === 'soles' ? 'default' : 'outline'}
+                      onClick={() => setPaymentDetails(prev => ({ ...prev, currency: 'soles' }))}
+                    >
+                      🇵🇪 Soles (S/)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={paymentDetails.currency === 'dolares' ? 'default' : 'outline'}
+                      onClick={() => setPaymentDetails(prev => ({ ...prev, currency: 'dolares' }))}
+                    >
+                      🇺🇸 Dólares ($)
+                    </Button>
                   </div>
-                </Card>
-              ))}
-            </div>
-            <div className="flex justify-between gap-2 pt-4">
+                </div>
+
+                {/* Monto recibido */}
+                <div>
+                  <Label>Monto recibido</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={paymentDetails.amountReceived}
+                    onChange={(e) => setPaymentDetails(prev => ({ ...prev, amountReceived: e.target.value }))}
+                    className="mt-2 text-lg"
+                  />
+                </div>
+
+                {/* Vuelto (calculado automáticamente) */}
+                {paymentDetails.amountReceived && (
+                  <div className={`p-4 rounded-lg ${paymentDetails.change >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                    <p className="text-sm text-gray-600 mb-1">Vuelto:</p>
+                    <p className={`text-3xl font-bold ${paymentDetails.change >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      S/ {paymentDetails.change.toFixed(2)}
+                    </p>
+                    {paymentDetails.change < 0 && (
+                      <p className="text-sm text-red-600 mt-2">⚠️ Monto insuficiente</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FORMULARIO: TARJETA */}
+            {cashPaymentMethod === 'tarjeta' && (
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">💳 Pago con Tarjeta</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCashPaymentMethod(null);
+                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', cardType: '' }));
+                    }}
+                  >
+                    Cambiar
+                  </Button>
+                </div>
+
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600">Monto:</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Tipo de tarjeta</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {['Visa', 'Mastercard', 'American Express', 'Otra'].map((card) => (
+                      <Button
+                        key={card}
+                        type="button"
+                        variant={paymentDetails.cardType === card ? 'default' : 'outline'}
+                        onClick={() => setPaymentDetails(prev => ({ ...prev, cardType: card }))}
+                        className="text-sm"
+                      >
+                        {card}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <Label>Número de operación</Label>
+                  <Input
+                    type="text"
+                    placeholder="Ej: 123456789"
+                    value={paymentDetails.operationNumber}
+                    onChange={(e) => setPaymentDetails(prev => ({ ...prev, operationNumber: e.target.value }))}
+                    className="mt-2"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* FORMULARIO: YAPE/PLIN */}
+            {cashPaymentMethod === 'yape' && (
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">📱 Yape / Plin</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCashPaymentMethod(null);
+                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', yapeType: 'yape' }));
+                    }}
+                  >
+                    Cambiar
+                  </Button>
+                </div>
+
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600">Monto:</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Tipo de pago</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Button
+                      type="button"
+                      variant={paymentDetails.yapeType === 'yape' ? 'default' : 'outline'}
+                      onClick={() => setPaymentDetails(prev => ({ ...prev, yapeType: 'yape' }))}
+                    >
+                      Yape
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={paymentDetails.yapeType === 'plin' ? 'default' : 'outline'}
+                      onClick={() => setPaymentDetails(prev => ({ ...prev, yapeType: 'plin' }))}
+                    >
+                      Plin
+                    </Button>
+                  </div>
+                </div>
+
+                <div>
+                  <Label>Número de operación</Label>
+                  <Input
+                    type="text"
+                    placeholder="Ej: 987654321"
+                    value={paymentDetails.operationNumber}
+                    onChange={(e) => setPaymentDetails(prev => ({ ...prev, operationNumber: e.target.value }))}
+                    className="mt-2"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* FORMULARIO: TRANSFERENCIA */}
+            {cashPaymentMethod === 'transferencia' && (
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">🏦 Transferencia Bancaria</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCashPaymentMethod(null);
+                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', bankName: '' }));
+                    }}
+                  >
+                    Cambiar
+                  </Button>
+                </div>
+
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600">Monto:</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Banco</Label>
+                  <Input
+                    type="text"
+                    placeholder="Ej: BCP, Interbank, BBVA..."
+                    value={paymentDetails.bankName}
+                    onChange={(e) => setPaymentDetails(prev => ({ ...prev, bankName: e.target.value }))}
+                    className="mt-2"
+                  />
+                </div>
+
+                <div>
+                  <Label>Número de operación</Label>
+                  <Input
+                    type="text"
+                    placeholder="Ej: 123456789"
+                    value={paymentDetails.operationNumber}
+                    onChange={(e) => setPaymentDetails(prev => ({ ...prev, operationNumber: e.target.value }))}
+                    className="mt-2"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Botones de navegación */}
+            <div className="flex justify-between gap-2 pt-4 border-t">
               <Button variant="outline" onClick={() => setStep(5)}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
               </Button>
-              <Button onClick={handleSubmit} disabled={!cashPaymentMethod || loading}>
+              <Button 
+                onClick={handleSubmit} 
+                disabled={!cashPaymentMethod || loading || !isPaymentDetailsComplete()}
+              >
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

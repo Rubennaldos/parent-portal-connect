@@ -1210,11 +1210,8 @@ const LunchCalendar = () => {
         onClose={() => setIsPhysicalOrderOpen(false)}
         schoolId={userSchoolId || ''}
         onSuccess={() => {
-          fetchData();
-          toast({
-            title: '✅ Pedido registrado',
-            description: 'El pedido se ha guardado correctamente'
-          });
+          // Recargar los menús del mes actual
+          window.location.reload();
         }}
       />
     </div>
