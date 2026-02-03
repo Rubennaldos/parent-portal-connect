@@ -383,6 +383,7 @@ const LunchCalendar = () => {
   };
 
   const handleCreateMenu = () => {
+    console.log('🆕 Botón "Nuevo Menú" clickeado - Abriendo wizard...');
     setSelectedDay(null);
     setSelectedMenuId(null);
     setIsWizardOpen(true);  // Abrir wizard en lugar del modal directo
