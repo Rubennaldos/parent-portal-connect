@@ -197,14 +197,14 @@ export default function LunchOrders() {
         .from('lunch_orders')
         .select(`
           *,
-          student:students!lunch_orders_student_id_fkey (
+          student:students (
             full_name,
             photo_url,
             is_temporary,
             temporary_classroom_name,
             school_id
           ),
-          teacher:teacher_profiles!lunch_orders_teacher_id_fkey (
+          teacher:teacher_profiles (
             full_name,
             school_id_1
           )
