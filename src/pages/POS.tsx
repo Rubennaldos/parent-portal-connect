@@ -1440,30 +1440,30 @@ const POS = () => {
               {/* Cliente Genérico */}
               <button
                 onClick={selectGenericClient}
-                className="p-6 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-all group"
+                className="p-4 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-all group"
               >
-                <Users className="h-12 w-12 sm:h-16 sm:w-16 mx-auto mb-3 sm:mb-4 text-gray-400 group-hover:text-emerald-600" />
-                <h3 className="text-lg sm:text-xl font-bold mb-2">Cliente Genérico</h3>
+                <Users className="h-10 w-10 sm:h-16 sm:w-16 mx-auto mb-2 sm:mb-4 text-gray-400 group-hover:text-emerald-600" />
+                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Cliente Genérico</h3>
                 <p className="text-xs sm:text-sm text-gray-600">Venta al contado (Efectivo/Yape/Tarjeta)</p>
               </button>
 
               {/* Crédito */}
               <button
                 onClick={selectStudentMode}
-                className="p-6 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
+                className="p-4 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
               >
-                <User className="h-12 w-12 sm:h-16 sm:w-16 mx-auto mb-3 sm:mb-4 text-gray-400 group-hover:text-blue-600" />
-                <h3 className="text-lg sm:text-xl font-bold mb-2">Crédito</h3>
+                <User className="h-10 w-10 sm:h-16 sm:w-16 mx-auto mb-2 sm:mb-4 text-gray-400 group-hover:text-blue-600" />
+                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Crédito</h3>
                 <p className="text-xs sm:text-sm text-gray-600">Compra a crédito (Descuenta de saldo)</p>
               </button>
 
               {/* Profesor */}
               <button
                 onClick={selectTeacherMode}
-                className="p-6 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all group"
+                className="p-4 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all group"
               >
-                <UtensilsCrossed className="h-12 w-12 sm:h-16 sm:w-16 mx-auto mb-3 sm:mb-4 text-gray-400 group-hover:text-purple-600" />
-                <h3 className="text-lg sm:text-xl font-bold mb-2">Profesor</h3>
+                <UtensilsCrossed className="h-10 w-10 sm:h-16 sm:w-16 mx-auto mb-2 sm:mb-4 text-gray-400 group-hover:text-purple-600" />
+                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Profesor</h3>
                 <p className="text-xs sm:text-sm text-gray-600">Cuenta libre (Sin límites)</p>
               </button>
             </div>
