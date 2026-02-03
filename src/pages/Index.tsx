@@ -43,6 +43,7 @@ import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { LunchCalendarView } from '@/components/parent/LunchCalendarView';
 import { LunchOrderCalendar } from '@/components/parent/LunchOrderCalendar';
+import { OrderLunchMenus } from '@/components/lunch/OrderLunchMenus';
 import { ParentLunchOrders } from '@/components/parent/ParentLunchOrders';
 import { ParentDataForm } from '@/components/parent/ParentDataForm';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
@@ -764,13 +765,14 @@ const Index = () => {
                 </TabsList>
                 
                 <TabsContent value="hacer-pedido" className="mt-4 sm:mt-6">
-                  {/* Calendario para Hacer Pedidos */}
-                  <LunchOrderCalendar
-                    isOpen={true}
-                    onClose={() => {}}
-                    parentId={user.id}
-                    embedded={true}
-                  />
+                  {/* Nuevo componente para pedir almuerzos con categorías */}
+                  {user && profileData && (
+                    <OrderLunchMenus 
+                      userType="parent"
+                      userId={user.id}
+                      userSchoolId={profileData.school_id || ''}
+                    />
+                  )}
                 </TabsContent>
                 
                 <TabsContent value="mis-pedidos" className="mt-4 sm:mt-6">
