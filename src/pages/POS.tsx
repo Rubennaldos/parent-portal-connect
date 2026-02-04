@@ -1052,6 +1052,7 @@ const POS = () => {
           .from('transactions')
           .insert({
             student_id: selectedStudent.id,
+            school_id: selectedStudent.school_id, // ✅ Agregar school_id
             type: 'purchase',
             amount: -total,
             description: `Compra POS${isFreeAccount ? ' (Cuenta Libre)' : ''} - Total: S/ ${total.toFixed(2)}`,
@@ -1142,6 +1143,7 @@ const POS = () => {
           .insert({
             student_id: null,
             teacher_id: selectedTeacher.id,
+            school_id: selectedTeacher.school_id_1 || null, // ✅ Agregar school_id
             type: 'purchase',
             amount: -total,
             description: `Compra Profesor: ${selectedTeacher.full_name} - ${cart.length} items`,
@@ -1207,6 +1209,7 @@ const POS = () => {
           .from('transactions')
           .insert({
             student_id: null,
+            school_id: userSchoolId, // ✅ Agregar school_id del cajero
             type: 'purchase',
             amount: -total,
             description: `Compra Cliente Genérico - ${cart.length} items`,

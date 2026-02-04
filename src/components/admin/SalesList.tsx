@@ -477,12 +477,12 @@ export const SalesList = () => {
     console.log('🗑️ Intentando anular venta:', {
       ticket: transaction.ticket_code,
       userRole: role,
-      isCajero: role === 'cajero'
+      isCajero: role === 'cajero' || role === 'operador_caja'
     });
     
-    // Si es cajero, requiere contraseña de admin primero
-    if (role === 'cajero') {
-      console.log('✅ Es cajero, pidiendo contraseña');
+    // Si es cajero u operador de caja, requiere contraseña de admin primero
+    if (role === 'cajero' || role === 'operador_caja') {
+      console.log('✅ Es cajero/operador, pidiendo contraseña');
       setPendingAnnulTransaction(transaction);
       setAdminPassword('');
       setShowPasswordValidation(true);
