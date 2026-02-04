@@ -1145,10 +1145,20 @@ const LunchCalendar = () => {
                 {selectedDay?.menus.map((menu) => (
                   <Card key={menu.id} className="overflow-hidden border-l-4" style={{ borderLeftColor: menu.school_color || '#10b981' }}>
                     <CardHeader className="bg-muted/30 py-3 flex flex-row items-center justify-between space-y-0">
-                      <CardTitle className="text-sm font-bold flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: menu.school_color || '#10b981' }} />
-                        {menu.school_name}
-                      </CardTitle>
+                      <div className="flex flex-col gap-1">
+                        <CardTitle className="text-sm font-bold flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: menu.school_color || '#10b981' }} />
+                          {menu.school_name}
+                        </CardTitle>
+                        {menu.category_name && (
+                          <div className="flex items-center gap-1 text-xs">
+                            <span>{menu.category_icon || '🍽️'}</span>
+                            <span className="font-semibold" style={{ color: menu.category_color || '#10b981' }}>
+                              {menu.category_name}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                       {canEdit && (
                         <Button 
                           variant="ghost" 
