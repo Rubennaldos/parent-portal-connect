@@ -265,7 +265,7 @@ export default function LunchOrders() {
           )
         `)
         .eq('order_date', selectedDate)
-        .or('is_cancelled.is.null,is_cancelled.eq.false') // 🚫 Incluir NULL y false, excluir true
+        .neq('is_cancelled', true) // 🚫 Excluir SOLO los que son true
         .order('created_at', { ascending: false });
 
       const { data, error } = await query;
