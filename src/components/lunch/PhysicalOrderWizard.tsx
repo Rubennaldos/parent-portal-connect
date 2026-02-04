@@ -198,90 +198,56 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       console.log('🏫 [fetchCategories] School ID:', schoolId);
       console.log('👥 [fetchCategories] Target type:', targetType);
       
-      // OPCIÓN 1: Intentar con la foreign key explícita
-      console.log('🔧 [fetchCategories] Intentando query con FK explícita...');
-      let { data: menusData, error: menusError } = await supabase
+      // Buscar menús sin FK (método más confiable)
+      console.log('🔧 [fetchCategories] Buscando menús...');
+      const { data: menusData, error: menusError } = await supabase
         .from('lunch_menus')
-        .select(`
-          id,
-          category_id,
-          date,
-          lunch_categories!lunch_menus_category_id_fkey (
-            id,
-            name,
-            icon,
-            color,
-            price,
-            display_order
-          )
-        `)
+        .select('id, category_id, date, starter, main_course, beverage, dessert, price')
         .eq('school_id', schoolId)
         .eq('date', targetDate)
         .eq('target_type', targetType);
-
-      // Si hay error, intentar sin especificar FK
+        
       if (menusError) {
-        console.log('❌ [fetchCategories] Error con FK explícita:', menusError);
-        console.log('🔧 [fetchCategories] Intentando query sin FK explícita...');
-        
-        const result = await supabase
-          .from('lunch_menus')
-          .select(`
-            id,
-            category_id,
-            date
-          `)
-          .eq('school_id', schoolId)
-          .eq('date', targetDate)
-          .eq('target_type', targetType);
-          
-        menusData = result.data;
-        menusError = result.error;
-        
-        if (menusError) {
-          console.log('❌ [fetchCategories] Error sin FK:', menusError);
-          throw menusError;
-        }
-        
-        console.log('✅ [fetchCategories] Menús encontrados:', menusData?.length || 0);
-        
-        // Si no hay error, buscar las categorías por separado
-        if (menusData && menusData.length > 0) {
-          const categoryIds = [...new Set(menusData.map((m: any) => m.category_id))];
-          console.log('📋 [fetchCategories] IDs de categorías:', categoryIds);
-          
-          const { data: categoriesData, error: categoriesError } = await supabase
-            .from('lunch_categories')
-            .select('*')
-            .in('id', categoryIds);
-            
-          if (categoriesError) {
-            console.log('❌ [fetchCategories] Error buscando categorías:', categoriesError);
-            throw categoriesError;
-          }
-          
-          console.log('✅ [fetchCategories] Categorías encontradas:', categoriesData?.length || 0);
-          setCategories(categoriesData || []);
-          return;
-        }
-      } else {
-        console.log('✅ [fetchCategories] Query con FK exitosa');
-        console.log('📊 [fetchCategories] Menús encontrados:', menusData?.length || 0);
-        
-        // Extraer categorías únicas de los menús encontrados
-        const uniqueCategories = new Map();
-        menusData?.forEach((menu: any) => {
-          if (menu.lunch_categories && !uniqueCategories.has(menu.lunch_categories.id)) {
-            uniqueCategories.set(menu.lunch_categories.id, menu.lunch_categories);
-          }
-        });
-        
-        const categoriesArray = Array.from(uniqueCategories.values());
-        console.log('📋 [fetchCategories] Categorías únicas:', categoriesArray.length);
-        console.log('📝 [fetchCategories] Categorías:', categoriesArray);
-        
-        setCategories(categoriesArray);
+        console.log('❌ [fetchCategories] Error buscando menús:', menusError);
+        throw menusError;
       }
+      
+      console.log('✅ [fetchCategories] Menús encontrados:', menusData?.length || 0);
+      console.log('📋 [fetchCategories] Menús:', menusData);
+      
+      // Si no hay menús, no hay categorías
+      if (!menusData || menusData.length === 0) {
+        console.log('⚠️ [fetchCategories] No hay menús disponibles');
+        setCategories([]);
+        return;
+      }
+      
+      // Extraer IDs de categorías únicas
+      const categoryIds = [...new Set(menusData.map((m: any) => m.category_id).filter(Boolean))];
+      console.log('📋 [fetchCategories] IDs de categorías:', categoryIds);
+      
+      if (categoryIds.length === 0) {
+        console.log('⚠️ [fetchCategories] No hay categorías asignadas');
+        setCategories([]);
+        return;
+      }
+      
+      // Buscar las categorías
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('lunch_categories')
+        .select('*')
+        .in('id', categoryIds)
+        .order('display_order');
+        
+      if (categoriesError) {
+        console.log('❌ [fetchCategories] Error buscando categorías:', categoriesError);
+        throw categoriesError;
+      }
+      
+      console.log('✅ [fetchCategories] Categorías encontradas:', categoriesData?.length || 0);
+      console.log('📝 [fetchCategories] Categorías:', categoriesData);
+      
+      setCategories(categoriesData || []);
     } catch (error) {
       console.error('💥 [fetchCategories] Error fatal:', error);
       toast({
