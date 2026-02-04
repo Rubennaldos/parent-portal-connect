@@ -181,16 +181,51 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('lunch_categories')
-        .select('*')
+      
+      // Usar la fecha seleccionada o la fecha de hoy
+      let targetDate = selectedDate || format(new Date(), 'yyyy-MM-dd');
+      
+      // Si selectedDate es un objeto Date, formatearlo
+      if (selectedDate && typeof selectedDate !== 'string') {
+        targetDate = format(new Date(selectedDate), 'yyyy-MM-dd');
+      }
+      
+      console.log('🔍 Buscando categorías con menús para fecha:', targetDate);
+      console.log('🔍 School ID:', schoolId);
+      console.log('🔍 Target type:', targetType);
+      
+      // Buscar menús disponibles para esta fecha, escuela y tipo
+      const { data: menusData, error: menusError } = await supabase
+        .from('lunch_menus')
+        .select(`
+          category_id,
+          lunch_categories!lunch_menus_category_id_fkey (
+            id,
+            name,
+            icon,
+            color,
+            price,
+            display_order
+          )
+        `)
         .eq('school_id', schoolId)
-        .eq('target_type', targetType)
-        .eq('is_active', true)
-        .order('display_order');
+        .eq('date', targetDate)
+        .eq('target_type', targetType);
 
-      if (error) throw error;
-      setCategories(data || []);
+      if (menusError) throw menusError;
+      
+      // Extraer categorías únicas de los menús encontrados
+      const uniqueCategories = new Map();
+      menusData?.forEach((menu: any) => {
+        if (menu.lunch_categories && !uniqueCategories.has(menu.lunch_categories.id)) {
+          uniqueCategories.set(menu.lunch_categories.id, menu.lunch_categories);
+        }
+      });
+      
+      const categoriesArray = Array.from(uniqueCategories.values());
+      console.log('📋 Categorías con menús encontradas:', categoriesArray.length);
+      
+      setCategories(categoriesArray);
     } catch (error) {
       console.error('Error fetching categories:', error);
     } finally {
