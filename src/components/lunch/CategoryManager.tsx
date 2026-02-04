@@ -338,7 +338,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog key={editingCategory?.id || 'new'} open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold">Gestionar Categorías de Almuerzos</DialogTitle>
@@ -385,7 +385,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper" sideOffset={5}>
                           <SelectItem value="students">Alumnos</SelectItem>
                           <SelectItem value="teachers">Profesores</SelectItem>
                           <SelectItem value="both">Ambos</SelectItem>
