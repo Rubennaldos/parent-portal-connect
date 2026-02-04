@@ -276,6 +276,11 @@ export default function LunchOrders() {
       }
       
       console.log('✅ Pedidos cargados:', data?.length || 0);
+      console.log('🔍 [DEBUG] Pedidos con is_cancelled:', data?.map(o => ({
+        nombre: o.student?.full_name || o.teacher?.full_name || o.manual_name,
+        is_cancelled: o.is_cancelled,
+        status: o.status
+      })));
       
       // DEBUG: Ver qué pedidos tienen menú
       data?.forEach((order, index) => {
