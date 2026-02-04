@@ -265,6 +265,7 @@ export default function LunchOrders() {
           )
         `)
         .eq('order_date', selectedDate)
+        .eq('is_cancelled', false) // 🚫 NO traer pedidos anulados
         .order('created_at', { ascending: false });
 
       const { data, error } = await query;
@@ -331,8 +332,8 @@ export default function LunchOrders() {
   const filterOrders = () => {
     let filtered = [...orders];
 
-    // 🚫 EXCLUIR pedidos anulados (is_cancelled = true)
-    filtered = filtered.filter(order => !order.is_cancelled);
+    // Ya no es necesario filtrar por is_cancelled aquí porque lo hacemos en la query SQL
+    // Los pedidos anulados nunca llegan a este punto
 
     // Filtrar por sede
     if (selectedSchool !== 'all') {
