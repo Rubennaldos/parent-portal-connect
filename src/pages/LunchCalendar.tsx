@@ -239,69 +239,69 @@ const LunchCalendar = () => {
   }, [canViewAllSchools, userSchoolId, toast]);
 
   // Cargar menús del mes
+  const loadMonthlyMenus = async () => {
+    if (selectedSchools.length === 0) {
+      setCalendarData([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const month = currentDate.getMonth() + 1;
+      const year = currentDate.getFullYear();
+
+      const { data, error } = await supabase.rpc('get_monthly_lunch_menus', {
+        target_month: month,
+        target_year: year,
+        target_school_ids: selectedSchools,
+      });
+
+      if (error) throw error;
+
+      // Construir estructura de calendario
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const calendarDays: DayData[] = [];
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        // Construir fecha como string directamente (sin conversión UTC)
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const date = new Date(year, month - 1, day); // Solo para mostrar en UI
+
+        const menusForDay = (data || []).filter(
+          (m: LunchMenu) => m.date === dateStr
+        );
+
+        const specialDay = menusForDay.find((m) => m.is_special_day);
+
+        calendarDays.push({
+          date: dateStr,
+          displayDate: date,
+          menus: menusForDay,
+          isSpecialDay: !!specialDay,
+          specialDayInfo: specialDay
+            ? {
+                type: specialDay.special_day_type || '',
+                title: specialDay.special_day_title || '',
+              }
+            : undefined,
+        });
+      }
+
+      setCalendarData(calendarDays);
+    } catch (error) {
+      console.error('Error loading monthly menus:', error);
+      toast({
+        title: 'Error',
+        description: 'No se pudieron cargar los menús del mes',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadMonthlyMenus = async () => {
-      if (selectedSchools.length === 0) {
-        setCalendarData([]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const month = currentDate.getMonth() + 1;
-        const year = currentDate.getFullYear();
-
-        const { data, error } = await supabase.rpc('get_monthly_lunch_menus', {
-          target_month: month,
-          target_year: year,
-          target_school_ids: selectedSchools,
-        });
-
-        if (error) throw error;
-
-        // Construir estructura de calendario
-        const daysInMonth = new Date(year, month, 0).getDate();
-        const calendarDays: DayData[] = [];
-
-        for (let day = 1; day <= daysInMonth; day++) {
-          // Construir fecha como string directamente (sin conversión UTC)
-          const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const date = new Date(year, month - 1, day); // Solo para mostrar en UI
-
-          const menusForDay = (data || []).filter(
-            (m: LunchMenu) => m.date === dateStr
-          );
-
-          const specialDay = menusForDay.find((m) => m.is_special_day);
-
-          calendarDays.push({
-            date: dateStr,
-            displayDate: date,
-            menus: menusForDay,
-            isSpecialDay: !!specialDay,
-            specialDayInfo: specialDay
-              ? {
-                  type: specialDay.special_day_type || '',
-                  title: specialDay.special_day_title || '',
-                }
-              : undefined,
-          });
-        }
-
-        setCalendarData(calendarDays);
-      } catch (error) {
-        console.error('Error loading monthly menus:', error);
-        toast({
-          title: 'Error',
-          description: 'No se pudieron cargar los menús del mes',
-          variant: 'destructive',
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
     loadMonthlyMenus();
   }, [currentDate, selectedSchools, toast]);
 
