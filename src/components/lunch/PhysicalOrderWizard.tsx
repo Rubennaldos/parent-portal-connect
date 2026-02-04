@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -124,6 +125,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         return paymentDetails.operationNumber.trim();
       case 'transferencia':
         return paymentDetails.bankName.trim() && paymentDetails.operationNumber.trim();
+      case 'pagar_luego':
+        return true; // ✅ Siempre válido para "Pagar Luego"
       default:
         return false;
     }
@@ -404,7 +407,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         // Sin crédito: guardar nombre manual y detalles de pago
         orderData.manual_name = manualName;
         orderData.payment_method = cashPaymentMethod;
-        orderData.payment_details = paymentDetails;
+        
+        // Solo guardar payment_details si NO es "pagar_luego"
+        if (cashPaymentMethod !== 'pagar_luego') {
+          orderData.payment_details = paymentDetails;
+        }
       }
 
       const { error: orderError } = await supabase
@@ -418,7 +425,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         const transactionData: any = {
           type: 'purchase',
           amount: -Math.abs(selectedCategory.price),
-          description: `Almuerzo - ${selectedCategory.name} - ${format(new Date(selectedMenu.date), "d 'de' MMMM", { locale: es })}`,
+          description: `Almuerzo - ${selectedCategory.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
+          payment_status: 'pending', // 📝 Deuda pendiente
+          school_id: schoolId,
         };
 
         if (targetType === 'students') {
@@ -430,9 +439,32 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         await supabase.from('transactions').insert([transactionData]);
       }
 
+      // 🆕 Crear transacción pendiente si es "Pagar Luego"
+      if (paymentType === 'cash' && cashPaymentMethod === 'pagar_luego' && selectedCategory.price && selectedCategory.price > 0) {
+        const transactionData: any = {
+          type: 'purchase',
+          amount: -Math.abs(selectedCategory.price),
+          description: `Almuerzo - ${selectedCategory.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} - ${manualName}`,
+          payment_status: 'pending', // 📝 Deuda pendiente (fiado)
+          school_id: schoolId,
+          manual_client_name: manualName, // 👤 Guardar el nombre del cliente
+        };
+
+        const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);
+        
+        if (transactionError) {
+          console.error('❌ Error creando transacción de fiado:', transactionError);
+          throw transactionError;
+        }
+
+        console.log('✅ Transacción de fiado creada para:', manualName);
+      }
+
       toast({
         title: '✅ Pedido registrado',
-        description: `Almuerzo para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}`
+        description: `Almuerzo para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}${
+          cashPaymentMethod === 'pagar_luego' ? ' (Pago pendiente)' : ''
+        }`
       });
 
       handleClose();
@@ -742,15 +774,20 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                   { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
                   { value: 'yape', label: 'Yape/Plin', icon: '📱' },
                   { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
+                  { value: 'pagar_luego', label: 'Pagar Luego', icon: '📝', highlight: true },
                 ].map((method) => (
                   <Card
                     key={method.value}
-                    className="p-4 cursor-pointer hover:shadow-lg transition-all"
+                    className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
+                      method.highlight ? 'border-2 border-orange-400 bg-orange-50' : ''
+                    }`}
                     onClick={() => setCashPaymentMethod(method.value as any)}
                   >
                     <div className="text-center">
                       <span className="text-3xl mb-2 block">{method.icon}</span>
-                      <p className="font-medium">{method.label}</p>
+                      <p className={`font-medium ${method.highlight ? 'text-orange-700' : ''}`}>
+                        {method.label}
+                      </p>
                     </div>
                   </Card>
                 ))}
@@ -986,6 +1023,47 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                     onChange={(e) => setPaymentDetails(prev => ({ ...prev, operationNumber: e.target.value }))}
                     className="mt-2"
                   />
+                </div>
+              </div>
+            )}
+
+            {/* FORMULARIO: PAGAR LUEGO */}
+            {cashPaymentMethod === 'pagar_luego' && (
+              <div className="space-y-4 border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-lg">📝 Pagar Luego (Fiado)</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCashPaymentMethod(null);
+                    }}
+                  >
+                    Cambiar
+                  </Button>
+                </div>
+
+                <Alert className="bg-orange-50 border-orange-200">
+                  <AlertTriangle className="h-4 w-4 text-orange-600" />
+                  <AlertDescription className="text-orange-800">
+                    Este pedido se registrará como <strong>deuda pendiente</strong> y aparecerá en el módulo de Cobranzas para su posterior pago.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600">Monto a pagar después:</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                  </p>
+                </div>
+
+                <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                  <p className="text-sm font-medium text-yellow-800">
+                    ✓ El pedido quedará registrado a nombre de: <strong>{manualName}</strong>
+                  </p>
+                  <p className="text-xs text-yellow-600 mt-1">
+                    Podrá pagar en el módulo de Cobranzas cuando lo desee
+                  </p>
                 </div>
               </div>
             )}

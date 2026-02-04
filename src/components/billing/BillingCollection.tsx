@@ -63,13 +63,14 @@ interface BillingPeriod {
   school_id: string;
 }
 
-interface DebtorStudent {
-  student_id: string;
-  student_name: string;
-  parent_id: string;
-  parent_name: string;
-  parent_phone: string;
-  parent_email: string;
+interface Debtor {
+  id: string; // student_id, teacher_id, o 'manual_' + nombre
+  client_name: string; // Nombre del deudor (alumno, profesor, o cliente manual)
+  client_type: 'student' | 'teacher' | 'manual'; // Tipo de cliente
+  parent_id?: string; // Solo para estudiantes
+  parent_name?: string; // Solo para estudiantes
+  parent_phone?: string; // Solo para estudiantes
+  parent_email?: string; // Solo para estudiantes
   school_id: string;
   school_name: string;
   total_amount: number;
@@ -85,7 +86,7 @@ export const BillingCollection = () => {
   const [loading, setLoading] = useState(true);
   const [schools, setSchools] = useState<School[]>([]);
   const [periods, setPeriods] = useState<BillingPeriod[]>([]);
-  const [debtors, setDebtors] = useState<DebtorStudent[]>([]);
+  const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   
   // Filtros
@@ -99,7 +100,7 @@ export const BillingCollection = () => {
   
   // Modal de pago
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [currentDebtor, setCurrentDebtor] = useState<DebtorStudent | null>(null);
+  const [currentDebtor, setCurrentDebtor] = useState<Debtor | null>(null);
   const [paymentData, setPaymentData] = useState({
     paid_amount: 0,
     payment_method: 'efectivo',
@@ -287,21 +288,20 @@ export const BillingCollection = () => {
 
       console.log('🔍 [BillingCollection] schoolIdFilter:', schoolIdFilter);
 
-      // SIMPLIFICADO: Solo consultar transacciones pendientes
+      // CONSULTA MEJORADA: Incluir estudiantes, profesores y clientes manuales
       let query = supabase
         .from('transactions')
         .select(`
           *,
           students(id, full_name, parent_id),
+          teacher_profiles(id, full_name),
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .eq('payment_status', 'pending')
-        .not('student_id', 'is', null);
+        .eq('payment_status', 'pending');
 
       // Filtrar por fecha límite si está definida
       if (untilDate) {
-        // Convertir a fecha local sin restar días
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
         const isoDate = localDate.toISOString();
@@ -326,9 +326,10 @@ export const BillingCollection = () => {
         throw error;
       }
 
-      // Obtener IDs únicos de padres
+      // Obtener IDs únicos de padres (solo para estudiantes)
       const parentIds = [...new Set(transactions
-        .map((t: any) => t.students?.parent_id)
+        .filter((t: any) => t.student_id && t.students?.parent_id)
+        .map((t: any) => t.students.parent_id)
         .filter(Boolean))];
 
       console.log('👤 [BillingCollection] Parent IDs:', parentIds);
@@ -357,23 +358,45 @@ export const BillingCollection = () => {
 
       console.log('🗺️ [BillingCollection] Parent map size:', parentMap.size);
 
-      // Agrupar por estudiante
-      const debtorsMap: { [key: string]: DebtorStudent } = {};
+      // Agrupar por cliente (estudiante, profesor, o manual)
+      const debtorsMap: { [key: string]: Debtor } = {};
 
       transactions?.forEach((transaction: any) => {
-        const studentId = transaction.student_id;
-        if (!studentId || !transaction.students) return;
+        let clientId: string;
+        let clientName: string;
+        let clientType: 'student' | 'teacher' | 'manual';
+        let parentData = null;
 
-        const student = transaction.students;
-        const parentProfile = parentMap.get(student.parent_id);
-        
-        if (!debtorsMap[studentId]) {
-          debtorsMap[studentId] = {
-            student_id: studentId,
-            student_name: student.full_name,
-            parent_id: student.parent_id || '',
-            parent_name: parentProfile?.full_name || 'Sin padre asignado',
-            parent_phone: parentProfile?.phone_1 || '',
+        // Determinar el tipo de cliente
+        if (transaction.student_id && transaction.students) {
+          // Estudiante
+          clientId = transaction.student_id;
+          clientName = transaction.students.full_name;
+          clientType = 'student';
+          parentData = parentMap.get(transaction.students.parent_id);
+        } else if (transaction.teacher_id && transaction.teacher_profiles) {
+          // Profesor
+          clientId = transaction.teacher_id;
+          clientName = transaction.teacher_profiles.full_name;
+          clientType = 'teacher';
+        } else if (transaction.manual_client_name) {
+          // Cliente manual (sin cuenta)
+          clientId = `manual_${transaction.manual_client_name}`;
+          clientName = transaction.manual_client_name;
+          clientType = 'manual';
+        } else {
+          // Transacción sin cliente identificado, saltar
+          return;
+        }
+
+        if (!debtorsMap[clientId]) {
+          debtorsMap[clientId] = {
+            id: clientId,
+            client_name: clientName,
+            client_type: clientType,
+            parent_id: parentData?.user_id || '',
+            parent_name: parentData?.full_name || '',
+            parent_phone: parentData?.phone_1 || '',
             parent_email: '', // Email no disponible por ahora
             school_id: transaction.school_id,
             school_name: transaction.schools?.name || '',
@@ -383,9 +406,9 @@ export const BillingCollection = () => {
           };
         }
 
-        debtorsMap[studentId].total_amount += Math.abs(transaction.amount);
-        debtorsMap[studentId].transaction_count += 1;
-        debtorsMap[studentId].transactions.push(transaction);
+        debtorsMap[clientId].total_amount += Math.abs(transaction.amount);
+        debtorsMap[clientId].transaction_count += 1;
+        debtorsMap[clientId].transactions.push(transaction);
       });
 
       const debtorsArray = Object.values(debtorsMap);
@@ -409,18 +432,18 @@ export const BillingCollection = () => {
     if (!searchTerm) return true;
     const search = searchTerm.toLowerCase();
     return (
-      debtor.student_name.toLowerCase().includes(search) ||
-      debtor.parent_name.toLowerCase().includes(search) ||
-      debtor.parent_email.toLowerCase().includes(search)
+      debtor.client_name.toLowerCase().includes(search) ||
+      debtor.parent_name?.toLowerCase().includes(search) ||
+      debtor.parent_email?.toLowerCase().includes(search)
     );
   });
 
-  const toggleSelection = (studentId: string) => {
+  const toggleSelection = (id: string) => {
     const newSelected = new Set(selectedDebtors);
-    if (newSelected.has(studentId)) {
-      newSelected.delete(studentId);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
     } else {
-      newSelected.add(studentId);
+      newSelected.add(id);
     }
     setSelectedDebtors(newSelected);
   };
@@ -429,7 +452,7 @@ export const BillingCollection = () => {
     if (selectedDebtors.size === filteredDebtors.length) {
       setSelectedDebtors(new Set());
     } else {
-      setSelectedDebtors(new Set(filteredDebtors.map(d => d.student_id)));
+      setSelectedDebtors(new Set(filteredDebtors.map(d => d.id)));
     }
   };
 
@@ -501,15 +524,29 @@ export const BillingCollection = () => {
     }
   };
 
-  const copyMessage = (debtor: DebtorStudent) => {
+  const copyMessage = (debtor: Debtor) => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
     const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
     
+    let clientLine = '';
+    let recipientLine = '';
+    
+    if (debtor.client_type === 'student') {
+      clientLine = `El alumno *${debtor.client_name}* tiene un consumo ${periodText}`;
+      recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
+    } else if (debtor.client_type === 'teacher') {
+      clientLine = `El profesor *${debtor.client_name}* tiene un consumo ${periodText}`;
+      recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
+    } else {
+      clientLine = `*${debtor.client_name}* tiene un consumo ${periodText}`;
+      recipientLine = `Estimado(a) ${debtor.client_name}`;
+    }
+    
     const message = `🔔 *COBRANZA LIMA CAFÉ 28*
 
-Estimado(a) ${debtor.parent_name}
+${recipientLine}
 
-El alumno *${debtor.student_name}* tiene un consumo ${periodText}
+${clientLine}
 
 💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}
 
@@ -525,7 +562,7 @@ Gracias.`;
     });
   };
 
-  const generatePDF = async (debtor: DebtorStudent) => {
+  const generatePDF = async (debtor: Debtor) => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
     
     let periodName: string;
@@ -565,7 +602,7 @@ Gracias.`;
     }
 
     generateBillingPDF({
-      student_name: debtor.student_name,
+      student_name: debtor.client_name,
       parent_name: debtor.parent_name,
       parent_phone: debtor.parent_phone,
       school_name: debtor.school_name,
@@ -586,13 +623,13 @@ Gracias.`;
 
     toast({
       title: '✅ PDF generado',
-      description: `Estado de cuenta de ${debtor.student_name}`,
+      description: `Estado de cuenta de ${debtor.client_name}`,
     });
   };
 
   const generateWhatsAppExport = () => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.student_id));
+    const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.id));
 
     if (selectedDebtorsList.length === 0) {
       toast({
@@ -611,7 +648,7 @@ Gracias.`;
         index: index + 1,
         phone: debtor.parent_phone,
         parent_name: debtor.parent_name,
-        student_name: debtor.student_name,
+        student_name: debtor.client_name,
         amount: debtor.total_amount.toFixed(2),
         period: period?.period_name || 'Cuenta Pendiente',
         message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del período: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administración.\nGracias.`,
@@ -636,7 +673,7 @@ Gracias.`;
   };
 
   const generateMassivePDFs = async () => {
-    const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.student_id));
+    const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.id));
 
     if (selectedDebtorsList.length === 0) {
       toast({
@@ -695,7 +732,7 @@ Gracias.`;
       }
 
       generateBillingPDF({
-        student_name: debtor.student_name,
+        student_name: debtor.client_name,
         parent_name: debtor.parent_name,
         parent_phone: debtor.parent_phone,
         school_name: debtor.school_name,
@@ -855,7 +892,7 @@ Gracias.`;
                     </span>
                     <Badge variant="secondary">
                       Total: S/ {filteredDebtors
-                        .filter(d => selectedDebtors.has(d.student_id))
+                        .filter(d => selectedDebtors.has(d.id))
                         .reduce((sum, d) => sum + d.total_amount, 0)
                         .toFixed(2)}
                     </Badge>
@@ -908,12 +945,12 @@ Gracias.`;
                 const maxDate = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
 
                 return (
-                  <Card key={debtor.student_id} className="hover:shadow-lg transition-shadow border-l-4 border-l-red-500">
+                  <Card key={debtor.id} className="hover:shadow-lg transition-shadow border-l-4 border-l-red-500">
                     <CardContent className="p-5">
                       <div className="flex items-start gap-4">
                         <Checkbox
-                          checked={selectedDebtors.has(debtor.student_id)}
-                          onCheckedChange={() => toggleSelection(debtor.student_id)}
+                          checked={selectedDebtors.has(debtor.id)}
+                          onCheckedChange={() => toggleSelection(debtor.id)}
                           className="mt-1"
                         />
 
@@ -921,14 +958,30 @@ Gracias.`;
                           {/* Header con nombre y monto */}
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
-                              <h3 className="font-bold text-xl text-gray-900">{debtor.student_name}</h3>
-                              <p className="text-sm text-gray-600 mt-1">
-                                👤 Padre: <span className="font-semibold">{debtor.parent_name}</span>
-                              </p>
-                              {debtor.parent_phone && (
-                                <p className="text-sm text-gray-600">
-                                  📱 {debtor.parent_phone}
-                                </p>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-bold text-xl text-gray-900">{debtor.client_name}</h3>
+                                {debtor.client_type === 'teacher' && (
+                                  <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                                    👨‍🏫 Profesor
+                                  </Badge>
+                                )}
+                                {debtor.client_type === 'manual' && (
+                                  <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
+                                    📝 Sin Cuenta
+                                  </Badge>
+                                )}
+                              </div>
+                              {debtor.client_type === 'student' && debtor.parent_name && (
+                                <>
+                                  <p className="text-sm text-gray-600 mt-1">
+                                    👤 Padre: <span className="font-semibold">{debtor.parent_name}</span>
+                                  </p>
+                                  {debtor.parent_phone && (
+                                    <p className="text-sm text-gray-600">
+                                      📱 {debtor.parent_phone}
+                                    </p>
+                                  )}
+                                </>
                               )}
                               {/* SIEMPRE mostrar la sede */}
                               <div className="flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md inline-flex">
@@ -1034,8 +1087,17 @@ Gracias.`;
             </DialogTitle>
             <DialogDescription asChild>
               <div className="mt-3 p-4 bg-blue-50 rounded-lg space-y-1">
-                <div className="font-semibold text-gray-900">👨‍🎓 Estudiante: {currentDebtor?.student_name}</div>
-                <div className="font-semibold text-gray-900">👤 Padre: {currentDebtor?.parent_name}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-semibold text-gray-900">
+                    {currentDebtor?.client_type === 'student' && '👨‍🎓 Estudiante: '}
+                    {currentDebtor?.client_type === 'teacher' && '👨‍🏫 Profesor: '}
+                    {currentDebtor?.client_type === 'manual' && '📝 Cliente: '}
+                    {currentDebtor?.client_name}
+                  </div>
+                </div>
+                {currentDebtor?.client_type === 'student' && currentDebtor.parent_name && (
+                  <div className="font-semibold text-gray-900">👤 Padre: {currentDebtor.parent_name}</div>
+                )}
                 <div className="text-2xl font-bold text-red-600 mt-2">Total a Cobrar: S/ {currentDebtor?.total_amount.toFixed(2)}</div>
                 <div className="text-sm text-gray-600">{currentDebtor?.transaction_count} consumo(s) pendiente(s)</div>
               </div>
