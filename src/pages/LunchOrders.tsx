@@ -536,7 +536,11 @@ export default function LunchOrders() {
     try {
       setCancelling(true);
       
-      console.log('🚫 Anulando pedido:', pendingCancelOrder.id);
+      console.log('🚫 [ANULAR] Iniciando anulación...');
+      console.log('📋 [ANULAR] Pedido completo:', pendingCancelOrder);
+      console.log('🆔 [ANULAR] ID del pedido:', pendingCancelOrder.id);
+      console.log('👤 [ANULAR] Usuario actual:', user?.id);
+      console.log('📝 [ANULAR] Motivo:', cancelReason.trim());
       
       // Anular el pedido
       const { error: updateError } = await supabase
@@ -549,7 +553,12 @@ export default function LunchOrders() {
         })
         .eq('id', pendingCancelOrder.id);
       
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('❌ [ANULAR] Error al actualizar:', updateError);
+        throw updateError;
+      }
+      
+      console.log('✅ [ANULAR] Pedido actualizado en BD');
       
       // 💰 Si el pedido fue con crédito (tiene student_id o teacher_id), devolver el crédito
       if (pendingCancelOrder.student_id || pendingCancelOrder.teacher_id) {
@@ -616,11 +625,13 @@ export default function LunchOrders() {
       setCancelReason('');
       setPendingCancelOrder(null);
       
+      console.log('🔄 [ANULAR] Recargando pedidos...');
       // Recargar pedidos
-      fetchOrders();
+      await fetchOrders();
+      console.log('✅ [ANULAR] Pedidos recargados');
       
     } catch (error: any) {
-      console.error('Error anulando pedido:', error);
+      console.error('💥 [ANULAR] Error fatal:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
