@@ -903,18 +903,29 @@ export const SalesList = () => {
                               S/ {Math.abs(t.amount).toFixed(2)}
                             </p>
                             <div className="flex gap-1 mt-2">
-                              {/* Botón Integrado: Ver y Reimprimir */}
+                              {/* Botón Ver Detalles */}
                               <Button 
                                 variant="outline" 
                                 size="sm"
                                 className="h-8 gap-1 border-blue-200 hover:bg-blue-50 text-blue-700"
-                                onClick={() => handleReprint(t)}
-                                disabled={!permissions.canPrint}
-                                title={permissions.canPrint ? "Ver y Reimprimir Ticket" : "Sin permiso para imprimir"}
+                                onClick={() => handleViewDetails(t)}
+                                title="Ver detalles de la venta"
                               >
-                                <Printer className="h-3.5 w-3.5" />
-                                <span className="text-[10px] font-bold">TICKET</span>
+                                <Eye className="h-3.5 w-3.5" />
                               </Button>
+
+                              {/* Botón Reimprimir */}
+                              {permissions.canPrint && (
+                                <Button 
+                                  variant="outline" 
+                                  size="sm"
+                                  className="h-8 gap-1 border-emerald-200 hover:bg-emerald-50 text-emerald-700"
+                                  onClick={() => handleReprint(t)}
+                                  title="Reimprimir ticket"
+                                >
+                                  <Printer className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
 
                               {!t.is_deleted && (
                                 <>
@@ -922,24 +933,23 @@ export const SalesList = () => {
                                     <Button 
                                       variant="ghost" 
                                       size="sm"
-                                      className="h-8 w-8 p-0"
+                                      className="h-8 w-8 p-0 hover:bg-blue-50"
                                       onClick={() => handleOpenEditClient(t)}
                                       title="Editar datos del cliente"
                                     >
-                                      <Edit className="h-4 w-4" />
+                                      <Edit className="h-4 w-4 text-blue-600" />
                                     </Button>
                                   )}
-                                  {permissions.canDelete && (
-                                    <Button 
-                                      variant="ghost" 
-                                      size="sm"
-                                      className="h-8 w-8 p-0"
-                                      onClick={() => handleOpenAnnul(t)}
-                                      title="Anular venta"
-                                    >
-                                      <Trash2 className="h-4 w-4 text-red-600" />
-                                    </Button>
-                                  )}
+                                  {/* Tachito: siempre visible */}
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    className="h-8 w-8 p-0 hover:bg-red-50"
+                                    onClick={() => handleOpenAnnul(t)}
+                                    title="Anular venta"
+                                  >
+                                    <Trash2 className="h-4 w-4 text-red-600" />
+                                  </Button>
                                 </>
                               )}
                             </div>

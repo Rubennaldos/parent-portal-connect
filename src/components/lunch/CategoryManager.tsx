@@ -390,7 +390,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                         <SelectContent>
                           <SelectItem value="students">
                             <span className="flex items-center gap-2">
-                              👨‍🎓 Antiguos alumnos
+                              👨‍🎓 Alumnos
                             </span>
                           </SelectItem>
                           <SelectItem value="teachers">
