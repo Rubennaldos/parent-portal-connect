@@ -957,7 +957,7 @@ export default function LunchOrders() {
                     <div className="flex justify-between items-center py-2 border-b">
                       <span className="text-sm text-gray-600">Fecha del pedido:</span>
                       <span className="font-semibold text-gray-900">
-                        {format(new Date(selectedMenuOrder.order_date), "dd 'de' MMMM, yyyy", { locale: es })}
+                        {format(new Date(selectedMenuOrder.order_date + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b">
