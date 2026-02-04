@@ -219,7 +219,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         .from('lunch_menus')
         .select(`
           *,
-          lunch_categories (
+          lunch_categories!lunch_menus_category_id_fkey (
             id,
             name,
             icon,
@@ -326,8 +326,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             <p className="text-sm text-gray-600 mt-2">
               📅 Pedido para el día: <span className="font-semibold">
                 {typeof selectedDate === 'string' 
-                  ? format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })
-                  : format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })
+                  ? format(new Date(selectedDate + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })
+                  : format(selectedDate, "dd 'de' MMMM, yyyy", { locale: es })
                 }
               </span>
             </p>
@@ -527,7 +527,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           <div className="space-y-4 py-4">
             <p className="text-center text-gray-600">
               Selecciona el menú 
-              {selectedDate && ` del ${format(new Date(typeof selectedDate === 'string' ? selectedDate : selectedDate), "dd 'de' MMMM", { locale: es })}`}
+              {selectedDate && ` del ${format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM", { locale: es })}`}
             </p>
             {loading ? (
               <div className="text-center py-8">
@@ -538,7 +538,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <p className="text-gray-500 mb-2">❌ No hay menús disponibles</p>
                 {selectedDate && (
                   <p className="text-sm text-gray-400">
-                    Para el día {format(new Date(typeof selectedDate === 'string' ? selectedDate : selectedDate), "dd 'de' MMMM, yyyy", { locale: es })}
+                    Para el día {format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })}
                   </p>
                 )}
               </div>
