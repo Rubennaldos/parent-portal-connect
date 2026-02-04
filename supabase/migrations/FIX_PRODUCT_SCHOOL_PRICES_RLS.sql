@@ -15,12 +15,16 @@ SELECT
 FROM pg_policies
 WHERE tablename = 'product_school_prices';
 
--- 2. Eliminar políticas antiguas si existen
+-- 2. Eliminar políticas antiguas si existen (TODAS las variantes posibles)
 DROP POLICY IF EXISTS "Usuarios autenticados pueden ver precios" ON product_school_prices;
 DROP POLICY IF EXISTS "Usuarios autenticados pueden insertar precios" ON product_school_prices;
 DROP POLICY IF EXISTS "Usuarios autenticados pueden actualizar precios" ON product_school_prices;
 DROP POLICY IF EXISTS "Usuarios autenticados pueden eliminar precios" ON product_school_prices;
 DROP POLICY IF EXISTS "Admin puede gestionar precios" ON product_school_prices;
+DROP POLICY IF EXISTS "Usuarios autenticados pueden ver precios por sede" ON product_school_prices;
+DROP POLICY IF EXISTS "Usuarios autenticados pueden insertar precios por sede" ON product_school_prices;
+DROP POLICY IF EXISTS "Usuarios autenticados pueden actualizar precios por sede" ON product_school_prices;
+DROP POLICY IF EXISTS "Usuarios autenticados pueden eliminar precios por sede" ON product_school_prices;
 
 -- 3. Habilitar RLS en la tabla (si no está habilitado)
 ALTER TABLE product_school_prices ENABLE ROW LEVEL SECURITY;
