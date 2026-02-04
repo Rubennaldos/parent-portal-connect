@@ -136,12 +136,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     }
   }, [step, paymentType, targetType]);
 
-  // Paso 4: Cargar categorías
+  // Paso 4: Cargar categorías (necesita selectedDate)
   useEffect(() => {
-    if (step === 4 && targetType) {
+    if (step === 4 && targetType && selectedDate) {
       fetchCategories();
     }
-  }, [step, targetType]);
+  }, [step, targetType, selectedDate]);
 
   // Paso 5: Cargar menús
   useEffect(() => {
