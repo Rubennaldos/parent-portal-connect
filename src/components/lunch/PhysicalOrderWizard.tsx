@@ -202,7 +202,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     try {
       setLoading(true);
       // Usar la fecha seleccionada o la fecha de hoy
-      const targetDate = selectedDate || format(new Date(), 'yyyy-MM-dd');
+      let targetDate = selectedDate || format(new Date(), 'yyyy-MM-dd');
+      
+      // Si selectedDate es un objeto Date, formatearlo
+      if (selectedDate && typeof selectedDate !== 'string') {
+        targetDate = format(new Date(selectedDate), 'yyyy-MM-dd');
+      }
       
       console.log('🔍 Buscando menús para fecha:', targetDate);
       
@@ -305,7 +310,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           <DialogTitle className="text-2xl">Nuevo Pedido de Almuerzo</DialogTitle>
           {selectedDate && (
             <p className="text-sm text-gray-600 mt-2">
-              📅 Pedido para el día: <span className="font-semibold">{format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })}</span>
+              📅 Pedido para el día: <span className="font-semibold">
+                {typeof selectedDate === 'string' 
+                  ? format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })
+                  : format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })
+                }
+              </span>
             </p>
           )}
         </DialogHeader>
@@ -500,7 +510,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           <div className="space-y-4 py-4">
             <p className="text-center text-gray-600">
               Selecciona el menú 
-              {selectedDate && ` del ${format(new Date(selectedDate), "dd 'de' MMMM", { locale: es })}`}
+              {selectedDate && ` del ${format(new Date(typeof selectedDate === 'string' ? selectedDate : selectedDate), "dd 'de' MMMM", { locale: es })}`}
             </p>
             {loading ? (
               <div className="text-center py-8">
@@ -511,7 +521,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <p className="text-gray-500 mb-2">❌ No hay menús disponibles</p>
                 {selectedDate && (
                   <p className="text-sm text-gray-400">
-                    Para el día {format(new Date(selectedDate), "dd 'de' MMMM, yyyy", { locale: es })}
+                    Para el día {format(new Date(typeof selectedDate === 'string' ? selectedDate : selectedDate), "dd 'de' MMMM, yyyy", { locale: es })}
                   </p>
                 )}
               </div>
