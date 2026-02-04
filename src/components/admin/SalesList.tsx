@@ -341,7 +341,7 @@ export const SalesList = () => {
           student:students(id, full_name, balance),
           school:schools(id, name, code)
         `)
-        .eq('type', 'purchase') // ✅ SOLO VENTAS (no recargas)
+        .eq('type', 'sale') // ✅ VENTAS DEL POS (no compras/almuerzos)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: false });
