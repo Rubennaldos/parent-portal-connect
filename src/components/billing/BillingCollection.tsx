@@ -474,8 +474,27 @@ export const BillingCollection = () => {
         console.log('💰 [BillingCollection] Transacciones virtuales creadas:', virtualTransactions.length);
       }
 
-      // Combinar transacciones reales con virtuales
-      const allTransactions = [...(transactions || []), ...virtualTransactions];
+      // Filtrar transacciones de pedidos cancelados
+      const validTransactions = [];
+      for (const transaction of transactions || []) {
+        // Si tiene metadata con lunch_order_id, verificar que el pedido no esté cancelado
+        if (transaction.metadata?.lunch_order_id) {
+          const { data: order } = await supabase
+            .from('lunch_orders')
+            .select('is_cancelled')
+            .eq('id', transaction.metadata.lunch_order_id)
+            .single();
+          
+          if (order?.is_cancelled === true) {
+            console.log(`⏭️ [BillingCollection] Transacción ${transaction.id} es de pedido cancelado, omitiendo`);
+            continue; // Saltar transacciones de pedidos cancelados
+          }
+        }
+        validTransactions.push(transaction);
+      }
+
+      // Combinar transacciones reales (filtradas) con virtuales
+      const allTransactions = [...validTransactions, ...virtualTransactions];
 
       // Obtener IDs únicos de padres (solo para estudiantes)
       const parentIds = [...new Set(allTransactions
