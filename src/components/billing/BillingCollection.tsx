@@ -370,29 +370,45 @@ export const BillingCollection = () => {
         console.log('🍽️ [BillingCollection] Pedidos de almuerzo encontrados:', lunchOrders?.length || 0);
       }
 
-      // Obtener IDs de pedidos que ya tienen transacciones asociadas
-      // Buscar transacciones que puedan estar relacionadas con pedidos de almuerzo
-      const existingOrderKeys = new Set<string>();
+      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      console.log('🔍 [BillingCollection] Filtrando transacciones de pedidos cancelados...');
       
-      if (transactions && transactions.length > 0) {
-        transactions.forEach((t: any) => {
-          // Si tiene metadata con lunch_order_id, agregarlo
-          if (t.metadata?.lunch_order_id) {
-            existingOrderKeys.add(t.metadata.lunch_order_id);
-          }
-          
-          // También verificar por coincidencia de fecha y cliente
-          if (t.description?.toLowerCase().includes('almuerzo')) {
-            const orderDate = t.created_at ? new Date(t.created_at).toISOString().split('T')[0] : null;
-            if (orderDate && (t.student_id || t.teacher_id || t.manual_client_name)) {
-              // Crear una clave única para identificar el pedido
-              const key = `${orderDate}_${t.student_id || ''}_${t.teacher_id || ''}_${t.manual_client_name || ''}`;
-              // No agregamos a existingOrderKeys porque no tenemos el ID del pedido
-              // pero podemos usar esta información para evitar duplicados
-            }
-          }
-        });
+      // Obtener todos los lunch_order_ids de las transacciones
+      const lunchOrderIds = transactions
+        ?.map((t: any) => t.metadata?.lunch_order_id)
+        .filter(Boolean) || [];
+      
+      // Si hay transacciones con lunch_order_id, verificar cuáles están cancelados
+      let cancelledOrderIds = new Set<string>();
+      if (lunchOrderIds.length > 0) {
+        const { data: cancelledOrders } = await supabase
+          .from('lunch_orders')
+          .select('id')
+          .in('id', lunchOrderIds)
+          .eq('is_cancelled', true);
+        
+        cancelledOrderIds = new Set(cancelledOrders?.map((o: any) => o.id) || []);
+        console.log('❌ [BillingCollection] Pedidos cancelados encontrados:', cancelledOrderIds.size);
       }
+      
+      // Filtrar transacciones, excluyendo las de pedidos cancelados
+      const validTransactions = transactions?.filter((t: any) => {
+        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) {
+          console.log(`⏭️ [BillingCollection] Transacción ${t.id} es de pedido cancelado, omitiendo`);
+          return false;
+        }
+        return true;
+      }) || [];
+      
+      console.log('✅ [BillingCollection] Transacciones válidas (no canceladas):', validTransactions.length);
+      
+      // Obtener IDs de pedidos que ya tienen transacciones asociadas
+      const existingOrderKeys = new Set<string>();
+      validTransactions.forEach((t: any) => {
+        if (t.metadata?.lunch_order_id) {
+          existingOrderKeys.add(t.metadata.lunch_order_id);
+        }
+      });
 
       // Crear transacciones virtuales para pedidos sin transacciones
       const virtualTransactions: any[] = [];
@@ -474,26 +490,7 @@ export const BillingCollection = () => {
         console.log('💰 [BillingCollection] Transacciones virtuales creadas:', virtualTransactions.length);
       }
 
-      // Filtrar transacciones de pedidos cancelados
-      const validTransactions = [];
-      for (const transaction of transactions || []) {
-        // Si tiene metadata con lunch_order_id, verificar que el pedido no esté cancelado
-        if (transaction.metadata?.lunch_order_id) {
-          const { data: order } = await supabase
-            .from('lunch_orders')
-            .select('is_cancelled')
-            .eq('id', transaction.metadata.lunch_order_id)
-            .single();
-          
-          if (order?.is_cancelled === true) {
-            console.log(`⏭️ [BillingCollection] Transacción ${transaction.id} es de pedido cancelado, omitiendo`);
-            continue; // Saltar transacciones de pedidos cancelados
-          }
-        }
-        validTransactions.push(transaction);
-      }
-
-      // Combinar transacciones reales (filtradas) con virtuales
+      // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
 
       // Obtener IDs únicos de padres (solo para estudiantes)
@@ -1030,23 +1027,28 @@ Gracias.`;
 
       if (error) throw error;
 
-      // Filtrar transacciones de pedidos cancelados
-      const validTransactions = [];
-      for (const transaction of data || []) {
-        // Si tiene metadata con lunch_order_id, verificar que el pedido no esté cancelado
-        if (transaction.metadata?.lunch_order_id) {
-          const { data: order } = await supabase
-            .from('lunch_orders')
-            .select('is_cancelled')
-            .eq('id', transaction.metadata.lunch_order_id)
-            .single();
-          
-          if (order?.is_cancelled === true) {
-            continue; // Saltar transacciones de pedidos cancelados
-          }
-        }
-        validTransactions.push(transaction);
+      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      const lunchOrderIds = data
+        ?.map((t: any) => t.metadata?.lunch_order_id)
+        .filter(Boolean) || [];
+      
+      let cancelledOrderIds = new Set<string>();
+      if (lunchOrderIds.length > 0) {
+        const { data: cancelledOrders } = await supabase
+          .from('lunch_orders')
+          .select('id')
+          .in('id', lunchOrderIds)
+          .eq('is_cancelled', true);
+        
+        cancelledOrderIds = new Set(cancelledOrders?.map((o: any) => o.id) || []);
       }
+      
+      const validTransactions = data?.filter((t: any) => {
+        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) {
+          return false;
+        }
+        return true;
+      }) || [];
 
       setPaidTransactions(validTransactions);
     } catch (error) {
