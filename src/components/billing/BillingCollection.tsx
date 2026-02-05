@@ -294,6 +294,7 @@ export const BillingCollection = () => {
       console.log('🔍 [BillingCollection] schoolIdFilter:', schoolIdFilter);
 
       // CONSULTA MEJORADA: Incluir estudiantes, profesores y clientes manuales
+      // Solo transacciones PENDIENTES o PARCIALES (NO pagadas)
       let query = supabase
         .from('transactions')
         .select(`
@@ -303,7 +304,7 @@ export const BillingCollection = () => {
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .eq('payment_status', 'pending');
+        .in('payment_status', ['pending', 'partial']); // Excluir 'paid'
 
       // Filtrar por fecha límite si está definida
       if (untilDate) {
@@ -727,6 +728,7 @@ export const BillingCollection = () => {
         description: `Se registró el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
       });
 
+      // Cerrar modal y limpiar
       setShowPaymentModal(false);
       setCurrentDebtor(null);
       setPaymentData({
@@ -736,7 +738,10 @@ export const BillingCollection = () => {
         document_type: 'ticket',
         notes: '',
       });
-      fetchDebtors();
+      
+      // Recargar deudores para actualizar la lista
+      console.log('🔄 [BillingCollection] Recargando deudores después del pago...');
+      await fetchDebtors();
     } catch (error: any) {
       console.error('Error registering payment:', error);
       toast({
