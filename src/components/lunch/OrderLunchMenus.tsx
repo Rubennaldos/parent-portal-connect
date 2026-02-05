@@ -250,6 +250,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
         order_date: selectedMenu.date,
         status: 'pending',
         category_id: selectedMenu.category_id,
+        school_id: userSchoolId || selectedMenu.school_id, // 🔥 Agregar school_id del usuario o del menú
       };
 
       if (userType === 'parent') {
@@ -271,6 +272,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           amount: -Math.abs(selectedMenu.category.price), // Negativo = cargo/deuda
           description: `Almuerzo - ${selectedMenu.category.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
           created_by: userId,
+          school_id: userSchoolId || selectedMenu.school_id, // 🔥 Agregar school_id
         };
 
         if (userType === 'parent') {
