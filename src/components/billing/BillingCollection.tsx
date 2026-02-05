@@ -1654,7 +1654,7 @@ Gracias.`;
             </div>
 
             {/* Número de Operación */}
-            {['yape', 'plin', 'transferencia'].includes(paymentData.payment_method) && (
+            {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
               <div className="space-y-2">
                 <Label className="text-base font-semibold">🔢 Número de Operación (Opcional)</Label>
                 <Input
