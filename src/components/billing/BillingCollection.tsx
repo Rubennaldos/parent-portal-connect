@@ -326,8 +326,144 @@ export const BillingCollection = () => {
         throw error;
       }
 
+      // 🆕 BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
+      console.log('🍽️ [BillingCollection] Buscando pedidos de almuerzo sin transacciones...');
+      
+      let lunchOrdersQuery = supabase
+        .from('lunch_orders')
+        .select(`
+          id,
+          order_date,
+          student_id,
+          teacher_id,
+          manual_name,
+          school_id,
+          category_id,
+          students(id, full_name, parent_id, school_id),
+          teacher_profiles(id, full_name, school_id_1),
+          schools(id, name),
+          lunch_categories(id, name, price)
+        `)
+        .eq('status', 'confirmed')
+        .eq('is_cancelled', false);
+
+      // Filtrar por fecha límite si está definida
+      if (untilDate) {
+        const localDate = new Date(untilDate);
+        localDate.setHours(23, 59, 59, 999);
+        const dateStr = localDate.toISOString().split('T')[0];
+        lunchOrdersQuery = lunchOrdersQuery.lte('order_date', dateStr);
+      }
+
+      if (schoolIdFilter) {
+        lunchOrdersQuery = lunchOrdersQuery.eq('school_id', schoolIdFilter);
+      }
+
+      const { data: lunchOrders, error: lunchOrdersError } = await lunchOrdersQuery;
+
+      if (lunchOrdersError) {
+        console.error('❌ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
+      } else {
+        console.log('🍽️ [BillingCollection] Pedidos de almuerzo encontrados:', lunchOrders?.length || 0);
+      }
+
+      // Obtener IDs de pedidos que ya tienen transacciones asociadas
+      // Buscar transacciones que puedan estar relacionadas con pedidos de almuerzo
+      const existingOrderKeys = new Set<string>();
+      
+      if (transactions && transactions.length > 0) {
+        transactions.forEach((t: any) => {
+          // Si tiene metadata con lunch_order_id, agregarlo
+          if (t.metadata?.lunch_order_id) {
+            existingOrderKeys.add(t.metadata.lunch_order_id);
+          }
+          
+          // También verificar por coincidencia de fecha y cliente
+          if (t.description?.toLowerCase().includes('almuerzo')) {
+            const orderDate = t.created_at ? new Date(t.created_at).toISOString().split('T')[0] : null;
+            if (orderDate && (t.student_id || t.teacher_id || t.manual_client_name)) {
+              // Crear una clave única para identificar el pedido
+              const key = `${orderDate}_${t.student_id || ''}_${t.teacher_id || ''}_${t.manual_client_name || ''}`;
+              // No agregamos a existingOrderKeys porque no tenemos el ID del pedido
+              // pero podemos usar esta información para evitar duplicados
+            }
+          }
+        });
+      }
+
+      // Crear transacciones virtuales para pedidos sin transacciones
+      const virtualTransactions: any[] = [];
+      
+      if (lunchOrders && lunchOrders.length > 0) {
+        // Obtener configuraciones de precio por sede
+        const schoolIds = [...new Set(lunchOrders.map((o: any) => o.school_id).filter(Boolean))];
+        const { data: lunchConfigs } = await supabase
+          .from('lunch_configuration')
+          .select('school_id, lunch_price')
+          .in('school_id', schoolIds);
+
+        const configMap = new Map();
+        lunchConfigs?.forEach((c: any) => {
+          configMap.set(c.school_id, c.lunch_price);
+        });
+
+        lunchOrders.forEach((order: any) => {
+          // Verificar si este pedido ya tiene una transacción
+          if (existingOrderKeys.has(order.id)) {
+            console.log(`⏭️ [BillingCollection] Pedido ${order.id} ya tiene transacción, omitiendo`);
+            return; // Saltar este pedido
+          }
+          
+          let price = 0;
+          let schoolId = order.school_id;
+
+          // Obtener precio desde categoría o configuración
+          if (order.lunch_categories?.price) {
+            price = order.lunch_categories.price;
+          } else if (schoolId && configMap.has(schoolId)) {
+            price = configMap.get(schoolId);
+          } else {
+            price = 7.50; // Precio por defecto
+          }
+
+          // Determinar school_id si no está en el pedido
+          if (!schoolId) {
+            if (order.students?.school_id) {
+              schoolId = order.students.school_id;
+            } else if (order.teacher_profiles?.school_id_1) {
+              schoolId = order.teacher_profiles.school_id_1;
+            }
+          }
+
+          // Crear transacción virtual solo si el pedido tiene un cliente identificado
+          if (order.student_id || order.teacher_id || order.manual_name) {
+            virtualTransactions.push({
+              id: `lunch_${order.id}`, // ID virtual
+              type: 'purchase',
+              amount: -Math.abs(price), // Negativo = deuda
+              payment_status: 'pending',
+              description: `Almuerzo - ${new Date(order.order_date).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+              student_id: order.student_id || null,
+              teacher_id: order.teacher_id || null,
+              manual_client_name: order.manual_name || null,
+              school_id: schoolId,
+              created_at: order.order_date || new Date().toISOString(),
+              students: order.students || null,
+              teacher_profiles: order.teacher_profiles || null,
+              schools: order.schools || null,
+              metadata: { lunch_order_id: order.id, source: 'lunch_order' }
+            });
+          }
+        });
+
+        console.log('💰 [BillingCollection] Transacciones virtuales creadas:', virtualTransactions.length);
+      }
+
+      // Combinar transacciones reales con virtuales
+      const allTransactions = [...(transactions || []), ...virtualTransactions];
+
       // Obtener IDs únicos de padres (solo para estudiantes)
-      const parentIds = [...new Set(transactions
+      const parentIds = [...new Set(allTransactions
         .filter((t: any) => t.student_id && t.students?.parent_id)
         .map((t: any) => t.students.parent_id)
         .filter(Boolean))];
@@ -361,7 +497,7 @@ export const BillingCollection = () => {
       // Agrupar por cliente (estudiante, profesor, o manual)
       const debtorsMap: { [key: string]: Debtor } = {};
 
-      transactions?.forEach((transaction: any) => {
+      allTransactions?.forEach((transaction: any) => {
         let clientId: string;
         let clientName: string;
         let clientType: 'student' | 'teacher' | 'manual';
@@ -483,18 +619,68 @@ export const BillingCollection = () => {
     setSaving(true);
     
     try {
-      // Simplemente marcar transacciones como pagadas
-      const { error: updateError } = await supabase
-        .from('transactions')
-        .update({
-          payment_status: 'paid',
-          payment_method: paymentData.payment_method,
-        })
-        .in('id', currentDebtor.transactions.map(t => t.id));
+      // Separar transacciones reales de virtuales
+      const realTransactions = currentDebtor.transactions.filter((t: any) => 
+        !t.id?.toString().startsWith('lunch_') && t.metadata?.source !== 'lunch_order'
+      );
+      const virtualTransactions = currentDebtor.transactions.filter((t: any) => 
+        t.id?.toString().startsWith('lunch_') || t.metadata?.source === 'lunch_order'
+      );
 
-      if (updateError) {
-        console.error('Error actualizando transacciones:', updateError);
-        throw updateError;
+      // Crear transacciones reales para las virtuales
+      if (virtualTransactions.length > 0) {
+        console.log('💰 [BillingCollection] Creando transacciones reales para pedidos de almuerzo...');
+        
+        const transactionsToCreate = virtualTransactions.map((vt: any) => ({
+          type: 'purchase',
+          amount: vt.amount,
+          payment_status: 'paid', // Ya se está pagando
+          payment_method: paymentData.payment_method,
+          description: vt.description,
+          student_id: vt.student_id || null,
+          teacher_id: vt.teacher_id || null,
+          manual_client_name: vt.manual_client_name || null,
+          school_id: vt.school_id,
+          created_at: vt.created_at,
+          metadata: vt.metadata
+        }));
+
+        const { data: createdTransactions, error: createError } = await supabase
+          .from('transactions')
+          .insert(transactionsToCreate)
+          .select();
+
+        if (createError) {
+          console.error('❌ [BillingCollection] Error creando transacciones:', createError);
+          throw createError;
+        }
+
+        console.log('✅ [BillingCollection] Transacciones creadas:', createdTransactions?.length);
+        
+        // Agregar las transacciones creadas a la lista de reales
+        realTransactions.push(...(createdTransactions || []));
+      }
+
+      // Actualizar transacciones reales como pagadas
+      if (realTransactions.length > 0) {
+        const realIds = realTransactions
+          .map((t: any) => t.id)
+          .filter((id: any) => id && !id.toString().startsWith('lunch_'));
+
+        if (realIds.length > 0) {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update({
+              payment_status: 'paid',
+              payment_method: paymentData.payment_method,
+            })
+            .in('id', realIds);
+
+          if (updateError) {
+            console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
+            throw updateError;
+          }
+        }
       }
 
       toast({
