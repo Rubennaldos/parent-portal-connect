@@ -651,15 +651,41 @@ export const BillingCollection = () => {
     setSaving(true);
     
     try {
+      console.log('💰 [BillingCollection] Iniciando registro de pago...', currentDebtor);
+      
       // Separar transacciones reales de virtuales
       const realTransactions = currentDebtor.transactions.filter((t: any) => 
-        !t.id?.toString().startsWith('lunch_') && t.metadata?.source !== 'lunch_order'
+        !t.id?.toString().startsWith('lunch_')
       );
       const virtualTransactions = currentDebtor.transactions.filter((t: any) => 
-        t.id?.toString().startsWith('lunch_') || t.metadata?.source === 'lunch_order'
+        t.id?.toString().startsWith('lunch_')
       );
+      
+      console.log('📊 [BillingCollection] Transacciones reales:', realTransactions.length, 'virtuales:', virtualTransactions.length);
 
-      // Crear transacciones reales para las virtuales
+      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
+      if (realTransactions.length > 0) {
+        const realIds = realTransactions.map((t: any) => t.id);
+        console.log('🔄 [BillingCollection] Actualizando transacciones reales:', realIds);
+
+        const { error: updateError } = await supabase
+          .from('transactions')
+          .update({
+            payment_status: 'paid',
+            payment_method: paymentData.payment_method,
+            operation_number: paymentData.operation_number || null,
+          })
+          .in('id', realIds);
+
+        if (updateError) {
+          console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
+          throw updateError;
+        }
+        
+        console.log('✅ [BillingCollection] Transacciones reales actualizadas:', realIds.length);
+      }
+
+      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacción)
       if (virtualTransactions.length > 0) {
         console.log('💰 [BillingCollection] Creando transacciones reales para pedidos de almuerzo...');
         
@@ -667,8 +693,9 @@ export const BillingCollection = () => {
           const transaction: any = {
             type: 'purchase',
             amount: vt.amount,
-            payment_status: 'paid', // Ya se está pagando
+            payment_status: 'paid',
             payment_method: paymentData.payment_method,
+            operation_number: paymentData.operation_number || null,
             description: vt.description,
             student_id: vt.student_id || null,
             teacher_id: vt.teacher_id || null,
@@ -677,7 +704,7 @@ export const BillingCollection = () => {
             created_at: vt.created_at,
           };
           
-          // Solo agregar metadata si existe y no es null
+          // Agregar metadata con lunch_order_id
           if (vt.metadata) {
             transaction.metadata = vt.metadata;
           }
@@ -695,32 +722,7 @@ export const BillingCollection = () => {
           throw createError;
         }
 
-        console.log('✅ [BillingCollection] Transacciones creadas:', createdTransactions?.length);
-        
-        // Agregar las transacciones creadas a la lista de reales
-        realTransactions.push(...(createdTransactions || []));
-      }
-
-      // Actualizar transacciones reales como pagadas
-      if (realTransactions.length > 0) {
-        const realIds = realTransactions
-          .map((t: any) => t.id)
-          .filter((id: any) => id && !id.toString().startsWith('lunch_'));
-
-        if (realIds.length > 0) {
-          const { error: updateError } = await supabase
-            .from('transactions')
-            .update({
-              payment_status: 'paid',
-              payment_method: paymentData.payment_method,
-            })
-            .in('id', realIds);
-
-          if (updateError) {
-            console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
-            throw updateError;
-          }
-        }
+        console.log('✅ [BillingCollection] Transacciones nuevas creadas:', createdTransactions?.length);
       }
 
       toast({
