@@ -27,7 +27,7 @@ import Logistics from "./pages/Logistics";
 import SchoolAdmin from "./pages/SchoolAdmin";
 import AccessControl from "./pages/AccessControl";
 import CombosPromotions from "./pages/CombosPromotions";
-import { CashRegisterClosure } from "./pages/CashRegisterClosure";
+import CashRegisterPage from "./pages/CashRegister";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -238,8 +238,8 @@ const App = () => (
             <Route
               path="/cash-register"
               element={
-                <ProtectedRoute allowedRoles={['admin', 'operador_caja']}>
-                  <CashRegisterClosure />
+                <ProtectedRoute allowedRoles={['admin', 'admin_general', 'operador_caja']}>
+                  <CashRegisterPage />
                 </ProtectedRoute>
               }
             />

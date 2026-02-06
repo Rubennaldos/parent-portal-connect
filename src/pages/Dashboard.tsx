@@ -287,6 +287,18 @@ const Dashboard = () => {
           is_enabled: false,
           status: 'coming_soon' as const,
         },
+        {
+          id: '8',
+          code: 'cierre_caja',
+          name: 'Cierre de Caja',
+          description: 'Gestión de caja, ingresos, egresos y cierre diario',
+          icon: 'DollarSign',
+          color: 'green',
+          route: '/cash-register',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
       ];
 
       // Admin General tiene acceso a TODO
