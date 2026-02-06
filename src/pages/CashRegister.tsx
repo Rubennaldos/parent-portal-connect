@@ -164,23 +164,8 @@ export default function CashRegisterPage() {
     }
   }, [currentRegister]);
 
-  // Verificar permisos
-  const canManageCash = profile?.role === 'admin' || 
-                        profile?.role === 'admin_general' || 
-                        profile?.role === 'operador_caja';
-
-  if (!canManageCash) {
-    return (
-      <div className="p-8">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            No tienes permisos para acceder al módulo de Cierre de Caja.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
+  // No necesitamos verificar permisos aquí porque PermissionProtectedRoute ya lo hace
+  // Si el usuario llegó hasta aquí, es porque tiene permisos
 
   if (loading) {
     return (
