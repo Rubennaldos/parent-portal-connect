@@ -199,6 +199,15 @@ const MODULE_CONFIG = {
       { action: 'gestionar_calendario', label: 'Gestionar calendarios', description: 'Eventos académicos e internos' },
       { action: 'gestionar_tarjetas', label: 'Gestionar tarjetas ID', description: 'Activar y vincular tarjetas' }
     ]
+  },
+  cash_register: {
+    name: 'Cierre de Caja',
+    icon: '💰',
+    color: 'green',
+    description: 'Gestión de caja, ingresos, egresos y cierre diario',
+    permissions: [
+      { action: 'access', label: 'Acceder al módulo', description: 'Permite ver y usar el módulo de cierre de caja' }
+    ]
   }
 };
 
