@@ -303,9 +303,9 @@ export default function CashRegisterPage() {
         />
       )}
 
-      {showHistoryDialog && (
+      {showHistoryDialog && profile?.school_id && (
         <CashHistoryDialog
-          schoolId={profile?.school_id || ''}
+          schoolId={profile.school_id}
           onClose={() => setShowHistoryDialog(false)}
         />
       )}

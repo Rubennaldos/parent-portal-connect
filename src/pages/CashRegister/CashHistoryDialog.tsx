@@ -37,12 +37,21 @@ export default function CashHistoryDialog({ schoolId, onClose }: Props) {
   const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
 
   const loadClosures = async () => {
+    if (!schoolId) {
+      console.warn('⚠️ No hay school_id para cargar historial');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
+      const { data, error} = await supabase
         .from('cash_closures')
-        .select('*, closed_by:profiles!cash_closures_closed_by_fkey(full_name)')
+        .select(`
+          *,
+          closed_by_profile:profiles!cash_closures_closed_by_fkey(full_name)
+        `)
         .eq('school_id', schoolId)
         .gte('closure_date', startDate)
         .lte('closure_date', endDate)
@@ -120,7 +129,7 @@ Egresos:            S/ ${closure.total_egresos.toFixed(2)}
 TOTAL VENTAS:       S/ ${closure.total_sales.toFixed(2)}
 ========================================
 
-Responsable del Cierre: ${(closure as any).closed_by?.full_name || 'N/A'}
+Responsable del Cierre: ${(closure as any).closed_by_profile?.full_name || 'N/A'}
 
 ========================================
     `;
