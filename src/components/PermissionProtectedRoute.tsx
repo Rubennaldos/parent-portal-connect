@@ -82,6 +82,8 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
       });
 
       console.log(`${hasModuleAccess ? '✅' : '❌'} Permiso para ${moduleCode} (module: ${permissionModule}):`, hasModuleAccess);
+      console.log('📊 Data recibida:', data);
+      console.log('🔑 Estableciendo hasPermission a:', hasModuleAccess);
       setHasPermission(hasModuleAccess || false);
       setChecking(false);
 
@@ -94,6 +96,7 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
 
   // Mostrar loader mientras se autentica o verifica permisos
   if (authLoading || roleLoading || checking) {
+    console.log('⏳ Cargando...', { authLoading, roleLoading, checking });
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -103,11 +106,13 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
 
   // Redirigir si no está autenticado
   if (!user) {
+    console.log('❌ Usuario no autenticado');
     return <Navigate to="/auth" replace />;
   }
 
   // Mostrar mensaje de acceso denegado si no tiene permiso
   if (hasPermission === false) {
+    console.log('🚫 Mostrando pantalla de acceso denegado. hasPermission:', hasPermission);
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50 p-6 flex items-center justify-center">
         <Card className="border-red-200 max-w-md">
@@ -132,6 +137,7 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
   }
 
   // Si tiene permiso, renderizar el componente hijo
+  console.log('✅ Renderizando componente hijo. hasPermission:', hasPermission);
   return <>{children}</>;
 }
 
