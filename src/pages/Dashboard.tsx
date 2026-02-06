@@ -288,8 +288,8 @@ const Dashboard = () => {
           status: 'coming_soon' as const,
         },
         {
-          id: '8',
-          code: 'cierre_caja',
+          id: '14',
+          code: 'cash_register',
           name: 'Cierre de Caja',
           description: 'Gestión de caja, ingresos, egresos y cierre diario',
           icon: 'DollarSign',

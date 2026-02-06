@@ -62,6 +62,7 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
       // Mapear códigos de módulo a nombres en permissions
       const moduleMap: { [key: string]: string } = {
         'cierre_caja': 'cash_register',
+        'cash_register': 'cash_register',
         'pos': 'pos',
         'ventas': 'ventas',
         'cobranzas': 'cobranzas',

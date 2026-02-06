@@ -238,7 +238,7 @@ const App = () => (
             <Route
               path="/cash-register"
               element={
-                <PermissionProtectedRoute moduleCode="cierre_caja">
+                <PermissionProtectedRoute moduleCode="cash_register">
                   <CashRegisterPage />
                 </PermissionProtectedRoute>
               }
