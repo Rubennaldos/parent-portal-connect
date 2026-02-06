@@ -111,7 +111,8 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
   }
 
   // Mostrar mensaje de acceso denegado si no tiene permiso
-  if (hasPermission === false) {
+  // Solo permitir acceso si hasPermission es explícitamente true
+  if (hasPermission !== true) {
     console.log('🚫 Mostrando pantalla de acceso denegado. hasPermission:', hasPermission);
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50 p-6 flex items-center justify-center">
