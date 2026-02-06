@@ -1,46 +1,13 @@
--- ✅ AGREGAR MÓDULO DE CIERRE DE CAJA AL SISTEMA
--- Este módulo aparecerá en Control de Accesos y Dashboard
+-- 🔐 ASIGNAR PERMISOS AL MÓDULO DE CIERRE DE CAJA
+-- Este script debe ejecutarse DESPUÉS de:
+-- 1. CREATE_PERMISSIONS_SYSTEM.sql
+-- 2. INSERT_ALL_MODULES.sql
 
--- 1. Insertar el módulo
-INSERT INTO modules (code, name, description, icon, color, route, is_active, status, display_order)
-VALUES (
-  'cierre_caja',
-  'Cierre de Caja',
-  'Gestión de caja, ingresos, egresos y cierre diario',
-  'DollarSign',
-  'green',
-  '/cash-register',
-  true,
-  'functional',
-  8
-)
-ON CONFLICT (code) DO UPDATE SET
-  name = EXCLUDED.name,
-  description = EXCLUDED.description,
-  icon = EXCLUDED.icon,
-  color = EXCLUDED.color,
-  route = EXCLUDED.route,
-  is_active = EXCLUDED.is_active,
-  status = EXCLUDED.status;
+-- ============================================
+-- ASIGNAR PERMISOS POR ROL
+-- ============================================
 
--- 2. Crear las acciones para el módulo
-INSERT INTO module_actions (module_code, action_code, name, description)
-VALUES 
-  ('cierre_caja', 'ver_modulo', 'Ver módulo', 'Permite ver el módulo de cierre de caja'),
-  ('cierre_caja', 'abrir_caja', 'Abrir caja', 'Permite abrir la caja del día'),
-  ('cierre_caja', 'ver_dashboard', 'Ver dashboard', 'Ver resumen de ventas y movimientos'),
-  ('cierre_caja', 'registrar_ingreso', 'Registrar ingreso', 'Registrar ingresos de efectivo'),
-  ('cierre_caja', 'registrar_egreso', 'Registrar egreso', 'Registrar egresos de efectivo'),
-  ('cierre_caja', 'cerrar_caja', 'Cerrar caja', 'Realizar el cierre de caja del día'),
-  ('cierre_caja', 'ver_historial', 'Ver historial', 'Consultar cierres anteriores'),
-  ('cierre_caja', 'imprimir', 'Imprimir reportes', 'Imprimir comprobantes y reportes'),
-  ('cierre_caja', 'exportar', 'Exportar datos', 'Exportar a Excel/CSV'),
-  ('cierre_caja', 'configurar', 'Configurar módulo', 'Cambiar configuración del sistema de caja')
-ON CONFLICT (module_code, action_code) DO UPDATE SET
-  name = EXCLUDED.name,
-  description = EXCLUDED.description;
-
--- 3. Asignar permisos al Admin General (acceso total)
+-- 1. Admin General - Acceso Total (automático, pero lo registramos por completitud)
 INSERT INTO role_permissions (role, module_code, action_code, can_access)
 SELECT 
   'admin_general',
@@ -52,23 +19,7 @@ WHERE module_code = 'cierre_caja'
 ON CONFLICT (role, module_code, action_code) DO UPDATE SET
   can_access = true;
 
--- 4. Asignar permisos básicos a Operador de Caja
-INSERT INTO role_permissions (role, module_code, action_code, can_access)
-VALUES 
-  ('operador_caja', 'cierre_caja', 'ver_modulo', true),
-  ('operador_caja', 'cierre_caja', 'abrir_caja', true),
-  ('operador_caja', 'cierre_caja', 'ver_dashboard', true),
-  ('operador_caja', 'cierre_caja', 'registrar_ingreso', true),
-  ('operador_caja', 'cierre_caja', 'registrar_egreso', true),
-  ('operador_caja', 'cierre_caja', 'cerrar_caja', true),
-  ('operador_caja', 'cierre_caja', 'ver_historial', true),
-  ('operador_caja', 'cierre_caja', 'imprimir', true),
-  ('operador_caja', 'cierre_caja', 'exportar', true),
-  ('operador_caja', 'cierre_caja', 'configurar', false) -- No puede configurar
-ON CONFLICT (role, module_code, action_code) DO UPDATE SET
-  can_access = EXCLUDED.can_access;
-
--- 5. Asignar permisos completos a Admin por Sede
+-- 2. Admin por Sede - Acceso Total
 INSERT INTO role_permissions (role, module_code, action_code, can_access)
 SELECT 
   'admin',
@@ -80,20 +31,61 @@ WHERE module_code = 'cierre_caja'
 ON CONFLICT (role, module_code, action_code) DO UPDATE SET
   can_access = true;
 
--- Verificar que se creó correctamente
+-- 3. Operador de Caja - Todo excepto configurar
+INSERT INTO role_permissions (role, module_code, action_code, can_access)
+VALUES 
+  ('operador_caja', 'cierre_caja', 'ver_modulo', true),
+  ('operador_caja', 'cierre_caja', 'abrir_caja', true),
+  ('operador_caja', 'cierre_caja', 'ver_dashboard', true),
+  ('operador_caja', 'cierre_caja', 'registrar_ingreso', true),
+  ('operador_caja', 'cierre_caja', 'registrar_egreso', true),
+  ('operador_caja', 'cierre_caja', 'cerrar_caja', true),
+  ('operador_caja', 'cierre_caja', 'ver_historial', true),
+  ('operador_caja', 'cierre_caja', 'imprimir', true),
+  ('operador_caja', 'cierre_caja', 'exportar', true),
+  ('operador_caja', 'cierre_caja', 'configurar', false) -- ❌ No puede configurar
+ON CONFLICT (role, module_code, action_code) DO UPDATE SET
+  can_access = EXCLUDED.can_access;
+
+-- ============================================
+-- VERIFICACIÓN
+-- ============================================
+
+-- Ver módulo registrado
 SELECT 
   m.code,
   m.name,
   m.status,
-  COUNT(ma.action_code) as acciones_count,
-  COUNT(rp.role) as roles_asignados
+  m.route
 FROM modules m
-LEFT JOIN module_actions ma ON m.code = ma.module_code
-LEFT JOIN role_permissions rp ON m.code = rp.module_code
-WHERE m.code = 'cierre_caja'
-GROUP BY m.code, m.name, m.status;
+WHERE m.code = 'cierre_caja';
 
--- ✅ Ahora el módulo estará visible en:
--- 1. Dashboard (para usuarios con permisos)
--- 2. Control de Accesos (para configurar permisos)
--- 3. Accesible según los permisos asignados
+-- Ver acciones del módulo
+SELECT 
+  ma.action_code,
+  ma.name,
+  ma.description
+FROM module_actions ma
+WHERE ma.module_code = 'cierre_caja'
+ORDER BY ma.name;
+
+-- Ver permisos asignados por rol
+SELECT 
+  rp.role,
+  rp.action_code,
+  rp.can_access
+FROM role_permissions rp
+WHERE rp.module_code = 'cierre_caja'
+ORDER BY rp.role, rp.action_code;
+
+-- Resumen de permisos
+SELECT 
+  rp.role,
+  COUNT(*) FILTER (WHERE rp.can_access = true) as permisos_activos,
+  COUNT(*) as total_acciones
+FROM role_permissions rp
+WHERE rp.module_code = 'cierre_caja'
+GROUP BY rp.role
+ORDER BY rp.role;
+
+SELECT '✅ Permisos de Cierre de Caja configurados exitosamente' as message;
