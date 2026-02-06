@@ -106,10 +106,25 @@ export default function CashRegisterPage() {
 
   // Abrir caja
   const openCashRegister = async () => {
-    if (!profile?.school_id || !user?.id) return;
+    console.log('🔵 openCashRegister llamado');
+    console.log('📊 profile:', profile);
+    console.log('👤 user:', user);
+    
+    if (!profile?.school_id) {
+      console.error('❌ No hay school_id en el perfil');
+      toast.error('Error: No tienes una sede asignada. Contacta al administrador.');
+      return;
+    }
+    
+    if (!user?.id) {
+      console.error('❌ No hay user.id');
+      toast.error('Error: Usuario no identificado. Intenta cerrar sesión y volver a entrar.');
+      return;
+    }
 
     try {
       setLoading(true);
+      console.log('🔄 Intentando abrir caja...');
 
       // Obtener el cierre anterior para la caja inicial
       const { data: lastClosure } = await supabase
@@ -121,6 +136,7 @@ export default function CashRegisterPage() {
         .single();
 
       const initialAmount = lastClosure?.actual_final || 0;
+      console.log('💰 Monto inicial:', initialAmount);
 
       const { data, error } = await supabase
         .from('cash_registers')
@@ -135,11 +151,12 @@ export default function CashRegisterPage() {
 
       if (error) throw error;
 
+      console.log('✅ Caja abierta:', data);
       setCurrentRegister(data);
       toast.success('Caja abierta exitosamente');
     } catch (error) {
-      console.error('Error al abrir caja:', error);
-      toast.error('Error al abrir la caja');
+      console.error('❌ Error al abrir caja:', error);
+      toast.error('Error al abrir la caja: ' + (error as any).message);
     } finally {
       setLoading(false);
     }
