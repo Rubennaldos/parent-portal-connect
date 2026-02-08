@@ -125,7 +125,7 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
       setLoading(true);
 
       // ⚠️ CLAVE MAESTRA DEL SISTEMA PARA PRUEBAS ⚠️
-      const MASTER_PASSWORD = 'LimaCafe2026!';
+      const MASTER_PASSWORD = 'beto123';
       
       if (adminPassword === MASTER_PASSWORD) {
         setStep('actual');

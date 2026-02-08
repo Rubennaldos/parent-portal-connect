@@ -340,7 +340,7 @@ export const SalesList = () => {
           *,
           student:students(id, full_name, balance),
           school:schools(id, name, code),
-          profiles:profiles!transactions_created_by_fkey(id, email, full_name)
+          profiles!created_by(id, email, full_name)
         `)
         .eq('type', 'sale') // ✅ VENTAS DEL POS (no compras/almuerzos)
         .gte('created_at', startDate)

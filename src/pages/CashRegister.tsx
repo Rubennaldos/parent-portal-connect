@@ -17,7 +17,8 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  History
+  History,
+  ArrowLeft
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -248,11 +249,21 @@ export default function CashRegisterPage() {
         <>
           {/* Header */}
           <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">💰 Cierre de Caja</h1>
-          <p className="text-muted-foreground">
-            Gestión completa de caja, ingresos, egresos y cierre diario
-          </p>
+        <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            onClick={() => window.location.href = '/#/dashboard'}
+            className="gap-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver al Dashboard
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold">💰 Cierre de Caja</h1>
+            <p className="text-muted-foreground">
+              Gestión completa de caja, ingresos, egresos y cierre diario
+            </p>
+          </div>
         </div>
         <div className="flex gap-2">
           {config && (profile?.role === 'admin' || profile?.role === 'admin_general') && (
