@@ -341,7 +341,7 @@ export const SalesList = () => {
           student:students(id, full_name, balance),
           school:schools(id, name, code)
         `)
-        .eq('type', 'sale') // ✅ VENTAS DEL POS (no compras/almuerzos)
+        .eq('type', 'purchase') // ✅ VENTAS DEL POS (registradas como 'purchase' en BD)
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: false });
