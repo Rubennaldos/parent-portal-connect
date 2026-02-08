@@ -350,15 +350,7 @@ export const SalesList = () => {
         .lte('created_at', endDate)
         .order('created_at', { ascending: false });
 
-      // Filtrar por tipo de venta (POS o Almuerzos)
-      if (salesFilter === 'pos') {
-        // Solo ventas con ticket_code (punto de venta)
-        query = query.not('ticket_code', 'is', null);
-      } else if (salesFilter === 'lunch') {
-        // Solo ventas sin ticket_code (almuerzos)
-        query = query.is('ticket_code', null);
-      }
-      // Si es 'all', no se filtra y muestra ambos tipos
+      console.log('🎯 Filtro aplicado:', salesFilter);
 
       // Filtrar por sede si corresponde
       if (canViewAllSchools) {
@@ -386,10 +378,20 @@ export const SalesList = () => {
         console.error('❌ Error:', error);
         throw error;
       }
+
+      // Aplicar filtro de tipo de venta en memoria si es necesario
+      let filteredData = data || [];
+      if (salesFilter === 'pos') {
+        // Solo ventas con ticket_code (punto de venta)
+        filteredData = filteredData.filter((t: any) => t.ticket_code !== null);
+      } else if (salesFilter === 'lunch') {
+        // Solo ventas sin ticket_code (almuerzos)
+        filteredData = filteredData.filter((t: any) => t.ticket_code === null);
+      }
       
       // Cargar información de los cajeros (profiles) por separado
-      if (data && data.length > 0) {
-        const createdByIds = [...new Set(data.map((t: any) => t.created_by).filter(Boolean))];
+      if (filteredData && filteredData.length > 0) {
+        const createdByIds = [...new Set(filteredData.map((t: any) => t.created_by).filter(Boolean))];
         
         if (createdByIds.length > 0) {
           const { data: profilesData, error: profilesError } = await supabase
@@ -400,7 +402,7 @@ export const SalesList = () => {
           if (!profilesError && profilesData) {
             // Mapear los perfiles a las transacciones
             const profilesMap = new Map(profilesData.map(p => [p.id, p]));
-            data.forEach((transaction: any) => {
+            filteredData.forEach((transaction: any) => {
               if (transaction.created_by) {
                 transaction.profiles = profilesMap.get(transaction.created_by);
               }
@@ -409,10 +411,10 @@ export const SalesList = () => {
         }
       }
       
-      console.log('✅ Ventas obtenidas:', data?.length || 0);
-      console.log('📊 Primera venta (ejemplo):', data?.[0]);
-      console.log('🏢 School data:', data?.[0]?.school);
-      setTransactions(data || []);
+      console.log('✅ Ventas obtenidas:', filteredData?.length || 0);
+      console.log('📊 Primera venta (ejemplo):', filteredData?.[0]);
+      console.log('🏢 School data:', filteredData?.[0]?.school);
+      setTransactions(filteredData || []);
     } catch (error: any) {
       console.error('Error fetching transactions:', error);
       toast({
