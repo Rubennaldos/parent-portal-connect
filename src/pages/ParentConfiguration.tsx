@@ -144,9 +144,14 @@ const ParentConfiguration = () => {
 
   useEffect(() => {
     // Esperar a que los permisos estén listos
-    if (canViewAllSchools !== null || userSchoolId) {
+    // Solo ejecutar fetchData cuando tengamos la información necesaria:
+    // - Si canViewAllSchools es true, podemos cargar (no necesitamos userSchoolId)
+    // - Si canViewAllSchools es false, necesitamos userSchoolId
+    if (canViewAllSchools === true || (canViewAllSchools === false && userSchoolId)) {
       console.log('🚀 Trigger fetchData - canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId);
       fetchData();
+    } else {
+      console.log('⏳ Esperando permisos... canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId);
     }
   }, [canViewAllSchools, userSchoolId]);
 
