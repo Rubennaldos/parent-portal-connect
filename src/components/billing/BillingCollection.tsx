@@ -103,6 +103,9 @@ export const BillingCollection = () => {
   // Selección múltiple
   const [selectedDebtors, setSelectedDebtors] = useState<Set<string>>(new Set());
   
+  // 🆕 Selección de transacciones individuales por deudor
+  const [selectedTransactionsByDebtor, setSelectedTransactionsByDebtor] = useState<Map<string, Set<string>>>(new Map());
+  
   // Modal de pago
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [currentDebtor, setCurrentDebtor] = useState<Debtor | null>(null);
@@ -645,10 +648,35 @@ export const BillingCollection = () => {
     }
   };
 
-  const handleOpenPayment = (debtor: DebtorStudent) => {
-    setCurrentDebtor(debtor);
+  const handleOpenPayment = (debtor: Debtor) => {
+    // 🆕 Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
+    const debtorKey = debtor.student_id || debtor.teacher_id || debtor.manual_client_name || '';
+    const selectedTxIds = selectedTransactionsByDebtor.get(debtorKey);
+    
+    let transactionsToPayAmount: number;
+    let transactionsToPay: any[];
+    
+    if (selectedTxIds && selectedTxIds.size > 0) {
+      // Si hay transacciones seleccionadas, cobrar solo esas
+      transactionsToPay = debtor.transactions.filter((t: any) => selectedTxIds.has(t.id));
+      transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
+      console.log(`💰 Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
+    } else {
+      // Si no hay selección, cobrar todas
+      transactionsToPay = debtor.transactions;
+      transactionsToPayAmount = debtor.total_amount;
+      console.log(`💰 Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
+    }
+    
+    // Guardar el deudor con las transacciones filtradas
+    setCurrentDebtor({
+      ...debtor,
+      transactions: transactionsToPay,
+      total_amount: transactionsToPayAmount
+    });
+    
     setPaymentData({
-      paid_amount: debtor.total_amount, // Por defecto pago completo
+      paid_amount: transactionsToPayAmount, // Por defecto pago completo de las seleccionadas
       payment_method: 'efectivo',
       operation_number: '',
       document_type: 'ticket',
@@ -1376,17 +1404,76 @@ Gracias.`;
                               <summary className="text-sm font-semibold text-blue-600 hover:text-blue-700">
                                 Ver detalles de {debtor.transaction_count} transacción(es) ▼
                               </summary>
-                              <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
-                                {debtor.transactions.map((t: any, idx: number) => (
-                                  <div key={t.id} className="text-xs bg-white p-2 rounded border">
-                                    <span className="font-semibold">#{idx + 1}</span>
-                                    {' - '}
-                                    {format(new Date(t.created_at), 'dd/MM/yyyy HH:mm', { locale: es })}
-                                    {' - '}
-                                    <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
-                                    {t.ticket_number && ` - Ticket: ${t.ticket_number}`}
-                                  </div>
-                                ))}
+                              <div className="mt-2">
+                                {/* Botón para seleccionar todas */}
+                                <button
+                                  onClick={() => {
+                                    const debtorKey = debtor.student_id || debtor.teacher_id || debtor.manual_client_name || '';
+                                    const newMap = new Map(selectedTransactionsByDebtor);
+                                    const currentSelection = newMap.get(debtorKey);
+                                    const allSelected = currentSelection && currentSelection.size === debtor.transactions.length;
+                                    
+                                    if (allSelected) {
+                                      // Deseleccionar todas
+                                      newMap.set(debtorKey, new Set());
+                                    } else {
+                                      // Seleccionar todas
+                                      const allTxIds = new Set(debtor.transactions.map((t: any) => t.id));
+                                      newMap.set(debtorKey, allTxIds);
+                                    }
+                                    
+                                    setSelectedTransactionsByDebtor(newMap);
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-700 underline mb-2"
+                                >
+                                  {(() => {
+                                    const debtorKey = debtor.student_id || debtor.teacher_id || debtor.manual_client_name || '';
+                                    const currentSelection = selectedTransactionsByDebtor.get(debtorKey);
+                                    const allSelected = currentSelection && currentSelection.size === debtor.transactions.length;
+                                    return allSelected ? 'Deseleccionar todas' : 'Seleccionar todas';
+                                  })()}
+                                </button>
+                                
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {debtor.transactions.map((t: any, idx: number) => {
+                                    const debtorKey = debtor.student_id || debtor.teacher_id || debtor.manual_client_name || '';
+                                    const isSelected = selectedTransactionsByDebtor.get(debtorKey)?.has(t.id) || false;
+                                    
+                                    return (
+                                      <div key={t.id} className="text-xs bg-white p-2 rounded border flex items-start gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={(e) => {
+                                            const newMap = new Map(selectedTransactionsByDebtor);
+                                            if (!newMap.has(debtorKey)) {
+                                              newMap.set(debtorKey, new Set());
+                                            }
+                                            const txSet = newMap.get(debtorKey)!;
+                                            
+                                            if (e.target.checked) {
+                                              txSet.add(t.id);
+                                            } else {
+                                              txSet.delete(t.id);
+                                            }
+                                            
+                                            setSelectedTransactionsByDebtor(newMap);
+                                          }}
+                                          className="mt-0.5 cursor-pointer"
+                                        />
+                                        <div className="flex-1">
+                                          <span className="font-semibold">#{idx + 1}</span>
+                                          {' - '}
+                                          {format(new Date(t.created_at), 'dd/MM/yyyy HH:mm', { locale: es })}
+                                          {' - '}
+                                          <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
+                                          {t.ticket_number && ` - Ticket: ${t.ticket_number}`}
+                                          <div className="text-gray-600 mt-0.5">{t.description}</div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             </details>
                           </div>
