@@ -61,6 +61,7 @@ export const LunchMenuModal = ({
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
+  const [isKitchenProduct, setIsKitchenProduct] = useState(false);
   const [formData, setFormData] = useState({
     school_id: userSchoolId || '',
     date: initialDate ? initialDate.toISOString().split('T')[0] : '',
@@ -71,6 +72,9 @@ export const LunchMenuModal = ({
     notes: '',
     category_id: preSelectedCategoryId || '',
     target_type: preSelectedTargetType || 'students',
+    // Campos para productos de cocina
+    product_name: '',
+    product_price: '',
   });
 
   // Cargar datos del menú si es edición o inicializar formulario para creación
@@ -98,9 +102,32 @@ export const LunchMenuModal = ({
         notes: '',
         category_id: preSelectedCategoryId || '',
         target_type: preSelectedTargetType || 'students',
+        product_name: '',
+        product_price: '',
       });
+      
+      // Verificar si es una categoría de venta de cocina
+      if (preSelectedCategoryId) {
+        checkIfKitchenCategory(preSelectedCategoryId);
+      }
     }
-  }, [menuId, isOpen]);
+  }, [menuId, isOpen, preSelectedCategoryId]);
+
+  const checkIfKitchenCategory = async (categoryId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('lunch_categories')
+        .select('is_kitchen_sale')
+        .eq('id', categoryId)
+        .single();
+
+      if (error) throw error;
+      setIsKitchenProduct(data?.is_kitchen_sale === true);
+    } catch (error) {
+      console.error('Error checking category type:', error);
+      setIsKitchenProduct(false);
+    }
+  };
 
   const loadMenuData = async () => {
     if (!menuId) return;
