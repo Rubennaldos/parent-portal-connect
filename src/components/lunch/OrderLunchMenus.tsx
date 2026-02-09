@@ -310,9 +310,11 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
     }
 
     // 🔔 ADVERTENCIA 1: Confirmar fecha del pedido
-    const orderDate = new Date(selectedMenu.date);
-    const dayOfWeek = orderDate.toLocaleDateString('es-PE', { weekday: 'long' });
-    const formattedDate = orderDate.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
+    // Usar fecha en zona horaria de Perú para evitar desfase
+    const [year, month, day] = selectedMenu.date.split('-').map(Number);
+    const orderDate = new Date(year, month - 1, day); // Crear fecha en hora local
+    const dayOfWeek = orderDate.toLocaleDateString('es-PE', { weekday: 'long', timeZone: 'America/Lima' });
+    const formattedDate = orderDate.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Lima' });
     
     const confirmOrder = window.confirm(
       `¿Desea confirmar el pedido de almuerzo para el ${dayOfWeek}, ${formattedDate}?`

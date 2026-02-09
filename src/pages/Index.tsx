@@ -1032,7 +1032,7 @@ const Index = () => {
                 <span>Este es un comprobante interno generado • 2026 ERP Profesional</span>
               </div>
               <div className="flex items-center gap-2 text-emerald-700 font-medium">
-                <span className="bg-emerald-100 px-2 py-0.5 rounded-full">Versión 1.17.1</span>
+                <span className="bg-emerald-100 px-2 py-0.5 rounded-full">Versión 1.17.2</span>
                 <span className="hidden sm:inline">•</span>
                 <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">PRODUCTION</span>
               </div>
