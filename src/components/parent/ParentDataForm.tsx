@@ -389,10 +389,10 @@ export function ParentDataForm({ onSuccess, isLoading: externalLoading, setIsLoa
   };
 
   return (
-    <Card className="w-full shadow-xl border border-stone-200/50 bg-white">
+    <Card className="w-full shadow-xl border border-stone-200/50 bg-white relative">
       <CardHeader className="text-center space-y-2 sm:space-y-3 pb-4 sm:pb-6 pt-6 sm:pt-8 px-4 sm:px-6">
         {/* Botón de Cerrar Sesión en la esquina superior derecha */}
-        <div className="absolute top-4 right-4">
+        <div className="absolute top-4 right-4 z-10">
           <Button
             type="button"
             variant="ghost"
