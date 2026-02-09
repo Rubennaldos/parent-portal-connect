@@ -339,7 +339,6 @@ const ParentConfiguration = () => {
               .select(`
                 *,
                 school:schools(id, name, code),
-                profile:profiles!parent_profiles_user_id_fkey(email),
                 responsible_2_full_name,
                 responsible_2_dni,
                 responsible_2_document_type,
@@ -366,7 +365,27 @@ const ParentConfiguration = () => {
             } else {
               console.log('✅ Padres encontrados:', filteredParents?.length || 0);
               console.log('📋 Datos de padres:', filteredParents);
-              parentsData = filteredParents || [];
+              
+              // Obtener emails de profiles
+              if (filteredParents && filteredParents.length > 0) {
+                const userIdsForProfiles = filteredParents.map(p => p.user_id).filter(Boolean);
+                const { data: profilesData, error: profilesError } = await supabase
+                  .from('profiles')
+                  .select('id, email')
+                  .in('id', userIdsForProfiles);
+                
+                if (!profilesError && profilesData) {
+                  // Mapear emails a los padres
+                  parentsData = filteredParents.map(parent => ({
+                    ...parent,
+                    profile: profilesData.find(p => p.id === parent.user_id) || null
+                  }));
+                } else {
+                  parentsData = filteredParents || [];
+                }
+              } else {
+                parentsData = filteredParents || [];
+              }
             }
           } else {
             console.warn('⚠️ No se encontraron parent_ids en los estudiantes');
@@ -380,7 +399,6 @@ const ParentConfiguration = () => {
           .select(`
             *,
             school:schools(id, name, code),
-            profile:profiles!parent_profiles_user_id_fkey(email),
             responsible_2_full_name,
             responsible_2_dni,
             responsible_2_document_type,
@@ -398,7 +416,26 @@ const ParentConfiguration = () => {
             description: `Error al cargar padres: ${parentsError.message}`,
           });
         } else {
-          parentsData = allParents || [];
+          // Obtener emails de profiles
+          if (allParents && allParents.length > 0) {
+            const userIdsForProfiles = allParents.map(p => p.user_id).filter(Boolean);
+            const { data: profilesData, error: profilesError } = await supabase
+              .from('profiles')
+              .select('id, email')
+              .in('id', userIdsForProfiles);
+            
+            if (!profilesError && profilesData) {
+              // Mapear emails a los padres
+              parentsData = allParents.map(parent => ({
+                ...parent,
+                profile: profilesData.find(p => p.id === parent.user_id) || null
+              }));
+            } else {
+              parentsData = allParents || [];
+            }
+          } else {
+            parentsData = allParents || [];
+          }
         }
       }
       
