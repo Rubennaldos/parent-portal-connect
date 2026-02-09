@@ -555,25 +555,30 @@ const Index = () => {
     try {
       // Registrar la orden de almuerzo como una compra inmediata
       const amount = todayMenu.price || 15.00;
-      const { error } = await supabase.from('transactions').insert({
-        student_id: selectedStudent.id,
-        type: 'purchase',
-        amount: amount,
-        description: `LUNCH FAST: ${todayMenu.main_course}`,
-        payment_status: selectedStudent.free_account !== false ? 'pending' : 'paid',
-        created_by: user?.id,
-        metadata: { lunch_menu_id: todayMenu.id, source: 'lunch_fast' }
-      });
+      
+      // Si es cuenta libre, crear transacción pendiente (deuda)
+      if (selectedStudent.free_account !== false) {
+        const { error } = await supabase.from('transactions').insert({
+          student_id: selectedStudent.id,
+          type: 'purchase',
+          amount: -Math.abs(amount), // Negativo = deuda
+          description: `LUNCH FAST: ${todayMenu.main_course}`,
+          payment_status: 'pending',
+          created_by: user?.id,
+          metadata: { lunch_menu_id: todayMenu.id, source: 'lunch_fast' }
+        });
 
-      if (error) throw error;
+        if (error) throw error;
+      } else {
+        // Si es cuenta prepagada, solo descontar del saldo (NO crear transacción)
+        // El pago ya se registró cuando recargó el saldo
+        const { error: balanceError } = await supabase
+          .from('students')
+          .update({ balance: selectedStudent.balance - amount })
+          .eq('id', selectedStudent.id);
 
-      // Actualizar balance del estudiante
-      const { error: balanceError } = await supabase
-        .from('students')
-        .update({ balance: selectedStudent.balance - amount })
-        .eq('id', selectedStudent.id);
-
-      if (balanceError) throw balanceError;
+        if (balanceError) throw balanceError;
+      }
 
       toast({
         title: "¡Pedido Confirmado! 🚀",
@@ -1027,7 +1032,7 @@ const Index = () => {
                 <span>Este es un comprobante interno generado • 2026 ERP Profesional</span>
               </div>
               <div className="flex items-center gap-2 text-emerald-700 font-medium">
-                <span className="bg-emerald-100 px-2 py-0.5 rounded-full">Versión 1.16.3</span>
+                <span className="bg-emerald-100 px-2 py-0.5 rounded-full">Versión 1.17.1</span>
                 <span className="hidden sm:inline">•</span>
                 <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">PRODUCTION</span>
               </div>

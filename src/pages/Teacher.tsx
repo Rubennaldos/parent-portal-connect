@@ -457,7 +457,7 @@ export default function Teacher() {
       const footerY = pageHeight - 30;
       doc.text('Este es un comprobante interno generado', pageWidth / 2, footerY, { align: 'center' });
       doc.text('© 2026 ERP Profesional diseñado por ARQUISIA Soluciones para Lima Café 28', pageWidth / 2, footerY + 5, { align: 'center' });
-      doc.text(`Versión 1.16.3 • PRODUCTION`, pageWidth / 2, footerY + 10, { align: 'center' });
+      doc.text(`Versión 1.17.1 • PRODUCTION`, pageWidth / 2, footerY + 10, { align: 'center' });
       doc.text(`Generado: ${new Date().toLocaleDateString('es-PE', { dateStyle: 'full', timeZone: 'America/Lima' })}`, pageWidth / 2, footerY + 15, { align: 'center' });
 
       // Guardar PDF

@@ -576,14 +576,9 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                   .update({ balance: newBalance })
                   .eq('id', studentId);
 
-                transactions.push({
-                  student_id: studentId,
-                  type: 'purchase',
-                  amount: -config.lunch_price,
-                  payment_status: 'paid',
-                  description: `Almuerzo - ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
-                  created_at: new Date().toISOString(),
-                });
+                // ✅ NO crear transacción para cuentas prepagadas
+                // El pago ya se registró cuando el padre recargó el saldo
+                // Solo descontamos del balance, no creamos deuda
               }
             }
           }

@@ -216,6 +216,7 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
       if (orderError) throw orderError;
 
       // Crear transacción de cuenta libre
+      console.log('🔍 [TeacherLunchCalendar] Creando transacción con payment_status: pending');
       const { error: transactionError } = await supabase
         .from('transactions')
         .insert({
@@ -223,7 +224,8 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           type: 'purchase',
           amount: -config.lunch_price,
           description: `Almuerzo - ${format(new Date(selectedDate), "d 'de' MMMM", { locale: es })}`,
-          payment_method: 'teacher_account',
+          payment_status: 'pending', // 📝 Deuda pendiente
+          payment_method: null, // Sin método de pago hasta que se cobre
           school_id: schoolId
         });
 

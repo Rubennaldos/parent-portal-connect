@@ -409,6 +409,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           description += ` + Agregados: ${addonNames}`;
         }
 
+        console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending');
         const transactionData: any = {
           type: 'purchase',
           amount: -Math.abs(totalPrice), // Negativo = cargo/deuda
