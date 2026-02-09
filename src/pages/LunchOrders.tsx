@@ -17,8 +17,6 @@ import {
   XCircle, 
   Clock, 
   AlertCircle,
-  UserPlus,
-  PackagePlus,
   Search,
   Filter,
   Loader2,
@@ -29,7 +27,7 @@ import {
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { CreateTemporaryStudentModal } from '@/components/lunch/CreateTemporaryStudentModal';
 import { DeliverWithoutOrderModal } from '@/components/lunch/DeliverWithoutOrderModal';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
@@ -1049,7 +1047,7 @@ export default function LunchOrders() {
       });
       
       // Crear tabla con autoTable
-      (doc as any).autoTable({
+      autoTable(doc, {
         head: [['Cliente', 'Sede', 'Fecha Pedido', 'Hora', 'Estado', 'Pago', 'Categoría Menú']],
         body: tableData,
         startY: 35,
@@ -1153,21 +1151,6 @@ export default function LunchOrders() {
           >
             <Download className="h-4 w-4" />
             Exportar PDF
-          </Button>
-          
-          <Button
-            onClick={() => setShowDeliverWithoutOrder(true)}
-            className="bg-orange-600 hover:bg-orange-700 gap-2"
-          >
-            <PackagePlus className="h-4 w-4" />
-            Entregar sin pedido
-          </Button>
-          <Button
-            onClick={() => setShowCreateTemporary(true)}
-            className="bg-purple-600 hover:bg-purple-700 gap-2"
-          >
-            <UserPlus className="h-4 w-4" />
-            Crear Puente Temporal
           </Button>
         </div>
       </div>
