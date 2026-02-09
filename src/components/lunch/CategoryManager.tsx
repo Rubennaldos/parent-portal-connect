@@ -591,8 +591,8 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              {/* Botón de Gestionar Agregados (solo si la categoría permite agregados) */}
-                              {category.allows_addons !== false && !category.is_kitchen_sale && (
+                              {/* Botón de Gestionar Agregados (solo para categorías normales, no venta de cocina) */}
+                              {!category.is_kitchen_sale && (
                                 <Button
                                   size="sm"
                                   variant="secondary"
