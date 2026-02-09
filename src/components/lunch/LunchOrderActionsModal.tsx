@@ -120,24 +120,46 @@ export function LunchOrderActionsModal({
 
       if (error) throw error;
 
-      // Si se cancela y hay una transacción asociada, revertirla
-      if (selectedAction === 'cancel' && order.is_no_order_delivery) {
-        console.log('💰 Revirtiendo transacción de deuda...');
+      // Si se cancela, revertir la transacción asociada
+      if (selectedAction === 'cancel') {
+        console.log('💰 Revirtiendo transacción del pedido cancelado...');
         
-        const { error: transactionError } = await supabase
+        // Buscar la transacción original del pedido
+        const { data: originalTransaction, error: searchError } = await supabase
           .from('transactions')
-          .insert({
-            student_id: order.student_id,
-            teacher_id: order.teacher_id,
-            type: 'refund',
-            amount: 5.50, // Monto positivo (devolución)
-            description: `Anulación de almuerzo - ${order.order_date}`,
-            payment_method: 'adjustment',
-            school_id: order.student?.school_id
-          });
+          .select('amount')
+          .eq(order.student_id ? 'student_id' : 'teacher_id', order.student_id || order.teacher_id)
+          .eq('type', 'purchase')
+          .ilike('description', `%${order.order_date}%`)
+          .maybeSingle();
 
-        if (transactionError) {
-          console.error('⚠️ Error revirtiendo transacción:', transactionError);
+        if (searchError) {
+          console.error('⚠️ Error buscando transacción original:', searchError);
+        }
+
+        if (originalTransaction) {
+          // Crear transacción de reversión (monto positivo)
+          const refundAmount = Math.abs(originalTransaction.amount);
+          
+          const { error: transactionError } = await supabase
+            .from('transactions')
+            .insert({
+              student_id: order.student_id,
+              teacher_id: order.teacher_id,
+              type: 'refund',
+              amount: refundAmount, // Monto positivo (devolución)
+              description: `Anulación de almuerzo - ${order.order_date}`,
+              payment_method: 'adjustment',
+              school_id: order.student?.school_id || order.school_id
+            });
+
+          if (transactionError) {
+            console.error('⚠️ Error creando transacción de reversión:', transactionError);
+          } else {
+            console.log('✅ Transacción revertida correctamente');
+          }
+        } else {
+          console.warn('⚠️ No se encontró transacción original para revertir');
         }
       }
 
