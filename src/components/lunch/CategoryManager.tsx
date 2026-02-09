@@ -43,11 +43,13 @@ import {
   ArrowUp,
   ArrowDown,
   Save,
-  X
+  X,
+  Package
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { AddonsManager } from './AddonsManager';
 
 const AVAILABLE_ICONS = [
   { value: 'utensils', label: 'Cubiertos', icon: Utensils },
@@ -80,6 +82,8 @@ interface LunchCategory {
   price: number | null;
   is_active: boolean;
   display_order: number;
+  is_kitchen_sale?: boolean;
+  allows_addons?: boolean;
 }
 
 interface CategoryManagerProps {
@@ -94,6 +98,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState<LunchCategory | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [managingAddonsForCategory, setManagingAddonsForCategory] = useState<LunchCategory | null>(null);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -586,6 +591,19 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
+                              {/* Botón de Gestionar Agregados (solo si la categoría permite agregados) */}
+                              {category.allows_addons !== false && !category.is_kitchen_sale && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setManagingAddonsForCategory(category)}
+                                  disabled={loading}
+                                  title="Gestionar agregados/extras"
+                                >
+                                  <Package className="h-3 w-3" />
+                                </Button>
+                              )}
+                              
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -620,6 +638,16 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
           </Button>
         </DialogFooter>
       </DialogContent>
+      
+      {/* Modal de gestión de agregados */}
+      {managingAddonsForCategory && (
+        <AddonsManager
+          categoryId={managingAddonsForCategory.id}
+          categoryName={managingAddonsForCategory.name}
+          open={!!managingAddonsForCategory}
+          onClose={() => setManagingAddonsForCategory(null)}
+        />
+      )}
     </Dialog>
   );
 }
