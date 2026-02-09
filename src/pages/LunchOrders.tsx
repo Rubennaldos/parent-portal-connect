@@ -28,8 +28,6 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { CreateTemporaryStudentModal } from '@/components/lunch/CreateTemporaryStudentModal';
-import { DeliverWithoutOrderModal } from '@/components/lunch/DeliverWithoutOrderModal';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
 
 interface LunchOrder {
@@ -110,8 +108,6 @@ export default function LunchOrders() {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   
-  const [showCreateTemporary, setShowCreateTemporary] = useState(false);
-  const [showDeliverWithoutOrder, setShowDeliverWithoutOrder] = useState(false);
   const [selectedOrderForAction, setSelectedOrderForAction] = useState<LunchOrder | null>(null);
   const [showActionsModal, setShowActionsModal] = useState(false);
   const [showMenuDetails, setShowMenuDetails] = useState(false);
@@ -1476,25 +1472,6 @@ export default function LunchOrders() {
       </Card>
 
       {/* Modals */}
-      <CreateTemporaryStudentModal
-        isOpen={showCreateTemporary}
-        onClose={() => setShowCreateTemporary(false)}
-        onSuccess={() => {
-          setShowCreateTemporary(false);
-          fetchOrders();
-        }}
-      />
-
-      <DeliverWithoutOrderModal
-        isOpen={showDeliverWithoutOrder}
-        onClose={() => setShowDeliverWithoutOrder(false)}
-        selectedDate={selectedDate}
-        onSuccess={() => {
-          setShowDeliverWithoutOrder(false);
-          fetchOrders();
-        }}
-      />
-
       {selectedOrderForAction && (
         <LunchOrderActionsModal
           isOpen={showActionsModal}
