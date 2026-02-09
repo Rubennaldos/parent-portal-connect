@@ -385,8 +385,8 @@ export default function LunchOrders() {
           ),
           lunch_order_addons (
             id,
-            name,
-            price,
+            addon_name,
+            addon_price,
             quantity
           )
         `)

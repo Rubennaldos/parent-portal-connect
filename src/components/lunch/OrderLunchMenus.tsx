@@ -117,6 +117,12 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
 
   // Cargar agregados cuando se selecciona un menú
   useEffect(() => {
+    console.log('🔍 Verificando agregados:', {
+      selectedMenu: selectedMenu?.id,
+      category_id: selectedMenu?.category_id,
+      orderDialogOpen
+    });
+    
     if (selectedMenu && selectedMenu.category_id && orderDialogOpen) {
       fetchAddons(selectedMenu.category_id);
     } else {
@@ -154,6 +160,8 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
   const fetchAddons = async (categoryId: string) => {
     try {
       setLoadingAddons(true);
+      console.log('📦 Cargando agregados para categoría:', categoryId);
+      
       const { data, error } = await supabase
         .from('lunch_category_addons')
         .select('*')
@@ -162,9 +170,11 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
         .order('display_order', { ascending: true });
 
       if (error) throw error;
+      
+      console.log('✅ Agregados cargados:', data);
       setAvailableAddons(data || []);
     } catch (error: any) {
-      console.error('Error fetching addons:', error);
+      console.error('❌ Error fetching addons:', error);
       // No mostrar toast de error, simplemente no cargar agregados
       setAvailableAddons([]);
     } finally {
