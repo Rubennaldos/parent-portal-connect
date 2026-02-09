@@ -473,8 +473,8 @@ export default function LunchOrders() {
         if (order.student?.school_id === selectedSchool) return true;
         // Incluir pedidos de profesores de la sede seleccionada
         if (order.teacher?.school_id_1 === selectedSchool) return true;
-        // EXCLUIR pedidos manuales cuando se ha seleccionado una sede específica
-        // Los pedidos manuales no tienen school_id asociado, por lo que no pertenecen a ninguna sede
+        // ✅ Incluir pedidos manuales (sin crédito) de la sede seleccionada
+        if (order.manual_name && order.school_id === selectedSchool) return true;
         return false;
       });
     }
