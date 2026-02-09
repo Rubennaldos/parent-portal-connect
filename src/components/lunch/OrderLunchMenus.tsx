@@ -363,9 +363,10 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           .map(addon => ({
             order_id: insertedOrder.id,
             addon_id: addon.id,
-            name: addon.name,
-            price: addon.price,
-            quantity: 1
+            addon_name: addon.name,
+            addon_price: addon.price,
+            quantity: 1,
+            subtotal: addon.price
           }));
 
         const { error: addonsError } = await supabase

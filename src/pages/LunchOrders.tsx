@@ -83,8 +83,8 @@ interface LunchOrder {
   };
   lunch_order_addons?: Array<{
     id: string;
-    name: string;
-    price: number;
+    addon_name: string;
+    addon_price: number;
     quantity: number;
   }>;
 }
@@ -302,8 +302,8 @@ export default function LunchOrders() {
             ),
             lunch_order_addons (
               id,
-              name,
-              price,
+              addon_name,
+              addon_price,
               quantity
             )
           `)
@@ -1055,7 +1055,7 @@ export default function LunchOrders() {
         
         // Agregados
         const addons = order.lunch_order_addons && order.lunch_order_addons.length > 0
-          ? order.lunch_order_addons.map((a: any) => a.name).join(', ')
+          ? order.lunch_order_addons.map((a: any) => a.addon_name).join(', ')
           : '-';
         
         // Precio total
@@ -1443,7 +1443,7 @@ export default function LunchOrders() {
                             <span className="font-semibold text-green-600">Agregados:</span>{' '}
                             {order.lunch_order_addons.map((addon: any, idx: number) => (
                               <span key={addon.id}>
-                                {addon.name}
+                                {addon.addon_name}
                                 {idx < order.lunch_order_addons.length - 1 ? ', ' : ''}
                               </span>
                             ))}

@@ -265,8 +265,8 @@ export function LunchOrderActionsModal({
                 <ul className="space-y-1">
                   {order.lunch_order_addons.map((addon: any) => (
                     <li key={addon.id} className="text-sm flex justify-between">
-                      <span>• {addon.name} {addon.quantity > 1 ? `x${addon.quantity}` : ''}</span>
-                      <span className="font-semibold text-green-600">S/ {addon.price.toFixed(2)}</span>
+                      <span>• {addon.addon_name} {addon.quantity > 1 ? `x${addon.quantity}` : ''}</span>
+                      <span className="font-semibold text-green-600">S/ {addon.addon_price.toFixed(2)}</span>
                     </li>
                   ))}
                 </ul>

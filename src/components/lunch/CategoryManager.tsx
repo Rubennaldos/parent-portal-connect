@@ -99,6 +99,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   const [editingCategory, setEditingCategory] = useState<LunchCategory | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [managingAddonsForCategory, setManagingAddonsForCategory] = useState<LunchCategory | null>(null);
+  const [addonsCount, setAddonsCount] = useState<Record<string, number>>({});
   
   // Form state
   const [formData, setFormData] = useState({
@@ -128,6 +129,25 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
 
       if (error) throw error;
       setCategories(data || []);
+      
+      // Cargar conteo de agregados para cada categoría
+      if (data && data.length > 0) {
+        const counts: Record<string, number> = {};
+        for (const category of data) {
+          if (!category.is_kitchen_sale) {
+            const { count, error: countError } = await supabase
+              .from('lunch_category_addons')
+              .select('*', { count: 'exact', head: true })
+              .eq('category_id', category.id)
+              .eq('is_active', true);
+            
+            if (!countError && count !== null) {
+              counts[category.id] = count;
+            }
+          }
+        }
+        setAddonsCount(counts);
+      }
     } catch (error: any) {
       console.error('Error fetching categories:', error);
       toast({
@@ -530,6 +550,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                       <TableHead>Para</TableHead>
                       <TableHead>Color/Icono</TableHead>
                       <TableHead>Precio</TableHead>
+                      <TableHead>Toppings</TableHead>
                       <TableHead>Estado</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
@@ -581,6 +602,15 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                           </TableCell>
                           <TableCell>
                             {category.price ? `S/ ${category.price.toFixed(2)}` : '-'}
+                          </TableCell>
+                          <TableCell>
+                            {!category.is_kitchen_sale && addonsCount[category.id] !== undefined ? (
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">
+                                {addonsCount[category.id]} {addonsCount[category.id] === 1 ? 'topping' : 'toppings'}
+                              </Badge>
+                            ) : (
+                              <span className="text-gray-400 text-sm">-</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Switch
@@ -645,7 +675,10 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
           categoryId={managingAddonsForCategory.id}
           categoryName={managingAddonsForCategory.name}
           open={!!managingAddonsForCategory}
-          onClose={() => setManagingAddonsForCategory(null)}
+          onClose={() => {
+            setManagingAddonsForCategory(null);
+            fetchCategories(); // Recargar para actualizar conteo
+          }}
         />
       )}
     </Dialog>
