@@ -99,6 +99,9 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
   const [selectedAddons, setSelectedAddons] = useState<Set<string>>(new Set());
   const [loadingAddons, setLoadingAddons] = useState(false);
 
+  // ⏰ Estado para configuración de hora límite
+  const [lunchConfig, setLunchConfig] = useState<{ order_deadline_time?: string; order_deadline_days?: number } | null>(null);
+
   // Cargar estudiantes (solo para padres)
   useEffect(() => {
     if (userType === 'parent') {
@@ -112,6 +115,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
   useEffect(() => {
     if ((userType === 'teacher') || (userType === 'parent' && selectedStudent)) {
       fetchWeekMenus();
+      fetchLunchConfig();
     }
   }, [selectedStudent, currentWeekStart, userType]);
 
@@ -207,6 +211,68 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
       .filter(addon => selectedAddons.has(addon.id))
       .reduce((sum, addon) => sum + addon.price, 0);
     return basePrice + addonsPrice;
+  };
+
+  // ⏰ Cargar configuración de límites de horario
+  const fetchLunchConfig = async () => {
+    try {
+      const schoolId = userType === 'parent' ? selectedStudent?.school_id : userSchoolId;
+      if (!schoolId) return;
+
+      const { data, error } = await supabase
+        .from('lunch_configuration')
+        .select('order_deadline_time, order_deadline_days')
+        .eq('school_id', schoolId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error loading lunch config:', error);
+      } else {
+        setLunchConfig(data);
+      }
+    } catch (error) {
+      console.error('Error fetching lunch config:', error);
+    }
+  };
+
+  // ⏰ Validar si se puede hacer pedido según la hora límite
+  const canOrderForDate = (targetDate: string): { canOrder: boolean; message?: string; isWarning?: boolean } => {
+    if (!lunchConfig || !lunchConfig.order_deadline_time || lunchConfig.order_deadline_days === undefined) {
+      return { canOrder: true };
+    }
+
+    const now = new Date();
+    const target = new Date(targetDate + 'T00:00:00-05:00'); // Zona horaria Perú
+    
+    // Calcular el deadline
+    const deadlineDate = new Date(target);
+    deadlineDate.setDate(deadlineDate.getDate() - lunchConfig.order_deadline_days);
+    
+    // Parsear la hora límite (formato "HH:MM:SS")
+    const [hours, minutes] = lunchConfig.order_deadline_time.split(':').map(Number);
+    deadlineDate.setHours(hours, minutes, 0, 0);
+
+    // Si ya pasó el deadline
+    if (now > deadlineDate) {
+      return {
+        canOrder: false,
+        message: `Ya no puedes hacer pedidos. La hora límite era ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+      };
+    }
+
+    // Si faltan menos de 30 minutos para el deadline (advertencia)
+    const timeUntilDeadline = deadlineDate.getTime() - now.getTime();
+    const minutesUntilDeadline = Math.floor(timeUntilDeadline / (1000 * 60));
+
+    if (minutesUntilDeadline <= 30 && minutesUntilDeadline > 0) {
+      return {
+        canOrder: true,
+        isWarning: true,
+        message: `¡Apúrate! Solo quedan ${minutesUntilDeadline} minutos para hacer tu pedido hasta las ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+      };
+    }
+
+    return { canOrder: true };
   };
 
   const fetchWeekMenus = async () => {
@@ -307,6 +373,29 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
         description: 'No se pudo identificar el usuario'
       });
       return;
+    }
+
+    // ⏰ VALIDACIÓN: Verificar si se puede hacer el pedido (solo para profesores)
+    if (userType === 'teacher') {
+      const validation = canOrderForDate(selectedMenu.date);
+      if (!validation.canOrder) {
+        toast({
+          variant: 'destructive',
+          title: '❌ Pedido no permitido',
+          description: validation.message,
+          duration: 6000,
+        });
+        return;
+      }
+
+      // Si hay advertencia, mostrarla pero permitir continuar
+      if (validation.isWarning && validation.message) {
+        toast({
+          title: '⚠️ Aviso Importante',
+          description: validation.message,
+          duration: 6000,
+        });
+      }
     }
 
     // 🔔 ADVERTENCIA 1: Confirmar fecha del pedido
@@ -654,6 +743,30 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
 
           {selectedMenu && (
             <div className="space-y-4 py-4">
+              {/* ⚠️ ADVERTENCIA DE HORA LÍMITE (solo para profesores) */}
+              {userType === 'teacher' && (() => {
+                const validation = canOrderForDate(selectedMenu.date);
+                if (!validation.canOrder || validation.isWarning) {
+                  return (
+                    <div className={`p-3 rounded-lg border-2 flex items-start gap-2 ${
+                      !validation.canOrder 
+                        ? 'bg-red-50 border-red-300' 
+                        : 'bg-yellow-50 border-yellow-300'
+                    }`}>
+                      <AlertCircle className={`h-5 w-5 mt-0.5 flex-shrink-0 ${
+                        !validation.canOrder ? 'text-red-600' : 'text-yellow-600'
+                      }`} />
+                      <p className={`text-sm font-medium ${
+                        !validation.canOrder ? 'text-red-800' : 'text-yellow-800'
+                      }`}>
+                        {validation.message}
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               <div className="flex items-center gap-2 text-sm">
                 <Calendar className="h-4 w-4" />
                 <span className="font-medium">

@@ -46,6 +46,8 @@ interface ExistingOrder {
 interface LunchConfig {
   lunch_price: number;
   orders_enabled: boolean;
+  order_deadline_time: string;
+  order_deadline_days: number;
 }
 
 const MONTHS = [
@@ -83,7 +85,7 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
       // 1. Obtener configuración de almuerzos
       const { data: configData, error: configError } = await supabase
         .from('lunch_configuration')
-        .select('lunch_price, orders_enabled')
+        .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days')
         .eq('school_id', schoolId)
         .maybeSingle();
 
@@ -197,8 +199,75 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
     setSelectedMenuDate(dateStr);
   };
 
+  // ⏰ Validar si se puede hacer pedido según la hora límite
+  const canOrderForDate = (targetDate: string): { canOrder: boolean; message?: string; isWarning?: boolean } => {
+    if (!config || !config.order_deadline_time || config.order_deadline_days === undefined) {
+      return { canOrder: true };
+    }
+
+    const now = new Date();
+    const target = new Date(targetDate + 'T00:00:00-05:00'); // Zona horaria Perú
+    
+    // Calcular el deadline
+    const deadlineDate = new Date(target);
+    deadlineDate.setDate(deadlineDate.getDate() - config.order_deadline_days);
+    
+    // Parsear la hora límite (formato "HH:MM:SS")
+    const [hours, minutes] = config.order_deadline_time.split(':').map(Number);
+    deadlineDate.setHours(hours, minutes, 0, 0);
+
+    console.log('⏰ Validación de hora límite:', {
+      now: now.toLocaleString('es-PE', { timeZone: 'America/Lima' }),
+      deadline: deadlineDate.toLocaleString('es-PE', { timeZone: 'America/Lima' }),
+      canOrder: now <= deadlineDate
+    });
+
+    // Si ya pasó el deadline
+    if (now > deadlineDate) {
+      return {
+        canOrder: false,
+        message: `Ya no puedes hacer pedidos. La hora límite era ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+      };
+    }
+
+    // Si faltan menos de 30 minutos para el deadline (advertencia)
+    const timeUntilDeadline = deadlineDate.getTime() - now.getTime();
+    const minutesUntilDeadline = Math.floor(timeUntilDeadline / (1000 * 60));
+
+    if (minutesUntilDeadline <= 30 && minutesUntilDeadline > 0) {
+      return {
+        canOrder: true,
+        isWarning: true,
+        message: `¡Apúrate! Solo quedan ${minutesUntilDeadline} minutos para hacer tu pedido hasta las ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+      };
+    }
+
+    return { canOrder: true };
+  };
+
   const handleOrderLunch = async () => {
     if (!selectedDate || !config) return;
+
+    // ⏰ VALIDACIÓN: Verificar si se puede hacer el pedido
+    const validation = canOrderForDate(selectedDate);
+    if (!validation.canOrder) {
+      toast({
+        variant: 'destructive',
+        title: '❌ Pedido no permitido',
+        description: validation.message,
+        duration: 6000,
+      });
+      return;
+    }
+
+    // Si hay advertencia, mostrarla pero permitir continuar
+    if (validation.isWarning && validation.message) {
+      toast({
+        title: '⚠️ Aviso Importante',
+        description: validation.message,
+        duration: 6000,
+      });
+    }
 
     try {
       setSubmitting(true);
@@ -411,6 +480,33 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           </CardHeader>
 
           <CardContent className="space-y-4">
+            {/* ⚠️ ADVERTENCIA DE HORA LÍMITE */}
+            {(() => {
+              const validation = canOrderForDate(selectedDate);
+              if (!validation.canOrder || validation.isWarning) {
+                return (
+                  <div className={cn(
+                    "p-3 rounded-lg border-2 flex items-start gap-2",
+                    !validation.canOrder 
+                      ? "bg-red-50 border-red-300" 
+                      : "bg-yellow-50 border-yellow-300"
+                  )}>
+                    <AlertCircle className={cn(
+                      "h-5 w-5 mt-0.5 flex-shrink-0",
+                      !validation.canOrder ? "text-red-600" : "text-yellow-600"
+                    )} />
+                    <p className={cn(
+                      "text-sm font-medium",
+                      !validation.canOrder ? "text-red-800" : "text-yellow-800"
+                    )}>
+                      {validation.message}
+                    </p>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {selectedMenu.starter && (
               <div>
                 <p className="text-sm font-medium text-gray-600">Entrada</p>
