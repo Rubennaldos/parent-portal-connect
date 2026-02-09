@@ -1150,6 +1150,8 @@ const POS = () => {
             balance_after: 0, // Profesores no tienen balance
             created_by: user?.id,
             ticket_code: ticketCode,
+            payment_status: 'pending', // 🔥 CRÉDITO: Iniciar como pending
+            payment_method: null, // Sin método de pago inicial
           })
           .select()
           .single();
@@ -1204,7 +1206,7 @@ const POS = () => {
         ticketInfo.isFreeAccount = true;
         ticketInfo.teacherName = selectedTeacher.full_name;
       } else {
-        // Cliente genérico - Solo registrar la venta
+        // Cliente genérico - Solo registrar la venta (PAGADA)
         const { data: transaction, error: transError } = await supabase
           .from('transactions')
           .insert({
@@ -1216,6 +1218,8 @@ const POS = () => {
             balance_after: 0,
             created_by: user?.id,
             ticket_code: ticketCode,
+            payment_status: 'paid', // 🔥 Cliente genérico PAGA en el momento
+            payment_method: paymentMethod || 'efectivo', // Método de pago real
           })
           .select()
           .single();

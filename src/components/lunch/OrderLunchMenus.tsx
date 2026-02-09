@@ -286,6 +286,8 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           description: `Almuerzo - ${selectedMenu.category.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
           created_by: userId,
           school_id: userSchoolId || selectedMenu.school_id, // 🔥 Agregar school_id
+          payment_status: 'pending', // 🔥 IMPORTANTE: Iniciar como pending, no paid
+          payment_method: null, // Sin método de pago inicial
         };
 
         if (userType === 'parent') {
