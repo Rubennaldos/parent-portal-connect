@@ -1097,13 +1097,16 @@ Gracias.`;
     let roleDescription = '';
     
     switch (profile.role) {
-      case 'admin':
+      case 'admin_general':
         roleDescription = `Administrador General`;
         break;
-      case 'billing_admin':
+      case 'supervisor_red':
+        roleDescription = `Supervisor de Red`;
+        break;
+      case 'gestor_unidad':
         roleDescription = `Gestor de Unidad - ${finalSchoolName}`;
         break;
-      case 'cashier':
+      case 'operador_caja':
         roleDescription = `Cajero - ${finalSchoolName}`;
         break;
       case 'kitchen':
@@ -1116,7 +1119,8 @@ Gracias.`;
         roleDescription = `Padre de Familia`;
         break;
       default:
-        roleDescription = `Usuario - ${finalSchoolName}`;
+        // Para roles desconocidos, mostrar el rol tal cual
+        roleDescription = `${profile.role || 'Usuario'} - ${finalSchoolName}`;
     }
     
     return {
