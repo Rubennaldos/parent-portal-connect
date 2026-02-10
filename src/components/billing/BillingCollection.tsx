@@ -1102,7 +1102,8 @@ Gracias.`;
           *,
           students(id, full_name, parent_id),
           teacher_profiles(id, full_name),
-          schools(id, name)
+          schools(id, name),
+          created_by_profile:profiles!transactions_created_by_fkey(id, full_name, email)
         `)
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
@@ -1226,7 +1227,7 @@ Gracias.`;
       const clientName = transaction.students?.full_name || 
                         transaction.teacher_profiles?.full_name || 
                         transaction.manual_client_name || 
-                        '🛒 Venta sin Cliente (Cajero)';
+                        'Cliente Generico Sin Cuenta';
       doc.setFont('helvetica', 'bold');
       doc.text('CLIENTE:', 15, yPos);
       doc.setFont('helvetica', 'normal');
@@ -1236,7 +1237,7 @@ Gracias.`;
       // Tipo de cliente
       const clientType = transaction.student_id ? 'Estudiante' : 
                         transaction.teacher_id ? 'Profesor' : 
-                        transaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Venta sin Cliente';
+                        transaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente Generico Sin Cuenta';
       doc.setFont('helvetica', 'bold');
       doc.text('TIPO:', 15, yPos);
       doc.setFont('helvetica', 'normal');
@@ -1252,8 +1253,8 @@ Gracias.`;
       yPos += 7;
 
       // Registrado por (si existe)
-      if (transaction.created_by_user) {
-        const createdBy = transaction.created_by_user.full_name || transaction.created_by_user.email;
+      if (transaction.created_by_profile) {
+        const createdBy = transaction.created_by_profile.full_name || transaction.created_by_profile.email;
         doc.setFont('helvetica', 'bold');
         doc.text('REGISTRADO POR:', 15, yPos);
         doc.setFont('helvetica', 'normal');
@@ -1779,7 +1780,7 @@ Gracias.`;
                     // Si no hay nombre, es una venta de cocina genérica
                     const isGenericSale = !clientName && !transaction.student_id && !transaction.teacher_id;
                     if (isGenericSale) {
-                      clientName = '🛒 Venta sin Cliente (Cajero)';
+                      clientName = '🛒 Cliente Genérico Sin Cuenta';
                     }
                     
                     const clientType = transaction.student_id ? 'student' : 
@@ -1834,6 +1835,15 @@ Gracias.`;
                                     </p>
                                   </div>
                                 </div>
+                                
+                                {transaction.created_by_profile && (
+                                  <div>
+                                    <p className="text-gray-500 text-sm">👤 Registrado por:</p>
+                                    <p className="font-semibold text-gray-900">
+                                      {transaction.created_by_profile.full_name || transaction.created_by_profile.email}
+                                    </p>
+                                  </div>
+                                )}
                                 
                                 <div>
                                   <p className="text-gray-500 text-sm">📝 Descripción:</p>
@@ -2140,13 +2150,13 @@ Gracias.`;
             const clientName = selectedTransaction.students?.full_name || 
                              selectedTransaction.teacher_profiles?.full_name || 
                              selectedTransaction.manual_client_name || 
-                             '🛒 Venta sin Cliente (Cajero)';
+                             '🛒 Cliente Genérico Sin Cuenta';
             const clientType = selectedTransaction.student_id ? 'Estudiante' : 
                               selectedTransaction.teacher_id ? 'Profesor' : 
-                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Venta sin Cliente';
+                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente Genérico Sin Cuenta';
             const schoolName = selectedTransaction.schools?.name || 'Sin sede';
-            const createdBy = selectedTransaction.created_by_user?.full_name || 
-                            selectedTransaction.created_by_user?.email || 
+            const createdBy = selectedTransaction.created_by_profile?.full_name || 
+                            selectedTransaction.created_by_profile?.email || 
                             null;
 
             return (
