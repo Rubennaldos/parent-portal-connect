@@ -2018,6 +2018,9 @@ Gracias.`;
                               <div className="flex flex-col gap-2 w-full mt-3">
                                 <Button
                                   onClick={() => {
+                                    console.log('[BillingCollection] 🔍 Abriendo detalles de transacción:', transaction);
+                                    console.log('[BillingCollection] 📞 operation_number:', transaction.operation_number);
+                                    console.log('[BillingCollection] 🎫 ticket_number:', transaction.ticket_number);
                                     setSelectedTransaction(transaction);
                                     setShowDetailsModal(true);
                                   }}
