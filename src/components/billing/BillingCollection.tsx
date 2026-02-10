@@ -1092,6 +1092,8 @@ Gracias.`;
     if (!profile) return null;
     
     const name = profile.full_name || profile.email || 'Usuario';
+    // Usar el school_name del perfil si existe, si no, usar el que viene de la transacción
+    const finalSchoolName = profile.school_name || profile.teacher_school_name || schoolName;
     let roleDescription = '';
     
     switch (profile.role) {
@@ -1099,22 +1101,22 @@ Gracias.`;
         roleDescription = `Administrador General`;
         break;
       case 'billing_admin':
-        roleDescription = `Gestor de Unidad - ${schoolName}`;
+        roleDescription = `Gestor de Unidad - ${finalSchoolName}`;
         break;
       case 'cashier':
-        roleDescription = `Cajero - ${schoolName}`;
+        roleDescription = `Cajero - ${finalSchoolName}`;
         break;
       case 'kitchen':
-        roleDescription = `Cocina - ${schoolName}`;
+        roleDescription = `Cocina - ${finalSchoolName}`;
         break;
       case 'teacher':
-        roleDescription = `Profesor - ${schoolName}`;
+        roleDescription = `Profesor - ${finalSchoolName}`;
         break;
       case 'parent':
         roleDescription = `Padre de Familia`;
         break;
       default:
-        roleDescription = `Usuario - ${schoolName}`;
+        roleDescription = `Usuario - ${finalSchoolName}`;
     }
     
     return {
@@ -1189,27 +1191,53 @@ Gracias.`;
       let createdByMap = new Map();
       
       if (userIds.length > 0) {
+        // Buscar en profiles con school_id
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name, email, role')
+          .select(`
+            id, 
+            full_name, 
+            email, 
+            role, 
+            school_id,
+            schools:school_id(id, name)
+          `)
           .in('id', userIds);
         
         if (profiles) {
           profiles.forEach((p: any) => {
-            createdByMap.set(p.id, p);
+            createdByMap.set(p.id, {
+              ...p,
+              school_name: p.schools?.name || null
+            });
           });
         }
 
         // También buscar en teacher_profiles por si el created_by es un profesor
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
-          .select('id, full_name, school_id')
+          .select('id, full_name, school_id, schools:school_id(id, name)')
           .in('id', userIds);
         
         if (teacherProfiles) {
           teacherProfiles.forEach((tp: any) => {
-            if (!createdByMap.has(tp.id)) {
-              createdByMap.set(tp.id, { ...tp, role: 'teacher' });
+            // Si ya existe en profiles, enriquecer con datos de teacher
+            if (createdByMap.has(tp.id)) {
+              const existing = createdByMap.get(tp.id);
+              createdByMap.set(tp.id, {
+                ...existing,
+                teacher_school_name: tp.schools?.name || null,
+                teacher_school_id: tp.school_id
+              });
+            } else {
+              // Si no existe en profiles, agregarlo como teacher
+              createdByMap.set(tp.id, {
+                id: tp.id,
+                full_name: tp.full_name,
+                role: 'teacher',
+                school_id: tp.school_id,
+                school_name: tp.schools?.name || null
+              });
             }
           });
         }
@@ -1222,7 +1250,9 @@ Gracias.`;
       }));
 
       console.log('[BillingCollection] 📊 Transacciones cargadas:', transactionsWithCreator.length);
-      console.log('[BillingCollection] 🔍 Ejemplo de transacción:', transactionsWithCreator[0]);
+      console.log('[BillingCollection] 🔍 Ejemplo de transacción completa:', transactionsWithCreator[0]);
+      console.log('[BillingCollection] 👤 created_by_profile:', transactionsWithCreator[0]?.created_by_profile);
+      console.log('[BillingCollection] 🗺️ Mapa de creadores (primeros 3):', Array.from(createdByMap.entries()).slice(0, 3));
 
       setPaidTransactions(transactionsWithCreator);
     } catch (error) {
