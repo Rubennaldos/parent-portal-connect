@@ -738,6 +738,16 @@ export const BillingCollection = () => {
       return;
     }
 
+    // ✅ VALIDACIÓN: Número de operación obligatorio (excepto efectivo)
+    if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && !paymentData.operation_number) {
+      toast({
+        variant: 'destructive',
+        title: 'Número de Operación Obligatorio',
+        description: 'Debe ingresar el número de operación para este método de pago',
+      });
+      return;
+    }
+
     setSaving(true);
     
     try {
@@ -2180,16 +2190,25 @@ Gracias.`;
               </div>
             </div>
 
-            {/* Número de Operación */}
+            {/* Número de Operación - OBLIGATORIO */}
             {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
               <div className="space-y-2">
-                <Label className="text-base font-semibold">🔢 Número de Operación (Opcional)</Label>
+                <Label className="text-base font-semibold">
+                  🔢 Número de Operación *
+                  <span className="text-red-600 ml-1">(OBLIGATORIO)</span>
+                </Label>
                 <Input
                   placeholder="Ej: 123456789"
                   value={paymentData.operation_number}
                   onChange={(e) => setPaymentData(prev => ({ ...prev, operation_number: e.target.value }))}
-                  className="h-12 text-lg"
+                  className="h-12 text-lg border-2"
+                  required
                 />
+                {!paymentData.operation_number && (
+                  <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                    ⚠️ El número de operación es obligatorio para este método de pago
+                  </p>
+                )}
               </div>
             )}
 
