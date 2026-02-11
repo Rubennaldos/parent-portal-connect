@@ -2358,64 +2358,86 @@ Gracias.`;
             const accountEmail = selectedTransaction.teacher_profiles?.email || 
                                 selectedTransaction.students?.email || null;
             
-            // Determinar quién hizo el pedido
+            // Determinar quién hizo el pedido - SIEMPRE mostrar nombre
             const getOriginInfo = () => {
-              if (selectedTransaction.created_by) {
-                // Alguien lo creó manualmente
-                if (selectedTransaction.created_by === selectedTransaction.teacher_id) {
-                  return {
-                    origin: 'Pedido por el profesor',
-                    detail: 'Realizado desde su propia cuenta en la plataforma',
-                    icon: '👨‍🏫',
-                    color: 'text-purple-700'
-                  };
-                } else if (selectedTransaction.created_by === selectedTransaction.student_id) {
-                  return {
-                    origin: 'Pedido por el estudiante',
-                    detail: 'Realizado desde su propia cuenta en la plataforma',
-                    icon: '🎒',
-                    color: 'text-blue-700'
-                  };
-                } else if (userInfo) {
-                  return {
-                    origin: `Registrado por: ${userInfo.name}`,
-                    detail: `Cargo: ${userInfo.role}`,
-                    icon: '🏢',
-                    color: 'text-orange-700'
-                  };
-                } else {
-                  return {
-                    origin: 'Registrado por un administrador',
-                    detail: 'No se pudo identificar al usuario',
-                    icon: '🏢',
-                    color: 'text-gray-700'
-                  };
-                }
-              } else if (selectedTransaction.metadata?.source === 'lunch_order' || 
-                        selectedTransaction.description?.toLowerCase().includes('almuerzo')) {
-                // Es un pedido de almuerzo (real o virtual)
+              // CASO 1: Tiene created_by y es el mismo profesor
+              if (selectedTransaction.created_by && selectedTransaction.created_by === selectedTransaction.teacher_id) {
+                const teacherName = selectedTransaction.teacher_profiles?.full_name || 
+                                   selectedTransaction.client_name || clientName;
                 return {
-                  origin: 'Pedido de almuerzo desde la plataforma',
-                  detail: 'El profesor/estudiante realizó el pedido desde su cuenta en el sistema',
-                  icon: '🍽️',
-                  color: 'text-green-700'
-                };
-              } else if (selectedTransaction.description?.toLowerCase().includes('venta') || 
-                        selectedTransaction.description?.toLowerCase().includes('manual')) {
-                return {
-                  origin: 'Venta registrada en caja',
-                  detail: 'Registrada desde el punto de venta',
-                  icon: '🏪',
-                  color: 'text-orange-700'
-                };
-              } else {
-                return {
-                  origin: 'Generado por el sistema',
-                  detail: 'Transacción creada automáticamente',
-                  icon: '⚙️',
-                  color: 'text-gray-600'
+                  createdByName: teacherName,
+                  createdByRole: 'Profesor',
+                  icon: '👨‍🏫'
                 };
               }
+              
+              // CASO 2: Tiene created_by y es el mismo estudiante
+              if (selectedTransaction.created_by && selectedTransaction.created_by === selectedTransaction.student_id) {
+                const studentName = selectedTransaction.students?.full_name || 
+                                   selectedTransaction.client_name || clientName;
+                return {
+                  createdByName: studentName,
+                  createdByRole: 'Estudiante',
+                  icon: '🎒'
+                };
+              }
+              
+              // CASO 3: Tiene created_by y es otro usuario (admin, cajero, etc.)
+              if (selectedTransaction.created_by && userInfo) {
+                return {
+                  createdByName: userInfo.name,
+                  createdByRole: userInfo.role,
+                  icon: '🏢'
+                };
+              }
+              
+              // CASO 4: Tiene created_by pero no tenemos el perfil
+              if (selectedTransaction.created_by) {
+                return {
+                  createdByName: 'Administrador',
+                  createdByRole: 'No se pudo cargar el perfil',
+                  icon: '🏢'
+                };
+              }
+              
+              // CASO 5: NO tiene created_by pero es un pedido de almuerzo con teacher_id
+              // → El profesor lo pidió desde su cuenta
+              if (!selectedTransaction.created_by && selectedTransaction.teacher_id) {
+                const teacherName = selectedTransaction.teacher_profiles?.full_name || 
+                                   selectedTransaction.client_name || clientName;
+                return {
+                  createdByName: teacherName,
+                  createdByRole: 'Profesor (pedido desde su cuenta)',
+                  icon: '👨‍🏫'
+                };
+              }
+              
+              // CASO 6: NO tiene created_by pero tiene student_id
+              if (!selectedTransaction.created_by && selectedTransaction.student_id) {
+                const studentName = selectedTransaction.students?.full_name || 
+                                   selectedTransaction.client_name || clientName;
+                return {
+                  createdByName: studentName,
+                  createdByRole: 'Estudiante (pedido desde su cuenta)',
+                  icon: '🎒'
+                };
+              }
+              
+              // CASO 7: Venta manual sin cuenta
+              if (selectedTransaction.manual_client_name) {
+                return {
+                  createdByName: selectedTransaction.manual_client_name,
+                  createdByRole: 'Cliente sin cuenta',
+                  icon: '🛒'
+                };
+              }
+              
+              // CASO 8: Sin información
+              return {
+                createdByName: 'Sistema',
+                createdByRole: 'Generado automáticamente',
+                icon: '⚙️'
+              };
             };
             
             const originInfo = getOriginInfo();
@@ -2547,36 +2569,27 @@ Gracias.`;
                     </p>
                   </div>
 
-                  {/* 📋 Origen del Pedido / Información de Registro */}
+                  {/* 📋 Quién realizó el pedido */}
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      {isPending ? '📋 Origen del Pedido' : 'ℹ️ Información del Registro'}
+                      📋 {isPending ? 'Responsable del Pedido' : 'Registrado por'}
                     </h3>
                     <div className="space-y-2">
-                      <div className="flex justify-between items-start">
-                        <span className="text-gray-600">Realizado por:</span>
-                        <div className="text-right">
-                          <span className={`font-semibold ${originInfo.color} flex items-center gap-1 justify-end`}>
-                            {originInfo.icon} {originInfo.origin}
-                          </span>
-                          <p className="text-xs text-gray-500 mt-1">{originInfo.detail}</p>
-                        </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Nombre:</span>
+                        <span className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                          {originInfo.icon} {originInfo.createdByName}
+                        </span>
                       </div>
-                      {userInfo && selectedTransaction.created_by !== selectedTransaction.teacher_id && (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Registrado por:</span>
-                            <span className="font-semibold text-gray-900">{userInfo.name}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Cargo:</span>
-                            <span className="font-semibold text-blue-700">{userInfo.role}</span>
-                          </div>
-                        </>
-                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Cargo:</span>
+                        <span className="font-semibold text-blue-700">
+                          {originInfo.createdByRole}
+                        </span>
+                      </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">ID de transacción:</span>
-                        <span className="font-mono text-xs text-gray-600">{selectedTransaction.id}</span>
+                        <span className="font-mono text-xs text-gray-500">{selectedTransaction.id}</span>
                       </div>
                     </div>
                   </div>
