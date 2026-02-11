@@ -534,12 +534,20 @@ export const BillingCollection = () => {
 
           // Crear transacción virtual solo si el pedido tiene un cliente identificado
           if (order.student_id || order.teacher_id || order.manual_name) {
+            // Mejorar la descripción para incluir el tipo de menú
+            const menuName = order.lunch_categories?.name || order.menu_item || 'Menú';
+            const dateFormatted = new Date(order.order_date + 'T12:00:00').toLocaleDateString('es-PE', { 
+              day: 'numeric', 
+              month: 'long',
+              year: 'numeric'
+            });
+            
             virtualTransactions.push({
               id: `lunch_${order.id}`, // ID virtual
               type: 'purchase',
               amount: -Math.abs(price), // Negativo = deuda
               payment_status: 'pending',
-              description: `Almuerzo - ${new Date(order.order_date + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+              description: `Almuerzo - ${menuName} - ${dateFormatted}`,
               student_id: order.student_id || null,
               teacher_id: order.teacher_id || null,
               manual_client_name: order.manual_name || null,
@@ -548,7 +556,12 @@ export const BillingCollection = () => {
               students: order.students || null,
               teacher_profiles: order.teacher_profiles || null,
               schools: order.schools || null,
-              metadata: { lunch_order_id: order.id, source: 'lunch_order' }
+              metadata: { 
+                lunch_order_id: order.id, 
+                source: 'lunch_order',
+                order_date: order.order_date,
+                menu_name: menuName
+              }
             });
           }
         });
@@ -1815,11 +1828,12 @@ Gracias.`;
                                     const isSelected = selectedTransactionsByDebtor.get(debtorKey)?.has(t.id) || false;
                                     
                                     return (
-                                      <div key={t.id} className="text-xs bg-white p-2 rounded border flex items-start gap-2">
+                                      <div key={t.id} className="text-xs bg-white p-2 rounded border flex items-start gap-2 hover:bg-blue-50 transition-colors">
                                         <input
                                           type="checkbox"
                                           checked={isSelected}
                                           onChange={(e) => {
+                                            e.stopPropagation();
                                             const newMap = new Map(selectedTransactionsByDebtor);
                                             if (!newMap.has(debtorKey)) {
                                               newMap.set(debtorKey, new Set());
@@ -1836,15 +1850,8 @@ Gracias.`;
                                           }}
                                           className="mt-0.5 cursor-pointer"
                                         />
-                                        <div className="flex-1">
-                                          <span className="font-semibold">#{idx + 1}</span>
-                                          {' - '}
-                                          {format(new Date(t.created_at), 'dd/MM/yyyy HH:mm', { locale: es })}
-                                          {' - '}
-                                          <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
-                                          <div className="text-gray-600 mt-0.5">{t.description}</div>
-                                        </div>
-                                        <button
+                                        <div 
+                                          className="flex-1 cursor-pointer"
                                           onClick={() => {
                                             // Convertir la transacción individual a formato compatible con el modal de detalles
                                             const txForModal = {
@@ -1858,11 +1865,14 @@ Gracias.`;
                                             setSelectedTransactionForDetails(txForModal);
                                             setShowDetailsModal(true);
                                           }}
-                                          className="px-2 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
-                                          title="Ver detalles completos"
                                         >
-                                          👁️
-                                        </button>
+                                          <span className="font-semibold text-blue-600 hover:text-blue-700">#{idx + 1}</span>
+                                          {' - '}
+                                          {format(new Date(t.created_at), 'dd/MM/yyyy HH:mm', { locale: es })}
+                                          {' - '}
+                                          <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
+                                          <div className="text-gray-700 mt-0.5 font-medium">{t.description}</div>
+                                        </div>
                                       </div>
                                     );
                                   })}
