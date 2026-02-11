@@ -1244,7 +1244,7 @@ Gracias.`;
         // También buscar en teacher_profiles por si el created_by es un profesor
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
-          .select('id, full_name, school_id, schools:school_id(id, name)')
+          .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
           .in('id', userIds);
         
         if (teacherProfiles) {
@@ -1255,7 +1255,7 @@ Gracias.`;
               createdByMap.set(tp.id, {
                 ...existing,
                 teacher_school_name: tp.schools?.name || null,
-                teacher_school_id: tp.school_id
+                teacher_school_id: tp.school_id_1
               });
             } else {
               // Si no existe en profiles, agregarlo como teacher
@@ -1263,7 +1263,7 @@ Gracias.`;
                 id: tp.id,
                 full_name: tp.full_name,
                 role: 'teacher',
-                school_id: tp.school_id,
+                school_id: tp.school_id_1,
                 school_name: tp.schools?.name || null
               });
             }
