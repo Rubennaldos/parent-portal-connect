@@ -1862,7 +1862,7 @@ Gracias.`;
                                               parent_phone: debtor.parent_phone,
                                               school_name: debtor.school_name
                                             };
-                                            setSelectedTransactionForDetails(txForModal);
+                                            setSelectedTransaction(txForModal);
                                             setShowDetailsModal(true);
                                           }}
                                         >
@@ -2338,14 +2338,20 @@ Gracias.`;
           </DialogHeader>
           
           {selectedTransaction && (() => {
-            const clientName = selectedTransaction.students?.full_name || 
+            const clientName = selectedTransaction.client_name ||
+                             selectedTransaction.students?.full_name || 
                              selectedTransaction.teacher_profiles?.full_name || 
                              selectedTransaction.manual_client_name || 
                              '🛒 Cliente Genérico Sin Cuenta';
-            const clientType = selectedTransaction.student_id ? 'Estudiante' : 
+            const clientType = selectedTransaction.client_type === 'student' ? 'Estudiante' :
+                              selectedTransaction.client_type === 'teacher' ? 'Profesor' :
+                              selectedTransaction.client_type === 'manual' ? 'Cliente Sin Cuenta' :
+                              selectedTransaction.student_id ? 'Estudiante' : 
                               selectedTransaction.teacher_id ? 'Profesor' : 
                               selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente Genérico Sin Cuenta';
-            const schoolName = selectedTransaction.schools?.name || 'Sin sede';
+            const schoolName = selectedTransaction.school_name || 
+                              selectedTransaction.schools?.name || 
+                              'Sin sede';
             const userInfo = selectedTransaction.created_by_profile ? 
                             getUserRoleDescription(selectedTransaction.created_by_profile, schoolName) : 
                             null;
