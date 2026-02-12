@@ -273,19 +273,21 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
       setSubmitting(true);
       console.log('🍽️ Creando pedido de almuerzo para profesor');
 
-      // Crear pedido
-      const { error: orderError } = await supabase
+      // Crear pedido y obtener su ID
+      const { data: insertedOrder, error: orderError } = await supabase
         .from('lunch_orders')
         .insert({
           teacher_id: teacherId,
           order_date: selectedDate,
           status: 'confirmed'
-        });
+        })
+        .select('id')
+        .single();
 
       if (orderError) throw orderError;
 
-      // Crear transacción de cuenta libre
-      console.log('🔍 [TeacherLunchCalendar] Creando transacción con payment_status: pending');
+      // Crear transacción de cuenta libre CON lunch_order_id para evitar duplicados
+      console.log('🔍 [TeacherLunchCalendar] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
       const { error: transactionError } = await supabase
         .from('transactions')
         .insert({
@@ -295,7 +297,12 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           description: `Almuerzo - ${format(new Date(selectedDate), "d 'de' MMMM", { locale: es })}`,
           payment_status: 'pending', // 📝 Deuda pendiente
           payment_method: null, // Sin método de pago hasta que se cobre
-          school_id: schoolId
+          school_id: schoolId,
+          metadata: {
+            lunch_order_id: insertedOrder.id,
+            source: 'teacher_lunch_calendar',
+            order_date: selectedDate
+          }
         });
 
       if (transactionError) throw transactionError;

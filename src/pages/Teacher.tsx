@@ -12,7 +12,7 @@ import { LogOut, User, ShoppingBag, UtensilsCrossed, Home, MoreHorizontal, Loade
 import { useToast } from '@/hooks/use-toast';
 import { TeacherOnboardingModal } from '@/components/teacher/TeacherOnboardingModal';
 import { TeacherMoreMenu } from '@/components/teacher/TeacherMoreMenu';
-import { OrderLunchMenus } from '@/components/lunch/OrderLunchMenus';
+import { UnifiedLunchCalendarV2 } from '@/components/lunch/UnifiedLunchCalendarV2';
 import { MyLunchOrders } from '@/components/teacher/MyLunchOrders';
 import jsPDF from 'jspdf';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
@@ -515,10 +515,13 @@ export default function Teacher() {
       setLoading(false);
     } catch (error: any) {
       console.error('❌ Error verificando perfil:', error);
+      // Si no pudimos verificar el perfil, mostramos el onboarding
+      // Es mejor que dejar al usuario en una pantalla vacía
+      setShowOnboarding(true);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudo cargar tu perfil. Por favor, intenta de nuevo.',
+        description: 'No se pudo cargar tu perfil. Completa tu registro o intenta de nuevo.',
       });
       setLoading(false);
     }
@@ -1309,7 +1312,7 @@ export default function Teacher() {
                   </TabsList>
 
                   <TabsContent value="order">
-                    <OrderLunchMenus 
+                    <UnifiedLunchCalendarV2 
                       userType="teacher"
                       userId={teacherProfile.id}
                       userSchoolId={teacherProfile.school_1_id}

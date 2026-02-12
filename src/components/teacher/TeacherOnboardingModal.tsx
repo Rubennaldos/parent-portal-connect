@@ -11,17 +11,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { CheckCircle2, Loader2, LogOut } from 'lucide-react';
+import { CheckCircle2, Loader2, LogOut, AlertTriangle, Info, School } from 'lucide-react';
 
-interface School {
+interface SchoolOption {
   id: string;
   name: string;
   code: string;
@@ -37,7 +30,9 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
-  const [schools, setSchools] = useState<School[]>([]);
+  const [schools, setSchools] = useState<SchoolOption[]>([]);
+  const [loadingSchools, setLoadingSchools] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Datos del formulario
   const [fullName, setFullName] = useState('');
@@ -61,6 +56,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
   }, [open, user]);
 
   const fetchSchools = async () => {
+    setLoadingSchools(true);
     try {
       const { data, error } = await supabase
         .from('schools')
@@ -73,30 +69,51 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
       console.error('Error cargando escuelas:', error);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudieron cargar las escuelas.',
+        title: 'Error al cargar sedes',
+        description: 'No se pudieron cargar las sedes. Intenta recargar la página.',
       });
+    } finally {
+      setLoadingSchools(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
 
     // Validaciones
-    if (!fullName || !dni || !phone1 || !schoolId1) {
+    if (!fullName.trim()) {
       toast({
         variant: 'destructive',
-        title: 'Campos requeridos',
-        description: 'Por favor completa todos los campos obligatorios.',
+        title: 'Campo requerido',
+        description: 'Por favor ingresa tu nombre completo.',
       });
       return;
     }
 
-    if (dni.length !== 8) {
+    if (!dni || dni.length !== 8) {
       toast({
         variant: 'destructive',
         title: 'DNI inválido',
-        description: 'El DNI debe tener 8 dígitos.',
+        description: 'El DNI debe tener exactamente 8 dígitos.',
+      });
+      return;
+    }
+
+    if (!phone1 || phone1.length < 7) {
+      toast({
+        variant: 'destructive',
+        title: 'Teléfono requerido',
+        description: 'Por favor ingresa un teléfono personal válido.',
+      });
+      return;
+    }
+
+    if (!schoolId1) {
+      toast({
+        variant: 'destructive',
+        title: 'Sede requerida',
+        description: 'Por favor selecciona tu sede principal.',
       });
       return;
     }
@@ -128,6 +145,17 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
 
       if (profileError) {
         console.error('❌ Error en teacher_profiles:', profileError);
+        
+        // Manejo específico de DNI duplicado
+        if (profileError.message?.includes('unique') || profileError.message?.includes('duplicate') || profileError.code === '23505') {
+          throw new Error('El DNI ingresado ya está registrado en el sistema. Si crees que es un error, contacta al administrador.');
+        }
+        
+        // Error de permisos RLS
+        if (profileError.message?.includes('policy') || profileError.code === '42501' || profileError.message?.includes('row-level security')) {
+          throw new Error('Error de permisos al crear tu perfil. Por favor contacta al administrador del sistema.');
+        }
+        
         throw profileError;
       }
 
@@ -147,6 +175,12 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
 
       if (generalProfileError) {
         console.error('❌ Error en profiles:', generalProfileError);
+        // Si falla el segundo paso, intentamos revertir el primero
+        // marcando onboarding como no completado
+        await supabase
+          .from('teacher_profiles')
+          .update({ onboarding_completed: false })
+          .eq('id', user?.id);
         throw generalProfileError;
       }
 
@@ -160,19 +194,42 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
       onComplete();
     } catch (error: any) {
       console.error('❌ Error guardando perfil:', error);
+      const errorMsg = error.message || 'No se pudo guardar tu perfil. Intenta de nuevo.';
+      setSubmitError(errorMsg);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: error.message || 'No se pudo guardar tu perfil. Intenta de nuevo.',
+        title: 'Error al registrarte',
+        description: errorMsg,
       });
     } finally {
       setLoading(false);
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast({
+        title: 'Sesión cerrada',
+        description: 'Has cerrado sesión exitosamente',
+      });
+    } catch (err) {
+      console.error('Error cerrando sesión:', err);
+      // Forzar recarga como fallback
+      window.location.href = '/auth';
+    }
+  };
+
+  // Obtener nombre de la sede seleccionada
+  const selectedSchoolName = schools.find(s => s.id === schoolId1)?.name || '';
+
   return (
     <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent 
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <div className="flex items-start justify-between">
             <div>
@@ -185,13 +242,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
               type="button"
               variant="ghost"
               size="sm"
-              onClick={async () => {
-                await signOut();
-                toast({
-                  title: 'Sesión cerrada',
-                  description: 'Has cerrado sesión exitosamente',
-                });
-              }}
+              onClick={handleLogout}
               className="text-stone-500 hover:text-red-600 hover:bg-red-50 ml-2"
             >
               <LogOut className="h-4 w-4 mr-2" />
@@ -201,6 +252,24 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Error persistente */}
+          {submitError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-red-800">Error en el registro</p>
+                <p className="text-xs text-red-700 mt-1">{submitError}</p>
+                <p className="text-xs text-red-600 mt-2">
+                  Puedes intentar de nuevo o{' '}
+                  <button type="button" onClick={handleLogout} className="underline font-medium hover:text-red-800">
+                    cerrar sesión
+                  </button>{' '}
+                  y volver a intentar.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Nombre Completo */}
           <div>
             <Label htmlFor="fullName">
@@ -229,6 +298,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
               }}
               placeholder="12345678"
               maxLength={8}
+              inputMode="numeric"
               required
             />
           </div>
@@ -273,6 +343,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
                 }}
                 placeholder="999888777"
                 maxLength={9}
+                inputMode="numeric"
                 required
               />
             </div>
@@ -289,69 +360,103 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
                 }}
                 placeholder="999888777"
                 maxLength={9}
+                inputMode="numeric"
               />
             </div>
           </div>
 
-          {/* Área de Trabajo */}
+          {/* Área de Trabajo - Usando <select> nativo en vez de Radix Select */}
           <div>
             <Label htmlFor="area">
               Área de Trabajo <span className="text-red-500">*</span>
             </Label>
-            <Select value={area} onValueChange={setArea} required>
-              <SelectTrigger id="area">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="profesor">Profesor</SelectItem>
-                <SelectItem value="administrador">Administrador</SelectItem>
-                <SelectItem value="personal">Personal</SelectItem>
-                <SelectItem value="otro">Otro</SelectItem>
-              </SelectContent>
-            </Select>
+            <select
+              id="area"
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              required
+              className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value="profesor">Profesor</option>
+              <option value="administrador">Administrador</option>
+              <option value="personal">Personal</option>
+              <option value="otro">Otro</option>
+            </select>
           </div>
 
-          {/* Escuela Principal */}
+          {/* Escuela Principal - Usando <select> nativo para evitar conflicto Portal/Dialog */}
           <div>
             <Label htmlFor="school1">
-              Escuela Principal <span className="text-red-500">*</span>
+              Sede Principal <span className="text-red-500">*</span>
             </Label>
-            <Select value={schoolId1} onValueChange={setSchoolId1} required>
-              <SelectTrigger id="school1">
-                <SelectValue placeholder="Selecciona tu escuela" />
-              </SelectTrigger>
-              <SelectContent>
-                {schools.map((school) => (
-                  <SelectItem key={school.id} value={school.id}>
-                    {school.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <select
+              id="school1"
+              value={schoolId1}
+              onChange={(e) => {
+                setSchoolId1(e.target.value);
+                // Si la segunda escuela es la misma, limpiarla
+                if (e.target.value === schoolId2) {
+                  setSchoolId2('');
+                }
+              }}
+              required
+              disabled={loadingSchools}
+              className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value="">
+                {loadingSchools ? 'Cargando sedes...' : 'Selecciona tu sede'}
+              </option>
+              {schools.map((school) => (
+                <option key={school.id} value={school.id}>
+                  {school.name}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Segunda Escuela (Opcional) */}
+          {/* ⚠️ Advertencia de Sede Principal - Solo se muestra cuando seleccionan una sede */}
+          {schoolId1 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+              <School className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">
+                  Sede Principal: {selectedSchoolName}
+                </p>
+                <p className="text-xs text-amber-700 mt-1">
+                  <strong>Importante:</strong> Esta será tu sede principal y tu cuenta estará asociada únicamente a esta sede. 
+                  Tus consumos, pagos y toda tu operación se registrarán aquí.
+                </p>
+                <p className="text-xs text-amber-600 mt-1">
+                  La segunda sede (abajo) es solo de referencia para futuras actualizaciones.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Segunda Escuela (Opcional) - Usando <select> nativo */}
           <div>
-            <Label htmlFor="school2">Segunda Escuela (Opcional)</Label>
-            <Select value={schoolId2 || 'none'} onValueChange={(val) => setSchoolId2(val === 'none' ? '' : val)}>
-              <SelectTrigger id="school2">
-                <SelectValue placeholder="Selecciona si trabajas en otra escuela" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Ninguna</SelectItem>
-                {schools
-                  .filter((s) => s.id !== schoolId1)
-                  .map((school) => (
-                    <SelectItem key={school.id} value={school.id}>
-                      {school.name}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="school2">Segunda Sede (Solo referencia - Opcional)</Label>
+            <select
+              id="school2"
+              value={schoolId2 || ''}
+              onChange={(e) => setSchoolId2(e.target.value)}
+              disabled={loadingSchools}
+              className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value="">Ninguna</option>
+              {schools
+                .filter((s) => s.id !== schoolId1)
+                .map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+            </select>
           </div>
 
           {/* Información */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-2">
+            <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-blue-800">
               <strong>Nota:</strong> Tu cuenta es libre y no tiene límites de gasto. 
               Toda la información es confidencial y solo será usada para fines administrativos.
@@ -362,7 +467,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
           <div className="flex justify-end gap-3 pt-4">
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || loadingSchools}
               className="bg-purple-600 hover:bg-purple-700"
             >
               {loading ? (

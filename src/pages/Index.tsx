@@ -43,7 +43,7 @@ import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { LunchCalendarView } from '@/components/parent/LunchCalendarView';
 import { LunchOrderCalendar } from '@/components/parent/LunchOrderCalendar';
-import { OrderLunchMenus } from '@/components/lunch/OrderLunchMenus';
+import { UnifiedLunchCalendarV2 } from '@/components/lunch/UnifiedLunchCalendarV2';
 import { ParentLunchOrders } from '@/components/parent/ParentLunchOrders';
 import { ParentDataForm } from '@/components/parent/ParentDataForm';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
@@ -775,9 +775,9 @@ const Index = () => {
                 </TabsList>
                 
                 <TabsContent value="hacer-pedido" className="mt-4 sm:mt-6">
-                  {/* Nuevo componente para pedir almuerzos con categorías */}
+                  {/* Calendario unificado V2 con wizard paso a paso */}
                   {user && parentProfileData && (
-                    <OrderLunchMenus 
+                    <UnifiedLunchCalendarV2 
                       userType="parent"
                       userId={user.id}
                       userSchoolId={parentProfileData.school_id || ''}

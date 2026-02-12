@@ -525,22 +525,44 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       
       // Crear pedidos
       const orders = [];
-      const transactions = [];
       
       for (const dateStr of selectedDates) {
         for (const studentId of selectedStudents) {
-          const student = students.find(s => s.id === studentId);
-          
           orders.push({
             student_id: studentId,
             order_date: dateStr,
             status: 'confirmed',
             created_at: new Date().toISOString(),
           });
+        }
+      }
+
+      // 📋 Insertar pedidos Y obtener sus IDs para vincularlos a transacciones
+      console.log('📋 Insertando pedidos:', orders.length);
+      const { data: insertedOrders, error: ordersError } = await supabase
+        .from('lunch_orders')
+        .insert(orders)
+        .select('id, student_id, order_date');
+
+      if (ordersError) throw ordersError;
+
+      // Crear mapa de lunch_order_id por (student_id + order_date)
+      const orderIdMap = new Map<string, string>();
+      if (insertedOrders) {
+        for (const io of insertedOrders) {
+          orderIdMap.set(`${io.student_id}_${io.order_date}`, io.id);
+        }
+      }
+
+      // Crear transacciones con lunch_order_id vinculado
+      const transactions = [];
+      
+      for (const dateStr of selectedDates) {
+        for (const studentId of selectedStudents) {
+          const student = students.find(s => s.id === studentId);
 
           // Si el estudiante tiene CUENTA LIBRE, crear transacción (deuda)
           if (student) {
-            // Obtener datos completos del estudiante para saber si es cuenta libre
             const { data: studentData } = await supabase
               .from('students')
               .select('free_account')
@@ -550,13 +572,20 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
             if (studentData?.free_account === true) {
               console.log(`💳 Estudiante ${student.full_name} tiene CUENTA LIBRE - Creando transacción`);
               
+              const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
+              
               transactions.push({
                 student_id: studentId,
                 type: 'purchase',
                 amount: -config.lunch_price, // Negativo = deuda
                 payment_status: 'pending',
-                description: `Almuerzo - ${new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+                description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
                 created_at: new Date().toISOString(),
+                metadata: {
+                  lunch_order_id: lunchOrderId || null,
+                  source: 'parent_lunch_calendar',
+                  order_date: dateStr
+                }
               });
             } else {
               console.log(`💰 Estudiante ${student.full_name} tiene SALDO PREPAGADO - Descontando del balance`);
@@ -577,20 +606,11 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                   .eq('id', studentId);
 
                 // ✅ NO crear transacción para cuentas prepagadas
-                // El pago ya se registró cuando el padre recargó el saldo
-                // Solo descontamos del balance, no creamos deuda
               }
             }
           }
         }
       }
-
-      console.log('📋 Insertando pedidos:', orders.length);
-      const { error: ordersError } = await supabase
-        .from('lunch_orders')
-        .insert(orders);
-
-      if (ordersError) throw ordersError;
 
       console.log('💰 Insertando transacciones:', transactions.length);
       if (transactions.length > 0) {

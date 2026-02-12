@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle, AlertCircle, Plus, Minus } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -55,6 +55,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const [manualName, setManualName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
+  const [quantity, setQuantity] = useState(1); // 🆕 CANTIDAD DE MENÚS
+  const [existingOrders, setExistingOrders] = useState<any[]>([]); // 🆕 PEDIDOS EXISTENTES
   const [cashPaymentMethod, setCashPaymentMethod] = useState<'efectivo' | 'tarjeta' | 'yape' | 'transferencia' | null>(null);
   
   // Detalles de pago
@@ -86,6 +88,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     setManualName('');
     setSelectedCategory(null);
     setSelectedMenu(null);
+    setQuantity(1); // 🆕 RESETEAR CANTIDAD
+    setExistingOrders([]); // 🆕 LIMPIAR PEDIDOS EXISTENTES
     setCashPaymentMethod(null);
     setPaymentDetails({
       currency: 'soles',
@@ -152,6 +156,101 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       fetchMenus();
     }
   }, [step, selectedCategory]);
+
+  // 🆕 NUEVO: Cargar pedidos existentes cuando se selecciona una persona (Step 3)
+  useEffect(() => {
+    const fetchExistingOrders = async () => {
+      if (!selectedPerson || !selectedDate || paymentType !== 'credit') {
+        setExistingOrders([]);
+        return;
+      }
+      
+      setLoading(true);
+      try {
+        // Formatear la fecha correctamente
+        let targetDate = selectedDate;
+        if (typeof selectedDate !== 'string') {
+          targetDate = format(new Date(selectedDate), 'yyyy-MM-dd');
+        }
+
+        // ✅ SOLUCIÓN: Traer lunch_menus con su category_id, luego buscar categorías
+        let query = supabase
+          .from('lunch_orders')
+          .select(`
+            id, 
+            order_date, 
+            status, 
+            quantity, 
+            is_cancelled,
+            category_id,
+            lunch_menus ( main_course )
+          `)
+          .eq('order_date', targetDate)
+          .eq('is_cancelled', false);
+
+        if (targetType === 'students') {
+          query = query.eq('student_id', selectedPerson.id);
+        } else if (targetType === 'teachers') {
+          query = query.eq('teacher_id', selectedPerson.id);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.error('❌ Error en query:', error);
+          throw error;
+        }
+        
+        // 🆕 Si hay pedidos, obtener los nombres de las categorías
+        if (data && data.length > 0) {
+          const categoryIds = [...new Set(data.map((order: any) => order.category_id).filter(Boolean))];
+          
+          if (categoryIds.length > 0) {
+            const { data: categories } = await supabase
+              .from('lunch_categories')
+              .select('id, name')
+              .in('id', categoryIds);
+            
+            // Mapear los nombres de categorías a los pedidos
+            const ordersWithCategoryNames = data.map((order: any) => ({
+              ...order,
+              lunch_menus: {
+                ...order.lunch_menus,
+                lunch_categories: {
+                  name: categories?.find((cat: any) => cat.id === order.category_id)?.name || 'Sin categoría'
+                }
+              }
+            }));
+            
+            console.log('✅ Pedidos con categorías:', ordersWithCategoryNames);
+            setExistingOrders(ordersWithCategoryNames || []);
+          } else {
+            console.log('✅ Pedidos sin categorías:', data);
+            setExistingOrders(data || []);
+          }
+        } else {
+          console.log('ℹ️ No hay pedidos existentes para este día');
+          setExistingOrders([]);
+        }
+      } catch (error: any) {
+        console.error('💥 Error fetching existing orders:', error);
+        // ⚠️ No mostrar toast si no hay pedidos, solo en caso de error real
+        if (error.code !== 'PGRST116') { // PGRST116 = No rows found (normal)
+          toast({ 
+            title: 'Error', 
+            description: error.message || 'No se pudieron cargar los pedidos existentes', 
+            variant: 'destructive' 
+          });
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (step === 3 && selectedPerson && paymentType === 'credit') {
+      fetchExistingOrders();
+    }
+  }, [step, selectedPerson, selectedDate, targetType, paymentType]);
 
   const fetchPeople = async () => {
     try {
@@ -322,6 +421,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     try {
       setLoading(true);
 
+      // 🆕 Calcular precio total basado en cantidad
+      const totalPrice = (selectedCategory.price || 0) * quantity;
+
       // Crear pedido
       const orderData: any = {
         menu_id: selectedMenu.id,
@@ -329,6 +431,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         status: 'confirmed',
         category_id: selectedCategory.id,
         school_id: schoolId, // Agregar school_id del admin que crea el pedido
+        quantity, // 🆕 AGREGAR CANTIDAD
+        base_price: selectedCategory.price || 0, // 🆕 Precio unitario
+        final_price: totalPrice, // 🆕 Precio total
       };
 
       if (paymentType === 'credit') {
@@ -348,20 +453,29 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         }
       }
 
-      const { error: orderError } = await supabase
+      const { data: insertedOrder, error: orderError } = await supabase
         .from('lunch_orders')
-        .insert([orderData]);
+        .insert([orderData])
+        .select('id')
+        .single();
 
       if (orderError) throw orderError;
 
       // Crear transacción si es con crédito
-      if (paymentType === 'credit' && selectedPerson && selectedCategory.price && selectedCategory.price > 0) {
+      if (paymentType === 'credit' && selectedPerson && totalPrice > 0) {
         const transactionData: any = {
           type: 'purchase',
-          amount: -Math.abs(selectedCategory.price),
-          description: `Almuerzo - ${selectedCategory.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
+          amount: -Math.abs(totalPrice), // 🆕 Usar precio total
+          description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
           payment_status: 'pending', // 📝 Deuda pendiente
           school_id: schoolId,
+          metadata: {
+            lunch_order_id: insertedOrder.id,
+            source: 'physical_order_wizard',
+            order_date: selectedMenu.date,
+            category_name: selectedCategory.name, // 🆕 Nombre de categoría
+            quantity // 🆕 Cantidad en metadata
+          }
         };
 
         if (targetType === 'students') {
@@ -374,14 +488,21 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       }
 
       // 🆕 Crear transacción pendiente si es "Pagar Luego"
-      if (paymentType === 'cash' && cashPaymentMethod === 'pagar_luego' && selectedCategory.price && selectedCategory.price > 0) {
+      if (paymentType === 'cash' && cashPaymentMethod === 'pagar_luego' && totalPrice > 0) {
         const transactionData: any = {
           type: 'purchase',
-          amount: -Math.abs(selectedCategory.price),
-          description: `Almuerzo - ${selectedCategory.name} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} - ${manualName}`,
+          amount: -Math.abs(totalPrice), // 🆕 Usar precio total
+          description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} - ${manualName}`,
           payment_status: 'pending', // 📝 Deuda pendiente (fiado)
           school_id: schoolId,
           manual_client_name: manualName, // 👤 Guardar el nombre del cliente
+          metadata: {
+            lunch_order_id: insertedOrder.id,
+            source: 'physical_order_wizard_fiado',
+            order_date: selectedMenu.date,
+            category_name: selectedCategory.name, // 🆕 Nombre de categoría
+            quantity // 🆕 Cantidad en metadata
+          }
         };
 
         const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);
@@ -396,9 +517,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
       toast({
         title: '✅ Pedido registrado',
-        description: `Almuerzo para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}${
+        description: `${quantity}x ${selectedCategory.name} para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}${
           cashPaymentMethod === 'pagar_luego' ? ' (Pago pendiente)' : ''
-        }`
+        }${existingOrders.length > 0 ? ` (pedido adicional)` : ''}`
       });
 
       handleClose();
@@ -550,6 +671,36 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                     ))
                   )}
                 </div>
+
+                {/* 🆕 ADVERTENCIA DE PEDIDOS EXISTENTES - AHORA EN STEP 3 */}
+                {selectedPerson && existingOrders.length > 0 && (
+                  <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 mt-4 animate-in slide-in-from-top-2">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="h-6 w-6 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <h4 className="font-bold text-orange-900 text-lg mb-2">
+                          ⚠️ {selectedPerson.full_name} ya tiene {existingOrders.length} pedido(s) para este día
+                        </h4>
+                        <div className="space-y-2 mb-3">
+                          {existingOrders.map((order: any, idx: number) => (
+                            <div key={order.id} className="bg-white rounded border border-orange-200 p-3 text-sm">
+                              <p className="font-semibold text-gray-900">
+                                Pedido #{idx + 1}: {order.lunch_menus?.lunch_categories?.name || 'Menú'}
+                                {order.quantity > 1 && ` (${order.quantity}x)`}
+                              </p>
+                              <p className="text-gray-600 text-xs mt-1">
+                                🍽️ {order.lunch_menus?.main_course || 'Sin detalles'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-sm text-orange-800 font-medium bg-orange-100 rounded px-3 py-2">
+                          💡 ¿Deseas agregarle <span className="font-bold">OTRO</span> pedido a {selectedPerson.full_name}?
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -672,17 +823,107 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
               </Button>
               <Button
-                onClick={() => paymentType === 'cash' ? setStep(6) : handleSubmit()}
+                onClick={async () => {
+                  // 🆕 Verificar pedidos existentes antes de continuar
+                  if (selectedPerson && selectedDate) {
+                    setLoading(true);
+                    try {
+                      const { data: orders, error } = await supabase
+                        .from('lunch_orders')
+                        .select('*, lunch_menus(*, lunch_categories(name))')
+                        .eq(targetType === 'students' ? 'student_id' : 'teacher_id', selectedPerson.id)
+                        .eq('order_date', typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd'))
+                        .eq('is_cancelled', false);
+
+                      if (error) throw error;
+                      setExistingOrders(orders || []);
+                    } catch (error) {
+                      console.error('Error al verificar pedidos existentes:', error);
+                    } finally {
+                      setLoading(false);
+                    }
+                  }
+                  setStep(6); // 🔧 Ir a paso 6 (cantidad)
+                }}
                 disabled={!selectedMenu || loading}
               >
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Guardando...
+                    Verificando...
                   </>
-                ) : paymentType === 'cash' ? (
+                ) : (
                   <>
                     Siguiente <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 6: Cantidad y advertencia de pedidos existentes */}
+        {step === 6 && paymentType === 'credit' && (
+          <div className="space-y-4 py-4">
+            {/* Selector de cantidad */}
+            <div className="space-y-3">
+              <Label className="text-lg font-semibold">¿Cuántos menús desea ordenar?</Label>
+              <div className="flex items-center justify-center gap-4 py-6">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                  disabled={quantity <= 1}
+                  className="h-16 w-16 rounded-full"
+                >
+                  <Minus className="h-6 w-6" />
+                </Button>
+                
+                <div className="text-center min-w-[120px]">
+                  <p className="text-5xl font-bold text-blue-600">{quantity}</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {quantity === 1 ? 'menú' : 'menús'}
+                  </p>
+                </div>
+                
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setQuantity(Math.min(10, quantity + 1))}
+                  disabled={quantity >= 10}
+                  className="h-16 w-16 rounded-full"
+                >
+                  <Plus className="h-6 w-6" />
+                </Button>
+              </div>
+
+              {/* Resumen del precio total */}
+              <div className="bg-blue-50 rounded-lg p-4 text-center">
+                <p className="text-sm text-gray-600 mb-1">Precio por menú:</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                </p>
+                <div className="border-t border-blue-200 mt-2 pt-2">
+                  <p className="text-sm text-gray-600 mb-1">Total a pagar:</p>
+                  <p className="text-3xl font-bold text-blue-700">
+                    S/ {((selectedCategory?.price || 0) * quantity).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between gap-2 pt-4">
+              <Button variant="outline" onClick={() => setStep(5)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Guardando...
                   </>
                 ) : (
                   <>
@@ -695,8 +936,72 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           </div>
         )}
 
-        {/* PASO 6: Método de pago (solo sin crédito) */}
+        {/* PASO 6: Cantidad y advertencia (para "Sin Crédito" también) */}
         {step === 6 && paymentType === 'cash' && (
+          <div className="space-y-4 py-4">
+            {/* Selector de cantidad */}
+            <div className="space-y-3">
+              <Label className="text-lg font-semibold">¿Cuántos menús desea ordenar?</Label>
+              <div className="flex items-center justify-center gap-4 py-6">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                  disabled={quantity <= 1}
+                  className="h-16 w-16 rounded-full"
+                >
+                  <Minus className="h-6 w-6" />
+                </Button>
+                
+                <div className="text-center min-w-[120px]">
+                  <p className="text-5xl font-bold text-blue-600">{quantity}</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {quantity === 1 ? 'menú' : 'menús'}
+                  </p>
+                </div>
+                
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setQuantity(Math.min(10, quantity + 1))}
+                  disabled={quantity >= 10}
+                  className="h-16 w-16 rounded-full"
+                >
+                  <Plus className="h-6 w-6" />
+                </Button>
+              </div>
+
+              {/* Resumen del precio total */}
+              <div className="bg-blue-50 rounded-lg p-4 text-center">
+                <p className="text-sm text-gray-600 mb-1">Precio por menú:</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                </p>
+                <div className="border-t border-blue-200 mt-2 pt-2">
+                  <p className="text-sm text-gray-600 mb-1">Total a pagar:</p>
+                  <p className="text-3xl font-bold text-blue-700">
+                    S/ {((selectedCategory?.price || 0) * quantity).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between gap-2 pt-4">
+              <Button variant="outline" onClick={() => setStep(5)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
+              </Button>
+              <Button
+                onClick={() => setStep(7)} // 🔧 Ir a paso 7 (método de pago)
+                disabled={loading}
+              >
+                Siguiente <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 7: Método de pago (solo sin crédito) - RENUMERADO */}
+        {step === 7 && paymentType === 'cash' && (
           <div className="space-y-4 py-4">
             <p className="text-center text-gray-600 font-medium">Selecciona el método de pago</p>
             
@@ -749,8 +1054,13 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <div className="bg-blue-50 p-3 rounded-lg">
                   <p className="text-sm text-gray-600">Monto a pagar:</p>
                   <p className="text-2xl font-bold text-blue-700">
-                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                    S/ {(((selectedCategory?.price || 0) * quantity).toFixed(2))}
                   </p>
+                  {quantity > 1 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {quantity} menús × S/ {selectedCategory?.price?.toFixed(2)}
+                    </p>
+                  )}
                 </div>
 
                 {/* Tipo de moneda */}
@@ -822,8 +1132,13 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <div className="bg-blue-50 p-3 rounded-lg">
                   <p className="text-sm text-gray-600">Monto:</p>
                   <p className="text-2xl font-bold text-blue-700">
-                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                    S/ {(((selectedCategory?.price || 0) * quantity).toFixed(2))}
                   </p>
+                  {quantity > 1 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {quantity} menús × S/ {selectedCategory?.price?.toFixed(2)}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -987,8 +1302,13 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 <div className="bg-blue-50 p-3 rounded-lg">
                   <p className="text-sm text-gray-600">Monto a pagar después:</p>
                   <p className="text-2xl font-bold text-blue-700">
-                    S/ {selectedCategory?.price?.toFixed(2) || '0.00'}
+                    S/ {(((selectedCategory?.price || 0) * quantity).toFixed(2))}
                   </p>
+                  {quantity > 1 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {quantity} menús × S/ {selectedCategory?.price?.toFixed(2)}
+                    </p>
+                  )}
                 </div>
 
                 <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
@@ -1004,7 +1324,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
             {/* Botones de navegación */}
             <div className="flex justify-between gap-2 pt-4 border-t">
-              <Button variant="outline" onClick={() => setStep(5)}>
+              <Button variant="outline" onClick={() => setStep(6)}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
               </Button>
               <Button 

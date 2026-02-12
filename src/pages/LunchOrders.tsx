@@ -44,12 +44,14 @@ interface LunchOrder {
   is_no_order_delivery: boolean;
   is_cancelled: boolean;
   cancelled_by: string | null;
+  created_by: string | null;
   student_id: string | null;
   teacher_id: string | null;
   manual_name: string | null;
   payment_method: string | null;
   payment_details: any;
   menu_id: string | null;
+  quantity: number | null;
   base_price: number | null;
   addons_total: number | null;
   final_price: number | null;
@@ -602,6 +604,43 @@ export default function LunchOrders() {
       setLoading(true);
       console.log('✅ Confirmando pedido:', order.id);
 
+      // ⚠️ ANTI-DUPLICADO: Verificar si ya existe una transacción para este lunch_order_id
+      const { data: existingTransaction, error: checkError } = await supabase
+        .from('transactions')
+        .select('id, payment_status')
+        .eq('metadata->>lunch_order_id', order.id)
+        .neq('payment_status', 'cancelled')
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('❌ Error verificando transacción existente:', checkError);
+        throw checkError;
+      }
+
+      if (existingTransaction) {
+        console.log('⚠️ Ya existe una transacción para este pedido, no se creará duplicado:', existingTransaction);
+        toast({
+          title: '⚠️ Pedido ya tiene transacción',
+          description: 'Este pedido ya tiene una transacción registrada. Solo se actualizó el estado.',
+        });
+        
+        // Solo actualizar el status del pedido
+        const { error: updateError } = await supabase
+          .from('lunch_orders')
+          .update({ status: 'confirmed' })
+          .eq('id', order.id);
+
+        if (updateError) throw updateError;
+
+        toast({
+          title: '✅ Pedido confirmado',
+          description: 'El pedido se confirmó correctamente',
+        });
+
+        fetchOrders();
+        return;
+      }
+
       // Actualizar status a confirmed
       const { error: updateError } = await supabase
         .from('lunch_orders')
@@ -616,6 +655,12 @@ export default function LunchOrders() {
         type: 'purchase',
         payment_status: 'pending',
         school_id: order.school_id || order.student?.school_id || order.teacher?.school_id_1,
+        created_by: user?.id, // 👤 Registrar quién confirmó
+        metadata: {
+          lunch_order_id: order.id,
+          source: 'lunch_orders_confirm',
+          order_date: order.order_date,
+        }
       };
 
       // Determinar si necesita transacción y el monto
@@ -916,24 +961,36 @@ export default function LunchOrders() {
           order_date: pendingCancelOrder.order_date
         });
         
-        // Buscar la transacción de compra asociada por student_id o teacher_id
-        let query = supabase
+        // 🆕 Primero intentar buscar por lunch_order_id en metadata (más confiable)
+        let { data: transactions, error: transError } = await supabase
           .from('transactions')
-          .select('id, amount, student_id, teacher_id, description, created_at')
-          .eq('type', 'purchase')
-          .eq('payment_status', 'pending');
+          .select('id, amount, student_id, teacher_id, description, created_at, metadata, payment_status')
+          .eq('metadata->>lunch_order_id', pendingCancelOrder.id)
+          .in('payment_status', ['pending', 'paid', 'partial']);
         
-        // Filtrar por student_id o teacher_id según corresponda
-        if (pendingCancelOrder.student_id) {
-          query = query.eq('student_id', pendingCancelOrder.student_id);
-        } else if (pendingCancelOrder.teacher_id) {
-          query = query.eq('teacher_id', pendingCancelOrder.teacher_id);
+        // Si no se encuentra por metadata, buscar por descripción (método legacy)
+        if (!transactions || transactions.length === 0) {
+          console.log('⚠️ No se encontró por lunch_order_id, buscando por descripción...');
+          let query = supabase
+            .from('transactions')
+            .select('id, amount, student_id, teacher_id, description, created_at, metadata, payment_status')
+            .eq('type', 'purchase')
+            .in('payment_status', ['pending', 'paid', 'partial']);
+          
+          // Filtrar por student_id o teacher_id según corresponda
+          if (pendingCancelOrder.student_id) {
+            query = query.eq('student_id', pendingCancelOrder.student_id);
+          } else if (pendingCancelOrder.teacher_id) {
+            query = query.eq('teacher_id', pendingCancelOrder.teacher_id);
+          }
+          
+          // Filtrar por fecha del pedido en la descripción
+          query = query.ilike('description', `%${pendingCancelOrder.order_date}%`);
+          
+          const result = await query;
+          transactions = result.data;
+          transError = result.error;
         }
-        
-        // Filtrar por fecha del pedido en la descripción
-        query = query.ilike('description', `%${pendingCancelOrder.order_date}%`);
-        
-        const { data: transactions, error: transError } = await query;
         
         console.log('🔍 Transacciones encontradas:', transactions);
         
@@ -943,16 +1000,23 @@ export default function LunchOrders() {
           const transaction = transactions[0];
           console.log('✅ Transacción encontrada:', transaction);
           
-          // Anular la transacción (eliminarla para devolver el crédito)
-          const { error: deleteTransError } = await supabase
+          // Anular la transacción (cambiar a 'cancelled' en lugar de eliminar)
+          const { error: cancelTransError } = await supabase
             .from('transactions')
-            .delete()
+            .update({ 
+              payment_status: 'cancelled',
+              metadata: {
+                ...transaction.metadata,
+                cancelled_reason: 'Pedido anulado por el administrador',
+                cancelled_at: new Date().toISOString()
+              }
+            })
             .eq('id', transaction.id);
           
-          if (deleteTransError) {
-            console.error('❌ Error anulando transacción:', deleteTransError);
+          if (cancelTransError) {
+            console.error('❌ Error anulando transacción:', cancelTransError);
           } else {
-            console.log('✅ Transacción eliminada, crédito devuelto automáticamente');
+            console.log('✅ Transacción cancelada, crédito devuelto automáticamente');
           }
         } else {
           console.log('⚠️ No se encontró transacción asociada (puede ser un pago físico o ya fue pagado)');
@@ -1031,13 +1095,14 @@ export default function LunchOrders() {
       doc.text(filterText, 15, 25);
       doc.text(`Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}`, 15, 30);
       
-      // Preparar datos para la tabla
+      // Preparar datos para la tabla con TODOS los detalles
       const tableData = filteredOrders.map(order => {
         const clientName = order.student?.full_name || order.teacher?.full_name || order.manual_name || 'N/A';
         const schoolName = order.school?.name || (order.student?.school_id ? schools.find(s => s.id === order.student?.school_id)?.name : null) || 'N/A';
         const orderDate = format(new Date(order.order_date), 'dd/MM/yyyy', { locale: es });
         const orderTime = new Date(order.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Lima' });
         
+        // 📋 Estado del pedido
         const statusLabels: Record<string, string> = {
           pending: 'Pendiente',
           confirmed: 'Confirmado',
@@ -1048,17 +1113,44 @@ export default function LunchOrders() {
         };
         const status = statusLabels[order.status] || order.status;
         
+        // 💰 Estado de pago
         const debtInfo = getDebtStatus(order);
         const paymentStatus = debtInfo.label.replace(/[💰✅💳⏳]/g, '').trim();
         
-        const menuCategory = order.lunch_menus?.category_name || 'Menú del día';
+        // 🍽️ Categoría del menú
+        const menuCategory = order.lunch_menus?.lunch_categories?.name || order.lunch_menus?.category_name || 'Menú del día';
         
-        // Agregados
-        const addons = order.lunch_order_addons && order.lunch_order_addons.length > 0
-          ? order.lunch_order_addons.map((a: any) => a.addon_name).join(', ')
-          : '-';
+        // 📊 Cantidad de menús
+        const quantity = order.quantity || 1;
+        const quantityText = quantity > 1 ? `${quantity}x` : '';
         
-        // Precio total
+        // 🥗 DETALLE DEL MENÚ (entrada, segundo, postre, bebida)
+        let menuDetails = '';
+        if (order.lunch_menus) {
+          const parts = [];
+          if (order.lunch_menus.starter) parts.push(`Entrada: ${order.lunch_menus.starter}`);
+          if (order.lunch_menus.main_course) parts.push(`Segundo: ${order.lunch_menus.main_course}`);
+          if (order.lunch_menus.dessert) parts.push(`Postre: ${order.lunch_menus.dessert}`);
+          if (order.lunch_menus.beverage) parts.push(`Bebida: ${order.lunch_menus.beverage}`);
+          menuDetails = parts.length > 0 ? parts.join(' | ') : '-';
+        } else {
+          menuDetails = '-';
+        }
+        
+        // 📝 Observaciones
+        const notes = order.lunch_menus?.notes || order.cancellation_reason || order.postponement_reason || '-';
+        
+        // 📱 Origen del pedido (por qué medio lo hizo)
+        let origin = 'Desconocido';
+        if (order.teacher_id) {
+          origin = 'App Profesor';
+        } else if (order.student_id) {
+          origin = order.student?.is_temporary ? 'Cocina (Cliente temporal)' : 'App Padre';
+        } else if (order.manual_name) {
+          origin = 'Registro Manual (Admin)';
+        }
+        
+        // 💵 Precio total
         const totalPrice = order.final_price !== null && order.final_price !== undefined
           ? `S/ ${order.final_price.toFixed(2)}`
           : '-';
@@ -1068,44 +1160,50 @@ export default function LunchOrders() {
           schoolName,
           orderDate,
           orderTime,
+          `${quantityText} ${menuCategory}`,
+          menuDetails,
+          notes,
+          origin,
           status,
           paymentStatus,
-          menuCategory,
-          addons,
           totalPrice
         ];
       });
       
       // Crear tabla con autoTable
       autoTable(doc, {
-        head: [['Cliente', 'Sede', 'Fecha Pedido', 'Hora', 'Estado', 'Pago', 'Categoría Menú', 'Agregados', 'Total']],
+        head: [['Cliente', 'Sede', 'Fecha', 'Hora', 'Categoría y Cant.', 'Detalle del Menú', 'Observaciones', 'Origen', 'Estado', 'Pago', 'Total']],
         body: tableData,
         startY: 35,
         styles: {
-          fontSize: 7,
+          fontSize: 6,
           cellPadding: 1.5,
+          overflow: 'linebreak',
         },
         headStyles: {
           fillColor: [59, 130, 246], // Blue-600
           textColor: 255,
           fontStyle: 'bold',
-          halign: 'center'
+          halign: 'center',
+          fontSize: 7
         },
         alternateRowStyles: {
           fillColor: [249, 250, 251] // Gray-50
         },
         columnStyles: {
-          0: { cellWidth: 35 }, // Cliente
-          1: { cellWidth: 30 }, // Sede
-          2: { cellWidth: 22 }, // Fecha
-          3: { cellWidth: 15 }, // Hora
-          4: { cellWidth: 22 }, // Estado
-          5: { cellWidth: 20 }, // Pago
-          6: { cellWidth: 35 }, // Categoría
-          7: { cellWidth: 45 }, // Agregados
-          8: { cellWidth: 18, halign: 'right' }  // Total
+          0: { cellWidth: 28 }, // Cliente
+          1: { cellWidth: 22 }, // Sede
+          2: { cellWidth: 18 }, // Fecha
+          3: { cellWidth: 12 }, // Hora
+          4: { cellWidth: 30 }, // Categoría
+          5: { cellWidth: 50 }, // Detalle del menú (MÁS IMPORTANTE)
+          6: { cellWidth: 25 }, // Observaciones
+          7: { cellWidth: 22 }, // Origen
+          8: { cellWidth: 18 }, // Estado
+          9: { cellWidth: 18 }, // Pago
+          10: { cellWidth: 15, halign: 'right' }  // Total
         },
-        margin: { left: 15, right: 15 },
+        margin: { left: 10, right: 10 },
       });
       
       // Footer con branding
@@ -1543,64 +1641,89 @@ export default function LunchOrders() {
         />
       )}
 
-      {/* Modal de Detalles del Menú */}
+      {/* Modal de Detalles del Pedido - REDESIGNED v1.21.2 */}
       {selectedMenuOrder && selectedMenuOrder.lunch_menus && (
         <Dialog open={showMenuDetails} onOpenChange={setShowMenuDetails}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-xl">
-                <UtensilsCrossed className="h-6 w-6 text-blue-600" />
-                Detalles del Pedido
+              <DialogTitle className="flex items-center gap-2 text-2xl font-bold">
+                🍽️ Detalle del Pedido
               </DialogTitle>
+              <DialogDescription className="text-base">
+                Información completa del pedido de almuerzo
+              </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-6">
-              {/* DATOS DE QUIÉN HIZO EL PEDIDO */}
-              <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+            <div className="space-y-4 mt-4">
+              {/* 1. PARA QUÉ DÍA ES EL PEDIDO */}
+              <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-300">
+                <CardContent className="py-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600 font-medium uppercase tracking-wide">Para el día</p>
+                      <p className="text-2xl font-bold text-gray-900 mt-1">
+                        {format(new Date(selectedMenuOrder.order_date + 'T00:00:00'), "EEEE d 'de' MMMM, yyyy", { locale: es })}
+                      </p>
+                    </div>
+                    <Calendar className="h-12 w-12 text-purple-600" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 2. CUÁNDO LO PIDIÓ */}
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-3">
+                    <Clock className="h-10 w-10 text-blue-600 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm text-gray-600 font-medium">Pedido registrado el</p>
+                      <p className="text-lg font-bold text-gray-900">
+                        {format(new Date(selectedMenuOrder.created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 3. QUIÉN HIZO EL PEDIDO */}
+              <Card className="bg-gradient-to-r from-green-50 to-emerald-50 border-green-200">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                    👤 Información del Cliente
+                  <CardTitle className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
+                    👤 Cliente
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent>
                   <div className="flex items-center gap-4">
-                    {/* Foto o inicial */}
                     {selectedMenuOrder.student?.photo_url ? (
                       <img
                         src={selectedMenuOrder.student.photo_url}
                         alt={selectedMenuOrder.student.full_name}
-                        className="h-16 w-16 rounded-full object-cover border-2 border-blue-300"
+                        className="h-14 w-14 rounded-full object-cover border-2 border-green-300"
                       />
                     ) : (
                       <div className={cn(
-                        "h-16 w-16 rounded-full flex items-center justify-center border-2",
-                        selectedMenuOrder.teacher ? "bg-green-100 border-green-300" : "bg-blue-100 border-blue-300"
+                        "h-14 w-14 rounded-full flex items-center justify-center border-2",
+                        selectedMenuOrder.teacher ? "bg-green-100 border-green-400" : "bg-blue-100 border-blue-400"
                       )}>
-                        <span className={cn(
-                          "font-bold text-2xl",
-                          selectedMenuOrder.teacher ? "text-green-700" : "text-blue-600"
-                        )}>
-                          {selectedMenuOrder.student?.full_name[0] || selectedMenuOrder.teacher?.full_name[0] || selectedMenuOrder.manual_name?.[0] || '?'}
+                        <span className="font-bold text-xl">
+                          {(selectedMenuOrder.student?.full_name || selectedMenuOrder.teacher?.full_name || selectedMenuOrder.manual_name || '?')[0]}
                         </span>
                       </div>
                     )}
                     
                     <div className="flex-1">
-                      <p className="text-xl font-bold text-gray-900">
+                      <p className="text-lg font-bold text-gray-900">
                         {selectedMenuOrder.student?.full_name || selectedMenuOrder.teacher?.full_name || selectedMenuOrder.manual_name || 'Desconocido'}
                       </p>
-                      <div className="flex items-center gap-2 mt-1">
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
                         {selectedMenuOrder.teacher && (
                           <Badge className="bg-green-600">👨‍🏫 Profesor</Badge>
                         )}
                         {selectedMenuOrder.student && !selectedMenuOrder.student.is_temporary && (
                           <Badge className="bg-blue-600">👨‍🎓 Alumno</Badge>
                         )}
-                        {selectedMenuOrder.student?.is_temporary && (
-                          <Badge className="bg-purple-600">🎫 Puente Temporal</Badge>
-                        )}
                         {selectedMenuOrder.manual_name && (
-                          <Badge className="bg-orange-600">💵 Pago Físico</Badge>
+                          <Badge className="bg-orange-600">💵 Cliente Manual</Badge>
                         )}
                         {selectedMenuOrder.school && (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300">
@@ -1608,35 +1731,171 @@ export default function LunchOrders() {
                           </Badge>
                         )}
                       </div>
-                      {selectedMenuOrder.student?.is_temporary && selectedMenuOrder.student.temporary_classroom_name && (
-                        <p className="text-sm text-purple-600 mt-1">
-                          Salón: {selectedMenuOrder.student.temporary_classroom_name}
-                        </p>
-                      )}
                     </div>
+                  </div>
+
+                  {/* QUIÉN LO CREÓ */}
+                  <div className="mt-3 pt-3 border-t border-green-200">
+                    <p className="text-xs text-gray-600 font-medium uppercase tracking-wide mb-1">Registrado por</p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {selectedMenuOrder.created_by ? (
+                        selectedMenuOrder.teacher_id && selectedMenuOrder.created_by === selectedMenuOrder.teacher_id 
+                          ? '✅ El profesor desde su perfil'
+                          : selectedMenuOrder.student_id && selectedMenuOrder.created_by === selectedMenuOrder.student?.parent_id
+                          ? '✅ El padre desde su perfil'
+                          : '🔧 Un administrador/cajero'
+                      ) : (
+                        selectedMenuOrder.teacher_id 
+                          ? '✅ El profesor desde su perfil (legacy)'
+                          : selectedMenuOrder.manual_name
+                          ? '🔧 Un cajero (venta manual)'
+                          : '⚙️ Sistema'
+                      )}
+                    </p>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* ESTADO DE PAGO */}
-              <Card className="bg-gradient-to-r from-green-50 to-emerald-50 border-green-200">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                    💰 Información de Pago
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Estado de Pago:</p>
-                      {selectedMenuOrder.manual_name ? (
-                        <Badge className="bg-green-600 text-white mt-1">✅ Pagado (Físico)</Badge>
-                      ) : (
-                        <Badge className="bg-blue-600 text-white mt-1">💳 Pagado (Crédito)</Badge>
+              {/* 4. ESTADO DEL PEDIDO (GRANDE Y CLARO) */}
+              <Card className={cn(
+                "border-2",
+                selectedMenuOrder.status === 'delivered' && "bg-green-50 border-green-500",
+                selectedMenuOrder.status === 'confirmed' && "bg-blue-50 border-blue-500",
+                selectedMenuOrder.status === 'pending' && "bg-yellow-50 border-yellow-500",
+                selectedMenuOrder.is_cancelled && "bg-red-50 border-red-500"
+              )}>
+                <CardContent className="py-6">
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-gray-600 uppercase tracking-wide mb-2">Estado del Pedido</p>
+                    <div className="flex items-center justify-center gap-3">
+                      {selectedMenuOrder.status === 'delivered' && (
+                        <>
+                          <CheckCircle2 className="h-10 w-10 text-green-600" />
+                          <p className="text-3xl font-bold text-green-700">ENTREGADO</p>
+                        </>
+                      )}
+                      {selectedMenuOrder.status === 'confirmed' && (
+                        <>
+                          <CheckCircle2 className="h-10 w-10 text-blue-600" />
+                          <p className="text-3xl font-bold text-blue-700">CONFIRMADO</p>
+                        </>
+                      )}
+                      {selectedMenuOrder.status === 'pending' && !selectedMenuOrder.is_cancelled && (
+                        <>
+                          <Clock className="h-10 w-10 text-yellow-600" />
+                          <p className="text-3xl font-bold text-yellow-700">PENDIENTE</p>
+                        </>
+                      )}
+                      {selectedMenuOrder.is_cancelled && (
+                        <>
+                          <XCircle className="h-10 w-10 text-red-600" />
+                          <p className="text-3xl font-bold text-red-700">ANULADO</p>
+                        </>
                       )}
                     </div>
-                    
-                    {selectedMenuOrder.payment_method && (
+                    {selectedMenuOrder.delivered_at && (
+                      <p className="text-sm text-gray-600 mt-2">
+                        Entregado a las {format(new Date(selectedMenuOrder.delivered_at), "HH:mm", { locale: es })}
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 5. CANTIDAD DE MENÚS */}
+              {selectedMenuOrder.quantity && selectedMenuOrder.quantity > 1 && (
+                <Card className="bg-amber-50 border-amber-300">
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-amber-200 flex items-center justify-center">
+                        <span className="text-2xl font-bold text-amber-900">{selectedMenuOrder.quantity}</span>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 font-medium">Cantidad de menús</p>
+                        <p className="text-lg font-bold text-gray-900">
+                          {selectedMenuOrder.quantity} menú{selectedMenuOrder.quantity > 1 ? 's' : ''} pedido{selectedMenuOrder.quantity > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 6. CATEGORÍA */}
+              {selectedMenuOrder.lunch_menus.lunch_categories && (
+                <Card className="bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-200">
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-3">
+                      {selectedMenuOrder.lunch_menus.lunch_categories.icon && (
+                        <span className="text-4xl">{selectedMenuOrder.lunch_menus.lunch_categories.icon}</span>
+                      )}
+                      <div>
+                        <p className="text-xs text-gray-600 uppercase tracking-wide font-semibold">Categoría</p>
+                        <p className="text-xl font-bold text-gray-900">{selectedMenuOrder.lunch_menus.lunch_categories.name}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 7. MENÚ COMPLETO */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
+                    🍽️ Menú del Día
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {selectedMenuOrder.lunch_menus.starter && (
+                      <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                        <p className="text-xs font-semibold text-green-700 uppercase mb-1">🥗 Entrada</p>
+                        <p className="text-sm font-medium text-gray-900">{selectedMenuOrder.lunch_menus.starter}</p>
+                      </div>
+                    )}
+                    {selectedMenuOrder.lunch_menus.main_course && (
+                      <div className="bg-orange-50 p-3 rounded-lg border border-orange-200">
+                        <p className="text-xs font-semibold text-orange-700 uppercase mb-1">🍽️ Plato Principal</p>
+                        <p className="text-sm font-medium text-gray-900">{selectedMenuOrder.lunch_menus.main_course}</p>
+                      </div>
+                    )}
+                    {selectedMenuOrder.lunch_menus.beverage && (
+                      <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                        <p className="text-xs font-semibold text-blue-700 uppercase mb-1">🥤 Bebida</p>
+                        <p className="text-sm font-medium text-gray-900">{selectedMenuOrder.lunch_menus.beverage}</p>
+                      </div>
+                    )}
+                    {selectedMenuOrder.lunch_menus.dessert && (
+                      <div className="bg-pink-50 p-3 rounded-lg border border-pink-200">
+                        <p className="text-xs font-semibold text-pink-700 uppercase mb-1">🍰 Postre</p>
+                        <p className="text-sm font-medium text-gray-900">{selectedMenuOrder.lunch_menus.dessert}</p>
+                      </div>
+                    )}
+                  </div>
+                  {selectedMenuOrder.lunch_menus.notes && (
+                    <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-yellow-700 uppercase mb-1">📝 Notas</p>
+                      <p className="text-sm text-gray-700">{selectedMenuOrder.lunch_menus.notes}</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 8. ESTADO DE PAGO (SOLO SI ESTÁ PAGADO O TIENE DETALLES) */}
+              {(selectedMenuOrder.payment_method || selectedMenuOrder.final_price) && (
+                <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-semibold uppercase tracking-wide flex items-center gap-2">
+                      💰 Información de Pago
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {selectedMenuOrder.manual_name ? (
+                      <div>
+                        <p className="text-sm text-gray-600">Estado:</p>
+                        <Badge className="bg-green-600 text-white mt-1">✅ Pagado (Efectivo/Manual)</Badge>
+                      </div>
+                    ) : selectedMenuOrder.payment_method ? (
                       <div>
                         <p className="text-sm text-gray-600">Método de Pago:</p>
                         <p className="font-bold text-gray-900 mt-1">
@@ -1648,171 +1907,28 @@ export default function LunchOrders() {
                           {!['cash', 'card', 'yape', 'plin', 'transfer'].includes(selectedMenuOrder.payment_method) && selectedMenuOrder.payment_method}
                         </p>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Detalles de Pago */}
-                  {selectedMenuOrder.payment_details && (
-                    <div className="pt-3 border-t border-green-200">
-                      <p className="text-sm text-gray-600 mb-2">Detalles:</p>
-                      <div className="bg-white rounded-lg p-3 text-sm">
-                        {selectedMenuOrder.payment_method === 'cash' && (
-                          <div className="space-y-1">
-                            <p><span className="font-semibold">Moneda:</span> {selectedMenuOrder.payment_details.currency || 'Soles'}</p>
-                            <p><span className="font-semibold">Monto recibido:</span> S/ {selectedMenuOrder.payment_details.amount_received?.toFixed(2)}</p>
-                            {selectedMenuOrder.payment_details.change && (
-                              <p><span className="font-semibold">Vuelto:</span> S/ {selectedMenuOrder.payment_details.change?.toFixed(2)}</p>
-                            )}
-                          </div>
-                        )}
-                        {selectedMenuOrder.payment_method === 'card' && (
-                          <div className="space-y-1">
-                            <p><span className="font-semibold">Tipo:</span> {selectedMenuOrder.payment_details.card_type}</p>
-                            <p><span className="font-semibold">N° Operación:</span> {selectedMenuOrder.payment_details.operation_number}</p>
-                          </div>
-                        )}
-                        {(selectedMenuOrder.payment_method === 'yape' || selectedMenuOrder.payment_method === 'plin') && (
-                          <div className="space-y-1">
-                            <p><span className="font-semibold">N° Operación:</span> {selectedMenuOrder.payment_details.operation_number}</p>
-                          </div>
-                        )}
-                        {selectedMenuOrder.payment_method === 'transfer' && (
-                          <div className="space-y-1">
-                            <p><span className="font-semibold">Banco:</span> {selectedMenuOrder.payment_details.bank_name}</p>
-                            <p><span className="font-semibold">N° Operación:</span> {selectedMenuOrder.payment_details.operation_number}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* CATEGORÍA DEL MENÚ */}
-              {selectedMenuOrder.lunch_menus.lunch_categories && (
-                <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center gap-4">
-                      {selectedMenuOrder.lunch_menus.lunch_categories.icon && (
-                        <span className="text-5xl">{selectedMenuOrder.lunch_menus.lunch_categories.icon}</span>
-                      )}
+                    ) : (
                       <div>
-                        <p className="text-xs text-gray-600 uppercase tracking-wide font-semibold">Categoría</p>
-                        <p className="text-2xl font-bold text-gray-900">{selectedMenuOrder.lunch_menus.lunch_categories.name}</p>
+                        <p className="text-sm text-gray-600">Estado:</p>
+                        <Badge className="bg-yellow-600 text-white mt-1">⏳ Pendiente de Pago (A Crédito)</Badge>
                       </div>
-                    </div>
+                    )}
+
+                    {selectedMenuOrder.final_price && (
+                      <div className="pt-2 border-t border-emerald-200">
+                        <div className="flex justify-between items-center text-lg font-bold">
+                          <span className="text-gray-700">Total:</span>
+                          <span className="text-emerald-700">S/ {selectedMenuOrder.final_price.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
-
-              {/* MENÚ DETALLADO */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                    🍽️ Menú del Día
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Entrada */}
-                    {selectedMenuOrder.lunch_menus.starter && (
-                      <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
-                        <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2 flex items-center gap-1">
-                          🥗 Entrada
-                        </p>
-                        <p className="text-base text-gray-900 font-medium">{selectedMenuOrder.lunch_menus.starter}</p>
-                      </div>
-                    )}
-
-                    {/* Plato Principal */}
-                    {selectedMenuOrder.lunch_menus.main_course && (
-                      <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg border border-orange-200">
-                        <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide mb-2 flex items-center gap-1">
-                          🍽️ Plato Principal
-                        </p>
-                        <p className="text-base text-gray-900 font-medium">{selectedMenuOrder.lunch_menus.main_course}</p>
-                      </div>
-                    )}
-
-                    {/* Bebida */}
-                    {selectedMenuOrder.lunch_menus.beverage && (
-                      <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
-                        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2 flex items-center gap-1">
-                          🥤 Bebida
-                        </p>
-                        <p className="text-base text-gray-900 font-medium">{selectedMenuOrder.lunch_menus.beverage}</p>
-                      </div>
-                    )}
-
-                    {/* Postre */}
-                    {selectedMenuOrder.lunch_menus.dessert && (
-                      <div className="bg-gradient-to-br from-pink-50 to-pink-100 p-4 rounded-lg border border-pink-200">
-                        <p className="text-xs font-semibold text-pink-700 uppercase tracking-wide mb-2 flex items-center gap-1">
-                          🍰 Postre
-                        </p>
-                        <p className="text-base text-gray-900 font-medium">{selectedMenuOrder.lunch_menus.dessert}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Notas */}
-                  {selectedMenuOrder.lunch_menus.notes && (
-                    <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <p className="text-xs font-semibold text-yellow-700 uppercase tracking-wide mb-2 flex items-center gap-1">
-                        📝 Notas Especiales
-                      </p>
-                      <p className="text-sm text-gray-700">{selectedMenuOrder.lunch_menus.notes}</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* INFORMACIÓN DEL PEDIDO */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                    📋 Información del Pedido
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-sm text-gray-600">Fecha del pedido:</span>
-                      <span className="font-semibold text-gray-900">
-                        {format(new Date(selectedMenuOrder.order_date + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-sm text-gray-600">Hora de registro:</span>
-                      <span className="font-semibold text-gray-900">
-                        {new Date(selectedMenuOrder.created_at).toLocaleTimeString('es-PE', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          timeZone: 'America/Lima'
-                        })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-2">
-                      <span className="text-sm text-gray-600">Estado actual:</span>
-                      <div>
-                        {getStatusBadge(selectedMenuOrder.status, selectedMenuOrder.is_no_order_delivery)}
-                      </div>
-                    </div>
-                    {selectedMenuOrder.delivered_at && (
-                      <div className="flex justify-between items-center py-2 border-t">
-                        <span className="text-sm text-gray-600">Entregado a las:</span>
-                        <span className="font-semibold text-green-700">
-                          {format(new Date(selectedMenuOrder.delivered_at), "HH:mm", { locale: es })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
             </div>
 
-            <div className="flex justify-end pt-4 border-t">
-              <Button onClick={() => setShowMenuDetails(false)} size="lg">
+            <div className="flex justify-end pt-4 border-t mt-4">
+              <Button onClick={() => setShowMenuDetails(false)} size="lg" className="bg-purple-600 hover:bg-purple-700">
                 Cerrar
               </Button>
             </div>

@@ -500,7 +500,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           description += ` + Agregados: ${addonNames}`;
         }
 
-        console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending');
+        console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
         const transactionData: any = {
           type: 'purchase',
           amount: -Math.abs(totalPrice), // Negativo = cargo/deuda
@@ -509,6 +509,12 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           school_id: userSchoolId || selectedMenu.school_id,
           payment_status: 'pending',
           payment_method: null,
+          metadata: {
+            lunch_order_id: insertedOrder.id,
+            source: 'order_lunch_menus',
+            order_date: selectedMenu.date,
+            menu_name: selectedMenu.category?.name || 'Menú'
+          }
         };
 
         if (userType === 'parent') {
