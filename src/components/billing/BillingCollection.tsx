@@ -2843,14 +2843,6 @@ Gracias.`;
                     {/* Información extra del metadata si existe */}
                     {selectedTransaction.metadata && (
                       <div className="mt-3 space-y-1.5 bg-white/60 rounded-lg p-3">
-                        {selectedTransaction.metadata.order_date && (
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">📅 Fecha del almuerzo:</span>
-                            <span className="font-bold text-blue-800">
-                              {format(new Date(selectedTransaction.metadata.order_date + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}
-                            </span>
-                          </div>
-                        )}
                         {selectedTransaction.metadata.menu_name && (
                           <div className="flex justify-between text-sm">
                             <span className="text-gray-600">🍽️ Categoría:</span>
