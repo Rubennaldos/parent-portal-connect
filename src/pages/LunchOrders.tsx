@@ -450,6 +450,36 @@ export default function LunchOrders() {
         }
       }
       
+      // 🎫 Batch: obtener ticket_codes de transacciones asociadas a estos pedidos
+      if (data && data.length > 0) {
+        try {
+          const orderIds = data.map(o => o.id);
+          const { data: txData } = await supabase
+            .from('transactions')
+            .select('metadata, ticket_code')
+            .eq('type', 'purchase')
+            .not('metadata', 'is', null);
+          
+          if (txData) {
+            const ticketMap = new Map<string, string>();
+            txData.forEach((tx: any) => {
+              const lunchOrderId = tx.metadata?.lunch_order_id;
+              if (lunchOrderId && orderIds.includes(lunchOrderId) && tx.ticket_code) {
+                ticketMap.set(lunchOrderId, tx.ticket_code);
+              }
+            });
+            
+            data.forEach((order: any) => {
+              if (ticketMap.has(order.id)) {
+                order._ticket_code = ticketMap.get(order.id);
+              }
+            });
+          }
+        } catch (err) {
+          console.log('⚠️ No se pudieron obtener ticket_codes batch');
+        }
+      }
+
       setOrders(data || []);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
@@ -838,23 +868,27 @@ export default function LunchOrders() {
 
   const handleViewMenu = async (order: LunchOrder) => {
     setSelectedMenuOrder(order);
-    setSelectedOrderTicketCode(null);
+    // Usar el ticket_code pre-cargado si existe, sino buscar
+    const preloadedTicket = (order as any)._ticket_code;
+    setSelectedOrderTicketCode(preloadedTicket || null);
     setShowMenuDetails(true);
     
-    // 🎫 Buscar ticket_code de la transacción asociada a este lunch_order
-    try {
-      const { data: txData } = await supabase
-        .from('transactions')
-        .select('ticket_code')
-        .eq('type', 'purchase')
-        .contains('metadata', { lunch_order_id: order.id })
-        .limit(1);
-      
-      if (txData && txData.length > 0 && txData[0].ticket_code) {
-        setSelectedOrderTicketCode(txData[0].ticket_code);
+    // 🎫 Si no tenemos el ticket_code pre-cargado, buscarlo
+    if (!preloadedTicket) {
+      try {
+        const { data: txData } = await supabase
+          .from('transactions')
+          .select('ticket_code')
+          .eq('type', 'purchase')
+          .contains('metadata', { lunch_order_id: order.id })
+          .limit(1);
+        
+        if (txData && txData.length > 0 && txData[0].ticket_code) {
+          setSelectedOrderTicketCode(txData[0].ticket_code);
+        }
+      } catch (err) {
+        console.log('⚠️ No se pudo obtener ticket_code para el pedido:', order.id);
       }
-    } catch (err) {
-      console.log('⚠️ No se pudo obtener ticket_code para el pedido:', order.id);
     }
   };
 
@@ -1575,6 +1609,12 @@ export default function LunchOrders() {
                               (Base: S/ {order.base_price?.toFixed(2)} + Agregados: S/ {order.addons_total.toFixed(2)})
                             </span>
                           )}
+                        </p>
+                      )}
+                      {/* 🎫 Ticket code */}
+                      {(order as any)._ticket_code && (
+                        <p className="text-xs font-bold text-indigo-700 mt-1">
+                          🎫 Ticket: {(order as any)._ticket_code}
                         </p>
                       )}
                     </div>

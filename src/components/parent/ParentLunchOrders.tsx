@@ -136,6 +136,36 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
           menu: menusData?.find(menu => menu.date === order.order_date) || null
         }));
 
+        // 🎫 Batch: obtener ticket_codes de transacciones asociadas
+        if (ordersWithMenus.length > 0) {
+          try {
+            const orderIds = ordersWithMenus.map(o => o.id);
+            const { data: txData } = await supabase
+              .from('transactions')
+              .select('metadata, ticket_code')
+              .eq('type', 'purchase')
+              .not('metadata', 'is', null);
+            
+            if (txData) {
+              const ticketMap = new Map<string, string>();
+              txData.forEach((tx: any) => {
+                const lunchOrderId = tx.metadata?.lunch_order_id;
+                if (lunchOrderId && orderIds.includes(lunchOrderId) && tx.ticket_code) {
+                  ticketMap.set(lunchOrderId, tx.ticket_code);
+                }
+              });
+              
+              ordersWithMenus.forEach((order: any) => {
+                if (ticketMap.has(order.id)) {
+                  order._ticket_code = ticketMap.get(order.id);
+                }
+              });
+            }
+          } catch (err) {
+            console.log('⚠️ No se pudieron obtener ticket_codes');
+          }
+        }
+
         setOrders(ordersWithMenus);
         console.log('✅ Pedidos cargados con menús:', ordersWithMenus.length);
       } else {
@@ -312,6 +342,11 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
                       <p className="text-[9px] sm:text-[10px] md:text-xs text-gray-400">
                         Pedido el {format(new Date(order.created_at), "d 'de' MMM 'a las' HH:mm", { locale: es })}
                       </p>
+                      {(order as any)._ticket_code && (
+                        <p className="text-[9px] sm:text-[10px] md:text-xs font-bold text-indigo-700 mt-0.5">
+                          🎫 Ticket: {(order as any)._ticket_code}
+                        </p>
+                      )}
                     </div>
 
                     {/* Estado */}

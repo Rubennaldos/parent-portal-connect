@@ -101,6 +101,36 @@ export function MyLunchOrders({ teacherId }: MyLunchOrdersProps) {
         })
       );
 
+      // 🎫 Batch: obtener ticket_codes de transacciones asociadas
+      if (ordersWithProfiles.length > 0) {
+        try {
+          const orderIds = ordersWithProfiles.map(o => o.id);
+          const { data: txData } = await supabase
+            .from('transactions')
+            .select('metadata, ticket_code')
+            .eq('type', 'purchase')
+            .not('metadata', 'is', null);
+          
+          if (txData) {
+            const ticketMap = new Map<string, string>();
+            txData.forEach((tx: any) => {
+              const lunchOrderId = tx.metadata?.lunch_order_id;
+              if (lunchOrderId && orderIds.includes(lunchOrderId) && tx.ticket_code) {
+                ticketMap.set(lunchOrderId, tx.ticket_code);
+              }
+            });
+            
+            ordersWithProfiles.forEach((order: any) => {
+              if (ticketMap.has(order.id)) {
+                order._ticket_code = ticketMap.get(order.id);
+              }
+            });
+          }
+        } catch (err) {
+          console.log('⚠️ No se pudieron obtener ticket_codes');
+        }
+      }
+
       setOrders(ordersWithProfiles);
     } catch (error: any) {
       console.error('Error fetching lunch orders:', error);
@@ -199,10 +229,17 @@ export function MyLunchOrders({ teacherId }: MyLunchOrdersProps) {
                 )}
               </div>
 
-              {/* Fecha de pedido */}
-              <p className="text-xs text-gray-400 pt-2 border-t">
-                Pedido el {format(new Date(order.created_at), "d 'de' MMMM 'a las' HH:mm", { locale: es })}
-              </p>
+              {/* Fecha de pedido y ticket */}
+              <div className="pt-2 border-t">
+                <p className="text-xs text-gray-400">
+                  Pedido el {format(new Date(order.created_at), "d 'de' MMMM 'a las' HH:mm", { locale: es })}
+                </p>
+                {(order as any)._ticket_code && (
+                  <p className="text-xs font-bold text-indigo-700 mt-1">
+                    🎫 Ticket: {(order as any)._ticket_code}
+                  </p>
+                )}
+              </div>
               
               {/* Información de entrega */}
               {order.status === 'delivered' && order.delivered_by && order.profiles && (

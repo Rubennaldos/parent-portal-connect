@@ -1573,6 +1573,15 @@ Gracias.`;
       doc.text(methodText.toUpperCase(), 70, yPos);
       yPos += 7;
 
+      // Número de ticket (si existe)
+      if (transaction.ticket_code) {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Nº TICKET:', 15, yPos);
+        doc.setFont('helvetica', 'normal');
+        doc.text(transaction.ticket_code, 70, yPos);
+        yPos += 7;
+      }
+
       // Número de operación (si existe)
       if (transaction.operation_number) {
         doc.setFont('helvetica', 'bold');
@@ -2036,6 +2045,9 @@ Gracias.`;
                                           </div>
                                           <div className="text-gray-600 mt-0.5 text-[10px]">
                                             {t.description} • {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
+                                            {t.ticket_code && (
+                                              <span className="ml-1 text-indigo-700 font-bold">• 🎫 {t.ticket_code}</span>
+                                            )}
                                           </div>
                                         </div>
                                       </div>
