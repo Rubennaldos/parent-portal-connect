@@ -429,7 +429,7 @@ export const BillingCollection = () => {
         .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
-        .limit(50000); // 🔧 FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
+        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
       
       if (schoolIdFilter) {
         paidQuery = paidQuery.eq('school_id', schoolIdFilter);
@@ -914,7 +914,7 @@ export const BillingCollection = () => {
             .select('metadata')
             .eq('type', 'purchase')
             .not('metadata', 'is', null)
-            .limit(50000); // FIX: Evitar truncamiento silencioso
+            .limit(100000); // FIX: Evitar truncamiento silencioso
           
           if (existingTx) {
             existingTx.forEach((tx: any) => {
@@ -1321,7 +1321,7 @@ Gracias.`;
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .order('created_at', { ascending: false })
-        .limit(10000); // 🔧 FIX: Evitar truncamiento silencioso (default: 1000)
+        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso (default: 1000)
 
       if (schoolIdFilter) {
         query = query.eq('school_id', schoolIdFilter);
