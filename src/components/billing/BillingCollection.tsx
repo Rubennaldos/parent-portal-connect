@@ -356,6 +356,9 @@ export const BillingCollection = () => {
           manual_name,
           school_id,
           category_id,
+          quantity,
+          final_price,
+          base_price,
           students(id, full_name, parent_id, school_id),
           teacher_profiles(id, full_name, school_id_1),
           schools(id, name),
@@ -421,7 +424,7 @@ export const BillingCollection = () => {
       // Las transacciones viejas sin metadata también deben detectarse por descripción
       let paidQuery = supabase
         .from('transactions')
-        .select('id, metadata, teacher_id, student_id, description, created_at')
+        .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid');
       
@@ -483,8 +486,11 @@ export const BillingCollection = () => {
           // Verificar que la transacción es del mismo cliente
           const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
           const sameStudent = order.student_id && t.student_id === order.student_id;
+          // 🔧 FIX: También verificar clientes manuales (sin teacher_id ni student_id)
+          const sameManual = order.manual_name && t.manual_client_name && 
+            order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
           
-          if (!sameTeacher && !sameStudent) return false;
+          if (!sameTeacher && !sameStudent && !sameManual) return false;
           
           // 🔧 Verificar si la descripción contiene la fecha del pedido
           // Esto funciona con descripciones como "Almuerzo - Menú Light - 11 de febrero"
@@ -538,16 +544,20 @@ export const BillingCollection = () => {
             return; // Saltar este pedido
           }
           
-          let price = 0;
+          let unitPrice = 0;
           let schoolId = order.school_id;
+          const orderQuantity = order.quantity || 1;
 
-          // Obtener precio desde categoría o configuración
-          if (order.lunch_categories?.price) {
-            price = order.lunch_categories.price;
+          // Obtener precio: primero final_price (ya incluye qty), luego calcular
+          if (order.final_price && order.final_price > 0) {
+            // final_price ya incluye quantity * base_price
+            unitPrice = order.final_price; // Ya es el total
+          } else if (order.lunch_categories?.price) {
+            unitPrice = order.lunch_categories.price * orderQuantity;
           } else if (schoolId && configMap.has(schoolId)) {
-            price = configMap.get(schoolId);
+            unitPrice = configMap.get(schoolId) * orderQuantity;
           } else {
-            price = 7.50; // Precio por defecto
+            unitPrice = 7.50 * orderQuantity; // Precio por defecto
           }
 
           // Determinar school_id si no está en el pedido
@@ -578,9 +588,9 @@ export const BillingCollection = () => {
             virtualTransactions.push({
               id: `lunch_${order.id}`, // ID virtual
               type: 'purchase',
-              amount: -Math.abs(price), // Negativo = deuda
+              amount: -Math.abs(unitPrice), // Negativo = deuda (ya incluye quantity)
               payment_status: 'pending',
-              description: `Almuerzo - ${menuName} - ${dateFormatted}`,
+              description: `Almuerzo - ${menuName}${orderQuantity > 1 ? ` (${orderQuantity}x)` : ''} - ${dateFormatted}`,
               student_id: order.student_id || null,
               teacher_id: order.teacher_id || null,
               manual_client_name: order.manual_name || null,
