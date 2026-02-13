@@ -1072,6 +1072,54 @@ export const BillingCollection = () => {
         } else {
           console.log('⚠️ [BillingCollection] Todas las virtuales ya tenían transacción real, nada que crear');
         }
+
+        // 🔧 FIX CRÍTICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
+        // Esto previene que un pedido cobrado vuelva a aparecer como virtual
+        const lunchOrderIdsToDeliver = virtualTransactions
+          .map((vt: any) => vt.metadata?.lunch_order_id)
+          .filter(Boolean);
+        
+        if (lunchOrderIdsToDeliver.length > 0) {
+          console.log('📦 [BillingCollection] Marcando lunch_orders como delivered:', lunchOrderIdsToDeliver);
+          const { error: deliverError } = await supabase
+            .from('lunch_orders')
+            .update({ 
+              status: 'delivered',
+              delivered_at: new Date().toISOString(),
+            })
+            .in('id', lunchOrderIdsToDeliver);
+          
+          if (deliverError) {
+            console.error('⚠️ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
+            // No lanzar error - el pago ya se registró, esto es secundario
+          } else {
+            console.log('✅ [BillingCollection] lunch_orders marcados como delivered');
+          }
+        }
+      }
+
+      // 🔧 FIX: También marcar lunch_orders de transacciones REALES como 'delivered'
+      if (realTransactions.length > 0) {
+        const realLunchOrderIds = realTransactions
+          .map((t: any) => t.metadata?.lunch_order_id)
+          .filter(Boolean);
+        
+        if (realLunchOrderIds.length > 0) {
+          console.log('📦 [BillingCollection] Marcando lunch_orders de transacciones reales como delivered:', realLunchOrderIds);
+          const { error: deliverRealError } = await supabase
+            .from('lunch_orders')
+            .update({ 
+              status: 'delivered',
+              delivered_at: new Date().toISOString(),
+            })
+            .in('id', realLunchOrderIds);
+          
+          if (deliverRealError) {
+            console.error('⚠️ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
+          } else {
+            console.log('✅ [BillingCollection] lunch_orders reales marcados como delivered');
+          }
+        }
       }
 
       toast({

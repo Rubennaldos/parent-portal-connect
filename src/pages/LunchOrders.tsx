@@ -636,26 +636,29 @@ export default function LunchOrders() {
       console.log('✅ Confirmando pedido:', order.id);
 
       // ⚠️ ANTI-DUPLICADO: Verificar si ya existe una transacción para este lunch_order_id
-      const { data: existingTransaction, error: checkError } = await supabase
+      const { data: existingTransactions, error: checkError } = await supabase
         .from('transactions')
         .select('id, payment_status')
         .eq('metadata->>lunch_order_id', order.id)
-        .neq('payment_status', 'cancelled')
-        .maybeSingle();
+        .neq('payment_status', 'cancelled');
 
-      if (checkError && checkError.code !== 'PGRST116') {
+      if (checkError) {
         console.error('❌ Error verificando transacción existente:', checkError);
         throw checkError;
       }
 
-      if (existingTransaction) {
-        console.log('⚠️ Ya existe una transacción para este pedido, no se creará duplicado:', existingTransaction);
+      if (existingTransactions && existingTransactions.length > 0) {
+        const hasPaid = existingTransactions.some((t: any) => t.payment_status === 'paid');
+        console.log('⚠️ Ya existe(n) transacción(es) para este pedido:', existingTransactions.length, 'pagada:', hasPaid);
+        
         toast({
-          title: '⚠️ Pedido ya tiene transacción',
-          description: 'Este pedido ya tiene una transacción registrada. Solo se actualizó el estado.',
+          title: hasPaid ? '✅ Pedido ya fue pagado' : '⚠️ Pedido ya tiene transacción',
+          description: hasPaid 
+            ? 'Este pedido ya fue pagado. Solo se actualizó el estado del pedido.'
+            : 'Este pedido ya tiene una transacción registrada. Solo se actualizó el estado.',
         });
         
-        // Solo actualizar el status del pedido
+        // Solo actualizar el status del pedido (no crear transacción)
         const { error: updateError } = await supabase
           .from('lunch_orders')
           .update({ status: 'confirmed' })
