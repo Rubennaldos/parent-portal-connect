@@ -618,6 +618,64 @@ export const BillingCollection = () => {
       // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
 
+      // 🆕 Obtener información del creador (created_by) para transacciones del tab "¡Cobrar!"
+      const creatorIds = [...new Set(allTransactions.map((t: any) => t.created_by).filter(Boolean))];
+      let debtorCreatedByMap = new Map();
+      
+      if (creatorIds.length > 0) {
+        // Buscar en profiles
+        const { data: creatorProfiles } = await supabase
+          .from('profiles')
+          .select(`
+            id, full_name, email, role, school_id,
+            schools:school_id(id, name)
+          `)
+          .in('id', creatorIds);
+        
+        if (creatorProfiles) {
+          creatorProfiles.forEach((p: any) => {
+            debtorCreatedByMap.set(p.id, {
+              ...p,
+              school_name: p.schools?.name || null
+            });
+          });
+        }
+
+        // También buscar en teacher_profiles
+        const { data: creatorTeachers } = await supabase
+          .from('teacher_profiles')
+          .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
+          .in('id', creatorIds);
+        
+        if (creatorTeachers) {
+          creatorTeachers.forEach((tp: any) => {
+            if (debtorCreatedByMap.has(tp.id)) {
+              const existing = debtorCreatedByMap.get(tp.id);
+              debtorCreatedByMap.set(tp.id, {
+                ...existing,
+                teacher_school_name: tp.schools?.name || null,
+                teacher_school_id: tp.school_id_1
+              });
+            } else {
+              debtorCreatedByMap.set(tp.id, {
+                id: tp.id,
+                full_name: tp.full_name,
+                role: 'teacher',
+                school_id: tp.school_id_1,
+                school_name: tp.schools?.name || null
+              });
+            }
+          });
+        }
+      }
+
+      // Agregar created_by_profile a cada transacción
+      allTransactions.forEach((t: any) => {
+        if (t.created_by && debtorCreatedByMap.has(t.created_by)) {
+          t.created_by_profile = debtorCreatedByMap.get(t.created_by);
+        }
+      });
+
       // Obtener IDs únicos de padres (solo para estudiantes)
       const parentIds = [...new Set(allTransactions
         .filter((t: any) => t.student_id && t.students?.parent_id)
@@ -2811,6 +2869,8 @@ Gracias.`;
                                selectedTransaction.metadata.source === 'parent_calendar' ? 'Perfil del Padre/Madre' :
                                selectedTransaction.metadata.source === 'admin_order' ? 'Administrador' :
                                selectedTransaction.metadata.source === 'physical_order' ? 'Pedido presencial' :
+                               selectedTransaction.metadata.source === 'lunch_orders_confirm' ? 'Confirmado desde Pedidos de Almuerzo' :
+                               selectedTransaction.metadata.source === 'lunch_order' ? 'Pedido de Almuerzo' :
                                selectedTransaction.metadata.source || 'No especificado'}
                             </span>
                           </div>
