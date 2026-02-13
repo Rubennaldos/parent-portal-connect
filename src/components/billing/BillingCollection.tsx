@@ -2806,7 +2806,7 @@ Gracias.`;
                         </div>
                       )}
                       <div className="flex justify-between items-start">
-                        <span className="text-gray-600">{isPending ? 'Fecha del pedido:' : 'Fecha y hora:'}</span>
+                        <span className="text-gray-600">{isPending ? 'Fecha de registro:' : 'Fecha y hora:'}</span>
                         <div className="text-right">
                           <p className="font-semibold text-gray-900">
                             {format(new Date(selectedTransaction.created_at), "dd/MM/yyyy", { locale: es })}
@@ -2845,7 +2845,7 @@ Gracias.`;
                       <div className="mt-3 space-y-1.5 bg-white/60 rounded-lg p-3">
                         {selectedTransaction.metadata.order_date && (
                           <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">📅 Fecha del pedido:</span>
+                            <span className="text-gray-600">📅 Fecha del almuerzo:</span>
                             <span className="font-bold text-blue-800">
                               {format(new Date(selectedTransaction.metadata.order_date + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}
                             </span>
