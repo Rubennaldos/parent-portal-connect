@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { CheckCircle2, Loader2, LogOut, AlertTriangle, Info, School } from 'lucide-react';
+import { CheckCircle2, Loader2, LogOut, AlertTriangle, Info, School, RefreshCw } from 'lucide-react';
 
 interface SchoolOption {
   id: string;
@@ -32,6 +32,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
   const [loading, setLoading] = useState(false);
   const [schools, setSchools] = useState<SchoolOption[]>([]);
   const [loadingSchools, setLoadingSchools] = useState(false);
+  const [schoolsError, setSchoolsError] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Datos del formulario
@@ -57,24 +58,31 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
 
   const fetchSchools = async () => {
     setLoadingSchools(true);
+    setSchoolsError(false);
     try {
       const { data, error } = await supabase
         .from('schools')
         .select('id, name, code')
+        .eq('is_active', true)
         .order('name');
 
       if (error) throw error;
       setSchools(data || []);
     } catch (error: any) {
       console.error('Error cargando escuelas:', error);
+      setSchoolsError(true);
       toast({
         variant: 'destructive',
         title: 'Error al cargar sedes',
-        description: 'No se pudieron cargar las sedes. Intenta recargar la página.',
+        description: 'No se pudieron cargar las sedes. Usa el botón "Reintentar" o recarga la página.',
       });
     } finally {
       setLoadingSchools(false);
     }
+  };
+
+  const handleReloadPage = () => {
+    window.location.reload();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -400,11 +408,11 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
                 }
               }}
               required
-              disabled={loadingSchools}
+              disabled={loadingSchools || schoolsError}
               className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="">
-                {loadingSchools ? 'Cargando sedes...' : 'Selecciona tu sede'}
+                {loadingSchools ? 'Cargando sedes...' : schoolsError ? '⚠️ Error al cargar sedes' : 'Selecciona tu sede'}
               </option>
               {schools.map((school) => (
                 <option key={school.id} value={school.id}>
@@ -412,6 +420,39 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
                 </option>
               ))}
             </select>
+
+            {/* Botones de recuperación cuando las sedes no cargan */}
+            {schoolsError && !loadingSchools && (
+              <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-3 flex flex-col gap-2">
+                <div className="flex gap-2 items-start">
+                  <AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-700">
+                    No se pudieron cargar las sedes. Verifica tu conexión a internet e intenta de nuevo.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchSchools}
+                    className="text-xs h-8"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Reintentar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReloadPage}
+                    className="text-xs h-8 text-stone-500"
+                  >
+                    Recargar Página
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ⚠️ Advertencia de Sede Principal - Solo se muestra cuando seleccionan una sede */}
@@ -440,7 +481,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
               id="school2"
               value={schoolId2 || ''}
               onChange={(e) => setSchoolId2(e.target.value)}
-              disabled={loadingSchools}
+              disabled={loadingSchools || schoolsError}
               className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="">Ninguna</option>
@@ -467,7 +508,7 @@ export function TeacherOnboardingModal({ open, onComplete }: TeacherOnboardingMo
           <div className="flex justify-end gap-3 pt-4">
             <Button
               type="submit"
-              disabled={loading || loadingSchools}
+              disabled={loading || loadingSchools || schoolsError}
               className="bg-purple-600 hover:bg-purple-700"
             >
               {loading ? (
