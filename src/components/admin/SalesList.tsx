@@ -412,9 +412,9 @@ export const SalesList = () => {
 
       // Filtrar según pestaña
       if (activeTab === 'deleted') {
-        query = query.eq('is_deleted', true);
+        query = query.eq('payment_status', 'cancelled');
       } else if (activeTab === 'today') {
-        query = query.or('is_deleted.is.null,is_deleted.eq.false');
+        query = query.neq('payment_status', 'cancelled');
       }
 
       const { data, error } = await query;
@@ -636,14 +636,26 @@ export const SalesList = () => {
 
     setIsProcessing(true);
     try {
-      // 1. Marcar como anulada
+      // 1. Marcar como anulada usando payment_status = 'cancelled' y guardar motivo en metadata
+      // Primero obtener metadata actual para no sobreescribirla
+      const { data: currentTx } = await supabase
+        .from('transactions')
+        .select('metadata')
+        .eq('id', selectedTransaction.id)
+        .single();
+      
+      const currentMetadata = currentTx?.metadata || {};
+      
       const { error: updateError } = await supabase
         .from('transactions')
         .update({
-          is_deleted: true,
-          deleted_at: new Date().toISOString(),
-          deleted_by: user?.id,
-          deletion_reason: annulReason.trim(),
+          payment_status: 'cancelled',
+          metadata: {
+            ...currentMetadata,
+            cancelled_at: new Date().toISOString(),
+            cancelled_by: user?.id,
+            cancellation_reason: annulReason.trim(),
+          },
         })
         .eq('id', selectedTransaction.id);
 
@@ -1099,7 +1111,7 @@ export const SalesList = () => {
                         selectedIds.has(t.id) ? 'bg-blue-50 border-blue-500' : ''
                       }`}
                       style={{
-                        borderLeftColor: t.is_deleted ? '#ef4444' : '#10b981'
+                        borderLeftColor: t.payment_status === 'cancelled' ? '#ef4444' : '#10b981'
                       }}
                     >
                       <CardContent className="p-4">
@@ -1119,7 +1131,7 @@ export const SalesList = () => {
                                 <Clock className="h-4 w-4" />
                                 {format(new Date(t.created_at), "dd/MM/yyyy HH:mm", { locale: es })}
                               </span>
-                              {t.is_deleted && (
+                              {t.payment_status === 'cancelled' && (
                                 <Badge variant="destructive" className="text-xs font-bold">ANULADA</Badge>
                               )}
                             </div>
@@ -1187,7 +1199,7 @@ export const SalesList = () => {
                                 </Button>
                               )}
 
-                              {!t.is_deleted && (
+                              {t.payment_status !== 'cancelled' && (
                                 <>
                                   {permissions.canEdit && (
                                     <Button 
