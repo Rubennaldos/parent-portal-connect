@@ -2974,13 +2974,17 @@ Gracias.`;
                           <span className="text-gray-600">📱 Origen:</span>
                           <span className="font-medium text-gray-700">
                             {selectedTransaction.metadata.source === 'unified_calendar_teacher' ? 'Calendario del Profesor' :
+                             selectedTransaction.metadata.source === 'unified_calendar_v2_teacher' ? 'Calendario del Profesor' :
                              selectedTransaction.metadata.source === 'unified_calendar_parent' ? 'Calendario del Padre/Madre' :
+                             selectedTransaction.metadata.source === 'unified_calendar_v2_parent' ? 'Calendario del Padre/Madre' :
                              selectedTransaction.metadata.source === 'teacher_calendar' ? 'Perfil del Profesor' :
                              selectedTransaction.metadata.source === 'parent_calendar' ? 'Perfil del Padre/Madre' :
-                             selectedTransaction.metadata.source === 'admin_order' ? 'Administrador' :
-                             selectedTransaction.metadata.source === 'physical_order' ? 'Pedido presencial' :
+                             selectedTransaction.metadata.source === 'admin_order' ? 'Pedido del Administrador' :
+                             selectedTransaction.metadata.source === 'physical_order' ? 'Pedido presencial (Cocina)' :
+                             selectedTransaction.metadata.source === 'physical_order_wizard' ? 'Pedido presencial (Cocina)' :
                              selectedTransaction.metadata.source === 'lunch_orders_confirm' ? 'Confirmado desde Pedidos de Almuerzo' :
                              selectedTransaction.metadata.source === 'lunch_order' ? 'Pedido de Almuerzo' :
+                             selectedTransaction.metadata.source === 'lunch_fast' ? 'Pedido rápido de Almuerzo' :
                              selectedTransaction.metadata.source || 'No especificado'}
                           </span>
                         </div>

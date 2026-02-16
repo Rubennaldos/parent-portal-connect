@@ -348,13 +348,13 @@ export default function LunchOrders() {
           }
         }
         
-        // 🎫💰 Batch: obtener ticket_codes + payment_status para modo rango
+        // 🎫💰 Batch: obtener ticket_codes + payment_status + amount para modo rango
         if (data && data.length > 0) {
           try {
             const orderIds = data.map(o => o.id);
             const { data: txData } = await supabase
               .from('transactions')
-              .select('metadata, ticket_code, payment_status, payment_method')
+              .select('metadata, ticket_code, payment_status, payment_method, amount')
               .eq('type', 'purchase')
               .neq('payment_status', 'cancelled')
               .not('metadata', 'is', null);
@@ -362,6 +362,7 @@ export default function LunchOrders() {
             if (txData) {
               const ticketMap = new Map<string, string>();
               const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
+              const amountMap = new Map<string, number>();
               txData.forEach((tx: any) => {
                 const lunchOrderId = tx.metadata?.lunch_order_id;
                 if (lunchOrderId && orderIds.includes(lunchOrderId)) {
@@ -375,6 +376,10 @@ export default function LunchOrders() {
                       method: tx.payment_method 
                     });
                   }
+                  // Guardar el monto de la transacción (valor absoluto)
+                  if (tx.amount) {
+                    amountMap.set(lunchOrderId, Math.abs(tx.amount));
+                  }
                 }
               });
               
@@ -385,6 +390,10 @@ export default function LunchOrders() {
                 if (paymentStatusMap.has(order.id)) {
                   order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
                   order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+                }
+                // 💰 Si final_price es 0 o null, usar el monto de la transacción
+                if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
+                  order.final_price = amountMap.get(order.id);
                 }
               });
             }
@@ -495,13 +504,13 @@ export default function LunchOrders() {
         }
       }
       
-      // 🎫 Batch: obtener ticket_codes + payment_status de transacciones asociadas a estos pedidos
+      // 🎫💰 Batch: obtener ticket_codes + payment_status + amount de transacciones asociadas a estos pedidos
       if (data && data.length > 0) {
         try {
           const orderIds = data.map(o => o.id);
           const { data: txData } = await supabase
             .from('transactions')
-            .select('metadata, ticket_code, payment_status, payment_method')
+            .select('metadata, ticket_code, payment_status, payment_method, amount')
             .eq('type', 'purchase')
             .neq('payment_status', 'cancelled')
             .not('metadata', 'is', null);
@@ -509,6 +518,7 @@ export default function LunchOrders() {
           if (txData) {
             const ticketMap = new Map<string, string>();
             const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
+            const amountMap = new Map<string, number>();
             txData.forEach((tx: any) => {
               const lunchOrderId = tx.metadata?.lunch_order_id;
               if (lunchOrderId && orderIds.includes(lunchOrderId)) {
@@ -523,6 +533,10 @@ export default function LunchOrders() {
                     method: tx.payment_method 
                   });
                 }
+                // Guardar el monto de la transacción (valor absoluto)
+                if (tx.amount) {
+                  amountMap.set(lunchOrderId, Math.abs(tx.amount));
+                }
               }
             });
             
@@ -533,6 +547,10 @@ export default function LunchOrders() {
               if (paymentStatusMap.has(order.id)) {
                 order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
                 order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+              }
+              // 💰 Si final_price es 0 o null, usar el monto de la transacción
+              if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
+                order.final_price = amountMap.get(order.id);
               }
             });
           }
@@ -1019,11 +1037,11 @@ export default function LunchOrders() {
     setSelectedOrderTicketCode(preloadedTicket || null);
     setShowMenuDetails(true);
     
-    // 🎫💰 Siempre buscar ticket_code y payment_status actualizado al abrir detalle
+    // 🎫💰 Siempre buscar ticket_code, payment_status y amount actualizado al abrir detalle
     try {
       const { data: txData } = await supabase
         .from('transactions')
-        .select('ticket_code, payment_status, payment_method')
+        .select('ticket_code, payment_status, payment_method, amount')
         .eq('type', 'purchase')
         .neq('payment_status', 'cancelled')
         .contains('metadata', { lunch_order_id: order.id })
@@ -1037,6 +1055,10 @@ export default function LunchOrders() {
         const updatedOrder = { ...order } as any;
         updatedOrder._tx_payment_status = txData[0].payment_status;
         updatedOrder._tx_payment_method = txData[0].payment_method;
+        // 💰 Si final_price es 0 o null, usar el monto de la transacción
+        if ((!updatedOrder.final_price || updatedOrder.final_price === 0) && txData[0].amount) {
+          updatedOrder.final_price = Math.abs(txData[0].amount);
+        }
         setSelectedMenuOrder(updatedOrder);
       }
     } catch (err) {
