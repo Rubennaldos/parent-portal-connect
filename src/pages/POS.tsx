@@ -1048,6 +1048,16 @@ const POS = () => {
         });
 
         // Crear transacción
+        const studentPaymentDetails: any = {};
+        if (!isFreeAccount && paymentMethod) {
+          studentPaymentDetails.payment_method_detail = paymentMethod;
+          if (transactionCode) studentPaymentDetails.operation_number = transactionCode;
+          if (yapeNumber) studentPaymentDetails.yape_number = yapeNumber;
+          if (plinNumber) studentPaymentDetails.plin_number = plinNumber;
+          if (cashGiven) studentPaymentDetails.cash_given = parseFloat(cashGiven);
+          if (paymentSplits.length > 0) studentPaymentDetails.payment_splits = paymentSplits;
+        }
+
         const { data: transaction, error: transError} = await supabase
           .from('transactions')
           .insert({
@@ -1060,6 +1070,8 @@ const POS = () => {
             created_by: user?.id,
             ticket_code: ticketCode,
             payment_status: isFreeAccount ? 'pending' : 'paid', // Si es cuenta libre, queda pendiente
+            payment_method: isFreeAccount ? null : (paymentMethod || 'efectivo'),
+            metadata: Object.keys(studentPaymentDetails).length > 0 ? { source: 'pos', ...studentPaymentDetails } : { source: 'pos' },
           })
           .select()
           .single();
@@ -1207,6 +1219,13 @@ const POS = () => {
         ticketInfo.teacherName = selectedTeacher.full_name;
       } else {
         // Cliente genérico - Solo registrar la venta (PAGADA)
+        const genericPaymentDetails: any = { source: 'pos' };
+        if (transactionCode) genericPaymentDetails.operation_number = transactionCode;
+        if (yapeNumber) genericPaymentDetails.yape_number = yapeNumber;
+        if (plinNumber) genericPaymentDetails.plin_number = plinNumber;
+        if (cashGiven) genericPaymentDetails.cash_given = parseFloat(cashGiven);
+        if (paymentSplits.length > 0) genericPaymentDetails.payment_splits = paymentSplits;
+
         const { data: transaction, error: transError } = await supabase
           .from('transactions')
           .insert({
@@ -1220,6 +1239,7 @@ const POS = () => {
             ticket_code: ticketCode,
             payment_status: 'paid', // 🔥 Cliente genérico PAGA en el momento
             payment_method: paymentMethod || 'efectivo', // Método de pago real
+            metadata: genericPaymentDetails,
           })
           .select()
           .single();
@@ -2308,18 +2328,30 @@ const POS = () => {
               </div>
             )}
 
-            {(paymentMethod === 'transferencia' || paymentMethod === 'yape_qr' || paymentMethod === 'plin_qr') && (
-              <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
-                <Label className="text-sm font-bold text-amber-900 mb-2 block">Código de Operación</Label>
+            {(paymentMethod === 'transferencia' || paymentMethod === 'yape_qr' || paymentMethod === 'plin_qr' || paymentMethod === 'tarjeta') && (
+              <div className={`border-2 rounded-xl p-4 ${
+                paymentMethod === 'tarjeta' 
+                  ? 'bg-blue-50 border-blue-200' 
+                  : 'bg-amber-50 border-amber-200'
+              }`}>
+                <Label className={`text-sm font-bold mb-2 block ${
+                  paymentMethod === 'tarjeta' ? 'text-blue-900' : 'text-amber-900'
+                }`}>
+                  {paymentMethod === 'tarjeta' ? 'Nº de Operación (Voucher)' : 'Código de Operación'}
+                </Label>
                 <Input
                   type="text"
                   value={transactionCode}
                   onChange={(e) => setTransactionCode(e.target.value)}
-                  placeholder="Ej: OP12345678"
+                  placeholder={paymentMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
                   className="h-14 text-lg font-semibold uppercase"
                 />
-                <p className="text-xs text-amber-700 mt-2">
-                  Ingresa el código de la transacción para validar el pago
+                <p className={`text-xs mt-2 ${
+                  paymentMethod === 'tarjeta' ? 'text-blue-700' : 'text-amber-700'
+                }`}>
+                  {paymentMethod === 'tarjeta' 
+                    ? 'Ingresa el número de operación del voucher de la tarjeta' 
+                    : 'Ingresa el código de la transacción para validar el pago'}
                 </p>
               </div>
             )}
