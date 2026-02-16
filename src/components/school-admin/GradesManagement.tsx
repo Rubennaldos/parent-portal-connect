@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Plus, Trash2, GraduationCap, Users, Edit2, Check, X, School, Building2, Search } from 'lucide-react';
+import { Plus, Trash2, GraduationCap, Users, Edit2, Check, X, School, Building2, Search, AlertTriangle, ArrowRight, Loader2, ShieldAlert } from 'lucide-react';
 
 interface Level {
   id: string;
@@ -104,6 +104,21 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
   const [editLevelName, setEditLevelName] = useState('');
   const [editingClassroom, setEditingClassroom] = useState<string | null>(null);
   const [editClassroomName, setEditClassroomName] = useState('');
+  
+  // Estados para modal de reasignación al eliminar GRADO
+  const [showReassignLevelModal, setShowReassignLevelModal] = useState(false);
+  const [levelToDelete, setLevelToDelete] = useState<Level | null>(null);
+  const [targetLevelForReassign, setTargetLevelForReassign] = useState<string>('');
+  const [targetClassroomForLevelReassign, setTargetClassroomForLevelReassign] = useState<string>('');
+  const [targetClassroomsForReassign, setTargetClassroomsForReassign] = useState<Classroom[]>([]);
+  const [studentsInLevelToDelete, setStudentsInLevelToDelete] = useState<Student[]>([]);
+  const [isReassigning, setIsReassigning] = useState(false);
+  
+  // Estados para modal de reasignación al eliminar AULA
+  const [showReassignClassroomModal, setShowReassignClassroomModal] = useState(false);
+  const [classroomToDelete, setClassroomToDelete] = useState<Classroom | null>(null);
+  const [targetClassroomForReassign, setTargetClassroomForReassign] = useState<string>('');
+  const [studentsInClassroomToDelete, setStudentsInClassroomToDelete] = useState<Student[]>([]);
 
   useEffect(() => {
     if (user) {
@@ -410,6 +425,7 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
     if (!newName.trim()) return;
     
     try {
+      // 1. Actualizar el nombre del grado
       const { error } = await supabase
         .from('school_levels')
         .update({ name: newName.trim() })
@@ -417,9 +433,24 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
 
       if (error) throw error;
 
-      toast({ title: '✅ Grado actualizado' });
+      // 2. ✅ PROTECCIÓN: Actualizar campo legacy "grade" en todos los estudiantes vinculados
+      const { error: studentError } = await supabase
+        .from('students')
+        .update({ grade: newName.trim() })
+        .eq('level_id', levelId)
+        .eq('is_active', true);
+
+      if (studentError) {
+        console.error('⚠️ Error actualizando campo legacy grade en estudiantes:', studentError);
+      }
+
+      toast({ 
+        title: '✅ Grado actualizado', 
+        description: `Se actualizó el nombre a "${newName.trim()}" en el grado y en todos los estudiantes vinculados.`
+      });
       setEditingLevel(null);
       fetchLevels();
+      fetchStudents();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
@@ -429,6 +460,7 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
     if (!newName.trim()) return;
     
     try {
+      // 1. Actualizar el nombre del aula
       const { error } = await supabase
         .from('school_classrooms')
         .update({ name: newName.trim() })
@@ -436,47 +468,276 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
 
       if (error) throw error;
 
-      toast({ title: '✅ Aula actualizada' });
+      // 2. ✅ PROTECCIÓN: Actualizar campo legacy "section" en todos los estudiantes vinculados
+      const { error: studentError } = await supabase
+        .from('students')
+        .update({ section: newName.trim() })
+        .eq('classroom_id', classroomId)
+        .eq('is_active', true);
+
+      if (studentError) {
+        console.error('⚠️ Error actualizando campo legacy section en estudiantes:', studentError);
+      }
+
+      toast({ 
+        title: '✅ Aula actualizada',
+        description: `Se actualizó el nombre a "${newName.trim()}" en el aula y en todos los estudiantes vinculados.`
+      });
       setEditingClassroom(null);
       if (selectedLevel) fetchClassrooms(selectedLevel);
+      fetchStudents();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };
 
+  // ============================================
+  // 🛡️ PROTECCIÓN: ELIMINAR GRADO
+  // ============================================
   const deleteLevel = async (levelId: string) => {
-    if (!confirm('¿Estás seguro? Los estudiantes asignados quedarán sin grado.')) return;
+    const level = levels.find(l => l.id === levelId);
+    if (!level) return;
 
+    // Contar estudiantes asignados a este grado
+    const { count, error: countError } = await supabase
+      .from('students')
+      .select('*', { count: 'exact', head: true })
+      .eq('level_id', levelId)
+      .eq('is_active', true);
+
+    if (countError) {
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo verificar los estudiantes del grado' });
+      return;
+    }
+
+    const studentCount = count || 0;
+
+    if (studentCount > 0) {
+      // ⚠️ HAY ESTUDIANTES → Abrir modal de reasignación
+      // Cargar los estudiantes afectados
+      const { data: affectedStudents } = await supabase
+        .from('students')
+        .select('id, full_name, grade, section, level_id, classroom_id, school_id')
+        .eq('level_id', levelId)
+        .eq('is_active', true)
+        .order('full_name');
+
+      setLevelToDelete(level);
+      setStudentsInLevelToDelete(affectedStudents || []);
+      setTargetLevelForReassign('');
+      setTargetClassroomForLevelReassign('');
+      setTargetClassroomsForReassign([]);
+      setShowReassignLevelModal(true);
+    } else {
+      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar directamente
+      if (!confirm(`¿Estás seguro de eliminar el grado "${level.name}"? No tiene estudiantes asignados.`)) return;
+      
+      try {
+        // También desactivar las aulas de este grado
+        await supabase
+          .from('school_classrooms')
+          .update({ is_active: false })
+          .eq('level_id', levelId);
+
+        const { error } = await supabase
+          .from('school_levels')
+          .update({ is_active: false })
+          .eq('id', levelId);
+
+        if (error) throw error;
+
+        toast({ title: '✅ Grado eliminado', description: `"${level.name}" fue eliminado correctamente (sin estudiantes afectados)` });
+        setSelectedLevel(null);
+        fetchLevels();
+      } catch (error: any) {
+        toast({ variant: 'destructive', title: 'Error', description: error.message });
+      }
+    }
+  };
+
+  // Cargar aulas del grado destino cuando se selecciona uno en el modal de reasignación
+  const loadTargetClassrooms = async (targetLevelId: string) => {
+    if (!selectedSchoolId) return;
     try {
-      const { error } = await supabase
-        .from('school_levels')
-        .update({ is_active: false })
-        .eq('id', levelId);
+      const { data, error } = await supabase
+        .from('school_classrooms')
+        .select('*')
+        .eq('school_id', selectedSchoolId)
+        .eq('level_id', targetLevelId)
+        .eq('is_active', true)
+        .order('order_index');
 
       if (error) throw error;
 
-      toast({ title: '✅ Grado eliminado' });
-      fetchLevels();
+      // Contar estudiantes por aula
+      const classroomsWithCount = await Promise.all(
+        (data || []).map(async (classroom) => {
+          const { count } = await supabase
+            .from('students')
+            .select('*', { count: 'exact', head: true })
+            .eq('classroom_id', classroom.id)
+            .eq('is_active', true);
+          return { ...classroom, student_count: count || 0 };
+        })
+      );
+
+      setTargetClassroomsForReassign(classroomsWithCount);
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
+      console.error('Error loading target classrooms:', error);
     }
   };
 
-  const deleteClassroom = async (classroomId: string) => {
-    if (!confirm('¿Estás seguro? Los estudiantes asignados quedarán sin aula.')) return;
-
+  // Ejecutar la reasignación de estudiantes y eliminar el grado
+  const handleReassignAndDeleteLevel = async () => {
+    if (!levelToDelete || !targetLevelForReassign || !targetClassroomForLevelReassign) return;
+    
+    setIsReassigning(true);
     try {
-      const { error } = await supabase
+      const targetLevel = levels.find(l => l.id === targetLevelForReassign);
+      const targetClassroom = targetClassroomsForReassign.find(c => c.id === targetClassroomForLevelReassign);
+
+      // 1. Mover TODOS los estudiantes al nuevo grado y aula
+      const { error: moveError } = await supabase
+        .from('students')
+        .update({ 
+          level_id: targetLevelForReassign,
+          classroom_id: targetClassroomForLevelReassign,
+          grade: targetLevel?.name || '',
+          section: targetClassroom?.name || ''
+        })
+        .eq('level_id', levelToDelete.id)
+        .eq('is_active', true);
+
+      if (moveError) throw moveError;
+
+      // 2. Desactivar las aulas del grado eliminado
+      await supabase
         .from('school_classrooms')
         .update({ is_active: false })
-        .eq('id', classroomId);
+        .eq('level_id', levelToDelete.id);
 
-      if (error) throw error;
+      // 3. Desactivar el grado
+      const { error: deleteError } = await supabase
+        .from('school_levels')
+        .update({ is_active: false })
+        .eq('id', levelToDelete.id);
 
-      toast({ title: '✅ Aula eliminada' });
-      if (selectedLevel) fetchClassrooms(selectedLevel);
+      if (deleteError) throw deleteError;
+
+      toast({ 
+        title: '✅ Grado eliminado correctamente', 
+        description: `${studentsInLevelToDelete.length} estudiantes fueron movidos a "${targetLevel?.name}" → "${targetClassroom?.name}"`
+      });
+
+      // Limpiar y refrescar
+      setShowReassignLevelModal(false);
+      setLevelToDelete(null);
+      setSelectedLevel(targetLevelForReassign);
+      fetchLevels();
+      fetchStudents();
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
+      toast({ variant: 'destructive', title: 'Error al reasignar', description: error.message });
+    } finally {
+      setIsReassigning(false);
+    }
+  };
+
+  // ============================================
+  // 🛡️ PROTECCIÓN: ELIMINAR AULA
+  // ============================================
+  const deleteClassroom = async (classroomId: string) => {
+    const classroom = classrooms.find(c => c.id === classroomId);
+    if (!classroom) return;
+
+    // Contar estudiantes asignados a esta aula
+    const { count, error: countError } = await supabase
+      .from('students')
+      .select('*', { count: 'exact', head: true })
+      .eq('classroom_id', classroomId)
+      .eq('is_active', true);
+
+    if (countError) {
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo verificar los estudiantes del aula' });
+      return;
+    }
+
+    const studentCount = count || 0;
+
+    if (studentCount > 0) {
+      // ⚠️ HAY ESTUDIANTES → Abrir modal de reasignación
+      const { data: affectedStudents } = await supabase
+        .from('students')
+        .select('id, full_name, grade, section, level_id, classroom_id, school_id')
+        .eq('classroom_id', classroomId)
+        .eq('is_active', true)
+        .order('full_name');
+
+      setClassroomToDelete(classroom);
+      setStudentsInClassroomToDelete(affectedStudents || []);
+      setTargetClassroomForReassign('');
+      setShowReassignClassroomModal(true);
+    } else {
+      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar directamente
+      if (!confirm(`¿Estás seguro de eliminar el aula "${classroom.name}"? No tiene estudiantes asignados.`)) return;
+      
+      try {
+        const { error } = await supabase
+          .from('school_classrooms')
+          .update({ is_active: false })
+          .eq('id', classroomId);
+
+        if (error) throw error;
+
+        toast({ title: '✅ Aula eliminada', description: `"${classroom.name}" fue eliminada correctamente (sin estudiantes afectados)` });
+        if (selectedLevel) fetchClassrooms(selectedLevel);
+      } catch (error: any) {
+        toast({ variant: 'destructive', title: 'Error', description: error.message });
+      }
+    }
+  };
+
+  // Ejecutar la reasignación de estudiantes y eliminar el aula
+  const handleReassignAndDeleteClassroom = async () => {
+    if (!classroomToDelete || !targetClassroomForReassign) return;
+    
+    setIsReassigning(true);
+    try {
+      const targetClassroom = classrooms.find(c => c.id === targetClassroomForReassign);
+
+      // 1. Mover TODOS los estudiantes a la nueva aula
+      const { error: moveError } = await supabase
+        .from('students')
+        .update({ 
+          classroom_id: targetClassroomForReassign,
+          section: targetClassroom?.name || ''
+        })
+        .eq('classroom_id', classroomToDelete.id)
+        .eq('is_active', true);
+
+      if (moveError) throw moveError;
+
+      // 2. Desactivar el aula
+      const { error: deleteError } = await supabase
+        .from('school_classrooms')
+        .update({ is_active: false })
+        .eq('id', classroomToDelete.id);
+
+      if (deleteError) throw deleteError;
+
+      toast({ 
+        title: '✅ Aula eliminada correctamente', 
+        description: `${studentsInClassroomToDelete.length} estudiantes fueron movidos a "${targetClassroom?.name}"`
+      });
+
+      // Limpiar y refrescar
+      setShowReassignClassroomModal(false);
+      setClassroomToDelete(null);
+      if (selectedLevel) fetchClassrooms(selectedLevel);
+      fetchStudents();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error al reasignar', description: error.message });
+    } finally {
+      setIsReassigning(false);
     }
   };
 
@@ -649,8 +910,11 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
                                   e.stopPropagation();
                                   deleteLevel(level.id);
                                 }}
+                                title={level.student_count && level.student_count > 0 
+                                  ? `⚠️ ${level.student_count} estudiantes - Se requiere reasignar antes de eliminar` 
+                                  : 'Eliminar grado'}
                               >
-                                <Trash2 className="h-3 w-3 text-red-500" />
+                                <Trash2 className={`h-3 w-3 ${level.student_count && level.student_count > 0 ? 'text-amber-500' : 'text-red-500'}`} />
                               </Button>
                             </div>
                           </div>
@@ -740,8 +1004,11 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
                                   size="sm"
                                   variant="ghost"
                                   onClick={() => deleteClassroom(classroom.id)}
+                                  title={classroom.student_count && classroom.student_count > 0 
+                                    ? `⚠️ ${classroom.student_count} estudiantes - Se requiere reasignar antes de eliminar` 
+                                    : 'Eliminar aula'}
                                 >
-                                  <Trash2 className="h-3 w-3 text-red-500" />
+                                  <Trash2 className={`h-3 w-3 ${classroom.student_count && classroom.student_count > 0 ? 'text-amber-500' : 'text-red-500'}`} />
                                 </Button>
                               </div>
                             </div>
@@ -1057,6 +1324,286 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
             </div>
             <Button onClick={createClassroom} disabled={!newClassroomName.trim()} className="w-full">
               Crear Aula
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================ */}
+      {/* 🛡️ MODAL: Reasignar estudiantes antes de eliminar GRADO */}
+      {/* ============================================ */}
+      <Dialog open={showReassignLevelModal} onOpenChange={(open) => {
+        if (!isReassigning) setShowReassignLevelModal(open);
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <ShieldAlert className="h-6 w-6" />
+              ⚠️ No se puede eliminar el grado "{levelToDelete?.name}"
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              Este grado tiene estudiantes asignados. Debes moverlos a otro grado y aula antes de eliminarlo.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Advertencia visual */}
+          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-8 w-8 text-red-600 flex-shrink-0" />
+              <div>
+                <p className="font-bold text-red-800 text-lg">
+                  {studentsInLevelToDelete.length} estudiante{studentsInLevelToDelete.length !== 1 ? 's' : ''} será{studentsInLevelToDelete.length !== 1 ? 'n' : ''} movido{studentsInLevelToDelete.length !== 1 ? 's' : ''}
+                </p>
+                <p className="text-red-700 text-sm mt-1">
+                  Todos los niños de "{levelToDelete?.name}" deben ser reasignados a otro grado y aula para poder eliminar este grado.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Lista de estudiantes afectados */}
+          <div className="border-2 rounded-lg overflow-hidden">
+            <div className="bg-amber-50 px-4 py-2 border-b-2 border-amber-200">
+              <p className="font-bold text-amber-900 text-sm">
+                👦 Estudiantes en "{levelToDelete?.name}" que serán reasignados:
+              </p>
+            </div>
+            <div className="max-h-40 overflow-y-auto p-2">
+              {studentsInLevelToDelete.map((student, i) => (
+                <div key={student.id} className="flex items-center gap-2 py-1 px-2 text-sm hover:bg-gray-50 rounded">
+                  <span className="text-gray-400 w-6 text-right">{i + 1}.</span>
+                  <span className="font-medium">{student.full_name}</span>
+                  {student.section && (
+                    <Badge variant="outline" className="text-xs ml-auto">{student.section}</Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Selector de destino */}
+          <div className="space-y-4 bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+            <h4 className="font-bold text-blue-900 flex items-center gap-2">
+              <ArrowRight className="h-5 w-5" />
+              Selecciona el nuevo destino:
+            </h4>
+
+            <div className="space-y-3">
+              <div>
+                <Label className="font-semibold">1️⃣ Nuevo Grado/Nivel:</Label>
+                <Select 
+                  value={targetLevelForReassign} 
+                  onValueChange={(val) => {
+                    setTargetLevelForReassign(val);
+                    setTargetClassroomForLevelReassign('');
+                    loadTargetClassrooms(val);
+                  }}
+                >
+                  <SelectTrigger className="mt-1 bg-white">
+                    <SelectValue placeholder="Selecciona el grado destino..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {levels.filter(l => l.id !== levelToDelete?.id).map(level => (
+                      <SelectItem key={level.id} value={level.id}>
+                        {level.name} ({level.student_count} estudiantes)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {targetLevelForReassign && (
+                <div>
+                  <Label className="font-semibold">2️⃣ Nueva Aula/Sección:</Label>
+                  {targetClassroomsForReassign.length > 0 ? (
+                    <Select 
+                      value={targetClassroomForLevelReassign} 
+                      onValueChange={setTargetClassroomForLevelReassign}
+                    >
+                      <SelectTrigger className="mt-1 bg-white">
+                        <SelectValue placeholder="Selecciona el aula destino..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {targetClassroomsForReassign.map(classroom => (
+                          <SelectItem key={classroom.id} value={classroom.id}>
+                            {classroom.name} ({classroom.student_count} estudiantes)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="mt-1 p-3 bg-amber-100 border-2 border-amber-300 rounded-lg">
+                      <p className="text-amber-800 text-sm font-medium">
+                        ⚠️ El grado seleccionado no tiene aulas. Crea al menos un aula primero.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Resumen de la acción */}
+            {targetLevelForReassign && targetClassroomForLevelReassign && (
+              <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3 mt-3">
+                <p className="text-green-800 font-medium text-sm">
+                  ✅ Se moverán <strong>{studentsInLevelToDelete.length} estudiantes</strong> de "{levelToDelete?.name}" → "{levels.find(l => l.id === targetLevelForReassign)?.name}" / "{targetClassroomsForReassign.find(c => c.id === targetClassroomForLevelReassign)?.name}"
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Botones de acción */}
+          <div className="flex gap-3 pt-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowReassignLevelModal(false)}
+              disabled={isReassigning}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleReassignAndDeleteLevel}
+              disabled={!targetLevelForReassign || !targetClassroomForLevelReassign || isReassigning}
+              className="flex-1"
+            >
+              {isReassigning ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Reasignando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Mover Estudiantes y Eliminar Grado
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================ */}
+      {/* 🛡️ MODAL: Reasignar estudiantes antes de eliminar AULA */}
+      {/* ============================================ */}
+      <Dialog open={showReassignClassroomModal} onOpenChange={(open) => {
+        if (!isReassigning) setShowReassignClassroomModal(open);
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <ShieldAlert className="h-6 w-6" />
+              ⚠️ No se puede eliminar el aula "{classroomToDelete?.name}"
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              Esta aula tiene estudiantes asignados. Debes moverlos a otra aula del mismo grado antes de eliminarla.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Advertencia visual */}
+          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-8 w-8 text-red-600 flex-shrink-0" />
+              <div>
+                <p className="font-bold text-red-800 text-lg">
+                  {studentsInClassroomToDelete.length} estudiante{studentsInClassroomToDelete.length !== 1 ? 's' : ''} será{studentsInClassroomToDelete.length !== 1 ? 'n' : ''} movido{studentsInClassroomToDelete.length !== 1 ? 's' : ''}
+                </p>
+                <p className="text-red-700 text-sm mt-1">
+                  Todos los niños de "{classroomToDelete?.name}" deben ser reasignados a otra aula para poder eliminar esta aula.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Lista de estudiantes afectados */}
+          <div className="border-2 rounded-lg overflow-hidden">
+            <div className="bg-amber-50 px-4 py-2 border-b-2 border-amber-200">
+              <p className="font-bold text-amber-900 text-sm">
+                👦 Estudiantes en "{classroomToDelete?.name}" que serán reasignados:
+              </p>
+            </div>
+            <div className="max-h-40 overflow-y-auto p-2">
+              {studentsInClassroomToDelete.map((student, i) => (
+                <div key={student.id} className="flex items-center gap-2 py-1 px-2 text-sm hover:bg-gray-50 rounded">
+                  <span className="text-gray-400 w-6 text-right">{i + 1}.</span>
+                  <span className="font-medium">{student.full_name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Selector de destino */}
+          <div className="space-y-4 bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+            <h4 className="font-bold text-blue-900 flex items-center gap-2">
+              <ArrowRight className="h-5 w-5" />
+              Selecciona la nueva aula destino:
+            </h4>
+
+            {classrooms.filter(c => c.id !== classroomToDelete?.id).length > 0 ? (
+              <div>
+                <Label className="font-semibold">Nueva Aula/Sección (mismo grado: {levels.find(l => l.id === selectedLevel)?.name}):</Label>
+                <Select 
+                  value={targetClassroomForReassign} 
+                  onValueChange={setTargetClassroomForReassign}
+                >
+                  <SelectTrigger className="mt-1 bg-white">
+                    <SelectValue placeholder="Selecciona el aula destino..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classrooms.filter(c => c.id !== classroomToDelete?.id).map(classroom => (
+                      <SelectItem key={classroom.id} value={classroom.id}>
+                        {classroom.name} ({classroom.student_count} estudiantes)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="p-4 bg-amber-100 border-2 border-amber-300 rounded-lg">
+                <p className="text-amber-800 font-medium">
+                  ⚠️ No hay otras aulas en este grado. Crea otra aula primero, o elimina el grado completo para reasignar a otro grado.
+                </p>
+              </div>
+            )}
+
+            {/* Resumen de la acción */}
+            {targetClassroomForReassign && (
+              <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3 mt-3">
+                <p className="text-green-800 font-medium text-sm">
+                  ✅ Se moverán <strong>{studentsInClassroomToDelete.length} estudiantes</strong> de "{classroomToDelete?.name}" → "{classrooms.find(c => c.id === targetClassroomForReassign)?.name}"
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Botones de acción */}
+          <div className="flex gap-3 pt-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowReassignClassroomModal(false)}
+              disabled={isReassigning}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleReassignAndDeleteClassroom}
+              disabled={!targetClassroomForReassign || isReassigning}
+              className="flex-1"
+            >
+              {isReassigning ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Reasignando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Mover Estudiantes y Eliminar Aula
+                </>
+              )}
             </Button>
           </div>
         </DialogContent>
