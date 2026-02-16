@@ -29,6 +29,7 @@ interface Student {
   section: string;
   is_active: boolean;
   free_account?: boolean;
+  school?: { id: string; name: string } | null;
 }
 
 interface StudentCardProps {
@@ -95,7 +96,13 @@ export function StudentCard({
             <h3 className="text-xl font-normal text-stone-800 leading-tight group-hover:text-emerald-700 transition-colors tracking-wide">
               {student.full_name}
             </h3>
-            <p className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.2em] mt-2">
+            {/* 🏫 Nombre del colegio */}
+            {student.school?.name && (
+              <p className="text-xs font-semibold text-emerald-700 mt-1.5 tracking-wide">
+                🏫 {student.school.name}
+              </p>
+            )}
+            <p className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.2em] mt-1">
               {student.grade} <span className="text-stone-300">·</span> {student.section}
             </p>
             

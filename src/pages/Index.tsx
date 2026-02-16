@@ -59,6 +59,7 @@ interface Student {
   is_active: boolean;
   school_id?: string;
   free_account?: boolean;
+  school?: { id: string; name: string } | null;
 }
 
 interface Transaction {
@@ -259,7 +260,7 @@ const Index = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('students')
-        .select('*')
+        .select('*, school:schools(id, name)')
         .eq('parent_id', user.id)
         .eq('is_active', true)
         .order('full_name', { ascending: true});
