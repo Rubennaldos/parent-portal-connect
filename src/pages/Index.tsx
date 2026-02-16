@@ -514,17 +514,8 @@ const Index = () => {
   };
 
   const openSettingsModal = (student: Student) => {
-    // 🔒 MÓDULO DE TOPES DESACTIVADO TEMPORALMENTE
-    toast({
-      title: '🔧 Próximamente',
-      description: 'La configuración de topes de consumo estará disponible pronto. Por ahora, todos los estudiantes operan con Cuenta Libre.',
-    });
-    return;
-    
-    /* CÓDIGO ORIGINAL - Restaurar cuando se habiliten topes:
     setSelectedStudent(student);
     setShowLimitModal(true);
-    */
   };
 
   const handleLunchFast = async (student: Student) => {

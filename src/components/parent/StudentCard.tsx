@@ -215,25 +215,14 @@ export function StudentCard({
             </Button>
           </div>
 
-          {/* 🔒 CONFIGURACIÓN DE TOPES DESACTIVADO TEMPORALMENTE */}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                className="w-full pt-2 flex items-center justify-center gap-2 text-stone-200 cursor-help group/btn"
-              >
-                <Settings2 className="h-5 w-5" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-64 shadow-lg border border-stone-200/50 rounded-2xl p-4" side="top">
-              <div className="text-center space-y-2">
-                <p className="text-sm font-medium text-stone-700">🔧 Configuración de Topes</p>
-                <Badge className="bg-amber-100 text-amber-700 border border-amber-200">Próximamente</Badge>
-                <p className="text-xs text-stone-500">
-                  Esta función estará disponible pronto. Por ahora, todos los estudiantes operan con Cuenta Libre.
-                </p>
-              </div>
-            </PopoverContent>
-          </Popover>
+          {/* ⚙️ Configuración de Topes */}
+          <button
+            onClick={onOpenSettings}
+            className="w-full pt-2 flex items-center justify-center gap-2 text-stone-400 hover:text-emerald-600 transition-colors cursor-pointer group/btn"
+          >
+            <Settings2 className="h-5 w-5 group-hover/btn:rotate-90 transition-transform duration-300" />
+            <span className="text-xs font-medium">Configuración de Topes</span>
+          </button>
         </div>
       </CardContent>
     </Card>
