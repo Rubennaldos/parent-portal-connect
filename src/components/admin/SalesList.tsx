@@ -69,6 +69,7 @@ interface Transaction {
   id: string;
   created_at: string;
   student_id: string | null;
+  teacher_id?: string | null;
   school_id: string | null;
   type: string;
   amount: number;
@@ -84,13 +85,26 @@ interface Transaction {
   client_dni?: string;
   client_ruc?: string;
   document_type?: 'ticket' | 'boleta' | 'factura';
+  payment_status?: string;
+  payment_method?: string;
+  metadata?: {
+    lunch_order_id?: string;
+    source?: string;
+    order_date?: string;
+    [key: string]: any;
+  };
   student?: {
     id: string;
     full_name: string;
     balance: number;
   };
+  teacher?: {
+    id: string;
+    full_name: string;
+  };
   profiles?: {
     email: string;
+    full_name?: string;
   };
   school?: School;
 }
@@ -731,11 +745,27 @@ export const SalesList = () => {
     setShowPrintOptions(false);
   };
 
+  // 🔍 Determinar si una transacción es de almuerzo
+  const isLunchTransaction = (t: Transaction): boolean => {
+    // Verificar por metadata (más confiable)
+    if (t.metadata?.lunch_order_id) return true;
+    if (t.metadata?.source && (
+      t.metadata.source.includes('lunch') || 
+      t.metadata.source === 'lunch_orders_confirm' ||
+      t.metadata.source === 'lunch_order' ||
+      t.metadata.source === 'lunch_fast'
+    )) return true;
+    // Verificar por descripción (fallback para transacciones antiguas)
+    if (t.description?.startsWith('Almuerzo')) return true;
+    if (t.description?.startsWith('Almuerzo -')) return true;
+    return false;
+  };
+
   // Búsqueda inteligente
   const filteredTransactions = transactions.filter(t => {
     // Primero filtrar por tipo de venta
-    if (salesFilter === 'pos' && !t.ticket_code) return false;
-    if (salesFilter === 'lunch' && t.ticket_code) return false;
+    if (salesFilter === 'pos' && isLunchTransaction(t)) return false;  // POS: excluir almuerzos
+    if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false; // Almuerzos: excluir POS
     
     // Luego filtrar por búsqueda
     if (!searchTerm.trim()) return true;
@@ -1046,8 +1076,19 @@ export const SalesList = () => {
                 <div className="text-center py-12">
                   <FileText className="h-16 w-16 mx-auto mb-3 text-muted-foreground opacity-30" />
                   <p className="text-muted-foreground">
-                    {searchTerm ? 'No se encontraron resultados' : 'No hay ventas hoy'}
+                    {searchTerm 
+                      ? 'No se encontraron resultados' 
+                      : salesFilter === 'pos' 
+                        ? `No hay ventas de cafetería para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}` 
+                        : salesFilter === 'lunch' 
+                          ? `No hay ventas de almuerzos para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}` 
+                          : `No hay ventas para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}`}
                   </p>
+                  {transactions.length > 0 && filteredTransactions.length === 0 && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Hay {transactions.length} venta(s) en total. Prueba cambiando el filtro de tipo.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-3">
