@@ -461,6 +461,21 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
       if (orderError) throw orderError;
 
+      // 🎫 Generar ticket_code para la transacción
+      let ticketCode: string | null = null;
+      if ((paymentType === 'credit' && selectedPerson && totalPrice > 0) || 
+          (paymentType === 'cash' && cashPaymentMethod === 'pagar_luego' && totalPrice > 0)) {
+        try {
+          const { data: ticketNumber, error: ticketErr } = await supabase
+            .rpc('get_next_ticket_number', { p_user_id: null });
+          if (!ticketErr && ticketNumber) {
+            ticketCode = ticketNumber;
+          }
+        } catch (err) {
+          console.warn('⚠️ No se pudo generar ticket_code:', err);
+        }
+      }
+
       // Crear transacción si es con crédito
       if (paymentType === 'credit' && selectedPerson && totalPrice > 0) {
         const transactionData: any = {
@@ -469,6 +484,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
           payment_status: 'pending', // 📝 Deuda pendiente
           school_id: schoolId,
+          ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
             source: 'physical_order_wizard',
@@ -496,6 +512,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           payment_status: 'pending', // 📝 Deuda pendiente (fiado)
           school_id: schoolId,
           manual_client_name: manualName, // 👤 Guardar el nombre del cliente
+          ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
             source: 'physical_order_wizard_fiado',

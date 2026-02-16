@@ -559,6 +559,18 @@ const Index = () => {
       
       // Si es cuenta libre, crear transacción pendiente (deuda)
       if (selectedStudent.free_account !== false) {
+        // 🎫 Generar ticket_code
+        let ticketCode: string | null = null;
+        try {
+          const { data: ticketNumber, error: ticketErr } = await supabase
+            .rpc('get_next_ticket_number', { p_user_id: user?.id });
+          if (!ticketErr && ticketNumber) {
+            ticketCode = ticketNumber;
+          }
+        } catch (err) {
+          console.warn('⚠️ No se pudo generar ticket_code:', err);
+        }
+
         const { error } = await supabase.from('transactions').insert({
           student_id: selectedStudent.id,
           type: 'purchase',
@@ -566,6 +578,7 @@ const Index = () => {
           description: `LUNCH FAST: ${todayMenu.main_course}`,
           payment_status: 'pending',
           created_by: user?.id,
+          ticket_code: ticketCode,
           metadata: { lunch_menu_id: todayMenu.id, source: 'lunch_fast' }
         });
 

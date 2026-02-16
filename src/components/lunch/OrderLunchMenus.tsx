@@ -501,6 +501,18 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           description += ` + Agregados: ${addonNames}`;
         }
 
+        // 🎫 Generar ticket_code
+        let ticketCode: string | null = null;
+        try {
+          const { data: ticketNumber, error: ticketErr } = await supabase
+            .rpc('get_next_ticket_number', { p_user_id: userId });
+          if (!ticketErr && ticketNumber) {
+            ticketCode = ticketNumber;
+          }
+        } catch (err) {
+          console.warn('⚠️ No se pudo generar ticket_code:', err);
+        }
+
         console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
         const transactionData: any = {
           type: 'purchase',
@@ -510,9 +522,10 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           school_id: userSchoolId || selectedMenu.school_id,
           payment_status: 'pending',
           payment_method: null,
+          ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
-            source: 'order_lunch_menus',
+            source: userType === 'parent' ? 'unified_calendar_v2_parent' : 'unified_calendar_v2_teacher',
             order_date: selectedMenu.date,
             menu_name: selectedMenu.category?.name || 'Menú'
           }

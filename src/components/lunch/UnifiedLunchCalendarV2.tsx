@@ -560,6 +560,18 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const dateFormatted = format(getPeruDateOnly(currentDateStr), "d 'de' MMMM", { locale: es });
       const description = `Almuerzo - ${selectedCategory.name} - ${dateFormatted}`;
 
+      // 🎫 Generar ticket_code
+      let ticketCode: string | null = null;
+      try {
+        const { data: ticketNumber, error: ticketErr } = await supabase
+          .rpc('get_next_ticket_number', { p_user_id: userId });
+        if (!ticketErr && ticketNumber) {
+          ticketCode = ticketNumber;
+        }
+      } catch (err) {
+        console.warn('⚠️ No se pudo generar ticket_code:', err);
+      }
+
       const { error: txError } = await supabase
         .from('transactions')
         .insert([{
@@ -571,6 +583,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           payment_method: null,
           school_id: effectiveSchoolId,
           created_by: userId,
+          ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
             source: `unified_calendar_v2_${userType}`,

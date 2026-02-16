@@ -573,6 +573,18 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               console.log(`💳 Estudiante ${student.full_name} tiene CUENTA LIBRE - Creando transacción`);
               
               const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
+
+              // 🎫 Generar ticket_code
+              let ticketCode: string | null = null;
+              try {
+                const { data: ticketNumber, error: ticketErr } = await supabase
+                  .rpc('get_next_ticket_number', { p_user_id: parentId });
+                if (!ticketErr && ticketNumber) {
+                  ticketCode = ticketNumber;
+                }
+              } catch (err) {
+                console.warn('⚠️ No se pudo generar ticket_code:', err);
+              }
               
               transactions.push({
                 student_id: studentId,
@@ -581,6 +593,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                 payment_status: 'pending',
                 description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
                 created_at: new Date().toISOString(),
+                ticket_code: ticketCode,
                 metadata: {
                   lunch_order_id: lunchOrderId || null,
                   source: 'parent_lunch_calendar',

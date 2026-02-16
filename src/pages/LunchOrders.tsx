@@ -363,6 +363,7 @@ export default function LunchOrders() {
               const ticketMap = new Map<string, string>();
               const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
               const amountMap = new Map<string, number>();
+              const sourceMap = new Map<string, string>();
               txData.forEach((tx: any) => {
                 const lunchOrderId = tx.metadata?.lunch_order_id;
                 if (lunchOrderId && orderIds.includes(lunchOrderId)) {
@@ -380,6 +381,10 @@ export default function LunchOrders() {
                   if (tx.amount) {
                     amountMap.set(lunchOrderId, Math.abs(tx.amount));
                   }
+                  // Guardar el source de la transacción
+                  if (tx.metadata?.source) {
+                    sourceMap.set(lunchOrderId, tx.metadata.source);
+                  }
                 }
               });
               
@@ -390,6 +395,9 @@ export default function LunchOrders() {
                 if (paymentStatusMap.has(order.id)) {
                   order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
                   order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+                }
+                if (sourceMap.has(order.id)) {
+                  order._tx_source = sourceMap.get(order.id);
                 }
                 // 💰 Si final_price es 0 o null, usar el monto de la transacción
                 if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
@@ -519,6 +527,7 @@ export default function LunchOrders() {
             const ticketMap = new Map<string, string>();
             const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
             const amountMap = new Map<string, number>();
+            const sourceMap = new Map<string, string>();
             txData.forEach((tx: any) => {
               const lunchOrderId = tx.metadata?.lunch_order_id;
               if (lunchOrderId && orderIds.includes(lunchOrderId)) {
@@ -537,6 +546,10 @@ export default function LunchOrders() {
                 if (tx.amount) {
                   amountMap.set(lunchOrderId, Math.abs(tx.amount));
                 }
+                // Guardar el source de la transacción
+                if (tx.metadata?.source) {
+                  sourceMap.set(lunchOrderId, tx.metadata.source);
+                }
               }
             });
             
@@ -547,6 +560,9 @@ export default function LunchOrders() {
               if (paymentStatusMap.has(order.id)) {
                 order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
                 order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+              }
+              if (sourceMap.has(order.id)) {
+                order._tx_source = sourceMap.get(order.id);
               }
               // 💰 Si final_price es 0 o null, usar el monto de la transacción
               if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
@@ -837,6 +853,18 @@ export default function LunchOrders() {
 
       if (updateError) throw updateError;
 
+      // 🎫 Generar ticket_code
+      let ticketCode: string | null = null;
+      try {
+        const { data: ticketNumber, error: ticketErr } = await supabase
+          .rpc('get_next_ticket_number', { p_user_id: user?.id });
+        if (!ticketErr && ticketNumber) {
+          ticketCode = ticketNumber;
+        }
+      } catch (err) {
+        console.warn('⚠️ No se pudo generar ticket_code:', err);
+      }
+
       // Crear transacción si es necesario (crédito o pagar luego)
       let needsTransaction = false;
       let transactionData: any = {
@@ -844,6 +872,7 @@ export default function LunchOrders() {
         payment_status: 'pending',
         school_id: order.school_id || order.student?.school_id || order.teacher?.school_id_1,
         created_by: user?.id, // 👤 Registrar quién confirmó
+        ticket_code: ticketCode,
         metadata: {
           lunch_order_id: order.id,
           source: 'lunch_orders_confirm',
@@ -1053,11 +1082,11 @@ export default function LunchOrders() {
     setSelectedOrderTicketCode(preloadedTicket || null);
     setShowMenuDetails(true);
     
-    // 🎫💰 Siempre buscar ticket_code, payment_status y amount actualizado al abrir detalle
+    // 🎫💰 Siempre buscar ticket_code, payment_status, amount y metadata actualizado al abrir detalle
     try {
       const { data: txData } = await supabase
         .from('transactions')
-        .select('ticket_code, payment_status, payment_method, amount')
+        .select('ticket_code, payment_status, payment_method, amount, metadata, created_by')
         .eq('type', 'purchase')
         .neq('payment_status', 'cancelled')
         .contains('metadata', { lunch_order_id: order.id })
@@ -1071,6 +1100,8 @@ export default function LunchOrders() {
         const updatedOrder = { ...order } as any;
         updatedOrder._tx_payment_status = txData[0].payment_status;
         updatedOrder._tx_payment_method = txData[0].payment_method;
+        updatedOrder._tx_source = txData[0].metadata?.source || null;
+        updatedOrder._tx_created_by = txData[0].created_by || null;
         // 💰 Si final_price es 0 o null, usar el monto de la transacción
         if ((!updatedOrder.final_price || updatedOrder.final_price === 0) && txData[0].amount) {
           updatedOrder.final_price = Math.abs(txData[0].amount);
@@ -2003,19 +2034,46 @@ export default function LunchOrders() {
                   <div className="mt-3 pt-3 border-t border-green-200">
                     <p className="text-xs text-gray-600 font-medium uppercase tracking-wide mb-1">Registrado por</p>
                     <p className="text-sm font-semibold text-gray-900">
-                      {selectedMenuOrder.created_by ? (
-                        selectedMenuOrder.teacher_id && selectedMenuOrder.created_by === selectedMenuOrder.teacher_id 
-                          ? '✅ El profesor desde su perfil'
-                          : selectedMenuOrder.student_id && selectedMenuOrder.created_by === selectedMenuOrder.student?.parent_id
-                          ? '✅ El padre desde su perfil'
-                          : '🔧 Un administrador/cajero'
-                      ) : (
-                        selectedMenuOrder.teacher_id 
-                          ? '✅ El profesor desde su perfil (legacy)'
-                          : selectedMenuOrder.manual_name
-                          ? '🔧 Un cajero (venta manual)'
-                          : '⚙️ Sistema'
-                      )}
+                      {(() => {
+                        const source = (selectedMenuOrder as any)?._tx_source;
+                        // Priorizar metadata.source de la transacción
+                        if (source) {
+                          switch (source) {
+                            case 'teacher_lunch_calendar':
+                              return '✅ El profesor desde su calendario';
+                            case 'parent_lunch_calendar':
+                              return '✅ El padre desde su calendario';
+                            case 'unified_calendar_v2_parent':
+                              return '✅ El padre desde el calendario V2';
+                            case 'unified_calendar_v2_teacher':
+                              return '✅ El profesor desde el calendario V2';
+                            case 'order_lunch_menus':
+                              return '✅ Desde el calendario de menús';
+                            case 'physical_order_wizard':
+                            case 'physical_order_wizard_fiado':
+                              return '🔧 Registro manual (administrador/cajero)';
+                            case 'lunch_orders_confirm':
+                              return '🔧 Confirmado por administrador/cajero';
+                            case 'lunch_fast':
+                              return '⚡ Pedido rápido (padre)';
+                            default:
+                              return `📋 ${source}`;
+                          }
+                        }
+                        // Fallback: usar created_by del pedido
+                        if (selectedMenuOrder.created_by) {
+                          if (selectedMenuOrder.teacher_id && selectedMenuOrder.created_by === selectedMenuOrder.teacher_id) {
+                            return '✅ El profesor desde su perfil';
+                          }
+                          if (selectedMenuOrder.student_id && selectedMenuOrder.created_by === (selectedMenuOrder.student as any)?.parent_id) {
+                            return '✅ El padre desde su perfil';
+                          }
+                          return '🔧 Un administrador/cajero';
+                        }
+                        // Fallback final
+                        if (selectedMenuOrder.manual_name) return '🔧 Un cajero (venta manual)';
+                        return '⚙️ Sistema';
+                      })()}
                     </p>
                   </div>
                 </CardContent>

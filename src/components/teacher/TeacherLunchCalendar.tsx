@@ -286,6 +286,18 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
 
       if (orderError) throw orderError;
 
+      // 🎫 Generar ticket_code
+      let ticketCode: string | null = null;
+      try {
+        const { data: ticketNumber, error: ticketError } = await supabase
+          .rpc('get_next_ticket_number', { p_user_id: teacherId });
+        if (!ticketError && ticketNumber) {
+          ticketCode = ticketNumber;
+        }
+      } catch (err) {
+        console.warn('⚠️ No se pudo generar ticket_code:', err);
+      }
+
       // Crear transacción de cuenta libre CON lunch_order_id para evitar duplicados
       console.log('🔍 [TeacherLunchCalendar] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
       const { error: transactionError } = await supabase
@@ -298,6 +310,7 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           payment_status: 'pending', // 📝 Deuda pendiente
           payment_method: null, // Sin método de pago hasta que se cobre
           school_id: schoolId,
+          ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
             source: 'teacher_lunch_calendar',
