@@ -635,21 +635,23 @@ export default function LunchOrders() {
       setLoading(true);
       console.log('✅ Confirmando pedido:', order.id);
 
-      // ⚠️ ANTI-DUPLICADO: Verificar si ya existe una transacción para este lunch_order_id
-      const { data: existingTransactions, error: checkError } = await supabase
+      // ============================================
+      // 🛡️ ANTI-DUPLICADO NIVEL 1: Por metadata.lunch_order_id
+      // ============================================
+      const { data: existingByMetadata, error: checkError } = await supabase
         .from('transactions')
-        .select('id, payment_status')
+        .select('id, payment_status, metadata')
         .eq('metadata->>lunch_order_id', order.id)
         .neq('payment_status', 'cancelled');
 
       if (checkError) {
-        console.error('❌ Error verificando transacción existente:', checkError);
-        throw checkError;
+        console.error('❌ Error verificando transacción existente (metadata):', checkError);
+        // No lanzar error - continuar con fallback
       }
 
-      if (existingTransactions && existingTransactions.length > 0) {
-        const hasPaid = existingTransactions.some((t: any) => t.payment_status === 'paid');
-        console.log('⚠️ Ya existe(n) transacción(es) para este pedido:', existingTransactions.length, 'pagada:', hasPaid);
+      if (existingByMetadata && existingByMetadata.length > 0) {
+        const hasPaid = existingByMetadata.some((t: any) => t.payment_status === 'paid');
+        console.log('⚠️ [NIVEL 1] Ya existe(n) transacción(es) por metadata:', existingByMetadata.length, 'pagada:', hasPaid);
         
         toast({
           title: hasPaid ? '✅ Pedido ya fue pagado' : '⚠️ Pedido ya tiene transacción',
@@ -666,14 +668,87 @@ export default function LunchOrders() {
 
         if (updateError) throw updateError;
 
+        fetchOrders();
+        return;
+      }
+
+      // ============================================
+      // 🛡️ ANTI-DUPLICADO NIVEL 2: FALLBACK por descripción + persona + fecha
+      // Para transacciones creadas SIN metadata.lunch_order_id (código viejo)
+      // ============================================
+      console.log('🔍 [NIVEL 2] Buscando duplicado por descripción (fallback para metadata faltante)...');
+      
+      // Formatear la fecha del pedido como aparece en las descripciones
+      const orderDateFormatted = format(new Date(order.order_date + 'T12:00:00'), "d 'de' MMMM", { locale: es });
+      console.log('🔍 [NIVEL 2] Buscando "Almuerzo" + "' + orderDateFormatted + '" para', 
+        order.teacher_id ? 'teacher:' + order.teacher_id : 'student:' + order.student_id);
+      
+      let fallbackQuery = supabase
+        .from('transactions')
+        .select('id, payment_status, description, metadata')
+        .eq('type', 'purchase')
+        .neq('payment_status', 'cancelled')
+        .ilike('description', `%Almuerzo%`);
+
+      if (order.teacher_id) {
+        fallbackQuery = fallbackQuery.eq('teacher_id', order.teacher_id);
+      } else if (order.student_id) {
+        fallbackQuery = fallbackQuery.eq('student_id', order.student_id);
+      } else if (order.manual_name) {
+        fallbackQuery = fallbackQuery.ilike('manual_client_name', `%${order.manual_name}%`);
+      }
+
+      const { data: fallbackResults } = await fallbackQuery;
+      
+      // Filtrar por fecha en la descripción
+      const existingByDescription = fallbackResults?.filter((t: any) => {
+        return t.description?.includes(orderDateFormatted);
+      }) || [];
+
+      if (existingByDescription.length > 0) {
+        const hasPaid = existingByDescription.some((t: any) => t.payment_status === 'paid');
+        console.log('⚠️ [NIVEL 2] Encontrada(s) transacción(es) por descripción:', existingByDescription.length, 'pagada:', hasPaid);
+        
+        // 🔧 BONUS: Actualizar la transacción vieja para que tenga metadata.lunch_order_id
+        // Esto evita que el duplicado se repita en futuras confirmaciones
+        const txToFix = existingByDescription[0];
+        try {
+          const updatedMetadata = {
+            ...(txToFix.metadata || {}),
+            lunch_order_id: order.id,
+            order_date: order.order_date,
+            fixed_by: 'handleConfirmOrder_fallback',
+            fixed_at: new Date().toISOString()
+          };
+          await supabase
+            .from('transactions')
+            .update({ metadata: updatedMetadata })
+            .eq('id', txToFix.id);
+          console.log('✅ [NIVEL 2] Metadata actualizada en transacción vieja:', txToFix.id);
+        } catch (fixErr) {
+          console.warn('⚠️ [NIVEL 2] No se pudo actualizar metadata:', fixErr);
+        }
+
         toast({
-          title: '✅ Pedido confirmado',
-          description: 'El pedido se confirmó correctamente',
+          title: hasPaid ? '✅ Pedido ya fue pagado' : '⚠️ Pedido ya tiene transacción',
+          description: hasPaid 
+            ? 'Este pedido ya fue pagado. Solo se actualizó el estado.'
+            : 'Se detectó una transacción existente (sin metadata). Solo se actualizó el estado.',
         });
+        
+        // Solo actualizar el status del pedido (no crear transacción)
+        const { error: updateError } = await supabase
+          .from('lunch_orders')
+          .update({ status: 'confirmed' })
+          .eq('id', order.id);
+
+        if (updateError) throw updateError;
 
         fetchOrders();
         return;
       }
+      
+      console.log('✅ [ANTI-DUPLICADO] No se encontraron duplicados. Procediendo a crear transacción...');
 
       // Actualizar status a confirmed
       const { error: updateError } = await supabase
