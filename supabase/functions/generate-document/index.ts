@@ -33,8 +33,8 @@ serve(async (req) => {
       const token = cfg?.nubefact_token || body.nubefact_token;
 
       if (!ruta || !token) {
-        return new Response(JSON.stringify({ ok: false, error: "Sin credenciales" }), {
-          status: 400, headers: { ...cors, "Content-Type": "application/json" }
+        return new Response(JSON.stringify({ ok: false, error: "Sin credenciales — verifica RUTA y TOKEN" }), {
+          status: 200, headers: { ...cors, "Content-Type": "application/json" }
         });
       }
 
@@ -45,11 +45,11 @@ serve(async (req) => {
         });
         const ok = testRes.status < 500;
         return new Response(JSON.stringify({ ok, status: testRes.status }), {
-          headers: { ...cors, "Content-Type": "application/json" }
+          status: 200, headers: { ...cors, "Content-Type": "application/json" }
         });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-          status: 400, headers: { ...cors, "Content-Type": "application/json" }
+          status: 200, headers: { ...cors, "Content-Type": "application/json" }
         });
       }
     }

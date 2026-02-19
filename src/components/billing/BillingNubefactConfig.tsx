@@ -239,31 +239,32 @@ export const BillingNubefactConfig = () => {
     }
     setTesting(true);
     try {
-      // Llamamos a nuestra Edge Function (evita CORS - el navegador no puede llamar a Nubefact directamente)
       const { data, error } = await supabase.functions.invoke('generate-document', {
         body: {
           test: true,
-          school_id: selectedSchool,
+          school_id: selectedSchool || null,
           nubefact_ruta: config.nubefact_ruta,
           nubefact_token: config.nubefact_token,
         },
       });
 
-      if (error) throw error;
+      // Leer error del cuerpo aunque haya error de red
+      const result = data || {};
+      const errMsg = error?.message || result?.error;
 
-      if (data?.ok) {
-        toast({ title: '✅ Conexión exitosa', description: 'Las credenciales de Nubefact son válidas.' });
+      if (!errMsg && result?.ok) {
+        toast({ title: '✅ Conexión exitosa', description: `Nubefact respondió OK (HTTP ${result.status ?? 200}).` });
       } else {
         toast({
           title: '❌ Error de conexión',
-          description: data?.error || `Código HTTP: ${data?.status}. Verifica RUTA y TOKEN.`,
+          description: errMsg || `HTTP ${result?.status}. Verifica RUTA y TOKEN en Nubefact.`,
           variant: 'destructive',
         });
       }
     } catch (err: any) {
       toast({
         title: '❌ No se pudo conectar',
-        description: err?.message || 'Error al probar la conexión.',
+        description: err?.message || 'Error inesperado.',
         variant: 'destructive',
       });
     } finally {
