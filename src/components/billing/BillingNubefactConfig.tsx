@@ -8,7 +8,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Save, CheckCircle2, AlertCircle, Building2, FileText, Key, FlaskConical, ArrowRightLeft } from 'lucide-react';
+import { Loader2, Save, CheckCircle2, AlertCircle, Building2, FileText, Key, FlaskConical, ArrowRightLeft, Receipt, XCircle, ExternalLink, TestTube2 } from 'lucide-react';
+
+interface TestResult {
+  tipo: string;
+  estado: 'ok' | 'error' | 'loading';
+  mensaje: string;
+  pdf?: string | null;
+  xml?: string | null;
+  serie?: string;
+  numero?: number;
+}
 
 const PROD_BASE = 'https://api.nubefact.com';
 const DEMO_BASE = 'https://demo.api.nubefact.com';
@@ -44,6 +54,9 @@ export const BillingNubefactConfig = () => {
   const [testing, setTesting] = useState(false);
   const [schools, setSchools] = useState<School[]>([]);
   const [demoMode, setDemoMode] = useState(false);
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [lastBoleta, setLastBoleta] = useState<{ serie: string; numero: number } | null>(null);
+  const [lastFactura, setLastFactura] = useState<{ serie: string; numero: number } | null>(null);
   const [selectedSchool, setSelectedSchool] = useState('');
   const [config, setConfig] = useState<BillingConfig>({
     school_id: '',
@@ -117,6 +130,80 @@ export const BillingNubefactConfig = () => {
         serie_nc_factura: 'FC01',
         activo: true,
       });
+    }
+  };
+
+  const handleTestDocument = async (tipo: 1 | 2 | 7) => {
+    if (!selectedSchool) {
+      toast({ title: 'Sin sede', description: 'Guarda la configuración primero.', variant: 'destructive' });
+      return;
+    }
+
+    const labels: Record<number, string> = { 2: 'Boleta', 1: 'Factura', 7: 'Nota de Crédito' };
+    const label = labels[tipo];
+
+    // Para NC necesitamos una boleta o factura previa
+    if (tipo === 7 && !lastBoleta && !lastFactura) {
+      toast({ title: 'Genera primero una Boleta o Factura', description: 'La Nota de Crédito necesita un documento de referencia.', variant: 'destructive' });
+      return;
+    }
+
+    setTestResults(prev => [
+      { tipo: label, estado: 'loading', mensaje: 'Generando...' },
+      ...prev.filter(r => r.tipo !== label),
+    ]);
+
+    try {
+      const body: any = {
+        school_id: selectedSchool,
+        tipo,
+        monto_total: tipo === 1 ? 118.00 : 50.00, // factura con IGV, boleta simple
+        cliente: tipo === 1
+          ? { nombre: 'EMPRESA DE PRUEBA S.A.C.', tipo_doc: 6, numero_doc: '20100130492' }
+          : { nombre: 'Cliente de Prueba', tipo_doc: 0 },
+      };
+
+      // Nota de crédito referencia la última boleta o factura
+      if (tipo === 7) {
+        const ref = lastBoleta || lastFactura!;
+        const tipoRef = lastBoleta ? 2 : 1;
+        body.doc_ref = { tipo: tipoRef, serie: ref.serie, numero: ref.numero };
+        body.monto_total = 50.00;
+      }
+
+      const { data, error } = await supabase.functions.invoke('generate-document', { body });
+
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+
+      const doc = data?.documento;
+      const nf  = data?.nubefact;
+      const ok  = nf?.aceptada_por_sunat || !!nf?.enlace_del_pdf;
+
+      // Guardar referencia para nota de crédito
+      if (tipo === 2 && doc) setLastBoleta({ serie: doc.serie, numero: doc.numero });
+      if (tipo === 1 && doc) setLastFactura({ serie: doc.serie, numero: doc.numero });
+
+      setTestResults(prev => [
+        {
+          tipo: label,
+          estado: ok ? 'ok' : 'error',
+          mensaje: ok
+            ? `${doc?.serie}-${String(doc?.numero).padStart(8,'0')} — ${nf?.aceptada_por_sunat ? '✅ Aceptada por SUNAT' : '⚠️ Generada (modo demo)'}`
+            : (nf?.errors || 'Respuesta inesperada de Nubefact'),
+          pdf: nf?.enlace_del_pdf || doc?.enlace_pdf,
+          xml: nf?.enlace_del_xml || doc?.enlace_xml,
+          serie: doc?.serie,
+          numero: doc?.numero,
+        },
+        ...prev.filter(r => r.tipo !== label),
+      ]);
+
+    } catch (err: any) {
+      setTestResults(prev => [
+        { tipo: label, estado: 'error', mensaje: err.message || 'Error desconocido' },
+        ...prev.filter(r => r.tipo !== label),
+      ]);
     }
   };
 
@@ -416,6 +503,106 @@ export const BillingNubefactConfig = () => {
           </p>
         </CardContent>
       </Card>
+
+      {/* Panel de pruebas */}
+      {config.id && (
+        <Card className="border-2 border-dashed border-yellow-300 bg-yellow-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wide text-yellow-800">
+              <TestTube2 className="h-4 w-4" />
+              Panel de Pruebas — Comprobantes
+              {demoMode && <Badge className="bg-yellow-500 text-white text-xs">MODO DEMO</Badge>}
+            </CardTitle>
+            <p className="text-xs text-yellow-700">
+              Genera comprobantes de prueba para verificar que la integración funciona.
+              {demoMode ? ' En modo demo no se reporta nada a SUNAT.' : ' ⚠️ En modo PRODUCCIÓN estos documentos se enviarán a SUNAT.'}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Botones de prueba */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Button
+                variant="outline"
+                onClick={() => handleTestDocument(2)}
+                className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
+              >
+                <Receipt className="h-4 w-4" />
+                Probar Boleta
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleTestDocument(1)}
+                className="gap-2 border-green-300 text-green-700 hover:bg-green-50"
+              >
+                <FileText className="h-4 w-4" />
+                Probar Factura
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleTestDocument(7)}
+                disabled={!lastBoleta && !lastFactura}
+                className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40"
+                title={!lastBoleta && !lastFactura ? 'Genera primero una boleta o factura' : ''}
+              >
+                <XCircle className="h-4 w-4" />
+                Probar Nota Crédito
+              </Button>
+            </div>
+
+            {/* Referencia para nota de crédito */}
+            {(lastBoleta || lastFactura) && (
+              <p className="text-xs text-gray-500">
+                📎 Referencia disponible para N.C.:{' '}
+                {lastBoleta && <span className="font-mono bg-white px-1 rounded border">{lastBoleta.serie}-{String(lastBoleta.numero).padStart(8,'0')}</span>}
+                {lastFactura && <span className="font-mono bg-white px-1 rounded border ml-1">{lastFactura.serie}-{String(lastFactura.numero).padStart(8,'0')}</span>}
+              </p>
+            )}
+
+            {/* Resultados */}
+            {testResults.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-600 uppercase">Resultados:</p>
+                {testResults.map((r, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-start gap-3 p-3 rounded-lg border text-sm ${
+                      r.estado === 'loading' ? 'bg-white border-gray-200' :
+                      r.estado === 'ok'      ? 'bg-green-50 border-green-200' :
+                                               'bg-red-50 border-red-200'
+                    }`}
+                  >
+                    {r.estado === 'loading' && <Loader2 className="h-4 w-4 animate-spin text-gray-400 mt-0.5 shrink-0" />}
+                    {r.estado === 'ok'      && <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />}
+                    {r.estado === 'error'   && <AlertCircle  className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold">{r.tipo}</p>
+                      <p className={`text-xs mt-0.5 ${r.estado === 'error' ? 'text-red-700' : 'text-gray-600'}`}>
+                        {r.mensaje}
+                      </p>
+                      {(r.pdf || r.xml) && (
+                        <div className="flex gap-3 mt-2">
+                          {r.pdf && (
+                            <a href={r.pdf} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                              <ExternalLink className="h-3 w-3" /> Ver PDF
+                            </a>
+                          )}
+                          {r.xml && (
+                            <a href={r.xml} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                              <ExternalLink className="h-3 w-3" /> Ver XML
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Botón guardar */}
       <div className="flex justify-end">
