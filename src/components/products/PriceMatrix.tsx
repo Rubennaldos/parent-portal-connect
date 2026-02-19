@@ -170,11 +170,23 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
 
     setSaving(true);
     try {
-      // Eliminar precios personalizados antiguos
-      await supabase
-        .from('product_school_prices')
-        .delete()
-        .eq('product_id', product.id);
+      const isAdminGeneral = role === 'admin_general';
+
+      if (isAdminGeneral) {
+        // Admin general: borrar TODOS los precios personalizados del producto y reinsertar
+        await supabase
+          .from('product_school_prices')
+          .delete()
+          .eq('product_id', product.id);
+      } else if (userSchoolId) {
+        // Admin de sede: borrar SOLO el precio personalizado de SU sede
+        // ✅ NO tocamos los precios de las demás sedes
+        await supabase
+          .from('product_school_prices')
+          .delete()
+          .eq('product_id', product.id)
+          .eq('school_id', userSchoolId);
+      }
 
       // Insertar solo los precios personalizados (los que fueron modificados)
       const customPricesArray = Array.from(schoolPrices.entries())
@@ -197,7 +209,9 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
 
       toast({
         title: '✅ Precios actualizados',
-        description: `Se guardaron los precios para ${customPricesArray.length} sede(s)`,
+        description: isAdminGeneral
+          ? `Se guardaron los precios para ${customPricesArray.length} sede(s)`
+          : 'Se actualizó el precio para tu sede correctamente',
       });
 
       onClose();

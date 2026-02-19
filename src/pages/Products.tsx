@@ -429,7 +429,10 @@ const Products = () => {
         setCategories([...categories, f.newCategory]);
       }
 
-      const selectedSchools = f.applyToAllSchools ? schools.map(s => s.id) : f.school_ids;
+      // Admin general puede elegir sedes; otros admins solo asignan su propia sede
+      const selectedSchools = isAdminGeneral
+        ? (f.applyToAllSchools ? schools.map(s => s.id) : f.school_ids)
+        : (userSchoolId ? [userSchoolId] : []);
 
       const productData = {
         name: f.name,
@@ -807,6 +810,8 @@ const Products = () => {
           </div>
         );
       case 4:
+        // Solo admin_general ve el paso 4 de sedes
+        if (!isAdminGeneral) return null;
         return (
           <div className="space-y-4">
             <h3 className="text-lg font-bold">🏫 Sedes</h3>
@@ -891,6 +896,10 @@ const Products = () => {
   };
 
   const canViewAllSchools = role === 'admin_general';
+  const isAdminGeneral = role === 'admin_general';
+  // El wizard tiene 4 pasos para admin_general (incluye selección de sedes)
+  // y 3 pasos para otros admins (la sede se asigna automáticamente)
+  const totalWizardSteps = isAdminGeneral ? 4 : 3;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1126,14 +1135,16 @@ const Products = () => {
                     <CardDescription>{filteredProducts.length} de {products.length} productos</CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      onClick={() => setShowBulkUpload(true)}
-                      className="border-green-200 text-green-700 hover:bg-green-50"
-                    >
-                      <FileSpreadsheet className="h-4 w-4 mr-2" />
-                      Carga Masiva
-                    </Button>
+                    {isAdminGeneral && (
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowBulkUpload(true)}
+                        className="border-green-200 text-green-700 hover:bg-green-50"
+                      >
+                        <FileSpreadsheet className="h-4 w-4 mr-2" />
+                        Carga Masiva
+                      </Button>
+                    )}
                     <Button onClick={() => { setShowProductModal(true); resetForm(); }}>
                       <Plus className="h-4 w-4 mr-2" />
                       Crear Producto
@@ -1217,6 +1228,7 @@ const Products = () => {
                           </div>
                         )}
                         <div className="flex gap-2 flex-wrap">
+                          {/* Botón de precios: visible para todos, pero cada admin solo edita su sede */}
                           <Button 
                             size="sm" 
                             variant="outline"
@@ -1225,25 +1237,32 @@ const Products = () => {
                               setShowPriceMatrix(true);
                             }}
                             className="flex-1"
-                            title="Configurar precios por sede"
+                            title={isAdminGeneral ? "Configurar precios por sede" : "Configurar precio de mi sede"}
                           >
                             <Building2 className="h-3 w-3 mr-1" />
                             Precios
                           </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={() => handleEditProduct(product)}
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="destructive" 
-                            onClick={() => handleDeleteProduct(product.id)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
+                          {/* Editar y Eliminar: solo admin_general (modifica producto global) */}
+                          {isAdminGeneral && (
+                            <>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => handleEditProduct(product)}
+                                title="Editar producto (afecta todas las sedes)"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="destructive" 
+                                onClick={() => handleDeleteProduct(product.id)}
+                                title="Eliminar producto"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -1269,7 +1288,7 @@ const Products = () => {
           
           <div className="mb-4">
             <div className="flex gap-2 mb-6">
-              {[1,2,3,4].map(step => (
+              {Array.from({ length: totalWizardSteps }, (_, i) => i + 1).map(step => (
                 <div 
                   key={step} 
                   className={`flex-1 h-3 rounded-full transition-all ${
@@ -1290,7 +1309,7 @@ const Products = () => {
               >
                 ← Anterior
               </Button>
-              {wizardStep < 4 ? (
+              {wizardStep < totalWizardSteps ? (
                 <Button 
                   type="button"
                   size="lg"
