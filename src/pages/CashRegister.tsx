@@ -233,7 +233,7 @@ export default function CashRegisterPage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {true ? (
+      {true && (
         <>
           {/* Header */}
           <div className="flex items-center justify-between">
