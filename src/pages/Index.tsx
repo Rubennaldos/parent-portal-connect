@@ -417,25 +417,8 @@ const Index = () => {
   };
 
   const openRechargeModal = (student: Student) => {
-    // 🔒 MÓDULO DE PAGOS/RECARGAS DESACTIVADO TEMPORALMENTE
-    // Todo pago es presencial en caja
-    toast({
-      title: '💳 Pagos presenciales',
-      description: 'Los pagos y recargas se realizan presencialmente en la cafetería del colegio. Pronto habilitaremos pagos en línea.',
-    });
-    return;
-    
-    /* CÓDIGO ORIGINAL - Restaurar cuando se habiliten pagos en línea:
     setSelectedStudent(student);
-    const hasDebts = student.balance < 0;
-    if (hasDebts) {
-      setShowPayDebtModal(true);
-      setShowRechargeModal(false);
-    } else {
-      setShowRechargeModal(true);
-      setShowPayDebtModal(false);
-    }
-    */
+    setShowRechargeModal(true);
   };
 
   const openMenuModal = (student: Student) => {

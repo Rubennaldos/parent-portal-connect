@@ -17,7 +17,8 @@ import {
   Loader2,
   AlertCircle,
   ArrowLeft,
-  BarChart3
+  BarChart3,
+  Wallet
 } from 'lucide-react';
 
 // Importar los componentes de cada tab
@@ -26,6 +27,7 @@ import { BillingCollection } from '@/components/billing/BillingCollection';
 import { BillingReports } from '@/components/billing/BillingReports';
 import { BillingConfig } from '@/components/billing/BillingConfig';
 import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
+import { VoucherApproval } from '@/components/billing/VoucherApproval';
 
 interface TabPermissions {
   dashboard: boolean;
@@ -33,6 +35,7 @@ interface TabPermissions {
   reports: boolean;
   statistics: boolean;
   config: boolean;
+  vouchers: boolean;
 }
 
 const Cobranzas = () => {
@@ -47,7 +50,9 @@ const Cobranzas = () => {
     reports: false,
     statistics: false,
     config: false,
+    vouchers: false,
   });
+  const [pendingVouchers, setPendingVouchers] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -69,8 +74,10 @@ const Cobranzas = () => {
           reports: true,
           statistics: true,
           config: true,
+          vouchers: true,
         });
         setActiveTab('dashboard');
+        fetchPendingVouchers();
         setLoading(false);
         return;
       }
@@ -102,6 +109,7 @@ const Cobranzas = () => {
         reports: false,
         statistics: false,
         config: false,
+        vouchers: false,
       };
 
       // Mapear los permisos de la BD a las pestañas
@@ -116,6 +124,7 @@ const Cobranzas = () => {
             case 'cobrar_todas_sedes':
             case 'cobrar_personalizado':
               perms.collect = true;
+              perms.vouchers = true; // Admins que cobran también aprueban recargas
               break;
             case 'sacar_reportes':
               perms.reports = true;
@@ -132,10 +141,12 @@ const Cobranzas = () => {
 
       console.log('✅ Permisos finales de Cobranzas:', perms);
       setPermissions(perms);
+      if (perms.vouchers) fetchPendingVouchers();
 
       // Establecer la primera pestaña disponible
       if (perms.dashboard) setActiveTab('dashboard');
       else if (perms.collect) setActiveTab('collect');
+      else if (perms.vouchers) setActiveTab('vouchers');
       else if (perms.reports) setActiveTab('reports');
       else if (perms.statistics) setActiveTab('statistics');
       else if (perms.config) setActiveTab('config');
@@ -144,6 +155,18 @@ const Cobranzas = () => {
       console.error('Error checking permissions:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPendingVouchers = async () => {
+    try {
+      const { count } = await supabase
+        .from('recharge_requests')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending');
+      setPendingVouchers(count || 0);
+    } catch (err) {
+      console.error('Error al contar vouchers:', err);
     }
   };
 
@@ -256,6 +279,24 @@ const Cobranzas = () => {
                     <span className="hidden sm:inline">Reportes</span>
                   </button>
                 )}
+                {permissions.vouchers && (
+                  <button
+                    onClick={() => setActiveTab('vouchers')}
+                    className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all relative ${
+                      activeTab === 'vouchers'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    <span className="hidden sm:inline">Recargas</span>
+                    {pendingVouchers > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                        {pendingVouchers > 9 ? '9+' : pendingVouchers}
+                      </span>
+                    )}
+                  </button>
+                )}
                 {permissions.config && (
                   <button
                     onClick={() => setActiveTab('config')}
@@ -298,6 +339,13 @@ const Cobranzas = () => {
               {activeTab === 'reports' && permissions.reports && (
                 <div className="mt-6">
                   <BillingReports />
+                </div>
+              )}
+
+              {/* Recargas / Vouchers Tab */}
+              {activeTab === 'vouchers' && permissions.vouchers && (
+                <div className="mt-6">
+                  <VoucherApproval />
                 </div>
               )}
 
