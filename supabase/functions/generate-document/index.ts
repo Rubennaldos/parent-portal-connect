@@ -73,8 +73,8 @@ serve(async (req) => {
 
     if (cfgErr || !cfg) {
       return new Response(
-        JSON.stringify({ error: `Sin configuración para school_id=${school_id}. Detalle: ${cfgErr?.message}` }),
-        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+        JSON.stringify({ success: false, error: `Sin configuración para school_id=${school_id}. Detalle: ${cfgErr?.message}` }),
+        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
@@ -84,14 +84,19 @@ serve(async (req) => {
                 : cfg.serie_boleta;
 
     // 3. Obtener número correlativo (contar docs previos del mismo tipo/serie)
-    const { count } = await supabase
-      .from("electronic_documents")
-      .select("*", { count: "exact", head: true })
-      .eq("school_id", school_id)
-      .eq("tipo_comprobante", tipo)
-      .eq("serie", serie);
-
-    const numero = (count || 0) + 1;
+    let numero = 1;
+    try {
+      const { count } = await supabase
+        .from("electronic_documents")
+        .select("*", { count: "exact", head: true })
+        .eq("school_id", school_id)
+        .eq("tipo_comprobante", tipo)
+        .eq("serie", serie);
+      numero = (count || 0) + 1;
+    } catch (_) {
+      // Si la tabla no existe aún, empezamos desde 1
+      numero = 1;
+    }
 
     // 4. Calcular IGV
     const igv_pct = Number(cfg.igv_porcentaje) || 18;
@@ -162,8 +167,10 @@ serve(async (req) => {
 
     const nubefactData = await nubefactRes.json();
 
-    // 9. Guardar documento en base de datos
-    const { data: docGuardado } = await supabase
+    // 9. Guardar documento en base de datos (tolerante si la tabla no existe aún)
+    let docGuardado: any = null;
+    try {
+    const { data: _doc } = await supabase
       .from("electronic_documents")
       .insert({
         school_id,
@@ -187,17 +194,23 @@ serve(async (req) => {
       })
       .select()
       .single();
+    docGuardado = _doc;
+    } catch (dbErr) {
+      console.error("Error guardando en electronic_documents:", dbErr);
+      // No falla si la tabla no existe - el comprobante ya fue generado en Nubefact
+    }
 
     return new Response(
-      JSON.stringify({ success: true, documento: docGuardado, nubefact: nubefactData }),
+      JSON.stringify({ success: true, documento: docGuardado ?? { serie, numero }, nubefact: nubefactData }),
       { headers: { ...cors, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
     console.error("generate-document ERROR:", error);
+    // Siempre devolver 200 para que el cliente pueda leer el mensaje de error
     return new Response(
-      JSON.stringify({ error: String(error), stack: (error as any)?.stack }),
-      { status: 500, headers: { ...cors, "Content-Type": "application/json" } }
+      JSON.stringify({ success: false, error: String(error) }),
+      { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
     );
   }
 });
