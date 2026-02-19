@@ -102,7 +102,7 @@ export const VoucherApproval = () => {
         .select(`
           *,
           students(full_name, balance),
-          profiles(full_name, email),
+          profiles!recharge_requests_parent_id_fkey(full_name, email),
           schools(name)
         `)
         .order('created_at', { ascending: false });
