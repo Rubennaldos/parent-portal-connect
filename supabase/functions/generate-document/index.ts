@@ -79,9 +79,15 @@ serve(async (req) => {
       );
     }
 
+    // Mapeo tipos internos → tipos Nubefact
+    // Interno: 1=factura, 2=boleta, 7=nota_credito_boleta, 8=nota_credito_factura
+    // Nubefact: 1=factura, 2=boleta, 3=nota_credito, 4=nota_debito
+    const nubefact_tipo = tipo === 7 || tipo === 8 ? 3 : tipo;
+
     // 2. Determinar serie según tipo de documento
     const serie = tipo === 1 ? cfg.serie_factura
                 : tipo === 7 ? cfg.serie_nc_boleta
+                : tipo === 8 ? cfg.serie_nc_factura
                 : cfg.serie_boleta;
 
     // 3. Obtener número correlativo (contar docs previos del mismo tipo/serie)
@@ -127,7 +133,7 @@ serve(async (req) => {
     // 7. Armar payload para Nubefact
     const payload: Record<string, unknown> = {
       operacion: "generar_comprobante",
-      tipo_de_comprobante: tipo,
+      tipo_de_comprobante: nubefact_tipo,  // tipo mapeado a códigos Nubefact
       serie,
       numero,
       sunat_transaction: 1,
@@ -149,8 +155,8 @@ serve(async (req) => {
       items: itemsDoc,
     };
 
-    // Campos extra para Nota de Crédito
-    if (tipo === 7 && doc_ref) {
+    // Campos extra para Nota de Crédito (tipo interno 7 u 8)
+    if ((tipo === 7 || tipo === 8) && doc_ref) {
       payload.tipo_de_nota_de_credito = 1; // 1 = Anulación de operación
       payload.documento_que_se_modifica_tipo = doc_ref.tipo;
       payload.documento_que_se_modifica_serie = doc_ref.serie;
