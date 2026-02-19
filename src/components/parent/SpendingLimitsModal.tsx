@@ -493,6 +493,69 @@ export function SpendingLimitsModal({
         </div>
       </DialogContent>
 
+      {/* Modal de Advertencia - Cambio de Modo (Cuenta Libre → Con Recargas) */}
+      <Dialog open={showModeChangeWarning} onOpenChange={setShowModeChangeWarning}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto border border-stone-200/50 bg-white shadow-2xl">
+          <DialogHeader className="pb-4">
+            <div className="flex flex-col items-center text-center space-y-2 sm:space-y-3">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-blue-50/50 to-blue-100/30 rounded-xl sm:rounded-2xl flex items-center justify-center border border-blue-200/30 shadow-sm">
+                <CreditCard className="h-7 w-7 sm:h-8 sm:w-8 text-blue-600/80" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl sm:text-2xl font-light text-stone-800 tracking-wide">
+                  Cambiar a Con Recargas
+                </DialogTitle>
+                <DialogDescription className="text-xs sm:text-sm text-stone-500 mt-1.5 font-normal px-2">
+                  ¿Deseas cambiar el método de trabajo?
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 px-6">
+            <Alert className="bg-blue-50/50 border-blue-200/30">
+              <Info className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-sm text-blue-800 leading-relaxed font-normal">
+                Con el modo <strong>Con Recargas</strong>, {studentName} solo podrá consumir con saldo previamente recargado. Deberás mantener su cuenta con fondos para que pueda comprar.
+              </AlertDescription>
+            </Alert>
+
+            <ul className="space-y-2 text-sm text-stone-600">
+              <li className="flex items-start gap-2">
+                <span className="text-blue-600 font-medium">•</span>
+                <span>Deberás recargar saldo antes de que pueda consumir</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-blue-600 font-medium">•</span>
+                <span>Si no hay saldo, no podrá realizar compras</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-blue-600 font-medium">•</span>
+                <span>Puedes volver a Cuenta Libre cuando quieras</span>
+              </li>
+            </ul>
+
+            <div className="flex flex-col gap-3 pt-2">
+              <Button
+                onClick={confirmModeChange}
+                className="h-12 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all"
+              >
+                <CreditCard className="h-4 w-4 mr-2" />
+                Sí, cambiar a Con Recargas
+              </Button>
+              
+              <Button
+                variant="ghost"
+                onClick={cancelModeChange}
+                className="h-10 text-xs font-normal text-stone-400 hover:text-emerald-700 hover:bg-emerald-50/30 rounded-xl"
+              >
+                Mantener Cuenta Libre
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal de Advertencia - Cambio de Tope */}
       <Dialog open={showWarning} onOpenChange={setShowWarning}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto border border-stone-200/50 bg-white shadow-2xl">
