@@ -72,6 +72,7 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { getProductsForSchool } from '@/lib/productPricing';
 import { printPOSSale } from '@/lib/posPrinterService';
+import { CashOpeningModal } from '@/components/cash-register/CashOpeningModal';
 
 interface Student {
   id: string;
@@ -163,6 +164,13 @@ const POS = () => {
 
   // Estado para la sede del usuario (cajero)
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
+
+  // ── Guard de caja ────────────────────────────────────────────────
+  const [cashGuardLoading, setCashGuardLoading] = useState(true);
+  const [posOpenRegister, setPosOpenRegister] = useState<any | null>(null);
+  const [posHasUnclosed, setPosHasUnclosed] = useState(false);
+  const [posPreviousUnclosed, setPosPreviousUnclosed] = useState<any | null>(null);
+  const [posLastClosedAmount, setPosLastClosedAmount] = useState<number | null>(null);
 
   // Estados de cliente
   const [clientMode, setClientMode] = useState<'student' | 'generic' | 'teacher' | null>(null);
@@ -429,6 +437,71 @@ const POS = () => {
       }, 200);
     }
   }, [clientMode, selectedStudent]);
+
+  // ── Verificar estado de caja cuando cambia la sede ──────────────
+  useEffect(() => {
+    const checkCash = async () => {
+      if (!userSchoolId) return;
+      setCashGuardLoading(true);
+      try {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const { data: openRegs } = await supabase
+          .from('cash_registers')
+          .select('*')
+          .eq('school_id', userSchoolId)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: false })
+          .limit(1);
+
+        const current = openRegs?.[0] || null;
+        if (current) {
+          const openedDate = new Date(current.opened_at);
+          openedDate.setHours(0, 0, 0, 0);
+          if (openedDate < todayStart) {
+            setPosHasUnclosed(true);
+            setPosPreviousUnclosed(current);
+            setPosOpenRegister(null);
+          } else {
+            setPosOpenRegister(current);
+            setPosHasUnclosed(false);
+            setPosPreviousUnclosed(null);
+          }
+        } else {
+          setPosOpenRegister(null);
+          const { data: unclosed } = await supabase
+            .from('cash_registers')
+            .select('*')
+            .eq('school_id', userSchoolId)
+            .eq('status', 'open')
+            .lt('opened_at', todayStart.toISOString())
+            .order('opened_at', { ascending: false })
+            .limit(1);
+          if (unclosed && unclosed.length > 0) {
+            setPosHasUnclosed(true);
+            setPosPreviousUnclosed(unclosed[0]);
+          } else {
+            setPosHasUnclosed(false);
+            setPosPreviousUnclosed(null);
+          }
+        }
+
+        // Último cierre para referencia
+        const { data: lastClosure } = await supabase
+          .from('cash_closures')
+          .select('actual_final')
+          .eq('school_id', userSchoolId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setPosLastClosedAmount(lastClosure?.actual_final ?? null);
+      } finally {
+        setCashGuardLoading(false);
+      }
+    };
+    checkCash();
+  }, [userSchoolId]);
 
   const fetchProducts = async () => {
     console.log('🔵 POS - Iniciando carga de productos...');
@@ -1397,7 +1470,38 @@ const POS = () => {
     setInsufficientBalance(insufficient);
   }, [selectedStudent, cart]); // ✅ Dependencia en 'cart' en lugar de 'total'
 
+  // ─── GUARD: Bloquear POS si no hay caja abierta ─────────────────
+  const needsCashDeclaration =
+    !cashGuardLoading &&
+    userSchoolId &&
+    !posOpenRegister &&
+    !posHasUnclosed;
+
   return (
+    <>
+    {/* Modal bloqueante de apertura de caja */}
+    {userSchoolId && !cashGuardLoading && (!posOpenRegister || posHasUnclosed) && (
+      <CashOpeningModal
+        schoolId={userSchoolId}
+        lastClosedAmount={posLastClosedAmount}
+        hasUnclosedPrevious={posHasUnclosed}
+        previousUnclosed={posPreviousUnclosed}
+        onOpened={() => {
+          setPosHasUnclosed(false);
+          setPosPreviousUnclosed(null);
+          // Recargar estado de caja
+          supabase
+            .from('cash_registers')
+            .select('*')
+            .eq('school_id', userSchoolId)
+            .eq('status', 'open')
+            .order('opened_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+            .then(({ data }) => setPosOpenRegister(data));
+        }}
+      />
+    )}
     <div className="h-screen flex flex-col bg-gray-100">
       {/* Header */}
       <header className="bg-slate-900 text-white px-3 sm:px-4 lg:px-6 py-2 sm:py-3 flex justify-between items-center shadow-lg print:hidden">
@@ -2704,6 +2808,7 @@ const POS = () => {
         </DialogContent>
       </Dialog>
     </div>
+    </>
   );
 };
 

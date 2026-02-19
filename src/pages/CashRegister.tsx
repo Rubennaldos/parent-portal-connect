@@ -28,6 +28,7 @@ import CashMovements from './CashRegister/CashMovements';
 import CashClosureDialog from './CashRegister/CashClosureDialog';
 import CashHistoryDialog from './CashRegister/CashHistoryDialog';
 import CashConfigDialog from './CashRegister/CashConfigDialog';
+import { CashOpeningModal } from '@/components/cash-register/CashOpeningModal';
 import { toast } from 'sonner';
 
 export default function CashRegisterPage() {
@@ -40,6 +41,10 @@ export default function CashRegisterPage() {
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [showConfigDialog, setShowConfigDialog] = useState(false);
+  // Apertura de caja anti-fraude
+  const [lastClosedAmount, setLastClosedAmount] = useState<number | null>(null);
+  const [hasUnclosedPrevious, setHasUnclosedPrevious] = useState(false);
+  const [previousUnclosed, setPreviousUnclosed] = useState<any | null>(null);
 
   // Cargar perfil del usuario
   useEffect(() => {
@@ -68,11 +73,15 @@ export default function CashRegisterPage() {
     loadProfile();
   }, [user?.id]);
 
-  // Cargar caja actual
+  // Cargar caja actual con verificación anti-fraude
   const loadCurrentRegister = async () => {
     if (!profile?.school_id) return;
 
     try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      // Buscar caja abierta
       const { data, error } = await supabase
         .from('cash_registers')
         .select('*')
@@ -82,11 +91,35 @@ export default function CashRegisterPage() {
         .limit(1)
         .maybeSingle();
 
-      if (error) {
-        throw error;
+      if (error) throw error;
+
+      if (data) {
+        const openedDate = new Date(data.opened_at);
+        openedDate.setHours(0, 0, 0, 0);
+        if (openedDate < todayStart) {
+          // Caja abierta de un día anterior → sin cerrar
+          setHasUnclosedPrevious(true);
+          setPreviousUnclosed(data);
+          setCurrentRegister(null);
+        } else {
+          setCurrentRegister(data);
+          setHasUnclosedPrevious(false);
+          setPreviousUnclosed(null);
+        }
+      } else {
+        setCurrentRegister(null);
       }
 
-      setCurrentRegister(data || null);
+      // Cargar último cierre para referencia de monto
+      const { data: lastClosure } = await supabase
+        .from('cash_closures')
+        .select('actual_final')
+        .eq('school_id', profile.school_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      setLastClosedAmount(lastClosure?.actual_final ?? null);
     } catch (error) {
       console.error('Error al cargar caja:', error);
       toast.error('Error al cargar la caja actual');
@@ -133,63 +166,7 @@ export default function CashRegisterPage() {
     }
   };
 
-  // Abrir caja
-  const openCashRegister = async () => {
-    console.log('🔵 openCashRegister llamado');
-    console.log('📊 profile:', profile);
-    console.log('👤 user:', user);
-    
-    if (!profile?.school_id) {
-      console.error('❌ No hay school_id en el perfil');
-      toast.error('Error: No tienes una sede asignada. Contacta al administrador.');
-      return;
-    }
-    
-    if (!user?.id) {
-      console.error('❌ No hay user.id');
-      toast.error('Error: Usuario no identificado. Intenta cerrar sesión y volver a entrar.');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      console.log('🔄 Intentando abrir caja...');
-
-      // Obtener el cierre anterior para la caja inicial
-      const { data: lastClosure } = await supabase
-        .from('cash_closures')
-        .select('actual_final')
-        .eq('school_id', profile.school_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      const initialAmount = lastClosure?.actual_final || 0;
-      console.log('💰 Monto inicial:', initialAmount);
-
-      const { data, error } = await supabase
-        .from('cash_registers')
-        .insert({
-          school_id: profile.school_id,
-          opened_by: user.id,
-          initial_amount: initialAmount,
-          status: 'open'
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      console.log('✅ Caja abierta:', data);
-      setCurrentRegister(data);
-      toast.success('Caja abierta exitosamente');
-    } catch (error) {
-      console.error('❌ Error al abrir caja:', error);
-      toast.error('Error al abrir la caja: ' + (error as any).message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // La apertura de caja ahora se maneja en CashOpeningModal
 
   useEffect(() => {
     const init = async () => {
@@ -285,23 +262,22 @@ export default function CashRegisterPage() {
         </div>
       </div>
 
+      {/* Modal bloqueante de apertura / caja sin cerrar */}
+      {!currentRegister && profile?.school_id && (
+        <CashOpeningModal
+          schoolId={profile.school_id}
+          lastClosedAmount={lastClosedAmount}
+          hasUnclosedPrevious={hasUnclosedPrevious}
+          previousUnclosed={previousUnclosed}
+          onOpened={() => {
+            loadCurrentRegister();
+            loadMovements();
+          }}
+        />
+      )}
+
       {/* Estado de la caja */}
-      {!currentRegister ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No hay caja abierta</CardTitle>
-            <CardDescription>
-              Debes abrir la caja para comenzar a registrar operaciones
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={openCashRegister} size="lg">
-              <DollarSign className="h-5 w-5 mr-2" />
-              Abrir Caja
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
+      {currentRegister && (
         <>
           {/* Info de caja abierta */}
           <Card>
