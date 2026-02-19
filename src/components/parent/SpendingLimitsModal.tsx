@@ -513,43 +513,54 @@ export function SpendingLimitsModal({
           </DialogHeader>
 
           <div className="space-y-4 py-2 px-6">
-            <Alert className="bg-blue-50/50 border-blue-200/30">
-              <Info className="h-4 w-4 text-blue-600" />
-              <AlertDescription className="text-sm text-blue-800 leading-relaxed font-normal">
-                Con el modo <strong>Con Recargas</strong>, {studentName} solo podrá consumir con saldo previamente recargado. Deberás mantener su cuenta con fondos para que pueda comprar.
+            <Alert className="bg-emerald-50/50 border-emerald-200/30">
+              <Info className="h-4 w-4 text-emerald-600" />
+              <AlertDescription className="text-sm text-emerald-800 leading-relaxed font-normal">
+                <strong className="font-medium">Cuenta Libre</strong> es el modo más cómodo y seguro para tu familia. Con este modo:
               </AlertDescription>
             </Alert>
 
             <ul className="space-y-2 text-sm text-stone-600">
               <li className="flex items-start gap-2">
-                <span className="text-blue-600 font-medium">•</span>
-                <span>Deberás recargar saldo antes de que pueda consumir</span>
+                <span className="text-emerald-600 font-medium">✓</span>
+                <span>{studentName} <strong>nunca se queda sin comer</strong>, aunque olvides recargar</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-600 font-medium">•</span>
-                <span>Si no hay saldo, no podrá realizar compras</span>
+                <span className="text-emerald-600 font-medium">✓</span>
+                <span>Pagas cómodamente <strong>al final del mes</strong></span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-600 font-medium">•</span>
-                <span>Puedes volver a Cuenta Libre cuando quieras</span>
+                <span className="text-emerald-600 font-medium">✓</span>
+                <span>Ves <strong>todo el consumo en tiempo real</strong> desde la app</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-emerald-600 font-medium">✓</span>
+                <span>Sin estrés de recargas diarias ni saldos insuficientes</span>
               </li>
             </ul>
 
+            <Alert className="bg-amber-50/50 border-amber-200/30">
+              <AlertCircle className="h-4 w-4 text-amber-600" />
+              <AlertDescription className="text-xs text-amber-800 leading-relaxed">
+                <strong className="font-medium">Con Recargas:</strong> Si no hay saldo, {studentName} no podrá comprar en la cafetería. Tendrás que estar pendiente de recargar constantemente.
+              </AlertDescription>
+            </Alert>
+
             <div className="flex flex-col gap-3 pt-2">
               <Button
-                onClick={confirmModeChange}
-                className="h-12 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all"
+                onClick={cancelModeChange}
+                className="h-12 sm:h-14 text-sm sm:text-base font-medium bg-gradient-to-r from-emerald-600/90 to-[#8B7355]/80 hover:from-emerald-700/90 hover:to-[#6B5744]/80 text-white shadow-lg rounded-xl transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
               >
-                <CreditCard className="h-4 w-4 mr-2" />
-                Sí, cambiar a Con Recargas
+                <Check className="h-5 w-5" />
+                CONTINUAR CON CUENTA LIBRE (RECOMENDADO)
               </Button>
               
               <Button
                 variant="ghost"
-                onClick={cancelModeChange}
-                className="h-10 text-xs font-normal text-stone-400 hover:text-emerald-700 hover:bg-emerald-50/30 rounded-xl"
+                onClick={confirmModeChange}
+                className="h-9 sm:h-10 text-xs font-normal text-stone-400 hover:text-stone-600 hover:bg-stone-50/30 rounded-xl transition-all"
               >
-                Mantener Cuenta Libre
+                Prefiero cambiar a Con Recargas
               </Button>
             </div>
           </div>
