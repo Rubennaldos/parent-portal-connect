@@ -21,6 +21,8 @@ import {
   X,
   Send,
   Wallet,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface RechargeModalProps {
@@ -37,7 +39,9 @@ interface RechargeModalProps {
 
 interface PaymentConfig {
   yape_number: string | null;
+  yape_holder: string | null;
   plin_number: string | null;
+  plin_holder: string | null;
   bank_account_info: string | null;
   bank_account_holder: string | null;
   show_payment_info: boolean;
@@ -71,6 +75,7 @@ export function RechargeModal({
   const [loading, setLoading] = useState(false);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const quickAmounts = [10, 20, 50, 100, 150, 200];
 
@@ -107,7 +112,7 @@ export function RechargeModal({
 
       const { data: config } = await supabase
         .from('billing_config')
-        .select('yape_number, plin_number, bank_account_info, show_payment_info')
+        .select('yape_number, yape_holder, plin_number, plin_holder, bank_account_info, bank_account_holder, show_payment_info')
         .eq('school_id', student.school_id)
         .single();
 
@@ -203,12 +208,28 @@ export function RechargeModal({
     }
   };
 
-  const methodInfo: Record<PaymentMethod, { label: string; icon: React.ReactNode; color: string; number: string | null; hint: string }> = {
+  // ── Copiar al portapapeles con feedback visual ──
+  const handleCopy = (text: string, fieldKey: string) => {
+    navigator.clipboard.writeText(text).catch(() => {
+      // fallback para navegadores sin clipboard API
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    });
+    setCopiedField(fieldKey);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const methodInfo: Record<PaymentMethod, { label: string; icon: React.ReactNode; color: string; number: string | null; holder: string | null; hint: string }> = {
     yape: {
       label: 'Yape',
       icon: <YapeLogo className="w-8 h-8" />,
       color: 'purple',
       number: paymentConfig?.yape_number || null,
+      holder: paymentConfig?.yape_holder || null,
       hint: 'Abre tu app de Yape y transfiere al número indicado.',
     },
     plin: {
@@ -216,6 +237,7 @@ export function RechargeModal({
       icon: <PlinLogo className="w-8 h-8" />,
       color: 'green',
       number: paymentConfig?.plin_number || null,
+      holder: paymentConfig?.plin_holder || null,
       hint: 'Abre tu app de Plin y transfiere al número indicado.',
     },
     transferencia: {
@@ -223,6 +245,7 @@ export function RechargeModal({
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
       number: paymentConfig?.bank_account_info || null,
+      holder: paymentConfig?.bank_account_holder || null,
       hint: 'Realiza una transferencia bancaria con los datos indicados.',
     },
   };
@@ -349,43 +372,119 @@ export function RechargeModal({
               </div>
             </div>
 
-            {/* Instrucciones de pago */}
-            {currentMethodInfo.number && (
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-                <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                  📋 Pasos a seguir
-                </p>
-                
-                <div className="space-y-2 text-sm text-gray-600">
-                  <div className="flex items-start gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
-                    <span>{currentMethodInfo.hint}</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                    <span>Transfiere exactamente <strong>S/ {parseFloat(amount).toFixed(2)}</strong></span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                    <span>Toma captura del comprobante y envíalo en el siguiente paso</span>
-                  </div>
-                </div>
+                {/* Instrucciones de pago */}
+                {currentMethodInfo.number && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                    <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                      📋 Pasos a seguir
+                    </p>
+                    
+                    <div className="space-y-2 text-sm text-gray-600">
+                      <div className="flex items-start gap-2">
+                        <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                        <span>{currentMethodInfo.hint}</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                        <span>Transfiere exactamente <strong>S/ {parseFloat(amount).toFixed(2)}</strong></span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                        <span>Toma captura del comprobante y envíalo en el siguiente paso</span>
+                      </div>
+                    </div>
 
-                <div className="bg-white border-2 border-dashed border-blue-300 rounded-lg p-3 text-center">
-                  <p className="text-[10px] text-gray-500 mb-1 uppercase tracking-wider">
-                    {selectedMethod === 'transferencia' ? 'Datos bancarios' : `Número de ${currentMethodInfo.label}`}
-                  </p>
-                  <p className="text-lg font-bold text-gray-900 tracking-widest whitespace-pre-wrap">
-                    {currentMethodInfo.number}
-                  </p>
-                </div>
+                    {/* ── Datos de pago con botones COPIAR ── */}
+                    <div className="bg-white border-2 border-dashed border-blue-300 rounded-xl overflow-hidden">
+                      <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
+                        <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
+                          {selectedMethod === 'transferencia' ? '🏦 Datos bancarios' : `📱 Número de ${currentMethodInfo.label}`}
+                        </p>
+                      </div>
 
-                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2 text-xs text-blue-800">
-                  <Clock className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                  <span>Verificaremos tu pago y <strong>acreditaremos el saldo en menos de 24 horas</strong>.</span>
-                </div>
-              </div>
-            )}
+                      <div className="p-3 space-y-2">
+                        {/* Titular (si existe) */}
+                        {currentMethodInfo.holder && (
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
+                              <p className="text-sm font-semibold text-gray-800 truncate">{currentMethodInfo.holder}</p>
+                            </div>
+                            <button
+                              onClick={() => handleCopy(currentMethodInfo.holder!, 'holder')}
+                              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all shrink-0 ${
+                                copiedField === 'holder'
+                                  ? 'bg-green-100 text-green-700 border-green-300'
+                                  : 'bg-white text-blue-600 border-blue-200 hover:bg-blue-50 active:scale-95'
+                              }`}
+                            >
+                              {copiedField === 'holder' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              {copiedField === 'holder' ? '¡Copiado!' : 'Copiar'}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Número / datos bancarios */}
+                        {selectedMethod === 'transferencia' ? (
+                          <div className="space-y-1.5">
+                            {currentMethodInfo.number?.split('\n').map((line, i) => (
+                              line.trim() ? (
+                                <div key={i} className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-mono font-semibold text-gray-900 flex-1 min-w-0 break-all">{line}</p>
+                                  <button
+                                    onClick={() => handleCopy(line, `line-${i}`)}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border transition-all shrink-0 ${
+                                      copiedField === `line-${i}`
+                                        ? 'bg-green-100 text-green-700 border-green-300'
+                                        : 'bg-white text-blue-600 border-blue-200 hover:bg-blue-50 active:scale-95'
+                                    }`}
+                                  >
+                                    {copiedField === `line-${i}` ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                                  </button>
+                                </div>
+                              ) : null
+                            ))}
+                            {/* Copiar todo */}
+                            <button
+                              onClick={() => handleCopy(currentMethodInfo.number!, 'all')}
+                              className={`w-full flex items-center justify-center gap-2 mt-2 py-2 rounded-lg text-xs font-bold border-2 transition-all active:scale-95 ${
+                                copiedField === 'all'
+                                  ? 'bg-green-100 text-green-700 border-green-300'
+                                  : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              {copiedField === 'all' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                              {copiedField === 'all' ? '¡Datos copiados!' : 'Copiar todos los datos'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">Número</p>
+                              <p className="text-2xl font-bold text-gray-900 tracking-widest">{currentMethodInfo.number}</p>
+                            </div>
+                            <button
+                              onClick={() => handleCopy(currentMethodInfo.number!, 'number')}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold border-2 transition-all shrink-0 active:scale-95 ${
+                                copiedField === 'number'
+                                  ? 'bg-green-100 text-green-700 border-green-300'
+                                  : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              {copiedField === 'number' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                              {copiedField === 'number' ? '¡Copiado!' : 'Copiar'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2 text-xs text-blue-800">
+                      <Clock className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                      <span>Verificaremos tu pago y <strong>acreditaremos el saldo en menos de 24 horas</strong>.</span>
+                    </div>
+                  </div>
+                )}
           </>
         )}
 

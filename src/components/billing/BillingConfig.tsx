@@ -49,8 +49,11 @@ interface BillingConfig {
   school_id: string;
   message_template: string;
   bank_account_info: string | null;
+  bank_account_holder: string | null;
   yape_number: string | null;
+  yape_holder: string | null;
   plin_number: string | null;
+  plin_holder: string | null;
   show_payment_info: boolean;
 }
 
@@ -60,16 +63,21 @@ export const BillingConfig = () => {
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingMessage, setSavingMessage] = useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('');
   const [config, setConfig] = useState<BillingConfig | null>(null);
 
-  // Form data
+  // Form data — Mensaje
   const [messageTemplate, setMessageTemplate] = useState('');
+  // Form data — Pago
   const [bankInfo, setBankInfo] = useState('');
+  const [bankHolder, setBankHolder] = useState('');
   const [yapeNumber, setYapeNumber] = useState('');
+  const [yapeHolder, setYapeHolder] = useState('');
   const [plinNumber, setPlinNumber] = useState('');
+  const [plinHolder, setPlinHolder] = useState('');
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
 
   // ✨ Delay de visibilidad - NUEVO: Lista de todas las sedes
@@ -240,8 +248,11 @@ export const BillingConfig = () => {
         setConfig(data);
         setMessageTemplate(data.message_template);
         setBankInfo(data.bank_account_info || '');
+        setBankHolder(data.bank_account_holder || '');
         setYapeNumber(data.yape_number || '');
+        setYapeHolder(data.yape_holder || '');
         setPlinNumber(data.plin_number || '');
+        setPlinHolder(data.plin_holder || '');
         setShowPaymentInfo(data.show_payment_info || false);
       } else {
         // No hay config, usar valores por defecto
@@ -250,8 +261,11 @@ export const BillingConfig = () => {
 Para pagar, contacte con administración.
 Gracias.`);
         setBankInfo('');
+        setBankHolder('');
         setYapeNumber('');
+        setYapeHolder('');
         setPlinNumber('');
+        setPlinHolder('');
         setShowPaymentInfo(false);
       }
 
@@ -331,82 +345,65 @@ Gracias.`);
     }
   };
 
-  const handleSave = async () => {
-    console.log('💾 handleSave called - selectedSchool:', selectedSchool, 'user:', !!user, 'config:', config?.id);
-    
-    if (!selectedSchool) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se ha seleccionado ninguna sede. Recarga la página.',
-      });
-      return;
-    }
-    if (!user) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se detectó usuario autenticado.',
-      });
-      return;
-    }
-
-    setSaving(true);
-
+  // ── Guardar solo plantilla de mensaje ──
+  const handleSaveMessage = async () => {
+    if (!selectedSchool || !user) return;
+    setSavingMessage(true);
     try {
-      const configData = {
+      const payload = {
         school_id: selectedSchool,
         message_template: messageTemplate,
+        updated_by: user.id,
+      };
+      if (config) {
+        const { error } = await supabase.from('billing_config').update(payload).eq('id', config.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('billing_config').insert(payload);
+        if (error) throw error;
+      }
+      toast({ title: '✅ Plantilla guardada', description: 'Mensaje de WhatsApp actualizado.' });
+      fetchConfig();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error al guardar', description: error?.message });
+    } finally {
+      setSavingMessage(false);
+    }
+  };
+
+  // ── Guardar solo información de pago ──
+  const handleSavePayment = async () => {
+    if (!selectedSchool || !user) return;
+    setSavingPayment(true);
+    try {
+      const payload = {
+        school_id: selectedSchool,
         bank_account_info: bankInfo || null,
+        bank_account_holder: bankHolder || null,
         yape_number: yapeNumber || null,
+        yape_holder: yapeHolder || null,
         plin_number: plinNumber || null,
+        plin_holder: plinHolder || null,
         show_payment_info: showPaymentInfo,
         updated_by: user.id,
       };
-
-      console.log('💾 Datos a guardar:', configData);
-      console.log('💾 Config existente:', config ? `id=${config.id}` : 'NULL (insert)');
-
       if (config) {
-        // Actualizar
-        const { error } = await supabase
-          .from('billing_config')
-          .update(configData)
-          .eq('id', config.id);
-
-        if (error) {
-          console.error('❌ Error en UPDATE billing_config:', error);
-          throw error;
-        }
-        console.log('✅ UPDATE exitoso');
+        const { error } = await supabase.from('billing_config').update(payload).eq('id', config.id);
+        if (error) throw error;
       } else {
-        // Crear
-        const { error } = await supabase
-          .from('billing_config')
-          .insert(configData);
-
-        if (error) {
-          console.error('❌ Error en INSERT billing_config:', error);
-          throw error;
-        }
-        console.log('✅ INSERT exitoso');
+        // Si no hay config aún, crear con mensaje por defecto
+        const { error } = await supabase.from('billing_config').insert({
+          ...payload,
+          message_template: messageTemplate || '🔔 *COBRANZA LIMA CAFÉ 28*\nPara pagar, contacte con administración.',
+        });
+        if (error) throw error;
       }
-
-      toast({
-        title: '✅ Configuración guardada',
-        description: 'Los cambios se aplicaron correctamente',
-      });
-
+      toast({ title: '✅ Datos de pago guardados', description: 'Los padres podrán ver esta info al recargar.' });
       fetchConfig();
     } catch (error: any) {
-      console.error('❌ Error saving config:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error al guardar',
-        description: error?.message || 'No se pudo guardar la configuración',
-      });
+      toast({ variant: 'destructive', title: 'Error al guardar', description: error?.message });
     } finally {
-      setSaving(false);
+      setSavingPayment(false);
     }
   };
 
@@ -421,32 +418,8 @@ Gracias.`);
 
   return (
     <div className="space-y-6">
-      {/* Selector de Sede */}
-      {canViewAllSchools && schools.length > 1 && (
-        <Card className="border-2 shadow-lg bg-white">
-          <CardContent className="p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-blue-100 rounded-lg shrink-0">
-                  <Building2 className="h-6 w-6 text-blue-600" />
-                </div>
-                <Label className="text-base sm:text-lg font-semibold">Sede a Configurar</Label>
-              </div>
-              <select
-                value={selectedSchool}
-                onChange={(e) => setSelectedSchool(e.target.value)}
-                className="w-full sm:w-[250px] h-12 border-2 rounded-md bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                {schools.map((school) => (
-                  <option key={school.id} value={school.id}>
-                    {school.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* ── Selector inline de sede (helper reutilizable dentro de cards) ── */}
+      {/* Nota: el selector se renderiza dentro de cada Card que lo necesite */}
 
       {/* ⏱️ Configuración de Delay de Visibilidad */}
       <Card className="border-2 shadow-lg bg-white">
@@ -538,15 +511,32 @@ Gracias.`);
       {/* Plantilla de Mensaje */}
       <Card className="border-2 shadow-lg bg-white">
         <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 border-b-2 p-4 sm:p-6">
-          <CardTitle className="flex items-center gap-3 text-base sm:text-xl">
-            <div className="p-2 bg-blue-600 rounded-lg shrink-0">
-              <MessageSquare className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div className="flex-1">
+              <CardTitle className="flex items-center gap-3 text-base sm:text-xl">
+                <div className="p-2 bg-blue-600 rounded-lg shrink-0">
+                  <MessageSquare className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+                </div>
+                Plantilla de Mensaje WhatsApp
+              </CardTitle>
+              <CardDescription className="text-sm sm:text-base mt-2">
+                Personaliza el mensaje que se enviará a los padres. Usa variables: {'{'}nombre_padre{'}'}, {'{'}nombre_estudiante{'}'}, {'{'}periodo{'}'}, {'{'}monto{'}'}
+              </CardDescription>
             </div>
-            Plantilla de Mensaje WhatsApp
-          </CardTitle>
-          <CardDescription className="text-sm sm:text-base mt-2">
-            Personaliza el mensaje que se enviará a los padres. Usa variables: {'{'}nombre_padre{'}'}, {'{'}nombre_estudiante{'}'}, {'{'}periodo{'}'}, {'{'}monto{'}'}
-          </CardDescription>
+            {/* ── Selector de sede inline ── */}
+            {canViewAllSchools && schools.length > 1 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Building2 className="h-4 w-4 text-blue-500 shrink-0" />
+                <select
+                  value={selectedSchool}
+                  onChange={(e) => setSelectedSchool(e.target.value)}
+                  className="h-9 border-2 rounded-md bg-white px-2 py-1 text-xs sm:text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4 p-3 sm:p-6">
           <div className="space-y-2">
@@ -582,99 +572,175 @@ Gracias.`);
               </p>
             )}
           </div>
+
+          {/* ── Botón Guardar Plantilla ── */}
+          <div className="flex justify-end pt-2">
+            <Button
+              onClick={handleSaveMessage}
+              disabled={savingMessage || !selectedSchool}
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700 gap-2"
+            >
+              {savingMessage ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Guardando...</>
+              ) : (
+                <><Save className="h-4 w-4" /> Guardar plantilla</>
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
       {/* Información de Pago */}
       <Card className="border-2 shadow-lg bg-white">
         <CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50 border-b-2 p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-3 text-base sm:text-xl">
-                <div className="p-2 bg-green-600 rounded-lg shrink-0">
-                  <CreditCard className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-1">
+                <CardTitle className="flex items-center gap-3 text-base sm:text-xl">
+                  <div className="p-2 bg-green-600 rounded-lg shrink-0">
+                    <CreditCard className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+                  </div>
+                  Información de Pago
+                </CardTitle>
+                {/* Habilitado switch */}
+                <div className="flex items-center gap-2 ml-auto sm:ml-0">
+                  <Label htmlFor="show_payment_info" className="text-xs sm:text-sm font-semibold cursor-pointer whitespace-nowrap">
+                    {showPaymentInfo ? 'Visible al padre' : 'Oculto'}
+                  </Label>
+                  <Switch
+                    id="show_payment_info"
+                    checked={showPaymentInfo}
+                    onCheckedChange={setShowPaymentInfo}
+                  />
                 </div>
-                Información de Pago
-              </CardTitle>
-              <CardDescription className="text-sm sm:text-base mt-2">
-                Esta información se agregará automáticamente al final del mensaje de WhatsApp
+              </div>
+              <CardDescription className="text-xs sm:text-sm mt-1">
+                Los padres verán estos datos al recargar saldo. Pueden <strong>copiar</strong> cada campo desde su celular.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-3 self-start sm:self-auto">
-              <Label htmlFor="show_payment_info" className="text-sm sm:text-base font-semibold cursor-pointer">
-                {showPaymentInfo ? 'Habilitado' : 'Deshabilitado'}
-              </Label>
-              <Switch
-                id="show_payment_info"
-                checked={showPaymentInfo}
-                onCheckedChange={setShowPaymentInfo}
-              />
-            </div>
+            {/* ── Selector de sede inline ── */}
+            {canViewAllSchools && schools.length > 1 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Building2 className="h-4 w-4 text-green-600 shrink-0" />
+                <select
+                  value={selectedSchool}
+                  onChange={(e) => setSelectedSchool(e.target.value)}
+                  className="h-9 border-2 rounded-md bg-white px-2 py-1 text-xs sm:text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
         </CardHeader>
-        <CardContent className="space-y-4 sm:space-y-6 p-3 sm:p-6">
-          <div className="space-y-2">
-            <Label htmlFor="bank_info" className="text-sm sm:text-base font-semibold">Información Bancaria</Label>
-            <Textarea
-              id="bank_info"
-              placeholder="Ej: Banco BCP&#10;Cuenta Corriente: 123-456-789&#10;CCI: 001-123-456-789"
-              value={bankInfo}
-              onChange={(e) => setBankInfo(e.target.value)}
-              rows={4}
-              className="border-2"
-              disabled={!showPaymentInfo}
-            />
+        <CardContent className="space-y-5 p-3 sm:p-6">
+
+          {/* ── Yape ── */}
+          <div className="border-2 rounded-xl p-4 space-y-3 bg-purple-50 border-purple-200">
+            <p className="text-sm font-bold text-purple-700 flex items-center gap-2">💜 Yape</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="yape_number" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Número de teléfono</Label>
+                <Input
+                  id="yape_number"
+                  placeholder="987 654 321"
+                  value={yapeNumber}
+                  onChange={(e) => setYapeNumber(e.target.value)}
+                  className="h-10 border-2 font-mono"
+                  disabled={!showPaymentInfo}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="yape_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular</Label>
+                <Input
+                  id="yape_holder"
+                  placeholder="Ej: María García"
+                  value={yapeHolder}
+                  onChange={(e) => setYapeHolder(e.target.value)}
+                  className="h-10 border-2"
+                  disabled={!showPaymentInfo}
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="yape_number" className="text-sm sm:text-base font-semibold">Número Yape</Label>
-              <Input
-                id="yape_number"
-                placeholder="987654321"
-                value={yapeNumber}
-                onChange={(e) => setYapeNumber(e.target.value)}
-                className="h-12 border-2"
-                disabled={!showPaymentInfo}
-              />
+          {/* ── Plin ── */}
+          <div className="border-2 rounded-xl p-4 space-y-3 bg-green-50 border-green-200">
+            <p className="text-sm font-bold text-green-700 flex items-center gap-2">💚 Plin</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="plin_number" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Número de teléfono</Label>
+                <Input
+                  id="plin_number"
+                  placeholder="987 654 321"
+                  value={plinNumber}
+                  onChange={(e) => setPlinNumber(e.target.value)}
+                  className="h-10 border-2 font-mono"
+                  disabled={!showPaymentInfo}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="plin_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular</Label>
+                <Input
+                  id="plin_holder"
+                  placeholder="Ej: María García"
+                  value={plinHolder}
+                  onChange={(e) => setPlinHolder(e.target.value)}
+                  className="h-10 border-2"
+                  disabled={!showPaymentInfo}
+                />
+              </div>
             </div>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="plin_number" className="text-sm sm:text-base font-semibold">Número Plin</Label>
-              <Input
-                id="plin_number"
-                placeholder="987654321"
-                value={plinNumber}
-                onChange={(e) => setPlinNumber(e.target.value)}
-                className="h-12 border-2"
-                disabled={!showPaymentInfo}
-              />
+          {/* ── Transferencia Bancaria ── */}
+          <div className="border-2 rounded-xl p-4 space-y-3 bg-orange-50 border-orange-200">
+            <p className="text-sm font-bold text-orange-700 flex items-center gap-2">🏦 Transferencia Bancaria</p>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="bank_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular / razón social</Label>
+                <Input
+                  id="bank_holder"
+                  placeholder="Ej: Lima Café 28 S.A.C."
+                  value={bankHolder}
+                  onChange={(e) => setBankHolder(e.target.value)}
+                  className="h-10 border-2"
+                  disabled={!showPaymentInfo}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="bank_info" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Datos de cuenta (uno por línea)</Label>
+                <Textarea
+                  id="bank_info"
+                  placeholder={"Banco BCP\nCuenta Corriente: 123-456-789\nCCI: 001-123-456-789"}
+                  value={bankInfo}
+                  onChange={(e) => setBankInfo(e.target.value)}
+                  rows={4}
+                  className="border-2 font-mono text-sm"
+                  disabled={!showPaymentInfo}
+                />
+                <p className="text-xs text-gray-400">Cada línea aparecerá como un dato copiable por separado.</p>
+              </div>
             </div>
+          </div>
+
+          {/* ── Botón Guardar Pago ── */}
+          <div className="flex justify-end pt-1">
+            <Button
+              onClick={handleSavePayment}
+              disabled={savingPayment || !selectedSchool}
+              className="w-full sm:w-auto bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 gap-2 h-11 px-6 shadow-md"
+            >
+              {savingPayment ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Guardando...</>
+              ) : (
+                <><Save className="h-4 w-4" /> Guardar datos de pago</>
+              )}
+            </Button>
           </div>
         </CardContent>
       </Card>
-
-      {/* Botón Guardar */}
-      <div className="flex justify-end">
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          size="lg"
-          className="w-full sm:w-auto bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 h-12 sm:h-14 px-6 sm:px-8 text-base sm:text-lg shadow-lg"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-              Guardando...
-            </>
-          ) : (
-            <>
-              <Save className="h-5 w-5 mr-2" />
-              Guardar Configuración
-            </>
-          )}
-        </Button>
-      </div>
 
       {/* ===== SECCIÓN NUBEFACT ===== */}
       <hr className="border-gray-200" />
