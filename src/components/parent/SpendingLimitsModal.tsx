@@ -28,7 +28,7 @@ interface SpendingLimitsModalProps {
   studentId: string;
   studentName: string;
   onSuccess: () => void;
-  onRequestRecharge?: () => void;
+  onRequestRecharge?: (suggestedAmount?: number) => void;
 }
 
 type LimitType = 'none' | 'daily' | 'weekly' | 'monthly';
@@ -181,7 +181,10 @@ export function SpendingLimitsModal({
 
       // Si eligió "Con Recargas", abrir automáticamente el modal de recarga
       if (accountMode === 'prepaid' && onRequestRecharge) {
-        setTimeout(() => onRequestRecharge(), 300);
+        const amount = parseFloat(limitAmount) || 0;
+        // Pasar el monto del tope como sugerencia de recarga
+        const suggestedAmount = amount > 0 ? amount : undefined;
+        setTimeout(() => onRequestRecharge(suggestedAmount), 300);
       }
     } catch (error: any) {
       console.error('Error updating limits:', error);

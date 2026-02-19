@@ -20,6 +20,7 @@ import {
   Image as ImageIcon,
   X,
   Send,
+  Wallet,
 } from 'lucide-react';
 
 interface RechargeModalProps {
@@ -30,12 +31,15 @@ interface RechargeModalProps {
   currentBalance: number;
   accountType: string;
   onRecharge: (amount: number, method: string) => Promise<void>;
+  /** Si viene con monto pre-definido, salta el paso de monto */
+  suggestedAmount?: number;
 }
 
 interface PaymentConfig {
   yape_number: string | null;
   plin_number: string | null;
   bank_account_info: string | null;
+  bank_account_holder: string | null;
   show_payment_info: boolean;
 }
 
@@ -49,10 +53,13 @@ export function RechargeModal({
   currentBalance,
   accountType,
   onRecharge,
+  suggestedAmount,
 }: RechargeModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
   const [step, setStep] = useState<'amount' | 'method' | 'voucher' | 'success'>('amount');
   const [amount, setAmount] = useState('');
@@ -67,24 +74,29 @@ export function RechargeModal({
 
   const quickAmounts = [10, 20, 50, 100, 150, 200];
 
-  // Cargar configuración de pagos de la sede del alumno
   useEffect(() => {
     if (isOpen && studentId) {
       fetchPaymentConfig();
       // Reset estado al abrir
-      setStep('amount');
-      setAmount('');
       setReferenceCode('');
       setVoucherFile(null);
       setVoucherPreview(null);
       setNotes('');
+
+      if (skipAmountStep) {
+        // Pre-llenar monto y saltar al paso de método
+        setAmount(String(suggestedAmount));
+        setStep('method');
+      } else {
+        setStep('amount');
+        setAmount('');
+      }
     }
   }, [isOpen, studentId]);
 
   const fetchPaymentConfig = async () => {
     setLoadingConfig(true);
     try {
-      // Obtener school_id del alumno
       const { data: student } = await supabase
         .from('students')
         .select('school_id')
@@ -144,7 +156,6 @@ export function RechargeModal({
     try {
       let voucherUrl: string | null = null;
 
-      // Subir imagen si hay
       if (voucherFile) {
         const fileName = `${user.id}/${Date.now()}_${voucherFile.name}`;
         const { data: uploadData, error: uploadError } = await supabase.storage
@@ -152,22 +163,19 @@ export function RechargeModal({
           .upload(fileName, voucherFile, { upsert: false });
 
         if (uploadError) {
-          // Si el bucket no existe, seguimos sin imagen
-          console.warn('No se pudo subir imagen (bucket inexistente?):', uploadError.message);
+          console.warn('No se pudo subir imagen:', uploadError.message);
         } else if (uploadData) {
           const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
           voucherUrl = publicUrl;
         }
       }
 
-      // Obtener school_id del alumno
       const { data: student } = await supabase
         .from('students')
         .select('school_id')
         .eq('id', studentId)
         .single();
 
-      // Crear solicitud de recarga
       const { error: insertError } = await supabase.from('recharge_requests').insert({
         student_id: studentId,
         parent_id: user.id,
@@ -201,25 +209,31 @@ export function RechargeModal({
       icon: <YapeLogo className="w-8 h-8" />,
       color: 'purple',
       number: paymentConfig?.yape_number || null,
-      hint: 'Abre Yape, busca el número y transfiere el monto exacto.',
+      hint: 'Abre tu app de Yape y transfiere al número indicado.',
     },
     plin: {
       label: 'Plin',
       icon: <PlinLogo className="w-8 h-8" />,
       color: 'green',
       number: paymentConfig?.plin_number || null,
-      hint: 'Abre Plin, busca el número y transfiere el monto exacto.',
+      hint: 'Abre tu app de Plin y transfiere al número indicado.',
     },
     transferencia: {
       label: 'Transferencia',
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
       number: paymentConfig?.bank_account_info || null,
-      hint: 'Usa los datos bancarios para realizar la transferencia.',
+      hint: 'Realiza una transferencia bancaria con los datos indicados.',
     },
   };
 
   const currentMethodInfo = methodInfo[selectedMethod];
+
+  // Determinar pasos visibles
+  const visibleSteps = skipAmountStep 
+    ? ['method', 'voucher'] as const
+    : ['amount', 'method', 'voucher'] as const;
+  const currentStepIndex = visibleSteps.indexOf(step as any);
 
   // ─────────────────────── PASO 1: Monto ───────────────────────
   const renderStepAmount = () => (
@@ -229,7 +243,7 @@ export function RechargeModal({
           <p className="text-xs text-gray-500">Saldo actual de {studentName}</p>
           <p className="text-2xl font-bold text-blue-700">S/ {currentBalance.toFixed(2)}</p>
         </div>
-        <Badge className="bg-blue-100 text-blue-800">Cuenta Libre</Badge>
+        <Badge className="bg-blue-100 text-blue-800 text-xs">Con Recargas</Badge>
       </div>
 
       <div className="space-y-2">
@@ -279,75 +293,119 @@ export function RechargeModal({
   );
 
   // ─────────────────────── PASO 2: Método + instrucciones ───────────────────────
-  const renderStepMethod = () => (
-    <div className="space-y-5">
-      {/* Selector de método */}
-      <div className="space-y-2">
-        <Label className="font-semibold">Elige cómo vas a pagar</Label>
-        <div className="grid grid-cols-3 gap-2">
-          {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
-            const info = methodInfo[m];
-            const isAvailable = !!info.number;
-            return (
-              <button
-                key={m}
-                onClick={() => isAvailable && setSelectedMethod(m)}
-                disabled={!isAvailable}
-                className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all
-                  ${selectedMethod === m ? `border-${info.color}-500 bg-${info.color}-50` : 'border-gray-200 bg-white'}
-                  ${!isAvailable ? 'opacity-40 cursor-not-allowed' : 'hover:border-gray-300 cursor-pointer'}
-                `}
-              >
-                <div className="h-10 w-10 flex items-center justify-center">{info.icon}</div>
-                <span className="text-xs font-semibold text-gray-800">{info.label}</span>
-                {!isAvailable && <span className="text-[10px] text-gray-400">No disponible</span>}
-              </button>
-            );
-          })}
+  const renderStepMethod = () => {
+    const hasAnyMethod = !!(paymentConfig?.yape_number || paymentConfig?.plin_number || paymentConfig?.bank_account_info);
+
+    return (
+      <div className="space-y-4">
+        {/* Resumen de recarga */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-gray-500">Recarga para {studentName}</p>
+            <p className="text-xl font-bold text-blue-700">S/ {parseFloat(amount || '0').toFixed(2)}</p>
+          </div>
+          {!skipAmountStep && (
+            <button onClick={() => setStep('amount')} className="text-xs text-blue-600 hover:underline">
+              Cambiar
+            </button>
+          )}
         </div>
-      </div>
 
-      {/* Instrucciones de pago */}
-      {currentMethodInfo.number && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-          <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
-            <span>📋</span> Instrucciones de pago
-          </p>
-          <p className="text-sm text-gray-600">{currentMethodInfo.hint}</p>
-
-          <div className="bg-white border-2 border-dashed border-gray-300 rounded-lg p-3 text-center">
-            <p className="text-xs text-gray-500 mb-1">
-              {selectedMethod === 'transferencia' ? 'Datos bancarios:' : `Número de ${currentMethodInfo.label}:`}
-            </p>
-            <p className="text-lg font-bold text-gray-900 tracking-widest whitespace-pre-wrap">
-              {currentMethodInfo.number}
+        {!hasAnyMethod ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center space-y-2">
+            <AlertCircle className="h-8 w-8 text-amber-500 mx-auto" />
+            <p className="text-sm font-medium text-amber-800">Medios de pago no configurados</p>
+            <p className="text-xs text-amber-600">
+              El colegio aún no ha configurado números de Yape, Plin o cuenta bancaria. 
+              Contacta a la administración del colegio.
             </p>
           </div>
+        ) : (
+          <>
+            {/* Selector de método */}
+            <div className="space-y-2">
+              <Label className="font-semibold text-sm">Elige cómo vas a pagar</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
+                  const info = methodInfo[m];
+                  const isAvailable = !!info.number;
+                  const isSelected = selectedMethod === m;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => isAvailable && setSelectedMethod(m)}
+                      disabled={!isAvailable}
+                      className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all
+                        ${isSelected && isAvailable ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-gray-200 bg-white'}
+                        ${!isAvailable ? 'opacity-30 cursor-not-allowed' : 'hover:border-gray-300 cursor-pointer'}
+                      `}
+                    >
+                      <div className="h-10 w-10 flex items-center justify-center">{info.icon}</div>
+                      <span className="text-xs font-semibold text-gray-800">{info.label}</span>
+                      {!isAvailable && <span className="text-[10px] text-gray-400">No disponible</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-            <strong>⚠️ Importante:</strong> Transfiere exactamente{' '}
-            <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para que podamos identificar tu pago.
-          </div>
+            {/* Instrucciones de pago */}
+            {currentMethodInfo.number && (
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  📋 Pasos a seguir
+                </p>
+                
+                <div className="space-y-2 text-sm text-gray-600">
+                  <div className="flex items-start gap-2">
+                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                    <span>{currentMethodInfo.hint}</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                    <span>Transfiere exactamente <strong>S/ {parseFloat(amount).toFixed(2)}</strong></span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                    <span>Toma captura del comprobante y envíalo en el siguiente paso</span>
+                  </div>
+                </div>
 
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2 text-xs text-blue-800">
-            <Clock className="h-4 w-4 flex-shrink-0 mt-0.5" />
-            <span>Una vez enviado el comprobante, verificaremos tu pago y <strong>acreditaremos el saldo en menos de 24 horas</strong>.</span>
-          </div>
+                <div className="bg-white border-2 border-dashed border-blue-300 rounded-lg p-3 text-center">
+                  <p className="text-[10px] text-gray-500 mb-1 uppercase tracking-wider">
+                    {selectedMethod === 'transferencia' ? 'Datos bancarios' : `Número de ${currentMethodInfo.label}`}
+                  </p>
+                  <p className="text-lg font-bold text-gray-900 tracking-widest whitespace-pre-wrap">
+                    {currentMethodInfo.number}
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2 text-xs text-blue-800">
+                  <Clock className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span>Verificaremos tu pago y <strong>acreditaremos el saldo en menos de 24 horas</strong>.</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="flex gap-2">
+          {!skipAmountStep && (
+            <Button variant="outline" onClick={() => setStep('amount')} className="flex-1 h-11">
+              ← Atrás
+            </Button>
+          )}
+          <Button
+            onClick={() => setStep('voucher')}
+            disabled={!currentMethodInfo.number}
+            className={`h-11 bg-blue-600 hover:bg-blue-700 font-semibold ${skipAmountStep ? 'w-full' : 'flex-grow'}`}
+          >
+            Ya pagué → Enviar comprobante
+          </Button>
         </div>
-      )}
-
-      <div className="flex gap-2">
-        <Button variant="outline" onClick={() => setStep('amount')} className="flex-1 h-11">← Atrás</Button>
-        <Button
-          onClick={() => setStep('voucher')}
-          disabled={!currentMethodInfo.number}
-          className="flex-2 flex-grow h-11 bg-blue-600 hover:bg-blue-700 font-semibold"
-        >
-          Ya pagué → Enviar comprobante
-        </Button>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ─────────────────────── PASO 3: Subir voucher ───────────────────────
   const renderStepVoucher = () => (
@@ -371,7 +429,7 @@ export function RechargeModal({
         <p className="text-xs text-gray-400">Lo encuentras en tu app de Yape/Plin/banco después de realizar el pago.</p>
       </div>
 
-      {/* Subir imagen (opcional) */}
+      {/* Subir imagen */}
       <div className="space-y-2">
         <Label className="font-semibold">Captura del comprobante <span className="text-gray-400 text-xs">(opcional pero recomendado)</span></Label>
 
@@ -451,7 +509,7 @@ export function RechargeModal({
         <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
           <li>Un administrador verificará tu pago</li>
           <li>El saldo se acreditará en menos de 24 horas</li>
-          <li>Recibirás una notificación al aprobarse</li>
+          <li>Podrás ver el saldo actualizado en la app</li>
         </ul>
       </div>
 
@@ -466,7 +524,7 @@ export function RechargeModal({
       <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-blue-600" />
+            <Wallet className="h-5 w-5 text-blue-600" />
             {step === 'success' ? '¡Listo!' : 'Recargar Saldo'}
           </DialogTitle>
           {step !== 'success' && (
@@ -480,11 +538,11 @@ export function RechargeModal({
         {/* Indicador de pasos */}
         {step !== 'success' && (
           <div className="flex items-center gap-1 mb-1">
-            {(['amount', 'method', 'voucher'] as const).map((s, i) => (
+            {visibleSteps.map((s, i) => (
               <div key={s} className="flex items-center gap-1 flex-1">
                 <div className={`h-2 rounded-full flex-1 transition-colors ${
                   step === s ? 'bg-blue-500' :
-                  (['amount', 'method', 'voucher'].indexOf(step) > i) ? 'bg-green-400' : 'bg-gray-200'
+                  currentStepIndex > i ? 'bg-green-400' : 'bg-gray-200'
                 }`} />
               </div>
             ))}

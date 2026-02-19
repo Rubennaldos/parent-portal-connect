@@ -54,6 +54,9 @@ interface Student {
   photo_url: string | null;
   balance: number;
   daily_limit: number;
+  weekly_limit: number;
+  monthly_limit: number;
+  limit_type: string;
   grade: string;
   section: string;
   is_active: boolean;
@@ -110,6 +113,7 @@ const Index = () => {
   const [showLinksManager, setShowLinksManager] = useState(false);
   const [showPhotoConsent, setShowPhotoConsent] = useState(false);
   const [photoConsentAccepted, setPhotoConsentAccepted] = useState(false);
+  const [rechargeSuggestedAmount, setRechargeSuggestedAmount] = useState<number | undefined>(undefined);
   const [photoConsentRefresh, setPhotoConsentRefresh] = useState(0); // Para forzar refresh en MoreMenu
   const [showLunchFastConfirm, setShowLunchFastConfirm] = useState(false);
   const [todayMenu, setTodayMenu] = useState<any>(null);
@@ -811,12 +815,16 @@ const Index = () => {
         <>
           <RechargeModal
             isOpen={showRechargeModal}
-            onClose={() => setShowRechargeModal(false)}
+            onClose={() => {
+              setShowRechargeModal(false);
+              setRechargeSuggestedAmount(undefined);
+            }}
             studentName={selectedStudent.full_name}
             studentId={selectedStudent.id}
             currentBalance={selectedStudent.balance}
-            accountType="free"
+            accountType={selectedStudent.free_account !== false ? 'free' : 'prepaid'}
             onRecharge={handleRecharge}
+            suggestedAmount={rechargeSuggestedAmount}
           />
 
           <PayDebtModal
@@ -843,7 +851,8 @@ const Index = () => {
             studentId={selectedStudent.id}
             studentName={selectedStudent.full_name}
             onSuccess={fetchStudents}
-            onRequestRecharge={() => {
+            onRequestRecharge={(suggestedAmount?: number) => {
+              setRechargeSuggestedAmount(suggestedAmount);
               setShowRechargeModal(true);
             }}
           />
