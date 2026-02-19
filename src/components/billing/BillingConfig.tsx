@@ -110,10 +110,14 @@ export const BillingConfig = () => {
     return messageTemplate + getPaymentInfoText();
   };
 
+  // ✅ Esperar a que el rol esté cargado antes de cargar sedes
   useEffect(() => {
-    fetchSchools();
-    fetchAllSchoolDelays(); // ✨ Cargar delays de todas las sedes
-  }, []);
+    if (role) {
+      console.log('🚀 Rol listo:', role, '- canViewAllSchools:', canViewAllSchools);
+      fetchSchools();
+      fetchAllSchoolDelays();
+    }
+  }, [role, canViewAllSchools]);
 
   useEffect(() => {
     if (selectedSchool) {
@@ -123,19 +127,27 @@ export const BillingConfig = () => {
 
   const fetchSchools = async () => {
     try {
-      console.log('🏫 Cargando sedes...');
+      console.log('🏫 Cargando sedes... canViewAllSchools:', canViewAllSchools);
       const { data, error } = await supabase
         .from('schools')
         .select('*')
         .order('name');
       
       if (error) throw error;
-      console.log('📦 Sedes obtenidas:', data);
+      console.log('📦 Sedes obtenidas:', data?.length);
       setSchools(data || []);
 
-      console.log('🔍 canViewAllSchools:', canViewAllSchools, 'user:', !!user);
-
-      if (!canViewAllSchools && user) {
+      if (canViewAllSchools) {
+        // Admin General: seleccionar la primera sede
+        if (data && data.length > 0) {
+          console.log('✅ Admin General - Seleccionando primera sede:', data[0].name);
+          setSelectedSchool(data[0].id);
+        } else {
+          console.log('❌ No hay sedes disponibles');
+          setLoading(false);
+        }
+      } else if (user) {
+        // Admin de sede: buscar su sede
         console.log('👤 Buscando sede del usuario...');
         const { data: profile } = await supabase
           .from('profiles')
@@ -150,14 +162,11 @@ export const BillingConfig = () => {
           setSelectedSchool(profile.school_id);
         } else {
           console.log('❌ Usuario sin sede asignada');
-          setLoading(false); // Detener carga si no hay sede
+          setLoading(false);
         }
-      } else if (data && data.length > 0) {
-        console.log('✅ Admin General o sin restricciones - Estableciendo primera sede:', data[0].id);
-        setSelectedSchool(data[0].id);
       } else {
-        console.log('❌ No hay sedes disponibles');
-        setLoading(false); // Detener carga si no hay sedes
+        console.log('❌ No hay usuario');
+        setLoading(false);
       }
     } catch (error) {
       console.error('❌ Error fetching schools:', error);
