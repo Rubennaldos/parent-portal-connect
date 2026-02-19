@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { BillingNubefactConfig } from './BillingNubefactConfig';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -634,6 +635,10 @@ Gracias.`);
           )}
         </Button>
       </div>
+
+      {/* ===== SECCIÓN NUBEFACT ===== */}
+      <hr className="border-gray-200" />
+      <BillingNubefactConfig />
     </div>
   );
 };
