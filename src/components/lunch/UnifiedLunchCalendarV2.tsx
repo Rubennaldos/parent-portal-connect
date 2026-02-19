@@ -283,7 +283,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
       if (menusError) throw menusError;
 
-      // 3. Categories - FIXED v1.21.1: filter by school_id + is_active + exclude kitchen sales
+      // 3. Categories - Cargamos TODAS las categorías (activas e inactivas) para
+      //    mostrar menús y pedidos existentes. El filtro de is_active solo aplica
+      //    al wizard de creación de nuevos pedidos (LunchCategoryWizard).
       const categoryIds = [...new Set((menusData || []).map(m => m.category_id).filter(Boolean))] as string[];
       let categoriesMap = new Map<string, LunchCategory>();
 
@@ -292,8 +294,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           .from('lunch_categories')
           .select('*')
           .in('id', categoryIds)
-          .eq('school_id', effectiveSchoolId)
-          .eq('is_active', true);
+          .eq('school_id', effectiveSchoolId);
+        // ⚠️ NO filtramos por is_active aquí: si una categoría está desactivada,
+        //    los menús y pedidos existentes deben seguir siendo visibles.
 
         if (catError) {
           console.error('❌ [V2-DEBUG] Error loading categories:', catError);
@@ -304,7 +307,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           (cat: any) => cat.is_kitchen_sale !== true
         );
 
-        console.log(`📦 [V2-DEBUG] Categories: ${categoriesData?.length || 0} total, ${lunchCategories.length} after filtering (removed kitchen_sale & inactive)`);
+        console.log(`📦 [V2-DEBUG] Categories: ${categoriesData?.length || 0} total, ${lunchCategories.length} after filtering (removed kitchen_sale). Active filter NOT applied.`);
         lunchCategories.forEach((cat: any) => {
           console.log(`  📂 Category: ${cat.name} | school_id: ${cat.school_id} | target: ${cat.target_type} | active: ${cat.is_active} | kitchen: ${cat.is_kitchen_sale}`);
           categoriesMap.set(cat.id, cat);
@@ -312,6 +315,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       }
 
       // Build menus map - skip menus whose categories don't belong to this school
+      // (but NOT skip inactive categories — they stay visible)
       const menusMap = new Map<string, LunchMenu[]>();
       let menusIncluded = 0;
       let menusSkipped = 0;

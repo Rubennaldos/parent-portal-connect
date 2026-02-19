@@ -100,6 +100,12 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   const [showForm, setShowForm] = useState(false);
   const [managingAddonsForCategory, setManagingAddonsForCategory] = useState<LunchCategory | null>(null);
   const [addonsCount, setAddonsCount] = useState<Record<string, number>>({});
+
+  // Diálogos de confirmación con impacto
+  const [deleteConfirmCategory, setDeleteConfirmCategory] = useState<LunchCategory | null>(null);
+  const [toggleConfirmCategory, setToggleConfirmCategory] = useState<LunchCategory | null>(null);
+  const [impactData, setImpactData] = useState<{ futureOrders: number; futureMenus: number } | null>(null);
+  const [loadingImpact, setLoadingImpact] = useState(false);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -250,23 +256,64 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
     setShowForm(true);
   };
 
-  const handleDelete = async (category: LunchCategory) => {
-    if (!confirm(`¿Estás seguro de eliminar "${category.name}"?`)) return;
+  // Calcular el impacto de eliminar/desactivar una categoría
+  const fetchImpact = async (category: LunchCategory) => {
+    setLoadingImpact(true);
+    setImpactData(null);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      // Contar pedidos futuros activos de esta categoría
+      const { count: ordersCount } = await supabase
+        .from('lunch_orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('category_id', category.id)
+        .gte('order_date', today)
+        .eq('is_cancelled', false);
+
+      // Contar menús futuros de esta categoría
+      const { count: menusCount } = await supabase
+        .from('lunch_menus')
+        .select('*', { count: 'exact', head: true })
+        .eq('category_id', category.id)
+        .gte('date', today);
+
+      setImpactData({
+        futureOrders: ordersCount || 0,
+        futureMenus: menusCount || 0,
+      });
+    } catch (err) {
+      console.error('Error calculando impacto:', err);
+      setImpactData({ futureOrders: 0, futureMenus: 0 });
+    } finally {
+      setLoadingImpact(false);
+    }
+  };
+
+  const handleDeleteClick = async (category: LunchCategory) => {
+    setDeleteConfirmCategory(category);
+    await fetchImpact(category);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmCategory) return;
 
     setLoading(true);
     try {
       const { error } = await supabase
         .from('lunch_categories')
         .delete()
-        .eq('id', category.id);
+        .eq('id', deleteConfirmCategory.id);
 
       if (error) throw error;
 
       toast({
         title: '✅ Categoría eliminada',
-        description: `"${category.name}" se eliminó correctamente`
+        description: `"${deleteConfirmCategory.name}" se eliminó correctamente`
       });
 
+      setDeleteConfirmCategory(null);
+      setImpactData(null);
       await fetchCategories();
     } catch (error: any) {
       console.error('Error deleting category:', error);
@@ -280,7 +327,18 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
     }
   };
 
-  const handleToggleActive = async (category: LunchCategory) => {
+  const handleToggleActiveClick = async (category: LunchCategory) => {
+    // Solo pedir confirmación si se está desactivando y hay pedidos futuros
+    if (category.is_active) {
+      setToggleConfirmCategory(category);
+      await fetchImpact(category);
+    } else {
+      // Reactivar directamente, sin confirmación
+      await doToggleActive(category);
+    }
+  };
+
+  const doToggleActive = async (category: LunchCategory) => {
     setLoading(true);
     try {
       const { error } = await supabase
@@ -292,7 +350,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
 
       await fetchCategories();
       toast({
-        title: category.is_active ? 'Categoría desactivada' : 'Categoría activada',
+        title: category.is_active ? '⚠️ Categoría desactivada' : '✅ Categoría activada',
         description: `"${category.name}" ahora está ${!category.is_active ? 'activa' : 'inactiva'}`
       });
     } catch (error: any) {
@@ -305,6 +363,13 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
     } finally {
       setLoading(false);
     }
+  };
+
+  const confirmToggleActive = async () => {
+    if (!toggleConfirmCategory) return;
+    await doToggleActive(toggleConfirmCategory);
+    setToggleConfirmCategory(null);
+    setImpactData(null);
   };
 
   const moveCategory = async (category: LunchCategory, direction: 'up' | 'down') => {
@@ -613,11 +678,16 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                             )}
                           </TableCell>
                           <TableCell>
-                            <Switch
-                              checked={category.is_active}
-                              onCheckedChange={() => handleToggleActive(category)}
-                              disabled={loading}
-                            />
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={category.is_active}
+                                onCheckedChange={() => handleToggleActiveClick(category)}
+                                disabled={loading}
+                              />
+                              {!category.is_active && (
+                                <span className="text-xs text-orange-600 font-medium">Inactiva</span>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
@@ -645,8 +715,9 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => handleDelete(category)}
+                                onClick={() => handleDeleteClick(category)}
                                 disabled={loading}
+                                title="Eliminar categoría"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </Button>
@@ -681,6 +752,164 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
           }}
         />
       )}
+
+      {/* ======================================================
+          DIALOG DE CONFIRMACIÓN DE ELIMINACIÓN
+          ====================================================== */}
+      <Dialog open={!!deleteConfirmCategory} onOpenChange={() => { setDeleteConfirmCategory(null); setImpactData(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="h-5 w-5" />
+              ¿Eliminar categoría?
+            </DialogTitle>
+            <DialogDescription>
+              Estás a punto de eliminar la categoría <strong>"{deleteConfirmCategory?.name}"</strong>.
+              Esta acción <strong className="text-red-600">no se puede deshacer</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {loadingImpact ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                Calculando impacto...
+              </div>
+            ) : impactData ? (
+              <div className="space-y-2">
+                {impactData.futureOrders > 0 && (
+                  <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="text-2xl">🚨</span>
+                    <div>
+                      <p className="font-semibold text-red-800">
+                        {impactData.futureOrders} pedido(s) futuro(s) activo(s)
+                      </p>
+                      <p className="text-sm text-red-700 mt-1">
+                        Estos pedidos perderán su referencia de categoría pero <strong>NO se eliminarán</strong>. Los alumnos/profesores aún verán "Sin categoría" en su historial.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {impactData.futureMenus > 0 && (
+                  <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                    <span className="text-2xl">📅</span>
+                    <div>
+                      <p className="font-semibold text-orange-800">
+                        {impactData.futureMenus} menú(s) futuro(s) afectado(s)
+                      </p>
+                      <p className="text-sm text-orange-700 mt-1">
+                        Los menús quedarán sin categoría asignada pero <strong>seguirán existiendo</strong>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {impactData.futureOrders === 0 && impactData.futureMenus === 0 && (
+                  <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <span className="text-2xl">✅</span>
+                    <p className="text-sm text-green-700">No hay pedidos ni menús futuros afectados. Es seguro eliminar.</p>
+                  </div>
+                )}
+                {impactData.futureOrders > 0 && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-800 font-medium">💡 Alternativa recomendada:</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Considera <strong>desactivar</strong> la categoría en lugar de eliminarla. Así los pedidos existentes conservan su referencia visible.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setDeleteConfirmCategory(null); setImpactData(null); }} disabled={loading}>
+              Cancelar
+            </Button>
+            {impactData && impactData.futureOrders > 0 && (
+              <Button
+                variant="outline"
+                className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                onClick={() => {
+                  if (deleteConfirmCategory) doToggleActive({ ...deleteConfirmCategory, is_active: true });
+                  setDeleteConfirmCategory(null);
+                  setImpactData(null);
+                }}
+                disabled={loading}
+              >
+                Desactivar mejor
+              </Button>
+            )}
+            <Button variant="destructive" onClick={confirmDelete} disabled={loading || loadingImpact}>
+              {loading ? 'Eliminando...' : 'Sí, eliminar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ======================================================
+          DIALOG DE CONFIRMACIÓN DE DESACTIVACIÓN
+          ====================================================== */}
+      <Dialog open={!!toggleConfirmCategory} onOpenChange={() => { setToggleConfirmCategory(null); setImpactData(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <Users className="h-5 w-5" />
+              ¿Desactivar categoría?
+            </DialogTitle>
+            <DialogDescription>
+              Vas a desactivar <strong>"{toggleConfirmCategory?.name}"</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {loadingImpact ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-orange-500" />
+                Calculando impacto...
+              </div>
+            ) : impactData ? (
+              <div className="space-y-2">
+                {impactData.futureOrders > 0 ? (
+                  <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                    <span className="text-2xl">⚠️</span>
+                    <div>
+                      <p className="font-semibold text-orange-800">
+                        {impactData.futureOrders} pedido(s) activo(s) afectado(s)
+                      </p>
+                      <p className="text-sm text-orange-700 mt-1">
+                        Los pedidos existentes <strong>no se borrarán</strong> y seguirán visibles en el historial. Sin embargo, <strong>no se podrán hacer nuevos pedidos</strong> para esta categoría.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <span className="text-2xl">✅</span>
+                    <p className="text-sm text-green-700">No hay pedidos futuros activos. Es seguro desactivar.</p>
+                  </div>
+                )}
+                <div className="p-3 bg-gray-50 border rounded-lg">
+                  <p className="text-xs text-gray-600">
+                    Puedes volver a activar la categoría en cualquier momento usando el mismo switch.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setToggleConfirmCategory(null); setImpactData(null); }} disabled={loading}>
+              Cancelar
+            </Button>
+            <Button
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              onClick={confirmToggleActive}
+              disabled={loading || loadingImpact}
+            >
+              {loading ? 'Desactivando...' : 'Sí, desactivar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
