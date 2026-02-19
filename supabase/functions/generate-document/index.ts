@@ -15,15 +15,54 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    const body = await req.json();
+
+    // ========== MODO TEST: solo verificar credenciales ==========
+    if (body.test === true) {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      );
+      const { data: cfg } = await supabase
+        .from("billing_config")
+        .select("nubefact_ruta, nubefact_token")
+        .eq("school_id", body.school_id)
+        .single();
+
+      const ruta = cfg?.nubefact_ruta || body.nubefact_ruta;
+      const token = cfg?.nubefact_token || body.nubefact_token;
+
+      if (!ruta || !token) {
+        return new Response(JSON.stringify({ ok: false, error: "Sin credenciales" }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" }
+        });
+      }
+
+      try {
+        const testRes = await fetch(ruta, {
+          method: "GET",
+          headers: { "Authorization": `Token ${token}` },
+        });
+        const ok = testRes.status < 500;
+        return new Response(JSON.stringify({ ok, status: testRes.status }), {
+          headers: { ...cors, "Content-Type": "application/json" }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: String(e) }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" }
+        });
+      }
+    }
+
     const {
       school_id,
       transaction_id,
-      tipo,        // 1=factura, 2=boleta, 7=nota crédito
-      cliente,     // { nombre, tipo_doc, numero_doc, email }
-      items,       // opcional, si no se pasa se genera uno genérico
+      tipo,
+      cliente,
+      items,
       monto_total,
-      doc_ref      // solo para nota crédito: { tipo, serie, numero }
-    } = await req.json();
+      doc_ref
+    } = body;
 
     // 1. Obtener credenciales Nubefact de este cliente/sede
     const { data: cfg, error: cfgErr } = await supabase

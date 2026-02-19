@@ -144,17 +144,33 @@ export const BillingNubefactConfig = () => {
     }
     setTesting(true);
     try {
-      const res = await fetch(config.nubefact_ruta, {
-        method: 'GET',
-        headers: { 'Authorization': `Token ${config.nubefact_token}` },
+      // Llamamos a nuestra Edge Function (evita CORS - el navegador no puede llamar a Nubefact directamente)
+      const { data, error } = await supabase.functions.invoke('generate-document', {
+        body: {
+          test: true,
+          school_id: selectedSchool,
+          nubefact_ruta: config.nubefact_ruta,
+          nubefact_token: config.nubefact_token,
+        },
       });
-      if (res.ok || res.status === 405) {
+
+      if (error) throw error;
+
+      if (data?.ok) {
         toast({ title: '✅ Conexión exitosa', description: 'Las credenciales de Nubefact son válidas.' });
       } else {
-        toast({ title: '❌ Error de conexión', description: `Código: ${res.status}. Verifica RUTA y TOKEN.`, variant: 'destructive' });
+        toast({
+          title: '❌ Error de conexión',
+          description: data?.error || `Código HTTP: ${data?.status}. Verifica RUTA y TOKEN.`,
+          variant: 'destructive',
+        });
       }
-    } catch {
-      toast({ title: '❌ No se pudo conectar', description: 'Verifica que la RUTA sea correcta.', variant: 'destructive' });
+    } catch (err: any) {
+      toast({
+        title: '❌ No se pudo conectar',
+        description: err?.message || 'Error al probar la conexión.',
+        variant: 'destructive',
+      });
     } finally {
       setTesting(false);
     }
