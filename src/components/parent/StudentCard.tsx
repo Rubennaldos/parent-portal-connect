@@ -66,7 +66,6 @@ export function StudentCard({
   const hasDebt = isFreeAccount ? totalDebt > 0 : false;
   // Para Con Recargas: saldo
   const prepaidBalance = isPrepaid ? student.balance : 0;
-  const hasLowBalance = isPrepaid && prepaidBalance < 5;
 
   // Spending stats for limit remaining
   const [spentPeriod, setSpentPeriod] = useState(0);
@@ -80,10 +79,10 @@ export function StudentCard({
   const limitRemaining = Math.max(0, currentLimit - spentPeriod);
 
   useEffect(() => {
-    if (limitType !== 'none' && student.id) {
+    if (student.id && (limitType !== 'none' || isPrepaid)) {
       fetchSpentInPeriod();
     }
-  }, [student.id, limitType]);
+  }, [student.id, limitType, isPrepaid]);
 
   const fetchSpentInPeriod = async () => {
     setLoadingSpent(true);
@@ -99,6 +98,7 @@ export function StudentCard({
         start.setHours(0, 0, 0, 0);
         startDate = start.toISOString();
       } else {
+        // monthly o sin tope (para Con Recargas mostramos consumo del mes)
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
         startDate = start.toISOString();
       }
@@ -139,7 +139,6 @@ export function StudentCard({
       {/* Header bar */}
       <div className={`h-1.5 relative transition-colors duration-500 ${
         hasDebt ? 'bg-rose-400' 
-        : hasLowBalance ? 'bg-amber-400'
         : 'bg-gradient-to-r from-emerald-500/70 via-[#8B7355] to-[#6B5744]'
       }`} />
 
@@ -198,11 +197,7 @@ export function StudentCard({
                   Deuda
                 </Badge>
               )}
-              {hasLowBalance && (
-                <Badge className="bg-amber-50 text-amber-600 border-0 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider animate-pulse">
-                  Saldo Bajo
-                </Badge>
-              )}
+              {/* Badge de saldo bajo eliminado - la barra de progreso ya lo muestra */}
             </div>
           </div>
         </div>
@@ -274,15 +269,11 @@ export function StudentCard({
 
         {/* ── CON RECARGAS ── */}
         {isPrepaid && (
-          <div className={`rounded-2xl p-5 mb-4 border transition-all duration-300 ${
-            hasLowBalance ? 'bg-amber-50/30 border-amber-200/50' : 'bg-gradient-to-br from-blue-50/20 to-emerald-50/20 border-blue-200/20'
-          }`}>
-            <div className="flex items-center justify-between">
+          <div className="rounded-2xl p-5 mb-4 border transition-all duration-300 bg-gradient-to-br from-blue-50/20 to-emerald-50/20 border-blue-200/20">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className={`text-[9px] font-medium uppercase tracking-[0.2em] ${
-                    hasLowBalance ? 'text-amber-500' : 'text-blue-500'
-                  }`}>
+                  <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-blue-500">
                     Saldo Disponible
                   </span>
                   <Popover>
@@ -302,20 +293,36 @@ export function StudentCard({
                   </Popover>
                 </div>
                 <p className={`text-3xl font-light tracking-tight ${
-                  hasLowBalance ? 'text-amber-600' : prepaidBalance > 0 ? 'text-blue-600' : 'text-stone-400'
+                  prepaidBalance > 0 ? 'text-blue-600' : 'text-stone-400'
                 }`}>
                   S/ {prepaidBalance.toFixed(2)}
                 </p>
-                {hasLowBalance && (
-                  <p className="text-[10px] text-amber-600 font-medium mt-1">
-                    ⚠️ Saldo bajo — recarga pronto
-                  </p>
-                )}
               </div>
-              <div className={`p-3 rounded-xl ${
-                hasLowBalance ? 'bg-amber-100/50 text-amber-500' : 'bg-blue-100/50 text-blue-500'
-              }`}>
+              <div className="p-3 rounded-xl bg-blue-100/50 text-blue-500">
                 <CreditCard className="h-6 w-6" />
+              </div>
+            </div>
+
+            {/* Barra de consumo del saldo */}
+            <div>
+              <div className="h-2.5 bg-blue-100 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all ${
+                    prepaidBalance <= 0 ? 'bg-stone-300' : 
+                    prepaidBalance < 10 ? 'bg-blue-400' : 'bg-blue-500'
+                  }`}
+                  style={{ width: `${prepaidBalance > 0 ? Math.min(100, (prepaidBalance / Math.max(prepaidBalance, spentPeriod + prepaidBalance)) * 100) : 0}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-1.5">
+                <span className="text-[10px] text-stone-500">
+                  Consumido: <span className="font-semibold text-stone-700">S/ {spentPeriod.toFixed(2)}</span>
+                </span>
+                <span className={`text-[10px] font-semibold ${
+                  prepaidBalance <= 0 ? 'text-stone-400' : 'text-blue-700'
+                }`}>
+                  Disponible: S/ {prepaidBalance.toFixed(2)}
+                </span>
               </div>
             </div>
           </div>
