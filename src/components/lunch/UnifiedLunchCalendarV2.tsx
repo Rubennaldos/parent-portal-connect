@@ -548,6 +548,26 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
       if (!personId) throw new Error('No se encontró el usuario');
 
+      // ── Verificar si ya existe un pedido activo para esta categoría + fecha ──
+      const { data: existingOrder } = await supabase
+        .from('lunch_orders')
+        .select('id')
+        .eq(personField, personId)
+        .eq('order_date', currentDateStr)
+        .eq('category_id', selectedCategory.id)
+        .eq('is_cancelled', false)
+        .maybeSingle();
+
+      if (existingOrder) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Pedido duplicado',
+          description: `Ya tienes un pedido de "${selectedCategory.name}" para este día. Puedes cancelarlo primero si deseas cambiarlo.`,
+        });
+        setSubmitting(false);
+        return;
+      }
+
       const unitPrice = selectedCategory.price || config.lunch_price;
 
       // 1. Create lunch_order
@@ -569,7 +589,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         .select('id')
         .single();
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        // Handle unique constraint violation gracefully
+        if (orderError.code === '23505') {
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Pedido duplicado',
+            description: `Ya existe un pedido para esta categoría en este día.`,
+          });
+          setSubmitting(false);
+          return;
+        }
+        throw orderError;
+      }
 
       // 2. Create transaction (pending)
       const dateFormatted = format(getPeruDateOnly(currentDateStr), "d 'de' MMMM", { locale: es });
