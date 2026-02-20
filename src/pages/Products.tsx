@@ -116,10 +116,16 @@ const Products = () => {
   const [, forceUpdate] = useState({});
 
   useEffect(() => {
-    fetchProducts();
     fetchSchools();
     fetchUserSchool();
   }, []);
+
+  // Cargar productos una vez que sepamos la sede del usuario
+  useEffect(() => {
+    if (userSchoolId !== null || role === 'admin_general') {
+      fetchProducts();
+    }
+  }, [userSchoolId, role]);
 
   // Filtrar productos cuando cambia la búsqueda
   useEffect(() => {
@@ -187,10 +193,33 @@ const Products = () => {
 
   const fetchProducts = async () => {
     setLoading(true);
-    const { data } = await supabase.from('products').select('*').order('name');
-    const productsData = data || [];
+
+    let productsData: Product[] = [];
+
+    if (role === 'admin_general') {
+      // Admin general ve TODOS los productos
+      const { data } = await supabase.from('products').select('*').order('name');
+      productsData = (data || []) as Product[];
+    } else if (userSchoolId) {
+      // Gestor de unidad / cajero: solo productos de SU sede (misma lógica que POS)
+      const { data } = await supabase
+        .from('products')
+        .select('*')
+        .or(`school_ids.cs.{${userSchoolId}},school_ids.eq.{},school_ids.is.null`)
+        .order('name');
+      productsData = (data || []) as Product[];
+    } else {
+      // Sin sede asignada — mostrar solo productos globales
+      const { data } = await supabase
+        .from('products')
+        .select('*')
+        .or('school_ids.eq.{},school_ids.is.null')
+        .order('name');
+      productsData = (data || []) as Product[];
+    }
+
     setProducts(productsData);
-    setFilteredProducts(productsData); // Inicializar productos filtrados
+    setFilteredProducts(productsData);
     
     // Categorías predefinidas COMPLETAS
     const predefinedCategories = [
