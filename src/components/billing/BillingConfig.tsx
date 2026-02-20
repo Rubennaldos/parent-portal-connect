@@ -32,6 +32,32 @@ import {
   Zap
 } from 'lucide-react';
 
+const PERUVIAN_BANKS = [
+  'BCP - Banco de Crédito del Perú',
+  'BBVA Perú',
+  'Interbank',
+  'Scotiabank Perú',
+  'BanBif',
+  'Banco Pichincha',
+  'Mibanco',
+  'Banco de la Nación',
+  'GNB Sudameris',
+  'Banco Falabella',
+  'Banco Ripley',
+  'CrediScotia Financiera',
+  'Banco Santander Perú',
+  'Banco Azteca',
+  'CMAC Arequipa',
+  'CMAC Huancayo',
+  'CMAC Piura',
+  'CMAC Sullana',
+  'CMAC Trujillo',
+  'CMAC Cusco',
+  'Financiera Oh!',
+  'Compartamos Banco',
+  'Alfin Banco',
+];
+
 interface School {
   id: string;
   name: string;
@@ -52,9 +78,15 @@ interface BillingConfig {
   bank_account_holder: string | null;
   yape_number: string | null;
   yape_holder: string | null;
+  yape_enabled: boolean;
   plin_number: string | null;
   plin_holder: string | null;
+  plin_enabled: boolean;
   show_payment_info: boolean;
+  transferencia_enabled: boolean;
+  bank_name: string | null;
+  bank_account_number: string | null;
+  bank_cci: string | null;
 }
 
 export const BillingConfig = () => {
@@ -76,9 +108,15 @@ export const BillingConfig = () => {
   const [bankHolder, setBankHolder] = useState('');
   const [yapeNumber, setYapeNumber] = useState('');
   const [yapeHolder, setYapeHolder] = useState('');
+  const [yapeEnabled, setYapeEnabled] = useState(true);
   const [plinNumber, setPlinNumber] = useState('');
   const [plinHolder, setPlinHolder] = useState('');
+  const [plinEnabled, setPlinEnabled] = useState(true);
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
+  const [transferenciaEnabled, setTransferenciaEnabled] = useState(true);
+  const [bankName, setBankName] = useState('');
+  const [bankAccountNumber, setBankAccountNumber] = useState('');
+  const [bankCCI, setBankCCI] = useState('');
 
   // ✨ Delay de visibilidad - NUEVO: Lista de todas las sedes
   const [schoolDelays, setSchoolDelays] = useState<SchoolDelayConfig[]>([]);
@@ -251,9 +289,15 @@ export const BillingConfig = () => {
         setBankHolder(data.bank_account_holder || '');
         setYapeNumber(data.yape_number || '');
         setYapeHolder(data.yape_holder || '');
+        setYapeEnabled(data.yape_enabled ?? true);
         setPlinNumber(data.plin_number || '');
         setPlinHolder(data.plin_holder || '');
+        setPlinEnabled(data.plin_enabled ?? true);
         setShowPaymentInfo(data.show_payment_info || false);
+        setTransferenciaEnabled(data.transferencia_enabled ?? true);
+        setBankName(data.bank_name || '');
+        setBankAccountNumber(data.bank_account_number || '');
+        setBankCCI(data.bank_cci || '');
       } else {
         // No hay config, usar valores por defecto
         setMessageTemplate(`🔔 *COBRANZA LIMA CAFÉ 28*
@@ -264,9 +308,15 @@ Gracias.`);
         setBankHolder('');
         setYapeNumber('');
         setYapeHolder('');
+        setYapeEnabled(true);
         setPlinNumber('');
         setPlinHolder('');
+        setPlinEnabled(true);
         setShowPaymentInfo(false);
+        setTransferenciaEnabled(true);
+        setBankName('');
+        setBankAccountNumber('');
+        setBankCCI('');
       }
 
       // ✅ 2. Ya no necesitamos cargar delay aquí, se carga en fetchAllSchoolDelays
@@ -378,13 +428,18 @@ Gracias.`);
     try {
       const payload = {
         school_id: selectedSchool,
-        bank_account_info: bankInfo || null,
         bank_account_holder: bankHolder || null,
         yape_number: yapeNumber || null,
         yape_holder: yapeHolder || null,
+        yape_enabled: yapeEnabled,
         plin_number: plinNumber || null,
         plin_holder: plinHolder || null,
+        plin_enabled: plinEnabled,
         show_payment_info: showPaymentInfo,
+        transferencia_enabled: transferenciaEnabled,
+        bank_name: bankName || null,
+        bank_account_number: bankAccountNumber || null,
+        bank_cci: bankCCI || null,
         updated_by: user.id,
       };
       if (config) {
@@ -637,8 +692,20 @@ Gracias.`);
         <CardContent className="space-y-5 p-3 sm:p-6">
 
           {/* ── Yape ── */}
-          <div className="border-2 rounded-xl p-4 space-y-3 bg-purple-50 border-purple-200">
-            <p className="text-sm font-bold text-purple-700 flex items-center gap-2">💜 Yape</p>
+          <div className={`border-2 rounded-xl p-4 space-y-3 transition-all ${yapeEnabled ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-purple-700 flex items-center gap-2">💜 Yape</p>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="yape_enabled" className="text-xs text-gray-600 cursor-pointer">
+                  {yapeEnabled ? 'Activo' : 'Inactivo'}
+                </Label>
+                <Switch
+                  id="yape_enabled"
+                  checked={yapeEnabled}
+                  onCheckedChange={setYapeEnabled}
+                />
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="yape_number" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Número de teléfono</Label>
@@ -648,26 +715,38 @@ Gracias.`);
                   value={yapeNumber}
                   onChange={(e) => setYapeNumber(e.target.value)}
                   className="h-10 border-2 font-mono"
-                  disabled={!showPaymentInfo}
+                  disabled={!yapeEnabled}
                 />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="yape_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular</Label>
                 <Input
                   id="yape_holder"
-                  placeholder="Ej: María García"
+                  placeholder="Ej: UFRASAC CATERING S.A.C"
                   value={yapeHolder}
                   onChange={(e) => setYapeHolder(e.target.value)}
                   className="h-10 border-2"
-                  disabled={!showPaymentInfo}
+                  disabled={!yapeEnabled}
                 />
               </div>
             </div>
           </div>
 
           {/* ── Plin ── */}
-          <div className="border-2 rounded-xl p-4 space-y-3 bg-green-50 border-green-200">
-            <p className="text-sm font-bold text-green-700 flex items-center gap-2">💚 Plin</p>
+          <div className={`border-2 rounded-xl p-4 space-y-3 transition-all ${plinEnabled ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-green-700 flex items-center gap-2">💚 Plin</p>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="plin_enabled" className="text-xs text-gray-600 cursor-pointer">
+                  {plinEnabled ? 'Activo' : 'Inactivo'}
+                </Label>
+                <Switch
+                  id="plin_enabled"
+                  checked={plinEnabled}
+                  onCheckedChange={setPlinEnabled}
+                />
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="plin_number" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Número de teléfono</Label>
@@ -677,51 +756,91 @@ Gracias.`);
                   value={plinNumber}
                   onChange={(e) => setPlinNumber(e.target.value)}
                   className="h-10 border-2 font-mono"
-                  disabled={!showPaymentInfo}
+                  disabled={!plinEnabled}
                 />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="plin_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular</Label>
                 <Input
                   id="plin_holder"
-                  placeholder="Ej: María García"
+                  placeholder="Ej: UFRASAC CATERING S.A.C"
                   value={plinHolder}
                   onChange={(e) => setPlinHolder(e.target.value)}
                   className="h-10 border-2"
-                  disabled={!showPaymentInfo}
+                  disabled={!plinEnabled}
                 />
               </div>
             </div>
           </div>
 
           {/* ── Transferencia Bancaria ── */}
-          <div className="border-2 rounded-xl p-4 space-y-3 bg-orange-50 border-orange-200">
-            <p className="text-sm font-bold text-orange-700 flex items-center gap-2">🏦 Transferencia Bancaria</p>
+          <div className={`border-2 rounded-xl p-4 space-y-3 transition-all ${transferenciaEnabled ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-orange-700 flex items-center gap-2">🏦 Transferencia Bancaria</p>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="transferencia_enabled" className="text-xs text-gray-600 cursor-pointer">
+                  {transferenciaEnabled ? 'Activo' : 'Inactivo'}
+                </Label>
+                <Switch
+                  id="transferencia_enabled"
+                  checked={transferenciaEnabled}
+                  onCheckedChange={setTransferenciaEnabled}
+                />
+              </div>
+            </div>
             <div className="space-y-3">
+              {/* Banco */}
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Banco</Label>
+                <select
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  disabled={!transferenciaEnabled}
+                  className="w-full h-10 rounded-md border-2 border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                >
+                  <option value="">— Seleccionar banco —</option>
+                  {PERUVIAN_BANKS.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Titular */}
               <div className="space-y-1">
                 <Label htmlFor="bank_holder" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Nombre del titular / razón social</Label>
                 <Input
                   id="bank_holder"
-                  placeholder="Ej: Lima Café 28 S.A.C."
+                  placeholder="Ej: UFRASAC CATERING S.A.C"
                   value={bankHolder}
                   onChange={(e) => setBankHolder(e.target.value)}
                   className="h-10 border-2"
-                  disabled={!showPaymentInfo}
+                  disabled={!transferenciaEnabled}
                 />
               </div>
+              {/* Cuenta Corriente */}
               <div className="space-y-1">
-                <Label htmlFor="bank_info" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Datos de cuenta (uno por línea)</Label>
-                <Textarea
-                  id="bank_info"
-                  placeholder={"Banco BCP\nCuenta Corriente: 123-456-789\nCCI: 001-123-456-789"}
-                  value={bankInfo}
-                  onChange={(e) => setBankInfo(e.target.value)}
-                  rows={4}
-                  className="border-2 font-mono text-sm"
-                  disabled={!showPaymentInfo}
+                <Label htmlFor="bank_account_number" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Cuenta Corriente</Label>
+                <Input
+                  id="bank_account_number"
+                  placeholder="Ej: 123-456789-0-12"
+                  value={bankAccountNumber}
+                  onChange={(e) => setBankAccountNumber(e.target.value)}
+                  className="h-10 border-2 font-mono"
+                  disabled={!transferenciaEnabled}
                 />
-                <p className="text-xs text-gray-400">Cada línea aparecerá como un dato copiable por separado.</p>
               </div>
+              {/* CCI */}
+              <div className="space-y-1">
+                <Label htmlFor="bank_cci" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">CCI (Código de Cuenta Interbancario)</Label>
+                <Input
+                  id="bank_cci"
+                  placeholder="Ej: 00212345678901234"
+                  value={bankCCI}
+                  onChange={(e) => setBankCCI(e.target.value)}
+                  className="h-10 border-2 font-mono"
+                  disabled={!transferenciaEnabled}
+                />
+              </div>
+              <p className="text-xs text-gray-400">📱 Los padres solo podrán copiar los números de cuenta y CCI.</p>
             </div>
           </div>
 

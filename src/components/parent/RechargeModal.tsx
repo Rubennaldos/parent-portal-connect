@@ -40,10 +40,16 @@ interface RechargeModalProps {
 interface PaymentConfig {
   yape_number: string | null;
   yape_holder: string | null;
+  yape_enabled: boolean;
   plin_number: string | null;
   plin_holder: string | null;
+  plin_enabled: boolean;
   bank_account_info: string | null;
   bank_account_holder: string | null;
+  transferencia_enabled: boolean;
+  bank_name: string | null;
+  bank_account_number: string | null;
+  bank_cci: string | null;
   show_payment_info: boolean;
 }
 
@@ -112,7 +118,7 @@ export function RechargeModal({
 
       const { data: config } = await supabase
         .from('billing_config')
-        .select('yape_number, yape_holder, plin_number, plin_holder, bank_account_info, bank_account_holder, show_payment_info')
+        .select('yape_number, yape_holder, yape_enabled, plin_number, plin_holder, plin_enabled, bank_account_info, bank_account_holder, transferencia_enabled, bank_name, bank_account_number, bank_cci, show_payment_info')
         .eq('school_id', student.school_id)
         .single();
 
@@ -223,11 +229,23 @@ export function RechargeModal({
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const methodInfo: Record<PaymentMethod, { label: string; icon: React.ReactNode; color: string; number: string | null; holder: string | null; hint: string }> = {
+  const methodInfo: Record<PaymentMethod, {
+    label: string;
+    icon: React.ReactNode;
+    color: string;
+    number: string | null;
+    holder: string | null;
+    hint: string;
+    enabled: boolean;
+    bankName?: string | null;
+    accountNumber?: string | null;
+    cci?: string | null;
+  }> = {
     yape: {
       label: 'Yape',
       icon: <YapeLogo className="w-8 h-8" />,
       color: 'purple',
+      enabled: paymentConfig?.yape_enabled ?? true,
       number: paymentConfig?.yape_number || null,
       holder: paymentConfig?.yape_holder || null,
       hint: 'Abre tu app de Yape y transfiere al número indicado.',
@@ -236,6 +254,7 @@ export function RechargeModal({
       label: 'Plin',
       icon: <PlinLogo className="w-8 h-8" />,
       color: 'green',
+      enabled: paymentConfig?.plin_enabled ?? true,
       number: paymentConfig?.plin_number || null,
       holder: paymentConfig?.plin_holder || null,
       hint: 'Abre tu app de Plin y transfiere al número indicado.',
@@ -244,9 +263,14 @@ export function RechargeModal({
       label: 'Transferencia',
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
-      number: paymentConfig?.bank_account_info || null,
+      enabled: paymentConfig?.transferencia_enabled ?? true,
+      // number se usa para saber si está disponible
+      number: (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info) ? 'available' : null,
       holder: paymentConfig?.bank_account_holder || null,
       hint: 'Realiza una transferencia bancaria con los datos indicados.',
+      bankName: paymentConfig?.bank_name || null,
+      accountNumber: paymentConfig?.bank_account_number || null,
+      cci: paymentConfig?.bank_cci || null,
     },
   };
 
@@ -317,7 +341,11 @@ export function RechargeModal({
 
   // ─────────────────────── PASO 2: Método + instrucciones ───────────────────────
   const renderStepMethod = () => {
-    const hasAnyMethod = !!(paymentConfig?.yape_number || paymentConfig?.plin_number || paymentConfig?.bank_account_info);
+    const hasAnyMethod = !!(
+      (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
+      (paymentConfig?.plin_enabled !== false && paymentConfig?.plin_number) ||
+      (paymentConfig?.transferencia_enabled !== false && (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info))
+    );
 
     return (
       <div className="space-y-4">
@@ -351,7 +379,7 @@ export function RechargeModal({
               <div className="grid grid-cols-3 gap-2">
                 {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
-                  const isAvailable = !!info.number;
+                  const isAvailable = !!info.number && info.enabled;
                   const isSelected = selectedMethod === m;
                   return (
                     <button
@@ -398,83 +426,96 @@ export function RechargeModal({
                     <div className="bg-white border-2 border-dashed border-blue-300 rounded-xl overflow-hidden">
                       <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
                         <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
-                          {selectedMethod === 'transferencia' ? '🏦 Datos bancarios' : `📱 Número de ${currentMethodInfo.label}`}
+                          {selectedMethod === 'transferencia' ? '🏦 Datos bancarios — copia los números' : `📱 Número de ${currentMethodInfo.label}`}
                         </p>
                       </div>
 
                       <div className="p-3 space-y-2">
-                        {/* Titular (si existe) */}
-                        {currentMethodInfo.holder && (
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
-                              <p className="text-sm font-semibold text-gray-800 truncate">{currentMethodInfo.holder}</p>
-                            </div>
-                            <button
-                              onClick={() => handleCopy(currentMethodInfo.holder!, 'holder')}
-                              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all shrink-0 ${
-                                copiedField === 'holder'
-                                  ? 'bg-green-100 text-green-700 border-green-300'
-                                  : 'bg-white text-blue-600 border-blue-200 hover:bg-blue-50 active:scale-95'
-                              }`}
-                            >
-                              {copiedField === 'holder' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                              {copiedField === 'holder' ? '¡Copiado!' : 'Copiar'}
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Número / datos bancarios */}
                         {selectedMethod === 'transferencia' ? (
-                          <div className="space-y-1.5">
-                            {currentMethodInfo.number?.split('\n').map((line, i) => (
-                              line.trim() ? (
-                                <div key={i} className="flex items-center justify-between gap-2">
-                                  <p className="text-sm font-mono font-semibold text-gray-900 flex-1 min-w-0 break-all">{line}</p>
-                                  <button
-                                    onClick={() => handleCopy(line, `line-${i}`)}
-                                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border transition-all shrink-0 ${
-                                      copiedField === `line-${i}`
-                                        ? 'bg-green-100 text-green-700 border-green-300'
-                                        : 'bg-white text-blue-600 border-blue-200 hover:bg-blue-50 active:scale-95'
-                                    }`}
-                                  >
-                                    {copiedField === `line-${i}` ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                                  </button>
+                          <>
+                            {/* Banco — solo display */}
+                            {methodInfo.transferencia.bankName && (
+                              <div className="pb-1.5 border-b border-gray-100">
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Banco</p>
+                                <p className="text-sm font-semibold text-gray-800">{methodInfo.transferencia.bankName}</p>
+                              </div>
+                            )}
+                            {/* Titular — solo display, sin botón copiar */}
+                            {currentMethodInfo.holder && (
+                              <div className="pb-1.5 border-b border-gray-100">
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
+                                <p className="text-sm font-semibold text-gray-800">{currentMethodInfo.holder}</p>
+                              </div>
+                            )}
+                            {/* Cuenta Corriente — con botón copiar */}
+                            {methodInfo.transferencia.accountNumber && (
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Cuenta Corriente</p>
+                                  <p className="text-base font-bold font-mono text-gray-900 break-all">{methodInfo.transferencia.accountNumber}</p>
                                 </div>
-                              ) : null
-                            ))}
-                            {/* Copiar todo */}
-                            <button
-                              onClick={() => handleCopy(currentMethodInfo.number!, 'all')}
-                              className={`w-full flex items-center justify-center gap-2 mt-2 py-2 rounded-lg text-xs font-bold border-2 transition-all active:scale-95 ${
-                                copiedField === 'all'
-                                  ? 'bg-green-100 text-green-700 border-green-300'
-                                  : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                              }`}
-                            >
-                              {copiedField === 'all' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                              {copiedField === 'all' ? '¡Datos copiados!' : 'Copiar todos los datos'}
-                            </button>
-                          </div>
+                                <button
+                                  onClick={() => handleCopy(methodInfo.transferencia.accountNumber!, 'account')}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border-2 transition-all shrink-0 active:scale-95 ${
+                                    copiedField === 'account'
+                                      ? 'bg-green-100 text-green-700 border-green-300'
+                                      : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                                  }`}
+                                >
+                                  {copiedField === 'account' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                                  {copiedField === 'account' ? '¡Copiado!' : 'Copiar'}
+                                </button>
+                              </div>
+                            )}
+                            {/* CCI — con botón copiar */}
+                            {methodInfo.transferencia.cci && (
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">CCI</p>
+                                  <p className="text-base font-bold font-mono text-gray-900 break-all">{methodInfo.transferencia.cci}</p>
+                                </div>
+                                <button
+                                  onClick={() => handleCopy(methodInfo.transferencia.cci!, 'cci')}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border-2 transition-all shrink-0 active:scale-95 ${
+                                    copiedField === 'cci'
+                                      ? 'bg-green-100 text-green-700 border-green-300'
+                                      : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                                  }`}
+                                >
+                                  {copiedField === 'cci' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                                  {copiedField === 'cci' ? '¡Copiado!' : 'Copiar'}
+                                </button>
+                              </div>
+                            )}
+                          </>
                         ) : (
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">Número</p>
-                              <p className="text-2xl font-bold text-gray-900 tracking-widest">{currentMethodInfo.number}</p>
+                          <>
+                            {/* Titular Yape/Plin — solo display, sin botón copiar */}
+                            {currentMethodInfo.holder && (
+                              <div className="pb-1.5 border-b border-gray-100">
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
+                                <p className="text-sm font-semibold text-gray-800">{currentMethodInfo.holder}</p>
+                              </div>
+                            )}
+                            {/* Número — con botón copiar */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Número</p>
+                                <p className="text-2xl font-bold text-gray-900 tracking-widest">{currentMethodInfo.number}</p>
+                              </div>
+                              <button
+                                onClick={() => handleCopy(currentMethodInfo.number!, 'number')}
+                                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold border-2 transition-all shrink-0 active:scale-95 ${
+                                  copiedField === 'number'
+                                    ? 'bg-green-100 text-green-700 border-green-300'
+                                    : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                                }`}
+                              >
+                                {copiedField === 'number' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                                {copiedField === 'number' ? '¡Copiado!' : 'Copiar'}
+                              </button>
                             </div>
-                            <button
-                              onClick={() => handleCopy(currentMethodInfo.number!, 'number')}
-                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold border-2 transition-all shrink-0 active:scale-95 ${
-                                copiedField === 'number'
-                                  ? 'bg-green-100 text-green-700 border-green-300'
-                                  : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
-                              }`}
-                            >
-                              {copiedField === 'number' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                              {copiedField === 'number' ? '¡Copiado!' : 'Copiar'}
-                            </button>
-                          </div>
+                          </>
                         )}
                       </div>
                     </div>
