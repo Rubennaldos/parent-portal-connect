@@ -42,12 +42,12 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
     try {
       setLoading(true);
 
-      // Obtener todos los estudiantes del padre con cuenta libre
+      // Obtener todos los estudiantes activos del padre (incluye free_account y recarga)
+      // para mostrar deudas tanto del kiosco como de almuerzos
       const { data: students, error: studentsError } = await supabase
         .from('students')
         .select('id, full_name, photo_url, free_account, school_id')
         .eq('parent_id', userId)
-        .eq('free_account', true)
         .eq('is_active', true);
 
       if (studentsError) throw studentsError;

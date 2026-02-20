@@ -2969,10 +2969,12 @@ Gracias.`;
                           </span>
                         </div>
                       )}
-                      {/* Fecha de confirmación (cuándo se confirmó el pedido) */}
+                      {/* Fecha de registro / confirmación del pedido */}
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">✅ Pedido confirmado el:</span>
-                        <span className="font-semibold text-gray-800">
+                        <span className="text-gray-600">
+                          {selectedTransaction.payment_status === 'paid' ? '✅ Pedido confirmado el:' : '🕐 Pedido registrado el:'}
+                        </span>
+                        <span className={`font-semibold ${selectedTransaction.payment_status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
                           {format(new Date(selectedTransaction.created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
                         </span>
                       </div>

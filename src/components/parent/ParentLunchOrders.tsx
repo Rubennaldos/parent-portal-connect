@@ -231,6 +231,14 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
             <span className="sm:hidden">Pendiente</span>
           </Badge>
         );
+      case 'pending':
+        return (
+          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300 text-[9px] sm:text-[10px] md:text-xs">
+            <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 mr-0.5 sm:mr-1" />
+            <span className="hidden sm:inline">Pendiente</span>
+            <span className="sm:hidden">Pendiente</span>
+          </Badge>
+        );
       default:
         return <Badge variant="outline" className="text-[9px] sm:text-[10px] md:text-xs">{status}</Badge>;
     }
@@ -337,7 +345,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
                         {order.student.full_name}
                       </p>
                       <p className="text-[10px] sm:text-xs md:text-sm text-gray-600">
-                        {format(new Date(order.order_date), "EEEE, d 'de' MMMM", { locale: es })}
+                        {format(new Date(order.order_date + 'T00:00:00'), "EEEE, d 'de' MMMM", { locale: es })}
                       </p>
                       <p className="text-[9px] sm:text-[10px] md:text-xs text-gray-400">
                         Pedido el {format(new Date(order.created_at), "d 'de' MMM 'a las' HH:mm", { locale: es })}
