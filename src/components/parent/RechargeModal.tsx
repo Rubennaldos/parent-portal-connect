@@ -177,7 +177,10 @@ export function RechargeModal({
       let voucherUrl: string | null = null;
 
       if (voucherFile) {
-        const fileName = `${user.id}/${Date.now()}_${voucherFile.name}`;
+        // Sanitizar nombre: quitar espacios, acentos y caracteres especiales
+        const ext = voucherFile.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const safeName = `voucher_${Date.now()}.${ext}`;
+        const fileName = `${user.id}/${safeName}`;
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('vouchers')
           .upload(fileName, voucherFile, { upsert: false });

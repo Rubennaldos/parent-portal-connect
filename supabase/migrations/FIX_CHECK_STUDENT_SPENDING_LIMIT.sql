@@ -5,6 +5,10 @@
 -- Fix: prefijar variables con v_ para evitar ambigüedad
 -- ============================================
 
+-- PASO 1: Eliminar función anterior (return type cambió)
+DROP FUNCTION IF EXISTS check_student_spending_limit(uuid, numeric);
+
+-- PASO 2: Recrear con variables prefijadas
 CREATE OR REPLACE FUNCTION check_student_spending_limit(
   p_student_id UUID,
   p_amount NUMERIC
