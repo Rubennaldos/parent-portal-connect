@@ -406,6 +406,20 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
     const dayOfWeek = orderDate.toLocaleDateString('es-PE', { weekday: 'long', timeZone: 'America/Lima' });
     const formattedDate = orderDate.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Lima' });
     
+    // 🔔 ADVERTENCIA 2: Para padres, informar que el pedido será a crédito
+    if (userType === 'parent') {
+      const confirmCredit = window.confirm(
+        `⚠️ IMPORTANTE: Este pedido será registrado a crédito.\n\n` +
+        `Debes pagarlo desde la pestaña "Pagos" antes de la fecha de entrega.\n\n` +
+        `El pedido NO aparecerá para el administrador hasta que realices el pago.\n\n` +
+        `¿Desea continuar con el pedido para el ${dayOfWeek}, ${formattedDate}?`
+      );
+      
+      if (!confirmCredit) {
+        return; // Usuario canceló
+      }
+    }
+    
     const confirmOrder = window.confirm(
       `¿Desea confirmar el pedido de almuerzo para el ${dayOfWeek}, ${formattedDate}?`
     );

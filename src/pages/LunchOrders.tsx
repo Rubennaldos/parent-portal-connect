@@ -417,7 +417,16 @@ export default function LunchOrders() {
           }
         }
         
-        setOrders(data || []);
+        // 🔒 Filtrar pedidos de padres con pago pendiente (no mostrar hasta que paguen)
+        const filteredData = (data || []).filter((order: any) => {
+          // Si es pedido de estudiante (padre) y tiene payment_status='pending', ocultarlo
+          if (order.student_id && order._tx_payment_status === 'pending') {
+            return false;
+          }
+          return true;
+        });
+        
+        setOrders(filteredData);
         setLoading(false);
         return;
       }
@@ -582,7 +591,16 @@ export default function LunchOrders() {
         }
       }
 
-      setOrders(data || []);
+      // 🔒 Filtrar pedidos de padres con pago pendiente (no mostrar hasta que paguen)
+      const filteredData = (data || []).filter((order: any) => {
+        // Si es pedido de estudiante (padre) y tiene payment_status='pending', ocultarlo
+        if (order.student_id && order._tx_payment_status === 'pending') {
+          return false;
+        }
+        return true;
+      });
+
+      setOrders(filteredData);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
       toast({
