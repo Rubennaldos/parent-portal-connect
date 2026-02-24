@@ -188,9 +188,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // Wizard state - processes days sequentially (REDESIGNED)
   const [wizardDates, setWizardDates] = useState<string[]>([]);
   const [wizardCurrentIndex, setWizardCurrentIndex] = useState(0);
-  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'confirm' | 'done'>('idle');
+  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'select_menu' | 'confirm' | 'done'>('idle');
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
+  const [categoryMenuOptions, setCategoryMenuOptions] = useState<LunchMenu[]>([]); // Menús disponibles para la categoría seleccionada
   const [quantity, setQuantity] = useState<number>(1);
   const [ordersCreated, setOrdersCreated] = useState<number>(0);
 
@@ -530,10 +531,21 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     const dayMenus = menus.get(currentDateStr) || [];
     const categoryMenus = dayMenus.filter(m => m.category_id === category.id);
 
-    // Auto-select first menu (most days have 1 menu per category)
-    if (categoryMenus.length >= 1) {
+    setCategoryMenuOptions(categoryMenus);
+
+    if (categoryMenus.length === 1) {
+      // Solo 1 menú → auto-seleccionar e ir a confirmar
       setSelectedMenu(categoryMenus[0]);
+      setWizardStep('confirm');
+    } else if (categoryMenus.length > 1) {
+      // Múltiples menús → mostrar paso de selección
+      setSelectedMenu(null);
+      setWizardStep('select_menu');
     }
+  };
+
+  const handleMenuSelect = (menu: LunchMenu) => {
+    setSelectedMenu(menu);
     setWizardStep('confirm');
   };
 
@@ -669,6 +681,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         setWizardStep('category');
         setSelectedCategory(null);
         setSelectedMenu(null);
+        setCategoryMenuOptions([]);
         setQuantity(1);
       } else {
         setWizardStep('done');
@@ -689,6 +702,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setWizardCurrentIndex(0);
     setSelectedCategory(null);
     setSelectedMenu(null);
+    setCategoryMenuOptions([]);
     setQuantity(1);
     setSelectedDates(new Set());
 
@@ -952,6 +966,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                 </DialogTitle>
                 <DialogDescription>
                   {wizardStep === 'category' && 'Selecciona la categoría del menú'}
+                  {wizardStep === 'select_menu' && 'Elige el menú que deseas'}
                   {wizardStep === 'confirm' && 'Selecciona la cantidad y confirma tu pedido'}
                 </DialogDescription>
               </DialogHeader>
@@ -995,6 +1010,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                         );
                       })
                     )}
+                  </div>
+                )}
+
+                {/* STEP: Select Menu (cuando hay múltiples menús en la misma categoría) */}
+                {wizardStep === 'select_menu' && selectedCategory && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600 mb-2">
+                      Hay <strong>{categoryMenuOptions.length} opciones</strong> en "{selectedCategory.name}". Elige una:
+                    </p>
+                    {categoryMenuOptions.map((menu) => (
+                      <Card
+                        key={menu.id}
+                        className="cursor-pointer hover:shadow-md transition-all hover:border-purple-300"
+                        onClick={() => handleMenuSelect(menu)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="space-y-1">
+                            <p className="text-lg font-bold text-gray-900">{menu.main_course}</p>
+                            {menu.starter && (
+                              <p className="text-sm text-gray-600">Entrada: {menu.starter}</p>
+                            )}
+                            {menu.beverage && (
+                              <p className="text-sm text-gray-600">Bebida: {menu.beverage}</p>
+                            )}
+                            {menu.dessert && (
+                              <p className="text-sm text-gray-600">Postre: {menu.dessert}</p>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
                   </div>
                 )}
 
@@ -1046,18 +1092,38 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               </div>
 
               <DialogFooter className="gap-2 mt-4">
-                {wizardStep === 'confirm' && (
+                {wizardStep === 'select_menu' && (
                   <Button
                     variant="outline"
                     onClick={() => {
                       setWizardStep('category');
                       setSelectedCategory(null);
                       setSelectedMenu(null);
-                      setQuantity(1);
+                      setCategoryMenuOptions([]);
+                    }}
+                  >
+                    ← Cambiar categoría
+                  </Button>
+                )}
+                {wizardStep === 'confirm' && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      // Si había múltiples menús, volver a select_menu; si no, a category
+                      if (categoryMenuOptions.length > 1) {
+                        setWizardStep('select_menu');
+                        setSelectedMenu(null);
+                        setQuantity(1);
+                      } else {
+                        setWizardStep('category');
+                        setSelectedCategory(null);
+                        setSelectedMenu(null);
+                        setQuantity(1);
+                      }
                     }}
                     disabled={submitting}
                   >
-                    ← Cambiar categoría
+                    ← {categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
                   </Button>
                 )}
                 <Button variant="ghost" onClick={closeWizard} disabled={submitting}>
