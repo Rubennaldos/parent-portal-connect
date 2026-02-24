@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle, AlertCircle, Plus, Minus } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -45,6 +46,7 @@ interface Person {
 
 export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, onSuccess }: PhysicalOrderWizardProps) {
   const { toast } = useToast();
+  const { user } = useAuth(); // 🔑 Obtener usuario actual para ticket_code
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const isSubmittingRef = useRef(false); // 🔒 Lock sincrónico anti doble-clic
@@ -557,7 +559,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       if (totalPrice > 0) {
         try {
           const { data: ticketNumber, error: ticketErr } = await supabase
-            .rpc('get_next_ticket_number', { p_user_id: null });
+            .rpc('get_next_ticket_number', { p_user_id: user?.id || null });
           if (!ticketErr && ticketNumber) {
             ticketCode = ticketNumber;
           }
