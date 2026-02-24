@@ -618,7 +618,8 @@ export function RechargeModal({
                 ← Atrás
               </Button>
             )}
-            {(requestType === 'lunch_payment' || requestType === 'debt_payment') && (
+            {/* Botón "Pagar después" desactivado — padres deben pagar obligatoriamente */}
+            {/* {(requestType === 'lunch_payment' || requestType === 'debt_payment') && (
               <Button
                 variant="ghost"
                 onClick={onClose}
@@ -626,7 +627,7 @@ export function RechargeModal({
               >
                 Pagar después
               </Button>
-            )}
+            )} */}
           </div>
         </div>
       </div>

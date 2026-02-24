@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +47,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const isSubmittingRef = useRef(false); // 🔒 Lock sincrónico anti doble-clic
 
   // Datos del wizard
   const [targetType, setTargetType] = useState<'students' | 'teachers' | null>(null);
@@ -419,6 +420,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const handleSubmit = async () => {
     if (!selectedMenu || !selectedCategory) return;
 
+    // 🔒 Lock sincrónico: previene doble-clic / doble envío
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setLoading(true);
+
     // ── Guard de caja: solo aplica cuando es un pago inmediato (cash/yape/tarjeta) ──
     const isImmediatePayment =
       paymentType === 'cash' &&
@@ -447,13 +453,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             'Ve al módulo de Cierre de Caja y declara el monto inicial.',
         });
         setLoading(false);
+        isSubmittingRef.current = false; // 🔓 Liberar lock en salida temprana
         return;
       }
     }
 
     try {
-      setLoading(true);
-
       // 🆕 Calcular precio total basado en cantidad
       const totalPrice = (selectedCategory.price || 0) * quantity;
 
@@ -718,6 +723,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       });
     } finally {
       setLoading(false);
+      isSubmittingRef.current = false; // 🔓 Liberar lock
     }
   };
 

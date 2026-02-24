@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -210,6 +210,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // UI State
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false); // 🔒 Lock sincrónico anti doble-clic
 
   // ==========================================
   // COMPUTED
@@ -539,6 +540,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const handleConfirmOrder = async () => {
     if (!config || !selectedCategory || !selectedMenu) return;
 
+    // 🔒 Lock sincrónico: previene doble-clic / doble envío
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     const currentDateStr = wizardDates[wizardCurrentIndex];
     setSubmitting(true);
 
@@ -653,7 +658,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       }
 
       toast({
-        title: '✅ Pedido registrado',
+        title: userType === 'parent' ? '✅ Agregado' : '✅ Pedido registrado',
         description: `${quantity}x ${selectedCategory.name} - ${dateFormatted}`,
       });
 
@@ -674,6 +679,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudo registrar el pedido' });
     } finally {
       setSubmitting(false);
+      isSubmittingRef.current = false; // 🔓 Liberar lock
     }
   };
 
@@ -904,29 +910,29 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               )}
 
               <div className="flex flex-col sm:flex-row justify-center gap-3 mt-6">
-                {/* Botón Pagar para padres */}
-                {userType === 'parent' && totalOrderAmount > 0 && (
+                {/* Botón Pagar para padres — OBLIGATORIO */}
+                {userType === 'parent' && totalOrderAmount > 0 ? (
                   <Button
                     onClick={() => {
                       closeWizard();
                       setTimeout(() => setShowPaymentModal(true), 300);
                     }}
                     size="lg"
-                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold w-full"
                   >
                     <CreditCardIcon className="h-5 w-5 mr-2" />
                     Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
                   </Button>
+                ) : (
+                  <Button 
+                    onClick={closeWizard} 
+                    size="lg" 
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <CheckCircle2 className="h-5 w-5 mr-2" />
+                    Cerrar
+                  </Button>
                 )}
-                <Button 
-                  onClick={closeWizard} 
-                  size="lg" 
-                  variant={userType === 'parent' && totalOrderAmount > 0 ? 'outline' : 'default'}
-                  className={userType === 'parent' && totalOrderAmount > 0 ? '' : 'bg-green-600 hover:bg-green-700'}
-                >
-                  <CheckCircle2 className="h-5 w-5 mr-2" />
-                  {userType === 'parent' && totalOrderAmount > 0 ? 'Pagar después' : 'Cerrar'}
-                </Button>
               </div>
             </>
           )}
@@ -1064,11 +1070,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     className="bg-purple-600 hover:bg-purple-700"
                   >
                     {submitting ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Registrando...</>
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Procesando...</>
                     ) : isLastDay ? (
-                      <><CheckCircle2 className="h-4 w-4 mr-2" />Registrar Pedido</>
+                      <><CheckCircle2 className="h-4 w-4 mr-2" />Siguiente</>
                     ) : (
-                      <><CheckCircle2 className="h-4 w-4 mr-2" />Registrar y Siguiente →</>
+                      <><CheckCircle2 className="h-4 w-4 mr-2" />Siguiente →</>
                     )}
                   </Button>
                 )}

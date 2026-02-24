@@ -364,7 +364,9 @@ export default function LunchOrders() {
               .select('metadata, ticket_code, payment_status, payment_method, amount')
               .eq('type', 'purchase')
               .neq('payment_status', 'cancelled')
-              .not('metadata', 'is', null);
+              .not('metadata', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(5000); // 🔧 Evitar límite por defecto de 1000 que ocultaba tickets
             
             if (txData) {
               const ticketMap = new Map<string, string>();
@@ -537,7 +539,9 @@ export default function LunchOrders() {
             .select('metadata, ticket_code, payment_status, payment_method, amount')
             .eq('type', 'purchase')
             .neq('payment_status', 'cancelled')
-            .not('metadata', 'is', null);
+            .not('metadata', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(5000); // 🔧 Evitar límite por defecto de 1000 que ocultaba tickets
           
           if (txData) {
             const ticketMap = new Map<string, string>();
@@ -1950,11 +1954,19 @@ export default function LunchOrders() {
                           )}
                         </p>
                       )}
-                      {/* 🎫 Ticket code */}
-                      {(order as any)._ticket_code && (
-                        <p className="text-xs font-bold text-indigo-700 mt-1">
-                          🎫 Ticket: {(order as any)._ticket_code}
-                        </p>
+                      {/* 🎫 Nº de Comprobante - siempre visible y prominente */}
+                      {(order as any)._ticket_code ? (
+                        <div className="mt-1 inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-md px-2.5 py-1">
+                          <span className="text-sm font-bold text-indigo-800">
+                            🎫 Nº {(order as any)._ticket_code}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mt-1 inline-flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-md px-2.5 py-1">
+                          <span className="text-xs text-gray-400">
+                            Sin comprobante
+                          </span>
+                        </div>
                       )}
                     </div>
 
