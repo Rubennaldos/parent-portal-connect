@@ -1,38 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <!-- Fondo blanco con bordes redondeados -->
   <rect width="512" height="512" rx="100" ry="100" fill="#ffffff"/>
-  
-  <!-- Borde suave -->
-  <rect width="512" height="512" rx="100" ry="100" fill="none" stroke="#e8e0d8" stroke-width="4"/>
 
-  <!-- Taza de café - cuerpo principal -->
-  <path d="M 126 198 L 136 374 Q 138 394 160 394 L 352 394 Q 374 394 376 374 L 386 198 Z" fill="#6B3A1F"/>
-  
+  <!-- Círculo exterior teal -->
+  <circle cx="256" cy="256" r="218" fill="none" stroke="#3BAF9E" stroke-width="12"/>
+
+  <!-- Arco decorativo superior -->
+  <path d="M 70 200 Q 256 55 442 200" fill="none" stroke="#3BAF9E" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Vapor / humo izquierdo -->
+  <path d="M 192 140 Q 182 118 192 97 Q 202 76 192 54" fill="none" stroke="#3BAF9E" stroke-width="9" stroke-linecap="round"/>
+  <!-- Vapor / humo centro -->
+  <path d="M 228 128 Q 218 106 228 85 Q 238 64 228 42" fill="none" stroke="#3BAF9E" stroke-width="9" stroke-linecap="round"/>
+  <!-- Vapor / humo derecho -->
+  <path d="M 264 140 Q 254 118 264 97 Q 274 76 264 54" fill="none" stroke="#3BAF9E" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Taza - cuerpo -->
+  <path d="M 152 182 L 163 315 Q 165 330 180 330 L 332 330 Q 347 330 349 315 L 360 182 Z" fill="#3BAF9E"/>
+
   <!-- Taza - borde superior -->
-  <rect x="118" y="182" width="276" height="36" rx="18" fill="#8B4513"/>
-  
-  <!-- Taza - interior más oscuro -->
-  <path d="M 145 218 L 154 362 Q 156 380 170 380 L 342 380 Q 356 380 358 362 L 367 218 Z" fill="#7B3B15"/>
+  <rect x="146" y="166" width="220" height="32" rx="16" fill="#2E9A8A"/>
 
   <!-- Asa de la taza -->
-  <path d="M 383 234 Q 446 234 446 288 Q 446 342 383 342" fill="none" stroke="#8B4513" stroke-width="29" stroke-linecap="round"/>
-  <path d="M 383 234 Q 430 234 430 288 Q 430 342 383 342" fill="none" stroke="#6B3A1F" stroke-width="16" stroke-linecap="round"/>
+  <path d="M 349 202 Q 400 202 400 248 Q 400 294 349 294" fill="none" stroke="#3BAF9E" stroke-width="22" stroke-linecap="round"/>
+  <path d="M 349 202 Q 384 202 384 248 Q 384 294 349 294" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round"/>
 
-  <!-- Vapor / humo -->
-  <path d="M 190 155 Q 180 133 190 112 Q 200 91 190 70" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
-  <path d="M 256 148 Q 246 126 256 105 Q 266 84 256 63" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
-  <path d="M 322 155 Q 312 133 322 112 Q 332 91 322 70" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
+  <!-- Interior taza (líquido) -->
+  <ellipse cx="256" cy="193" rx="88" ry="14" fill="#2E9A8A" opacity="0.7"/>
 
-  <!-- Café dentro (líquido) -->
-  <ellipse cx="256" cy="223" rx="118" ry="20" fill="#3D1A00" opacity="0.6"/>
+  <!-- Texto "Lima" -->
+  <text x="210" y="244" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="600" fill="#ffffff" text-anchor="middle">Lima</text>
 
-  <!-- Texto LC28 dentro de la taza -->
-  <text x="256" y="352" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="bold" fill="#F5E6C8" text-anchor="middle" letter-spacing="3">LC28</text>
+  <!-- Texto "café" grande italic -->
+  <text x="248" y="290" font-family="Georgia, 'Times New Roman', serif" font-size="54" font-weight="bold" font-style="italic" fill="#ffffff" text-anchor="middle">café</text>
 
-  <!-- Platillo -->
-  <ellipse cx="256" cy="402" rx="154" ry="22" fill="#8B4513"/>
-  <ellipse cx="256" cy="402" rx="138" ry="15" fill="#A0522D"/>
+  <!-- Texto "28" amarillo/dorado -->
+  <text x="320" y="328" font-family="Arial, Helvetica, sans-serif" font-size="60" font-weight="900" fill="#F5C518" text-anchor="middle">28</text>
 
-  <!-- Texto inferior: Lima Café -->
-  <text x="256" y="460" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="600" fill="#6B3A1F" text-anchor="middle" letter-spacing="2">Lima Café 28</text>
+  <!-- Arco decorativo inferior -->
+  <path d="M 70 312 Q 256 455 442 312" fill="none" stroke="#3BAF9E" stroke-width="10" stroke-linecap="round"/>
 </svg>

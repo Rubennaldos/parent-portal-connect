@@ -1,37 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
   <!-- Fondo blanco con bordes redondeados -->
   <rect width="192" height="192" rx="38" ry="38" fill="#ffffff"/>
-  
-  <!-- Sombra suave del fondo -->
-  <rect width="192" height="192" rx="38" ry="38" fill="none" stroke="#e8e0d8" stroke-width="2"/>
 
-  <!-- Taza de café - cuerpo principal -->
-  <path d="M 48 75 L 52 140 Q 53 148 61 148 L 131 148 Q 139 148 140 140 L 144 75 Z" fill="#6B3A1F"/>
-  
+  <!-- Círculo exterior teal -->
+  <circle cx="96" cy="96" r="82" fill="none" stroke="#3BAF9E" stroke-width="5"/>
+
+  <!-- Arco decorativo superior (como en el logo original) -->
+  <path d="M 30 75 Q 96 20 162 75" fill="none" stroke="#3BAF9E" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Vapor / humo izquierdo -->
+  <path d="M 72 52 Q 68 44 73 36 Q 78 28 73 20" fill="none" stroke="#3BAF9E" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Vapor / humo centro -->
+  <path d="M 86 47 Q 82 39 87 31 Q 92 23 87 15" fill="none" stroke="#3BAF9E" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Vapor / humo derecho -->
+  <path d="M 100 52 Q 96 44 101 36 Q 106 28 101 20" fill="none" stroke="#3BAF9E" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- Taza - cuerpo -->
+  <path d="M 58 68 L 62 118 Q 63 124 70 124 L 122 124 Q 129 124 130 118 L 134 68 Z" fill="#3BAF9E"/>
+
   <!-- Taza - borde superior -->
-  <rect x="44" y="68" width="104" height="14" rx="7" fill="#8B4513"/>
-  
-  <!-- Taza - brillo interior -->
-  <path d="M 55 82 L 58 135 Q 59 142 64 142 L 128 142 Q 133 142 134 135 L 137 82 Z" fill="#7B3B15"/>
+  <rect x="55" y="62" width="82" height="12" rx="6" fill="#2E9A8A"/>
 
   <!-- Asa de la taza -->
-  <path d="M 144 88 Q 168 88 168 108 Q 168 128 144 128" fill="none" stroke="#8B4513" stroke-width="11" stroke-linecap="round"/>
-  <path d="M 144 88 Q 162 88 162 108 Q 162 128 144 128" fill="none" stroke="#6B3A1F" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 130 76 Q 150 76 150 92 Q 150 108 130 108" fill="none" stroke="#3BAF9E" stroke-width="8" stroke-linecap="round"/>
+  <path d="M 130 76 Q 144 76 144 92 Q 144 108 130 108" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
 
-  <!-- Vapor / humo 1 -->
-  <path d="M 72 58 Q 68 50 72 42 Q 76 34 72 26" fill="none" stroke="#C8956A" stroke-width="4" stroke-linecap="round"/>
-  <!-- Vapor / humo 2 -->
-  <path d="M 96 55 Q 92 47 96 39 Q 100 31 96 23" fill="none" stroke="#C8956A" stroke-width="4" stroke-linecap="round"/>
-  <!-- Vapor / humo 3 -->
-  <path d="M 120 58 Q 116 50 120 42 Q 124 34 120 26" fill="none" stroke="#C8956A" stroke-width="4" stroke-linecap="round"/>
+  <!-- Interior taza (líquido café) -->
+  <ellipse cx="96" cy="72" rx="33" ry="5" fill="#2E9A8A" opacity="0.7"/>
 
-  <!-- Café dentro de la taza (líquido) -->
-  <ellipse cx="96" cy="84" rx="44" ry="8" fill="#3D1A00" opacity="0.6"/>
+  <!-- Texto "Lima" pequeño -->
+  <text x="72" y="92" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Lima</text>
 
-  <!-- Texto LC28 -->
-  <text x="96" y="132" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="bold" fill="#F5E6C8" text-anchor="middle" letter-spacing="1">LC28</text>
+  <!-- Texto "café" grande -->
+  <text x="90" y="108" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-weight="bold" font-style="italic" fill="#ffffff" text-anchor="middle">café</text>
 
-  <!-- Platillo -->
-  <ellipse cx="96" cy="151" rx="58" ry="8" fill="#8B4513"/>
-  <ellipse cx="96" cy="151" rx="52" ry="5.5" fill="#A0522D"/>
+  <!-- Texto "28" amarillo/dorado -->
+  <text x="118" y="122" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900" fill="#F5C518" text-anchor="middle">28</text>
+
+  <!-- Arco decorativo inferior -->
+  <path d="M 30 118 Q 96 165 162 118" fill="none" stroke="#3BAF9E" stroke-width="4" stroke-linecap="round"/>
 </svg>
