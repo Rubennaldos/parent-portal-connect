@@ -66,6 +66,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         // Cachear recursos estáticos para uso offline
         globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
+        // El bundle principal pesa >2MB, aumentamos el límite a 5MB
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
