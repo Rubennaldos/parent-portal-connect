@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DollarSign, AlertTriangle, Lock, ArrowRight, Banknote } from 'lucide-react';
+import { AlertTriangle, Lock, ArrowRight, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
@@ -178,16 +178,6 @@ export function CashOpeningModal({
               Cuenta el dinero físico e ingresa el monto exacto
             </p>
           </div>
-
-          {/* Referencia del día anterior */}
-          {lastClosedAmount !== null && lastClosedAmount !== undefined && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800 flex items-center gap-2">
-              <DollarSign className="h-4 w-4 shrink-0" />
-              <span>
-                El día anterior cerró con <strong>S/ {lastClosedAmount.toFixed(2)}</strong>
-              </span>
-            </div>
-          )}
 
           {/* Input de monto */}
           <div>

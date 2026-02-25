@@ -56,6 +56,13 @@ export default function CashMovements({ cashRegister, movements, onMovementAdded
     setShowDialog(true);
   };
 
+  // Calcular efectivo disponible en caja (para validar egresos)
+  const currentCashInRegister = () => {
+    const ingresos = movements.filter(m => m.type === 'ingreso').reduce((s, m) => s + m.amount, 0);
+    const egresos = movements.filter(m => m.type === 'egreso').reduce((s, m) => s + m.amount, 0);
+    return cashRegister.initial_amount + ingresos - egresos;
+  };
+
   // Registrar movimiento
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +72,15 @@ export default function CashMovements({ cashRegister, movements, onMovementAdded
     if (isNaN(amount) || amount <= 0) {
       toast.error('Ingresa un monto válido');
       return;
+    }
+
+    // Validar que el egreso no supere el efectivo disponible
+    if (movementType === 'egreso') {
+      const available = currentCashInRegister();
+      if (amount > available) {
+        toast.error(`No puedes retirar S/ ${amount.toFixed(2)}. Solo hay S/ ${available.toFixed(2)} disponibles en caja.`);
+        return;
+      }
     }
 
     if (!formData.reason.trim()) {

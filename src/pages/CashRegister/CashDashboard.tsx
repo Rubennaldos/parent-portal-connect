@@ -100,8 +100,29 @@ export default function CashDashboard({ cashRegister, movements, onRefresh }: Pr
     { name: 'Crédito', value: totalCredit, color: '#f59e0b' },
   ].filter(item => item.value > 0);
 
+  // ── Detectar si la caja fue abierta ayer (pasó medianoche) ──
+  const openedDate = new Date(cashRegister.opened_at);
+  openedDate.setHours(0, 0, 0, 0);
+  const todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+  const isOvernight = openedDate < todayDate;
+
   return (
     <div className="space-y-6">
+      {/* ⚠️ Alerta de medianoche */}
+      {isOvernight && (
+        <div className="bg-red-600 text-white rounded-xl p-4 flex items-center gap-3 animate-pulse">
+          <AlertTriangle className="h-8 w-8 shrink-0" />
+          <div>
+            <p className="font-black text-lg">⚠️ CAJA SIN CERRAR</p>
+            <p className="text-red-100 text-sm">
+              Esta caja fue abierta el {format(new Date(cashRegister.opened_at), "EEEE dd 'de' MMMM", { locale: es })} y no fue cerrada.
+              Debes cerrarla antes de continuar operando.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Cards resumen ejecutivo */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Total Esperado */}
