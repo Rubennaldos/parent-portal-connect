@@ -36,12 +36,12 @@ export default defineConfig(({ mode }) => ({
     // ✅ PWA - Permite instalar la app en celulares
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "icon-192.svg", "icon-512.svg"],
+      includeAssets: ["favicon.ico", "icon-192.png", "icon-512.png"],
       manifest: {
         name: "Lima Café 28 - Kiosco Escolar",
         short_name: "Lima Café 28",
         description: "Sistema de Gestión de Kiosco Escolar Lima Café 28",
-        theme_color: "#8B4513",
+        theme_color: "#3BAF9E",
         background_color: "#ffffff",
         display: "standalone",
         scope: "/",
@@ -50,15 +50,15 @@ export default defineConfig(({ mode }) => ({
         lang: "es",
         icons: [
           {
-            src: "/icon-192.svg",
+            src: "/icon-192.png",
             sizes: "192x192",
-            type: "image/svg+xml",
+            type: "image/png",
             purpose: "any maskable",
           },
           {
-            src: "/icon-512.svg",
+            src: "/icon-512.png",
             sizes: "512x512",
-            type: "image/svg+xml",
+            type: "image/png",
             purpose: "any maskable",
           },
         ],
