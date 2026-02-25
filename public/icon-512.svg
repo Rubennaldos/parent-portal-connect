@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fondo blanco con bordes redondeados -->
+  <rect width="512" height="512" rx="100" ry="100" fill="#ffffff"/>
+  
+  <!-- Borde suave -->
+  <rect width="512" height="512" rx="100" ry="100" fill="none" stroke="#e8e0d8" stroke-width="4"/>
+
+  <!-- Taza de café - cuerpo principal -->
+  <path d="M 126 198 L 136 374 Q 138 394 160 394 L 352 394 Q 374 394 376 374 L 386 198 Z" fill="#6B3A1F"/>
+  
+  <!-- Taza - borde superior -->
+  <rect x="118" y="182" width="276" height="36" rx="18" fill="#8B4513"/>
+  
+  <!-- Taza - interior más oscuro -->
+  <path d="M 145 218 L 154 362 Q 156 380 170 380 L 342 380 Q 356 380 358 362 L 367 218 Z" fill="#7B3B15"/>
+
+  <!-- Asa de la taza -->
+  <path d="M 383 234 Q 446 234 446 288 Q 446 342 383 342" fill="none" stroke="#8B4513" stroke-width="29" stroke-linecap="round"/>
+  <path d="M 383 234 Q 430 234 430 288 Q 430 342 383 342" fill="none" stroke="#6B3A1F" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- Vapor / humo -->
+  <path d="M 190 155 Q 180 133 190 112 Q 200 91 190 70" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 256 148 Q 246 126 256 105 Q 266 84 256 63" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 322 155 Q 312 133 322 112 Q 332 91 322 70" fill="none" stroke="#C8956A" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Café dentro (líquido) -->
+  <ellipse cx="256" cy="223" rx="118" ry="20" fill="#3D1A00" opacity="0.6"/>
+
+  <!-- Texto LC28 dentro de la taza -->
+  <text x="256" y="352" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="bold" fill="#F5E6C8" text-anchor="middle" letter-spacing="3">LC28</text>
+
+  <!-- Platillo -->
+  <ellipse cx="256" cy="402" rx="154" ry="22" fill="#8B4513"/>
+  <ellipse cx="256" cy="402" rx="138" ry="15" fill="#A0522D"/>
+
+  <!-- Texto inferior: Lima Café -->
+  <text x="256" y="460" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="600" fill="#6B3A1F" text-anchor="middle" letter-spacing="2">Lima Café 28</text>
+</svg>
