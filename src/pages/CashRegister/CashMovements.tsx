@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,12 +38,30 @@ export default function CashMovements({ cashRegister, movements, onMovementAdded
   const [showDialog, setShowDialog] = useState(false);
   const [movementType, setMovementType] = useState<'ingreso' | 'egreso'>('ingreso');
   const [loading, setLoading] = useState(false);
+  const [salesCash, setSalesCash] = useState(0);
 
   const [formData, setFormData] = useState({
     amount: '',
     reason: '',
     responsible_name: profile?.full_name || '',
   });
+
+  // Cargar efectivo de ventas del día para calcular disponible real
+  useEffect(() => {
+    const loadSalesCash = async () => {
+      try {
+        const { data } = await supabase.rpc('calculate_daily_totals', {
+          p_school_id: cashRegister.school_id,
+          p_date: format(new Date(cashRegister.opened_at), 'yyyy-MM-dd'),
+        });
+        if (data) {
+          const cash = (data.pos?.cash || 0) + (data.pos?.mixed_cash || 0) + (data.lunch?.cash || 0);
+          setSalesCash(cash);
+        }
+      } catch (_) { /* silencioso */ }
+    };
+    loadSalesCash();
+  }, [cashRegister, movements]);
 
   // Abrir dialog
   const openDialog = (type: 'ingreso' | 'egreso') => {
@@ -56,11 +74,11 @@ export default function CashMovements({ cashRegister, movements, onMovementAdded
     setShowDialog(true);
   };
 
-  // Calcular efectivo disponible en caja (para validar egresos)
+  // Calcular efectivo disponible en caja (incluye ventas en efectivo)
   const currentCashInRegister = () => {
     const ingresos = movements.filter(m => m.type === 'ingreso').reduce((s, m) => s + m.amount, 0);
     const egresos = movements.filter(m => m.type === 'egreso').reduce((s, m) => s + m.amount, 0);
-    return cashRegister.initial_amount + ingresos - egresos;
+    return cashRegister.initial_amount + salesCash + ingresos - egresos;
   };
 
   // Registrar movimiento

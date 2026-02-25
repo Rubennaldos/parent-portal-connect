@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { AlertTriangle, Lock, ArrowRight, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,12 +33,38 @@ export function CashOpeningModal({
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [closingPrevious, setClosingPrevious] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // Forzar cierre de la caja anterior sin datos (cierre de emergencia)
   const forceClosePrevious = async () => {
     if (!previousUnclosed || !user?.id) return;
     setClosingPrevious(true);
     try {
+      const closureDate = format(new Date(previousUnclosed.opened_at), 'yyyy-MM-dd');
+
+      // Crear registro de cierre forzado en cash_closures para que quede en historial
+      await supabase.from('cash_closures').insert({
+        cash_register_id: previousUnclosed.id,
+        school_id: schoolId,
+        closure_date: closureDate,
+        initial_amount: previousUnclosed.initial_amount || 0,
+        expected_final: previousUnclosed.initial_amount || 0,
+        actual_final: 0,
+        difference: -(previousUnclosed.initial_amount || 0),
+        total_sales: 0,
+        total_cash: 0,
+        total_card: 0,
+        total_yape: 0,
+        total_yape_qr: 0,
+        total_credit: 0,
+        total_ingresos: 0,
+        total_egresos: 0,
+        pos_cash: 0, pos_card: 0, pos_yape: 0, pos_yape_qr: 0, pos_credit: 0,
+        pos_mixed_cash: 0, pos_mixed_card: 0, pos_mixed_yape: 0, pos_total: 0,
+        lunch_cash: 0, lunch_credit: 0, lunch_card: 0, lunch_yape: 0, lunch_total: 0,
+        closed_by: user.id,
+      });
+
       await supabase
         .from('cash_registers')
         .update({
@@ -59,6 +85,7 @@ export function CashOpeningModal({
   };
 
   const handleOpen = async () => {
+    if (isSubmittingRef.current) return;
     const val = parseFloat(amount);
     if (isNaN(val) || val < 0) {
       toast.error('Ingresa un monto válido (puede ser S/ 0.00)');
@@ -69,6 +96,7 @@ export function CashOpeningModal({
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
     try {
       const { error } = await supabase
@@ -85,6 +113,7 @@ export function CashOpeningModal({
       toast.success(`✅ Caja abierta con S/ ${val.toFixed(2)}`);
       onOpened();
     } catch (error: any) {
+      isSubmittingRef.current = false;
       toast.error('Error al abrir caja: ' + error.message);
     } finally {
       setLoading(false);

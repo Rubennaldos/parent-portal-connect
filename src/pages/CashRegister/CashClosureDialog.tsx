@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Dialog,
   DialogContent,
@@ -46,6 +46,7 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
   const [dailyTotals, setDailyTotals] = useState<DailyTotals | null>(null);
   const [actualAmount, setActualAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     loadDailyTotals();
@@ -96,13 +97,15 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
 
   // ── Realizar cierre ─────────────────────────────────────────────
   const performClosure = async () => {
+    if (isSubmittingRef.current) return;
     if (actualFinal === null) { toast.error('Ingresa el monto real de caja'); return; }
     if (hasDifference && !adjustmentReason.trim()) { toast.error('Escribe el motivo de la diferencia'); return; }
 
+    isSubmittingRef.current = true;
     try {
       setLoading(true);
 
-      await supabase.from('cash_closures').insert({
+      const { error: closureError } = await supabase.from('cash_closures').insert({
         cash_register_id: cashRegister.id,
         school_id: cashRegister.school_id,
         closure_date: format(new Date(cashRegister.opened_at), 'yyyy-MM-dd'),
@@ -137,6 +140,8 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
         whatsapp_phone: config?.whatsapp_phone || null,
       });
 
+      if (closureError) throw closureError;
+
       if (hasDifference) {
         await supabase.from('cash_movements').insert({
           cash_register_id: cashRegister.id,
@@ -166,6 +171,7 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
       onClosed();
     } catch (error) {
       console.error(error);
+      isSubmittingRef.current = false;
       toast.error('Error al cerrar la caja');
     } finally {
       setLoading(false);
