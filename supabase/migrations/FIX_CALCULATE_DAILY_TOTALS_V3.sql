@@ -117,3 +117,89 @@ SELECT
     '8a0dbd73-0571-4db1-af5c-65f4948c4c98'::uuid,  -- Jean LeBouch
     CURRENT_DATE
   ) as resultado;
+
+
+-- ╔═══════════════════════════════════════════════════════════════════╗
+-- ║  PARTE 2: CORREGIR CIERRES HISTÓRICOS CON VALORES NEGATIVOS     ║
+-- ╚═══════════════════════════════════════════════════════════════════╝
+
+-- ===================================================================
+-- 📋 PASO 1: VER CUÁNTOS CIERRES TIENEN VALORES NEGATIVOS (solo lectura)
+-- ===================================================================
+SELECT 
+  '📊 Cierres con valores negativos:' as info,
+  COUNT(*) as cantidad,
+  STRING_AGG(DISTINCT cc.school_id::text, ', ') as sedes_afectadas
+FROM cash_closures cc
+WHERE cc.total_sales < 0 OR cc.pos_total < 0;
+
+-- ===================================================================
+-- 🔧 PASO 2: CORREGIR cash_closures — convertir negativos a positivos
+-- ===================================================================
+UPDATE cash_closures
+SET
+  -- Ventas POS
+  pos_cash = ABS(pos_cash),
+  pos_card = ABS(pos_card),
+  pos_yape = ABS(pos_yape),
+  pos_yape_qr = ABS(pos_yape_qr),
+  pos_credit = ABS(pos_credit),
+  pos_mixed_cash = ABS(pos_mixed_cash),
+  pos_mixed_card = ABS(pos_mixed_card),
+  pos_mixed_yape = ABS(pos_mixed_yape),
+  pos_total = ABS(pos_total),
+  -- Ventas Almuerzos
+  lunch_cash = ABS(lunch_cash),
+  lunch_credit = ABS(lunch_credit),
+  lunch_card = ABS(lunch_card),
+  lunch_yape = ABS(lunch_yape),
+  lunch_total = ABS(lunch_total),
+  -- Totales generales
+  total_cash = ABS(total_cash),
+  total_card = ABS(total_card),
+  total_yape = ABS(total_yape),
+  total_yape_qr = ABS(total_yape_qr),
+  total_credit = ABS(total_credit),
+  total_sales = ABS(total_sales),
+  -- Recalcular caja esperada: inicial + efectivo ventas + ingresos - egresos
+  expected_final = initial_amount + ABS(total_cash) + total_ingresos - total_egresos,
+  -- Recalcular diferencia: real - esperado corregido
+  difference = COALESCE(actual_final, 0) - (initial_amount + ABS(total_cash) + total_ingresos - total_egresos)
+WHERE total_sales < 0 OR pos_total < 0 OR total_cash < 0;
+
+-- ===================================================================
+-- 🔧 PASO 3: CORREGIR cash_registers — expected y difference
+-- ===================================================================
+UPDATE cash_registers cr
+SET
+  expected_amount = cc.expected_final,
+  difference = cc.difference
+FROM cash_closures cc
+WHERE cr.id = cc.cash_register_id
+  AND cr.status = 'closed';
+
+-- ===================================================================
+-- ✅ VERIFICACIÓN FINAL: Confirmar que ya no hay negativos
+-- ===================================================================
+SELECT 
+  '✅ RESULTADO FINAL' as info,
+  COUNT(*) FILTER (WHERE total_sales < 0) as "Cierres aún negativos",
+  COUNT(*) FILTER (WHERE total_sales >= 0) as "Cierres OK",
+  COUNT(*) as "Total cierres"
+FROM cash_closures;
+
+-- Mostrar los cierres corregidos
+SELECT 
+  s.code as "Sede",
+  cc.closure_date as "Fecha",
+  cc.initial_amount as "Inició",
+  cc.total_sales as "Vendió",
+  cc.total_cash as "Efectivo",
+  cc.total_yape as "Yape",
+  cc.expected_final as "Esperado",
+  cc.actual_final as "Real",
+  cc.difference as "Diferencia"
+FROM cash_closures cc
+JOIN schools s ON cc.school_id = s.id
+ORDER BY cc.closure_date DESC
+LIMIT 20;
