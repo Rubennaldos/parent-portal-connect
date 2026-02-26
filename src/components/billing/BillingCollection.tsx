@@ -317,11 +317,6 @@ export const BillingCollection = () => {
 
       const { data: transactions, error } = await query;
 
-        count: transactions?.length || 0,
-        error,
-        sample: transactions?.[0]
-      });
-
       if (error) {
         console.error('âŒ [BillingCollection] Error:', error);
         throw error;
