@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -99,12 +99,12 @@ export const BillingCollection = () => {
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [untilDate, setUntilDate] = useState<string>(''); // Nueva fecha límite
+  const [untilDate, setUntilDate] = useState<string>(''); // Nueva fecha lÃ­mite
   
-  // Selección múltiple
+  // SelecciÃ³n mÃºltiple
   const [selectedDebtors, setSelectedDebtors] = useState<Set<string>>(new Set());
   
-  // 🆕 Selección de transacciones individuales por deudor
+  // ðŸ†• SelecciÃ³n de transacciones individuales por deudor
   const [selectedTransactionsByDebtor, setSelectedTransactionsByDebtor] = useState<Map<string, Set<string>>>(new Map());
   
   // Modal de pago
@@ -119,7 +119,7 @@ export const BillingCollection = () => {
   });
   const [saving, setSaving] = useState(false);
 
-  // Modal de envío masivo
+  // Modal de envÃ­o masivo
   const [showMassiveModal, setShowMassiveModal] = useState(false);
   const [generatingExport, setGeneratingExport] = useState(false);
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
@@ -134,7 +134,7 @@ export const BillingCollection = () => {
     if (!user || !role) return;
 
     try {
-      console.log('🔍 Verificando permisos de Cobranzas/Cobrar para rol:', role);
+      console.log('ðŸ” Verificando permisos de Cobranzas/Cobrar para rol:', role);
 
       // Admin General tiene todos los permisos
       if (role === 'admin_general') {
@@ -157,11 +157,11 @@ export const BillingCollection = () => {
         .eq('granted', true);
 
       if (error) {
-        console.error('❌ Error consultando permisos:', error);
+        console.error('âŒ Error consultando permisos:', error);
         return;
       }
 
-      console.log('📦 Permisos obtenidos para Cobrar:', data);
+      console.log('ðŸ“¦ Permisos obtenidos para Cobrar:', data);
 
       let canViewAll = false;
       let canCollectPerm = false;
@@ -182,7 +182,7 @@ export const BillingCollection = () => {
         }
       });
 
-      console.log('✅ Permisos de Cobrar:', { canCollectPerm, canViewAll });
+      console.log('âœ… Permisos de Cobrar:', { canCollectPerm, canViewAll });
       setCanViewAllSchools(canViewAll);
       setCanCollect(canCollectPerm);
 
@@ -192,34 +192,29 @@ export const BillingCollection = () => {
   };
 
   useEffect(() => {
-    console.log('🎬 [BillingCollection] Componente montado');
     fetchSchools();
     fetchUserSchool();
   }, []);
 
   useEffect(() => {
-    console.log('🔄 [BillingCollection] selectedSchool o untilDate cambió:', selectedSchool, 'userSchoolId:', userSchoolId, 'canViewAllSchools:', canViewAllSchools, 'untilDate:', untilDate);
-    
-    // Cargar períodos
+    // Cargar perÃ­odos
     if (selectedSchool) {
       fetchPeriods();
     }
     
     // Cargar deudores:
     // - Si es admin_general (canViewAllSchools), puede cargar inmediatamente
-    // - Si NO es admin_general, espera a que userSchoolId esté disponible
+    // - Si NO es admin_general, espera a que userSchoolId estÃ© disponible
     if (canViewAllSchools || (userSchoolId !== null && !canViewAllSchools)) {
       const timer = setTimeout(() => {
-        console.log('⏰ [BillingCollection] Ejecutando fetchDebtors después de debounce');
         fetchDebtors();
       }, 300);
       
       return () => {
-        console.log('🧹 [BillingCollection] Limpiando timer');
         clearTimeout(timer);
       };
     } else {
-      console.log('⏸️ [BillingCollection] Esperando userSchoolId...');
+      // esperando userSchoolId
     }
   }, [selectedSchool, userSchoolId, canViewAllSchools, untilDate]);
 
@@ -260,7 +255,6 @@ export const BillingCollection = () => {
   };
 
   const fetchPeriods = async (schoolId?: string) => {
-    console.log('📅 [BillingCollection] fetchPeriods llamado');
     try {
       const targetSchoolId = schoolId || (canViewAllSchools && selectedSchool !== 'all' ? selectedSchool : userSchoolId);
       
@@ -288,14 +282,12 @@ export const BillingCollection = () => {
   const fetchDebtors = async () => {
     try {
       setLoading(true);
-      console.log('🔍 [BillingCollection] Iniciando fetchDebtors...');
 
       // Determinar el school_id a filtrar
       const schoolIdFilter = !canViewAllSchools || selectedSchool !== 'all' 
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
-      console.log('🔍 [BillingCollection] schoolIdFilter:', schoolIdFilter);
 
       // CONSULTA MEJORADA: Incluir estudiantes, profesores y clientes manuales
       // Solo transacciones PENDIENTES o PARCIALES (NO pagadas)
@@ -309,15 +301,14 @@ export const BillingCollection = () => {
         `)
         .eq('type', 'purchase')
         .in('payment_status', ['pending', 'partial']) // Excluir 'paid'
-        .order('created_at', { ascending: false }); // ✅ Más reciente primero
+        .order('created_at', { ascending: false }); // âœ… MÃ¡s reciente primero
 
-      // Filtrar por fecha límite si está definida
+      // Filtrar por fecha lÃ­mite si estÃ¡ definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
         const isoDate = localDate.toISOString();
         query = query.lte('created_at', isoDate);
-        console.log('📅 [BillingCollection] Filtrando hasta:', untilDate, '→', isoDate);
       }
 
       if (schoolIdFilter) {
@@ -326,19 +317,17 @@ export const BillingCollection = () => {
 
       const { data: transactions, error } = await query;
 
-      console.log('📊 [BillingCollection] Transacciones:', { 
         count: transactions?.length || 0,
         error,
         sample: transactions?.[0]
       });
 
       if (error) {
-        console.error('❌ [BillingCollection] Error:', error);
+        console.error('âŒ [BillingCollection] Error:', error);
         throw error;
       }
 
-      // 🆕 BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
-      console.log('🍽️ [BillingCollection] Buscando pedidos de almuerzo sin transacciones...');
+      // ðŸ†• BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
       
       let lunchOrdersQuery = supabase
         .from('lunch_orders')
@@ -360,10 +349,10 @@ export const BillingCollection = () => {
           schools(id, name),
           lunch_categories(id, name, price)
         `)
-        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no están pagados)
+        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no estÃ¡n pagados)
         .eq('is_cancelled', false);
 
-      // Filtrar por fecha límite si está definida
+      // Filtrar por fecha lÃ­mite si estÃ¡ definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -371,25 +360,23 @@ export const BillingCollection = () => {
         lunchOrdersQuery = lunchOrdersQuery.lte('order_date', dateStr);
       }
 
-      // NO filtrar por school_id aquí porque los pedidos pueden no tenerlo
-      // El filtro se hará después de obtener los datos
+      // NO filtrar por school_id aquÃ­ porque los pedidos pueden no tenerlo
+      // El filtro se harÃ¡ despuÃ©s de obtener los datos
       const { data: lunchOrders, error: lunchOrdersError } = await lunchOrdersQuery;
 
       if (lunchOrdersError) {
-        console.error('❌ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
+        console.error('âŒ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
       } else {
-        console.log('🍽️ [BillingCollection] Pedidos de almuerzo encontrados:', lunchOrders?.length || 0);
       }
 
-      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
-      console.log('🔍 [BillingCollection] Filtrando transacciones de pedidos cancelados...');
+      // ðŸ”¥ FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
       
       // Obtener todos los lunch_order_ids de las transacciones
       const lunchOrderIds = transactions
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
       
-      // Si hay transacciones con lunch_order_id, verificar cuáles están cancelados
+      // Si hay transacciones con lunch_order_id, verificar cuÃ¡les estÃ¡n cancelados
       let cancelledOrderIds = new Set<string>();
       if (lunchOrderIds.length > 0) {
         const { data: cancelledOrders } = await supabase
@@ -399,32 +386,28 @@ export const BillingCollection = () => {
           .eq('is_cancelled', true);
         
         cancelledOrderIds = new Set(cancelledOrders?.map((o: any) => o.id) || []);
-        console.log('❌ [BillingCollection] Pedidos cancelados encontrados:', cancelledOrderIds.size);
       }
       
       // Filtrar transacciones, excluyendo las de pedidos cancelados
       const validTransactions = transactions?.filter((t: any) => {
         if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) {
-          console.log(`⏭️ [BillingCollection] Transacción ${t.id} es de pedido cancelado, omitiendo`);
           return false;
         }
         return true;
       }) || [];
       
-      console.log('✅ [BillingCollection] Transacciones válidas (no canceladas):', validTransactions.length);
       
-      // 🔥 BUSCAR TAMBIÉN TRANSACCIONES PAID PARA EVITAR DUPLICADOS
-      console.log('💰 [BillingCollection] Buscando transacciones PAID de lunch_orders...');
+      // ðŸ”¥ BUSCAR TAMBIÃ‰N TRANSACCIONES PAID PARA EVITAR DUPLICADOS
       
-      // 🔧 FIX CRÍTICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
-      // Las transacciones viejas sin metadata también deben detectarse por descripción
-      // ⚠️ FIX: Supabase tiene límite default de 1000 rows → forzar .limit() alto
+      // ðŸ”§ FIX CRÃTICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
+      // Las transacciones viejas sin metadata tambiÃ©n deben detectarse por descripciÃ³n
+      // âš ï¸ FIX: Supabase tiene lÃ­mite default de 1000 rows â†’ forzar .limit() alto
       let paidQuery = supabase
         .from('transactions')
         .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
-        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
+        .limit(100000); // ðŸ”§ FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
       
       if (schoolIdFilter) {
         paidQuery = paidQuery.eq('school_id', schoolIdFilter);
@@ -432,46 +415,44 @@ export const BillingCollection = () => {
       
       const { data: paidLunchTransactions } = await paidQuery;
       
-      console.log('💰 [BillingCollection] Transacciones PAID encontradas:', paidLunchTransactions?.length || 0);
       
       // Obtener IDs de pedidos que ya tienen transacciones asociadas (PENDING O PAID)
       const existingOrderKeys = new Set<string>();
       
-      // Método 1: Por metadata.lunch_order_id (transacciones virtuales convertidas a reales)
+      // MÃ©todo 1: Por metadata.lunch_order_id (transacciones virtuales convertidas a reales)
       validTransactions.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) {
           existingOrderKeys.add(t.metadata.lunch_order_id);
         }
       });
       
-      // Agregar también los IDs de transacciones PAID
+      // Agregar tambiÃ©n los IDs de transacciones PAID
       paidLunchTransactions?.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) {
           existingOrderKeys.add(t.metadata.lunch_order_id);
-          console.log(`✅ [BillingCollection] Pedido ${t.metadata.lunch_order_id} ya tiene transacción PAID, omitiendo`);
         }
       });
       
-      // Método 2: Por coincidencia de teacher_id/student_id + fecha EN DESCRIPCIÓN (para transacciones sin metadata)
-      // 🔧 FIX CRÍTICO: Antes comparábamos created_at con order_date, pero cuando un profesor
-      // pide almuerzos para varios días en una sola sesión, TODOS tienen el mismo created_at.
-      // Ahora extraemos la fecha del PEDIDO desde la descripción de la transacción.
-      // 🔧 FIX v2: Ahora busca TANTO en transacciones PENDING como PAID (sin metadata)
+      // MÃ©todo 2: Por coincidencia de teacher_id/student_id + fecha EN DESCRIPCIÃ“N (para transacciones sin metadata)
+      // ðŸ”§ FIX CRÃTICO: Antes comparÃ¡bamos created_at con order_date, pero cuando un profesor
+      // pide almuerzos para varios dÃ­as en una sola sesiÃ³n, TODOS tienen el mismo created_at.
+      // Ahora extraemos la fecha del PEDIDO desde la descripciÃ³n de la transacciÃ³n.
+      // ðŸ”§ FIX v2: Ahora busca TANTO en transacciones PENDING como PAID (sin metadata)
       // para evitar crear virtuales de pedidos que YA fueron pagados sin metadata.
       
-      // Combinar pending + paid para búsqueda por descripción
+      // Combinar pending + paid para bÃºsqueda por descripciÃ³n
       const allTransactionsForMatching = [
         ...validTransactions, 
         ...(paidLunchTransactions || [])
       ];
       
       lunchOrders?.forEach((order: any) => {
-        // Si ya está en existingOrderKeys (por metadata), no buscar más
+        // Si ya estÃ¡ en existingOrderKeys (por metadata), no buscar mÃ¡s
         if (existingOrderKeys.has(order.id)) return;
         
         const orderDate = order.order_date; // Formato: "2026-02-09"
         
-        // Formatear la fecha del pedido para buscarla en la descripción
+        // Formatear la fecha del pedido para buscarla en la descripciÃ³n
         const orderDateFormatted = new Date(orderDate + 'T12:00:00').toLocaleDateString('es-PE', { 
           day: 'numeric', 
           month: 'long' 
@@ -481,22 +462,22 @@ export const BillingCollection = () => {
           const descMatches = t.description?.includes('Almuerzo') || t.description?.includes('almuerzo');
           if (!descMatches) return false;
           
-          // Verificar que la transacción es del mismo cliente
+          // Verificar que la transacciÃ³n es del mismo cliente
           const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
           const sameStudent = order.student_id && t.student_id === order.student_id;
-          // 🔧 FIX: También verificar clientes manuales (sin teacher_id ni student_id)
+          // ðŸ”§ FIX: TambiÃ©n verificar clientes manuales (sin teacher_id ni student_id)
           const sameManual = order.manual_name && t.manual_client_name && 
             order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
           
           if (!sameTeacher && !sameStudent && !sameManual) return false;
           
-          // 🔧 Verificar si la descripción contiene la fecha del pedido
-          // Esto funciona con descripciones como "Almuerzo - Menú Light - 11 de febrero"
+          // ðŸ”§ Verificar si la descripciÃ³n contiene la fecha del pedido
+          // Esto funciona con descripciones como "Almuerzo - MenÃº Light - 11 de febrero"
           if (t.description?.includes(orderDateFormatted)) {
             return true;
           }
           
-          // Fallback: comparar created_at con order_date (solo para mismo día exacto)
+          // Fallback: comparar created_at con order_date (solo para mismo dÃ­a exacto)
           const transDate = t.created_at.split('T')[0];
           if (transDate === orderDate) {
             return true;
@@ -507,11 +488,9 @@ export const BillingCollection = () => {
         
         if (hasMatchingTransaction) {
           existingOrderKeys.add(order.id);
-          console.log(`✅ [BillingCollection] Pedido ${order.id} (${orderDate}) tiene transacción (pending O paid, sin metadata), omitiendo virtual`);
         }
       });
       
-      console.log('📋 [BillingCollection] Total de pedidos con transacción (pending o paid):', existingOrderKeys.size);
 
       // Crear transacciones virtuales para pedidos sin transacciones
       const virtualTransactions: any[] = [];
@@ -536,9 +515,8 @@ export const BillingCollection = () => {
         });
 
         lunchOrders.forEach((order: any) => {
-          // Verificar si este pedido ya tiene una transacción
+          // Verificar si este pedido ya tiene una transacciÃ³n
           if (existingOrderKeys.has(order.id)) {
-            console.log(`⏭️ [BillingCollection] Pedido ${order.id} ya tiene transacción, omitiendo`);
             return; // Saltar este pedido
           }
           
@@ -558,7 +536,7 @@ export const BillingCollection = () => {
             unitPrice = 7.50 * orderQuantity; // Precio por defecto
           }
 
-          // Determinar school_id si no está en el pedido
+          // Determinar school_id si no estÃ¡ en el pedido
           if (!schoolId) {
             if (order.students?.school_id) {
               schoolId = order.students.school_id;
@@ -567,22 +545,20 @@ export const BillingCollection = () => {
             }
           }
 
-          // Aplicar filtro de school_id si está configurado (después de determinar el school_id correcto)
+          // Aplicar filtro de school_id si estÃ¡ configurado (despuÃ©s de determinar el school_id correcto)
           if (schoolIdFilter && schoolId !== schoolIdFilter) {
-            console.log(`⏭️ [BillingCollection] Pedido ${order.id} no coincide con filtro de sede (${schoolId} vs ${schoolIdFilter}), omitiendo`);
             return; // Saltar este pedido
           }
 
-          // 🔑 Si es cliente manual que YA PAGÓ (método != pagar_luego), NO crear deuda virtual
+          // ðŸ”‘ Si es cliente manual que YA PAGÃ“ (mÃ©todo != pagar_luego), NO crear deuda virtual
           if (order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') {
-            console.log(`✅ [BillingCollection] Pedido ${order.id} manual ya pagado con ${order.payment_method}, omitiendo`);
-            return; // No crear transacción virtual - el cliente ya pagó
+            return; // No crear transacciÃ³n virtual - el cliente ya pagÃ³
           }
 
-          // Crear transacción virtual solo si el pedido tiene un cliente identificado
+          // Crear transacciÃ³n virtual solo si el pedido tiene un cliente identificado
           if (order.student_id || order.teacher_id || order.manual_name) {
-            // Mejorar la descripción para incluir el tipo de menú
-            const menuName = order.lunch_categories?.name || order.menu_item || 'Menú';
+            // Mejorar la descripciÃ³n para incluir el tipo de menÃº
+            const menuName = order.lunch_categories?.name || order.menu_item || 'MenÃº';
             const dateFormatted = new Date(order.order_date + 'T12:00:00').toLocaleDateString('es-PE', { 
               day: 'numeric', 
               month: 'long',
@@ -613,13 +589,12 @@ export const BillingCollection = () => {
           }
         });
 
-        console.log('💰 [BillingCollection] Transacciones virtuales creadas:', virtualTransactions.length);
       }
 
       // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
 
-      // 🆕 Obtener información del creador (created_by) para transacciones del tab "¡Cobrar!"
+      // ðŸ†• Obtener informaciÃ³n del creador (created_by) para transacciones del tab "Â¡Cobrar!"
       const creatorIds = [...new Set(allTransactions.map((t: any) => t.created_by).filter(Boolean))];
       let debtorCreatedByMap = new Map();
       
@@ -642,7 +617,7 @@ export const BillingCollection = () => {
           });
         }
 
-        // También buscar en teacher_profiles
+        // TambiÃ©n buscar en teacher_profiles
         const { data: creatorTeachers } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
@@ -670,14 +645,14 @@ export const BillingCollection = () => {
         }
       }
 
-      // Agregar created_by_profile a cada transacción
+      // Agregar created_by_profile a cada transacciÃ³n
       allTransactions.forEach((t: any) => {
         if (t.created_by && debtorCreatedByMap.has(t.created_by)) {
           t.created_by_profile = debtorCreatedByMap.get(t.created_by);
         }
       });
 
-      // 🆕 Obtener fecha de creación original del pedido (lunch_order.created_at)
+      // ðŸ†• Obtener fecha de creaciÃ³n original del pedido (lunch_order.created_at)
       // Para transacciones reales que tienen lunch_order_id en metadata
       const lunchOrderIdsForDates = allTransactions
         .filter((t: any) => t.metadata?.lunch_order_id && !t.id?.toString().startsWith('lunch_'))
@@ -700,20 +675,19 @@ export const BillingCollection = () => {
         }
       }
       
-      // Para transacciones virtuales, la fecha de creación ya está en created_at (viene del lunch_order)
+      // Para transacciones virtuales, la fecha de creaciÃ³n ya estÃ¡ en created_at (viene del lunch_order)
       allTransactions.forEach((t: any) => {
         if (t.id?.toString().startsWith('lunch_') && t.created_at && !t.metadata?.order_created_at) {
           t.metadata = { ...t.metadata, order_created_at: t.created_at };
         }
       });
 
-      // Obtener IDs únicos de padres (solo para estudiantes)
+      // Obtener IDs Ãºnicos de padres (solo para estudiantes)
       const parentIds = [...new Set(allTransactions
         .filter((t: any) => t.student_id && t.students?.parent_id)
         .map((t: any) => t.students.parent_id)
         .filter(Boolean))];
 
-      console.log('👤 [BillingCollection] Parent IDs:', parentIds);
 
       // Obtener datos de los padres (solo si hay parentIds)
       let parentProfiles: any[] = [];
@@ -724,20 +698,18 @@ export const BillingCollection = () => {
           .in('user_id', parentIds);
 
         if (parentError) {
-          console.error('❌ [BillingCollection] Error fetching parent profiles:', parentError);
+          console.error('âŒ [BillingCollection] Error fetching parent profiles:', parentError);
         } else {
           parentProfiles = data || [];
-          console.log('👤 [BillingCollection] Parent profiles encontrados:', parentProfiles.length);
         }
       }
 
-      // Crear mapa de padres para acceso rápido
+      // Crear mapa de padres para acceso rÃ¡pido
       const parentMap = new Map();
       parentProfiles?.forEach((p: any) => {
         parentMap.set(p.user_id, p);
       });
 
-      console.log('🗺️ [BillingCollection] Parent map size:', parentMap.size);
 
       // Agrupar por cliente (estudiante, profesor, o manual)
       const debtorsMap: { [key: string]: Debtor } = {};
@@ -766,7 +738,7 @@ export const BillingCollection = () => {
           clientName = transaction.manual_client_name;
           clientType = 'manual';
         } else {
-          // Transacción sin cliente identificado, saltar
+          // TransacciÃ³n sin cliente identificado, saltar
           return;
         }
 
@@ -794,15 +766,13 @@ export const BillingCollection = () => {
 
       const debtorsArray = Object.values(debtorsMap);
       
-      // ✅ ORDENAR: Deudores por fecha más reciente (transacción más nueva primero)
+      // âœ… ORDENAR: Deudores por fecha mÃ¡s reciente (transacciÃ³n mÃ¡s nueva primero)
       debtorsArray.sort((a, b) => {
         const aLatest = Math.max(...a.transactions.map(t => new Date(t.created_at).getTime()));
         const bLatest = Math.max(...b.transactions.map(t => new Date(t.created_at).getTime()));
         return bLatest - aLatest;
       });
       
-      console.log('👥 [BillingCollection] Deudores encontrados:', debtorsArray.length);
-      console.log('👥 [BillingCollection] Muestra:', debtorsArray[0]);
       
       setDebtors(debtorsArray);
     } catch (error) {
@@ -827,7 +797,7 @@ export const BillingCollection = () => {
     );
   });
 
-  // ✅ Filtrar pagos realizados por término de búsqueda (MEJORADO)
+  // âœ… Filtrar pagos realizados por tÃ©rmino de bÃºsqueda (MEJORADO)
   const filteredPaidTransactions = paidTransactions.filter(transaction => {
     if (!searchTerm) return true;
     const search = searchTerm.toLowerCase();
@@ -868,8 +838,8 @@ export const BillingCollection = () => {
   };
 
   const handleOpenPayment = (debtor: Debtor) => {
-    // 🆕 Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
-    // 🔧 FIX: Usar debtor.id que ES el student_id, teacher_id o manual_name
+    // ðŸ†• Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
+    // ðŸ”§ FIX: Usar debtor.id que ES el student_id, teacher_id o manual_name
     const debtorKey = debtor.id;
     const selectedTxIds = selectedTransactionsByDebtor.get(debtorKey);
     
@@ -880,12 +850,12 @@ export const BillingCollection = () => {
       // Si hay transacciones seleccionadas, cobrar solo esas
       transactionsToPay = debtor.transactions.filter((t: any) => selectedTxIds.has(t.id));
       transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
-      console.log(`💰 Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
+      console.log(`ðŸ’° Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
     } else {
-      // Si no hay selección, cobrar todas
+      // Si no hay selecciÃ³n, cobrar todas
       transactionsToPay = debtor.transactions;
       transactionsToPayAmount = debtor.total_amount;
-      console.log(`💰 Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
+      console.log(`ðŸ’° Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
     }
     
     // Guardar el deudor con las transacciones filtradas
@@ -917,12 +887,12 @@ export const BillingCollection = () => {
       return;
     }
 
-    // ✅ VALIDACIÓN: Número de operación obligatorio (excepto efectivo)
+    // âœ… VALIDACIÃ“N: NÃºmero de operaciÃ³n obligatorio (excepto efectivo)
     if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && !paymentData.operation_number) {
       toast({
         variant: 'destructive',
-        title: 'Número de Operación Obligatorio',
-        description: 'Debe ingresar el número de operación para este método de pago',
+        title: 'NÃºmero de OperaciÃ³n Obligatorio',
+        description: 'Debe ingresar el nÃºmero de operaciÃ³n para este mÃ©todo de pago',
       });
       return;
     }
@@ -930,7 +900,6 @@ export const BillingCollection = () => {
     setSaving(true);
     
     try {
-      console.log('💰 [BillingCollection] Iniciando registro de pago...', currentDebtor);
       
       // Separar transacciones reales de virtuales
       const realTransactions = currentDebtor.transactions.filter((t: any) => 
@@ -940,12 +909,10 @@ export const BillingCollection = () => {
         t.id?.toString().startsWith('lunch_')
       );
       
-      console.log('📊 [BillingCollection] Transacciones reales:', realTransactions.length, 'virtuales:', virtualTransactions.length);
 
-      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
+      // 1. ACTUALIZAR transacciones reales existentes (que ya estÃ¡n en la BD)
       if (realTransactions.length > 0) {
         const realIds = realTransactions.map((t: any) => t.id);
-        console.log('🔄 [BillingCollection] Actualizando transacciones reales:', realIds);
 
         const { error: updateError } = await supabase
           .from('transactions')
@@ -953,23 +920,21 @@ export const BillingCollection = () => {
             payment_status: 'paid',
             payment_method: paymentData.payment_method,
             operation_number: paymentData.operation_number || null,
-            created_by: user.id, // 🔧 FIX: Registrar quién cobró
+            created_by: user.id, // ðŸ”§ FIX: Registrar quiÃ©n cobrÃ³
           })
           .in('id', realIds);
 
         if (updateError) {
-          console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
+          console.error('âŒ [BillingCollection] Error actualizando transacciones:', updateError);
           throw updateError;
         }
         
-        console.log('✅ [BillingCollection] Transacciones reales actualizadas:', realIds.length);
       }
 
-      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacción)
+      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacciÃ³n)
       if (virtualTransactions.length > 0) {
-        console.log('💰 [BillingCollection] Creando transacciones reales para pedidos de almuerzo...');
         
-        // 🎫 Generar ticket_code para las transacciones de almuerzo
+        // ðŸŽ« Generar ticket_code para las transacciones de almuerzo
         let ticketCodeBase = '';
         try {
           const { data: ticketNumber, error: ticketError } = await supabase
@@ -979,10 +944,9 @@ export const BillingCollection = () => {
             ticketCodeBase = ticketNumber;
           }
         } catch (err) {
-          console.log('⚠️ [BillingCollection] No se pudo generar ticket_code via RPC, usando fallback');
         }
         
-        // Fallback: generar código de ticket basado en timestamp
+        // Fallback: generar cÃ³digo de ticket basado en timestamp
         if (!ticketCodeBase) {
           const now = new Date();
           const dateStr = now.toISOString().slice(0,10).replace(/-/g,'');
@@ -990,14 +954,14 @@ export const BillingCollection = () => {
           ticketCodeBase = `COB-${dateStr}-${timeStr}`;
         }
         
-        // 🔧 ANTI-DUPLICADO: Verificar que no existan transacciones reales para estos lunch_orders
+        // ðŸ”§ ANTI-DUPLICADO: Verificar que no existan transacciones reales para estos lunch_orders
         const lunchOrderIds = virtualTransactions
           .map((vt: any) => vt.metadata?.lunch_order_id)
           .filter(Boolean);
         
         let existingLunchOrderIds = new Set<string>();
         if (lunchOrderIds.length > 0) {
-          // 🔧 FIX: Buscar solo transacciones de tipo purchase con metadata, con límite alto
+          // ðŸ”§ FIX: Buscar solo transacciones de tipo purchase con metadata, con lÃ­mite alto
           const { data: existingTx } = await supabase
             .from('transactions')
             .select('metadata')
@@ -1012,22 +976,20 @@ export const BillingCollection = () => {
               }
             });
           }
-          console.log(`🔍 [BillingCollection] lunch_orders que YA tienen transacción real: ${existingLunchOrderIds.size}`);
         }
         
         let ticketCounter = 0;
         const transactionsToCreate = virtualTransactions
           .filter((vt: any) => {
-            // 🔧 FILTRAR: No crear si ya existe una transacción real para este lunch_order
+            // ðŸ”§ FILTRAR: No crear si ya existe una transacciÃ³n real para este lunch_order
             if (vt.metadata?.lunch_order_id && existingLunchOrderIds.has(vt.metadata.lunch_order_id)) {
-              console.log(`⏭️ [BillingCollection] Omitiendo duplicado para lunch_order: ${vt.metadata.lunch_order_id}`);
               return false;
             }
             return true;
           })
           .map((vt: any) => {
             ticketCounter++;
-            // 🎫 Generar ticket_code único: base + sufijo si hay múltiples
+            // ðŸŽ« Generar ticket_code Ãºnico: base + sufijo si hay mÃºltiples
             const ticketCode = virtualTransactions.length > 1 
               ? `${ticketCodeBase}-${ticketCounter}` 
               : ticketCodeBase;
@@ -1043,11 +1005,11 @@ export const BillingCollection = () => {
               teacher_id: vt.teacher_id || null,
               manual_client_name: vt.manual_client_name || null,
               school_id: vt.school_id,
-              // ✅ FIX: NO establecer created_at manualmente → DB auto-asigna NOW()
+              // âœ… FIX: NO establecer created_at manualmente â†’ DB auto-asigna NOW()
               // Esto corrige el bug donde todos los pagos mostraban 19:00
               // La fecha del pedido se mantiene en metadata.order_date
               created_by: user.id,
-              ticket_code: ticketCode, // 🎫 Siempre con ticket
+              ticket_code: ticketCode, // ðŸŽ« Siempre con ticket
             };
             
             // Agregar metadata con lunch_order_id
@@ -1065,23 +1027,20 @@ export const BillingCollection = () => {
             .select();
 
           if (createError) {
-            console.error('❌ [BillingCollection] Error creando transacciones:', createError);
+            console.error('âŒ [BillingCollection] Error creando transacciones:', createError);
             throw createError;
           }
 
-          console.log('✅ [BillingCollection] Transacciones nuevas creadas:', createdTransactions?.length);
         } else {
-          console.log('⚠️ [BillingCollection] Todas las virtuales ya tenían transacción real, nada que crear');
         }
 
-        // 🔧 FIX CRÍTICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
+        // ðŸ”§ FIX CRÃTICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
         // Esto previene que un pedido cobrado vuelva a aparecer como virtual
         const lunchOrderIdsToDeliver = virtualTransactions
           .map((vt: any) => vt.metadata?.lunch_order_id)
           .filter(Boolean);
         
         if (lunchOrderIdsToDeliver.length > 0) {
-          console.log('📦 [BillingCollection] Marcando lunch_orders como delivered:', lunchOrderIdsToDeliver);
           const { error: deliverError } = await supabase
             .from('lunch_orders')
             .update({ 
@@ -1091,22 +1050,20 @@ export const BillingCollection = () => {
             .in('id', lunchOrderIdsToDeliver);
           
           if (deliverError) {
-            console.error('⚠️ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
-            // No lanzar error - el pago ya se registró, esto es secundario
+            console.error('âš ï¸ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
+            // No lanzar error - el pago ya se registrÃ³, esto es secundario
           } else {
-            console.log('✅ [BillingCollection] lunch_orders marcados como delivered');
           }
         }
       }
 
-      // 🔧 FIX: También marcar lunch_orders de transacciones REALES como 'delivered'
+      // ðŸ”§ FIX: TambiÃ©n marcar lunch_orders de transacciones REALES como 'delivered'
       if (realTransactions.length > 0) {
         const realLunchOrderIds = realTransactions
           .map((t: any) => t.metadata?.lunch_order_id)
           .filter(Boolean);
         
         if (realLunchOrderIds.length > 0) {
-          console.log('📦 [BillingCollection] Marcando lunch_orders de transacciones reales como delivered:', realLunchOrderIds);
           const { error: deliverRealError } = await supabase
             .from('lunch_orders')
             .update({ 
@@ -1116,16 +1073,15 @@ export const BillingCollection = () => {
             .in('id', realLunchOrderIds);
           
           if (deliverRealError) {
-            console.error('⚠️ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
+            console.error('âš ï¸ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
           } else {
-            console.log('✅ [BillingCollection] lunch_orders reales marcados como delivered');
           }
         }
       }
 
       toast({
-        title: '✅ Pago registrado',
-        description: `Se registró el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
+        title: 'âœ… Pago registrado',
+        description: `Se registrÃ³ el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
       });
 
       // Cerrar modal y limpiar
@@ -1140,7 +1096,6 @@ export const BillingCollection = () => {
       });
       
       // Recargar deudores para actualizar la lista
-      console.log('🔄 [BillingCollection] Recargando deudores después del pago...');
       await fetchDebtors();
     } catch (error: any) {
       console.error('Error registering payment:', error);
@@ -1156,7 +1111,7 @@ export const BillingCollection = () => {
 
   const copyMessage = (debtor: Debtor) => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
+    const periodText = period ? `del perÃ­odo: ${period.period_name}` : 'pendiente';
     
     let clientLine = '';
     let recipientLine = '';
@@ -1172,23 +1127,23 @@ export const BillingCollection = () => {
       recipientLine = `Estimado(a) ${debtor.client_name}`;
     }
     
-    const message = `🔔 *COBRANZA LIMA CAFÉ 28*
+    const message = `ðŸ”” *COBRANZA LIMA CAFÃ‰ 28*
 
 ${recipientLine}
 
 ${clientLine}
 
-💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}
+ðŸ’° Monto Total: S/ ${debtor.total_amount.toFixed(2)}
 
-📎 Adjuntamos el detalle completo.
+ðŸ“Ž Adjuntamos el detalle completo.
 
-Para pagar, contacte con administración.
+Para pagar, contacte con administraciÃ³n.
 Gracias.`;
 
     navigator.clipboard.writeText(message);
     toast({
-      title: '📋 Mensaje copiado',
-      description: 'El mensaje se copió al portapapeles',
+      title: 'ðŸ“‹ Mensaje copiado',
+      description: 'El mensaje se copiÃ³ al portapapeles',
     });
   };
 
@@ -1252,7 +1207,7 @@ Gracias.`;
     });
 
     toast({
-      title: '✅ PDF generado',
+      title: 'âœ… PDF generado',
       description: `Estado de cuenta de ${debtor.client_name}`,
     });
   };
@@ -1281,9 +1236,9 @@ Gracias.`;
         student_name: debtor.client_name,
         amount: debtor.total_amount.toFixed(2),
         period: period?.period_name || 'Cuenta Pendiente',
-        message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del período: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administración.\nGracias.`,
+        message: `ðŸ”” *COBRANZA LIMA CAFÃ‰ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del perÃ­odo: ${period.period_name}` : ''}\n\nðŸ’° Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\nðŸ“Ž Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraciÃ³n.\nGracias.`,
         delay_seconds: delay,
-        pdf_url: '', // Se generará después
+        pdf_url: '', // Se generarÃ¡ despuÃ©s
       };
     });
 
@@ -1297,7 +1252,7 @@ Gracias.`;
     link.click();
 
     toast({
-      title: '✅ Exportación generada',
+      title: 'âœ… ExportaciÃ³n generada',
       description: `${messages.length} mensajes con intervalos aleatorios (15-300 seg)`,
     });
   };
@@ -1315,7 +1270,7 @@ Gracias.`;
     }
 
     toast({
-      title: '📄 Generando PDFs...',
+      title: 'ðŸ“„ Generando PDFs...',
       description: `Procesando ${selectedDebtorsList.length} documento(s)`,
     });
 
@@ -1333,14 +1288,14 @@ Gracias.`;
       console.error('Error cargando logo:', error);
     }
 
-    // Generar PDFs con pequeño delay entre cada uno
+    // Generar PDFs con pequeÃ±o delay entre cada uno
     for (let i = 0; i < selectedDebtorsList.length; i++) {
       const debtor = selectedDebtorsList[i];
       
       const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
       const periodName = period ? period.period_name : 'Todas las deudas';
       
-      // Calcular fechas reales basadas en las transacciones si no hay período
+      // Calcular fechas reales basadas en las transacciones si no hay perÃ­odo
       let startDate: string;
       let endDate: string;
       
@@ -1381,26 +1336,26 @@ Gracias.`;
         logo_base64: logoBase64
       });
 
-      // Pequeño delay entre PDFs para evitar bloqueo del navegador
+      // PequeÃ±o delay entre PDFs para evitar bloqueo del navegador
       if (i < selectedDebtorsList.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
     toast({
-      title: '✅ PDFs generados',
+      title: 'âœ… PDFs generados',
       description: `Se generaron ${selectedDebtorsList.length} documentos exitosamente`,
     });
   };
 
   const currentPeriod = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
 
-  // Función para obtener el cargo y descripción completa del usuario
+  // FunciÃ³n para obtener el cargo y descripciÃ³n completa del usuario
   const getUserRoleDescription = (profile: any, schoolName: string) => {
     if (!profile) return null;
     
     const name = profile.full_name || profile.email || 'Usuario';
-    // Usar el school_name del perfil si existe, si no, usar el que viene de la transacción
+    // Usar el school_name del perfil si existe, si no, usar el que viene de la transacciÃ³n
     const finalSchoolName = profile.school_name || profile.teacher_school_name || schoolName;
     let roleDescription = '';
     
@@ -1438,7 +1393,7 @@ Gracias.`;
     };
   };
 
-  // Función para obtener pagos realizados
+  // FunciÃ³n para obtener pagos realizados
   const fetchPaidTransactions = async () => {
     try {
       setLoadingPaid(true);
@@ -1458,13 +1413,13 @@ Gracias.`;
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .order('created_at', { ascending: false })
-        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso (default: 1000)
+        .limit(100000); // ðŸ”§ FIX: Evitar truncamiento silencioso (default: 1000)
 
       if (schoolIdFilter) {
         query = query.eq('school_id', schoolIdFilter);
       }
 
-      // Filtrar por fecha si está definida
+      // Filtrar por fecha si estÃ¡ definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -1476,7 +1431,7 @@ Gracias.`;
 
       if (error) throw error;
 
-      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      // ðŸ”¥ FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
       const lunchOrderIds = data
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
@@ -1499,7 +1454,7 @@ Gracias.`;
         return true;
       }) || [];
 
-      // 🆕 Obtener información del creador (created_by) manualmente
+      // ðŸ†• Obtener informaciÃ³n del creador (created_by) manualmente
       const userIds = [...new Set(validTransactions.map((t: any) => t.created_by).filter(Boolean))];
       let createdByMap = new Map();
       
@@ -1526,7 +1481,7 @@ Gracias.`;
           });
         }
 
-        // También buscar en teacher_profiles por si el created_by es un profesor
+        // TambiÃ©n buscar en teacher_profiles por si el created_by es un profesor
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
@@ -1556,16 +1511,12 @@ Gracias.`;
         }
       }
 
-      // Agregar la información del creador a cada transacción
+      // Agregar la informaciÃ³n del creador a cada transacciÃ³n
       const transactionsWithCreator = validTransactions.map((t: any) => ({
         ...t,
         created_by_profile: createdByMap.get(t.created_by) || null
       }));
 
-      console.log('[BillingCollection] 📊 Transacciones cargadas:', transactionsWithCreator.length);
-      console.log('[BillingCollection] 🔍 Ejemplo de transacción completa:', transactionsWithCreator[0]);
-      console.log('[BillingCollection] 👤 created_by_profile:', transactionsWithCreator[0]?.created_by_profile);
-      console.log('[BillingCollection] 🗺️ Mapa de creadores (primeros 3):', Array.from(createdByMap.entries()).slice(0, 3));
 
       setPaidTransactions(transactionsWithCreator);
     } catch (error) {
@@ -1580,7 +1531,7 @@ Gracias.`;
     }
   };
 
-  // Cargar pagos realizados cuando cambia la pestaña
+  // Cargar pagos realizados cuando cambia la pestaÃ±a
   useEffect(() => {
     if (activeTab === 'pagos' && (canViewAllSchools || userSchoolId)) {
       fetchPaidTransactions();
@@ -1614,22 +1565,22 @@ Gracias.`;
         doc.addImage(logoBase64, 'PNG', 15, 15, 30, 30);
       }
 
-      // Título
+      // TÃ­tulo
       doc.setFontSize(20);
       doc.setTextColor(34, 139, 34); // Verde
       doc.text('COMPROBANTE DE PAGO', pageWidth / 2, 25, { align: 'center' });
 
-      // Subtítulo
+      // SubtÃ­tulo
       doc.setFontSize(12);
       doc.setTextColor(100, 100, 100);
-      doc.text('Lima Café - Sistema de Cobranzas', pageWidth / 2, 32, { align: 'center' });
+      doc.text('Lima CafÃ© - Sistema de Cobranzas', pageWidth / 2, 32, { align: 'center' });
 
-      // Línea separadora
+      // LÃ­nea separadora
       doc.setDrawColor(34, 139, 34);
       doc.setLineWidth(0.5);
       doc.line(15, 50, pageWidth - 15, 50);
 
-      // Información del pago
+      // InformaciÃ³n del pago
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
       
@@ -1700,9 +1651,9 @@ Gracias.`;
         }
       }
 
-      // Método de pago
+      // MÃ©todo de pago
       doc.setFont('helvetica', 'bold');
-      doc.text('MÉTODO DE PAGO:', 15, yPos);
+      doc.text('MÃ‰TODO DE PAGO:', 15, yPos);
       doc.setFont('helvetica', 'normal');
       const methodText = transaction.payment_method 
         ? transaction.payment_method === 'teacher_account' ? 'CUENTA PROFESOR' : transaction.payment_method
@@ -1710,19 +1661,19 @@ Gracias.`;
       doc.text(methodText.toUpperCase(), 70, yPos);
       yPos += 7;
 
-      // Número de ticket (si existe)
+      // NÃºmero de ticket (si existe)
       if (transaction.ticket_code) {
         doc.setFont('helvetica', 'bold');
-        doc.text('Nº TICKET:', 15, yPos);
+        doc.text('NÂº TICKET:', 15, yPos);
         doc.setFont('helvetica', 'normal');
         doc.text(transaction.ticket_code, 70, yPos);
         yPos += 7;
       }
 
-      // Número de operación (si existe)
+      // NÃºmero de operaciÃ³n (si existe)
       if (transaction.operation_number) {
         doc.setFont('helvetica', 'bold');
-        doc.text('Nº OPERACIÓN:', 15, yPos);
+        doc.text('NÂº OPERACIÃ“N:', 15, yPos);
         doc.setFont('helvetica', 'normal');
         doc.text(transaction.operation_number, 70, yPos);
         yPos += 7;
@@ -1739,17 +1690,17 @@ Gracias.`;
 
       yPos += 3;
 
-      // 🍽️ DETALLE DE CONSUMO - MUY DESTACADO CON RECUADRO AZUL
+      // ðŸ½ï¸ DETALLE DE CONSUMO - MUY DESTACADO CON RECUADRO AZUL
       doc.setFillColor(59, 130, 246); // Azul
       doc.rect(15, yPos - 2, pageWidth - 30, 8, 'F');
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 255, 255);
-      doc.text('🍽️ DETALLE DE CONSUMO', 18, yPos + 4);
+      doc.text('ðŸ½ï¸ DETALLE DE CONSUMO', 18, yPos + 4);
       
       yPos += 12;
       
-      // Descripción del consumo en recuadro blanco
+      // DescripciÃ³n del consumo en recuadro blanco
       doc.setFillColor(240, 245, 255); // Azul muy claro
       doc.setDrawColor(59, 130, 246);
       doc.setLineWidth(0.5);
@@ -1757,7 +1708,7 @@ Gracias.`;
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      const description = transaction.description || 'Sin descripción';
+      const description = transaction.description || 'Sin descripciÃ³n';
       const descriptionLines = doc.splitTextToSize(description, pageWidth - 40);
       const descHeight = descriptionLines.length * 5 + 8;
       
@@ -1765,7 +1716,7 @@ Gracias.`;
       doc.text(descriptionLines, 20, yPos + 3);
       yPos += descHeight + 5;
 
-      // Línea separadora
+      // LÃ­nea separadora
       doc.setDrawColor(200, 200, 200);
       doc.setLineWidth(0.3);
       doc.line(15, yPos, pageWidth - 15, yPos);
@@ -1790,7 +1741,7 @@ Gracias.`;
       doc.setFont('helvetica', 'italic');
       
       const footerY = pageHeight - 30;
-      doc.text('Este es un comprobante interno generado por el sistema Lima Café', pageWidth / 2, footerY, { align: 'center' });
+      doc.text('Este es un comprobante interno generado por el sistema Lima CafÃ©', pageWidth / 2, footerY, { align: 'center' });
       doc.text(`Generado el: ${format(new Date(), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}`, pageWidth / 2, footerY + 5, { align: 'center' });
       doc.text('Para consultas: contacto@limacafe.pe', pageWidth / 2, footerY + 10, { align: 'center' });
 
@@ -1799,8 +1750,8 @@ Gracias.`;
       doc.save(fileName);
 
       toast({
-        title: '✅ Comprobante generado',
-        description: `Se descargó el comprobante de pago exitosamente`,
+        title: 'âœ… Comprobante generado',
+        description: `Se descargÃ³ el comprobante de pago exitosamente`,
       });
     } catch (error) {
       console.error('Error generando comprobante:', error);
@@ -1818,10 +1769,10 @@ Gracias.`;
       <Alert className="bg-amber-50 border-amber-200">
         <AlertTriangle className="h-5 w-5 text-amber-600" />
         <AlertDescription className="text-amber-900">
-          <strong>⚠️ API de Facturación SUNAT aún no conectado</strong>
+          <strong>âš ï¸ API de FacturaciÃ³n SUNAT aÃºn no conectado</strong>
           <br />
-          Por el momento, los documentos se generarán como comprobantes internos. 
-          Próximamente se habilitará la facturación electrónica oficial.
+          Por el momento, los documentos se generarÃ¡n como comprobantes internos. 
+          PrÃ³ximamente se habilitarÃ¡ la facturaciÃ³n electrÃ³nica oficial.
         </AlertDescription>
       </Alert>
 
@@ -1848,9 +1799,9 @@ Gracias.`;
               </div>
             )}
 
-            {/* Período (OPCIONAL) */}
+            {/* PerÃ­odo (OPCIONAL) */}
             <div className="space-y-2">
-              <Label>Período de Cobranza (Opcional)</Label>
+              <Label>PerÃ­odo de Cobranza (Opcional)</Label>
               <select
                 value={selectedPeriod || 'all'}
                 onChange={(e) => setSelectedPeriod(e.target.value === 'all' ? '' : e.target.value)}
@@ -1865,7 +1816,7 @@ Gracias.`;
               </select>
             </div>
 
-            {/* NUEVO: Filtro de fecha límite */}
+            {/* NUEVO: Filtro de fecha lÃ­mite */}
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
@@ -1877,7 +1828,7 @@ Gracias.`;
                   value={untilDate}
                   onChange={(e) => setUntilDate(e.target.value)}
                   className="flex-1"
-                  placeholder="Seleccionar fecha límite"
+                  placeholder="Seleccionar fecha lÃ­mite"
                 />
                 <Button
                   variant="default"
@@ -1888,7 +1839,7 @@ Gracias.`;
                     setUntilDate(localDate);
                   }}
                 >
-                  📅 Hasta Hoy
+                  ðŸ“… Hasta Hoy
                 </Button>
               </div>
               {untilDate && (
@@ -1898,7 +1849,7 @@ Gracias.`;
                     const today = new Date();
                     const filterDate = new Date(untilDate + 'T00:00:00');
                     if (filterDate < today) {
-                      return ' ⚠️ (Puede que falten pedidos de fechas posteriores)';
+                      return ' âš ï¸ (Puede que falten pedidos de fechas posteriores)';
                     }
                     return '';
                   })()}
@@ -1976,7 +1927,7 @@ Gracias.`;
             </Card>
           )}
 
-          {/* Pestañas: Cobrar / Pagos Realizados - Sin Radix */}
+          {/* PestaÃ±as: Cobrar / Pagos Realizados - Sin Radix */}
           <div className="w-full">
             <div className="grid w-full grid-cols-2 mb-6 bg-muted p-1 rounded-lg">
               <button
@@ -1988,7 +1939,7 @@ Gracias.`;
                 }`}
               >
                 <DollarSign className="h-4 w-4" />
-                ¡Cobrar!
+                Â¡Cobrar!
               </button>
               <button
                 onClick={() => setActiveTab('pagos')}
@@ -2011,17 +1962,17 @@ Gracias.`;
               <CardContent className="py-12 text-center">
                 <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-green-500" />
                 <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                  ¡Sin deudas pendientes!
+                  Â¡Sin deudas pendientes!
                 </h3>
                 <p className="text-gray-500">
-                  No hay consumos sin facturar en el período seleccionado
+                  No hay consumos sin facturar en el perÃ­odo seleccionado
                 </p>
               </CardContent>
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {filteredDebtors.map((debtor) => {
-                // Calcular fechas mín y máx de las transacciones
+                // Calcular fechas mÃ­n y mÃ¡x de las transacciones
                 const dates = debtor.transactions.map(t => new Date(t.created_at));
                 const minDate = dates.length > 0 ? new Date(Math.min(...dates.map(d => d.getTime()))) : null;
                 const maxDate = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
@@ -2044,23 +1995,23 @@ Gracias.`;
                                 <h3 className="font-bold text-xl text-gray-900">{debtor.client_name}</h3>
                                 {debtor.client_type === 'teacher' && (
                                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                                    👨‍🏫 Profesor
+                                    ðŸ‘¨â€ðŸ« Profesor
                                   </Badge>
                                 )}
                                 {debtor.client_type === 'manual' && (
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                    📝 Sin Cuenta
+                                    ðŸ“ Sin Cuenta
                                   </Badge>
                                 )}
                               </div>
                               {debtor.client_type === 'student' && debtor.parent_name && (
                                 <>
                                   <p className="text-sm text-gray-600 mt-1">
-                                    👤 Padre: <span className="font-semibold">{debtor.parent_name}</span>
+                                    ðŸ‘¤ Padre: <span className="font-semibold">{debtor.parent_name}</span>
                                   </p>
                                   {debtor.parent_phone && (
                                     <p className="text-sm text-gray-600">
-                                      📱 {debtor.parent_phone}
+                                      ðŸ“± {debtor.parent_phone}
                                     </p>
                                   )}
                                 </>
@@ -2081,17 +2032,17 @@ Gracias.`;
                             </div>
                           </div>
 
-                          {/* Información de fechas y comprobantes */}
+                          {/* InformaciÃ³n de fechas y comprobantes */}
                           <div className="bg-gray-50 rounded-lg p-3 mb-3 space-y-2">
                             <div className="grid grid-cols-2 gap-3 text-sm">
                               <div>
-                                <p className="text-gray-500">📅 Primer consumo:</p>
+                                <p className="text-gray-500">ðŸ“… Primer consumo:</p>
                                 <p className="font-semibold text-gray-900">
                                   {minDate ? format(minDate, "dd/MM/yyyy 'a las' HH:mm", { locale: es }) : 'N/A'}
                                 </p>
                               </div>
                               <div>
-                                <p className="text-gray-500">📅 Último consumo:</p>
+                                <p className="text-gray-500">ðŸ“… Ãšltimo consumo:</p>
                                 <p className="font-semibold text-gray-900">
                                   {maxDate ? format(maxDate, "dd/MM/yyyy 'a las' HH:mm", { locale: es }) : 'N/A'}
                                 </p>
@@ -2101,10 +2052,10 @@ Gracias.`;
                             {/* Desglose de transacciones */}
                             <details className="cursor-pointer">
                               <summary className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-                                Ver detalles de {debtor.transaction_count} transacción(es) ▼
+                                Ver detalles de {debtor.transaction_count} transacciÃ³n(es) â–¼
                               </summary>
                               <div className="mt-2">
-                                {/* Botón para seleccionar todas */}
+                                {/* BotÃ³n para seleccionar todas */}
                                 <button
                                   onClick={() => {
                                     const debtorKey = debtor.id;
@@ -2179,10 +2130,10 @@ Gracias.`;
                                           <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                               <span className="font-semibold text-blue-600 hover:text-blue-700">#{idx + 1}</span>
-                                              {/* Mostrar fecha del pedido si viene del metadata, si no de la descripción */}
+                                              {/* Mostrar fecha del pedido si viene del metadata, si no de la descripciÃ³n */}
                                               {t.metadata?.order_date ? (
                                                 <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                                  📅 {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
+                                                  ðŸ“… {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
                                                 </span>
                                               ) : null}
                                               {t.metadata?.menu_name && (
@@ -2194,9 +2145,9 @@ Gracias.`;
                                             <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
                                           </div>
                                           <div className="text-gray-600 mt-0.5 text-[10px]">
-                                            {t.description} • {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
+                                            {t.description} â€¢ {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
                                             {t.ticket_code && (
-                                              <span className="ml-1 text-indigo-700 font-bold">• 🎫 {t.ticket_code}</span>
+                                              <span className="ml-1 text-indigo-700 font-bold">â€¢ ðŸŽ« {t.ticket_code}</span>
                                             )}
                                           </div>
                                         </div>
@@ -2208,7 +2159,7 @@ Gracias.`;
                             </details>
                           </div>
 
-                          {/* Botones de acción */}
+                          {/* Botones de acciÃ³n */}
                           <div className="flex flex-wrap gap-2">
                             <Button
                               size="sm"
@@ -2267,7 +2218,7 @@ Gracias.`;
                       {searchTerm ? 'No se encontraron resultados' : 'No hay pagos registrados'}
                     </h3>
                     <p className="text-gray-500">
-                      {searchTerm ? 'Intenta con otro término de búsqueda' : 'Los pagos realizados aparecerán aquí'}
+                      {searchTerm ? 'Intenta con otro tÃ©rmino de bÃºsqueda' : 'Los pagos realizados aparecerÃ¡n aquÃ­'}
                     </p>
                   </CardContent>
                 </Card>
@@ -2280,10 +2231,10 @@ Gracias.`;
                                      transaction.manual_client_name || 
                                      null;
                     
-                    // Si no hay nombre, es una venta de cocina genérica
+                    // Si no hay nombre, es una venta de cocina genÃ©rica
                     const isGenericSale = !clientName && !transaction.student_id && !transaction.teacher_id;
                     if (isGenericSale) {
-                      clientName = '🛒 Cliente Genérico Sin Cuenta';
+                      clientName = 'ðŸ›’ Cliente GenÃ©rico Sin Cuenta';
                     }
                     
                     const clientType = transaction.student_id ? 'student' : 
@@ -2300,21 +2251,21 @@ Gracias.`;
                                 <h3 className="font-bold text-xl text-gray-900">{clientName}</h3>
                                 {clientType === 'teacher' && (
                                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                                    👨‍🏫 Profesor
+                                    ðŸ‘¨â€ðŸ« Profesor
                                   </Badge>
                                 )}
                                 {clientType === 'generic' && (
                                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                                    🛒 Sin Cliente
+                                    ðŸ›’ Sin Cliente
                                   </Badge>
                                 )}
                                 {clientType === 'manual' && (
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                    📝 Sin Cuenta
+                                    ðŸ“ Sin Cuenta
                                   </Badge>
                                 )}
                                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                  ✅ Pagado
+                                  âœ… Pagado
                                 </Badge>
                               </div>
                               
@@ -2324,29 +2275,29 @@ Gracias.`;
                               </div>
 
                               <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                                {/* 🍽️ DETALLE DE CONSUMO - Lo más importante primero */}
+                                {/* ðŸ½ï¸ DETALLE DE CONSUMO - Lo mÃ¡s importante primero */}
                                 <div className="bg-white border-l-4 border-l-blue-500 rounded-md p-3 mb-3">
-                                  <p className="text-gray-500 text-sm font-semibold mb-1">🍽️ Detalle de Consumo:</p>
+                                  <p className="text-gray-500 text-sm font-semibold mb-1">ðŸ½ï¸ Detalle de Consumo:</p>
                                   <p className="font-bold text-gray-900 text-base">
-                                    {transaction.description || 'Sin descripción'}
+                                    {transaction.description || 'Sin descripciÃ³n'}
                                   </p>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3 text-sm">
                                   <div>
-                                    <p className="text-gray-500">📅 Fecha de pago:</p>
+                                    <p className="text-gray-500">ðŸ“… Fecha de pago:</p>
                                     <p className="font-semibold text-gray-900">
                                       {format(new Date(transaction.created_at), "dd/MM/yyyy", { locale: es })}
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-gray-500">🕐 Hora de pago:</p>
+                                    <p className="text-gray-500">ðŸ• Hora de pago:</p>
                                     <p className="font-semibold text-gray-900">
                                       {format(new Date(transaction.created_at), "HH:mm", { locale: es })}
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-gray-500">💳 Método de pago:</p>
+                                    <p className="text-gray-500">ðŸ’³ MÃ©todo de pago:</p>
                                     <p className="font-semibold text-gray-900 capitalize">
                                       {transaction.payment_method 
                                         ? transaction.payment_method === 'teacher_account' 
@@ -2354,17 +2305,17 @@ Gracias.`;
                                           : transaction.payment_method
                                         : transaction.ticket_code 
                                           ? 'Pago directo en caja' 
-                                          : 'Método no registrado'}
+                                          : 'MÃ©todo no registrado'}
                                     </p>
                                     {!transaction.payment_method && (
                                       <p className="text-xs text-amber-600 mt-0.5">
-                                        ⚠️ Transacción anterior al sistema de cobros
+                                        âš ï¸ TransacciÃ³n anterior al sistema de cobros
                                       </p>
                                     )}
                                   </div>
                                   {transaction.operation_number && (
                                     <div>
-                                      <p className="text-gray-500">🔢 N° de operación:</p>
+                                      <p className="text-gray-500">ðŸ”¢ NÂ° de operaciÃ³n:</p>
                                       <p className="font-semibold text-gray-900">
                                         {transaction.operation_number}
                                       </p>
@@ -2372,7 +2323,7 @@ Gracias.`;
                                   )}
                                   {transaction.ticket_code && (
                                     <div>
-                                      <p className="text-gray-500">🎫 N° de ticket:</p>
+                                      <p className="text-gray-500">ðŸŽ« NÂ° de ticket:</p>
                                       <p className="font-bold text-indigo-700">
                                         {transaction.ticket_code}
                                       </p>
@@ -2387,7 +2338,7 @@ Gracias.`;
                                   );
                                   return userInfo ? (
                                     <div className="border-t pt-2 mt-2">
-                                      <p className="text-gray-500 text-sm">👤 Registrado por:</p>
+                                      <p className="text-gray-500 text-sm">ðŸ‘¤ Registrado por:</p>
                                       <p className="font-semibold text-gray-900">{userInfo.name}</p>
                                       <p className="text-xs text-gray-600 mt-1">{userInfo.role}</p>
                                     </div>
@@ -2396,7 +2347,7 @@ Gracias.`;
 
                                 {transaction.document_type && (
                                   <div className="border-t pt-2 mt-2">
-                                    <p className="text-gray-500 text-sm">📄 Tipo de documento:</p>
+                                    <p className="text-gray-500 text-sm">ðŸ“„ Tipo de documento:</p>
                                     <p className="font-semibold text-gray-900 capitalize">
                                       {transaction.document_type}
                                     </p>
@@ -2412,8 +2363,6 @@ Gracias.`;
                               <div className="flex flex-col gap-2 w-full mt-3">
                                 <Button
                                   onClick={() => {
-                                    console.log('[BillingCollection] 🔍 Abriendo detalles de transacción:', transaction);
-                                    console.log('[BillingCollection] 📞 operation_number:', transaction.operation_number);
                                     setSelectedTransaction(transaction);
                                     setShowDetailsModal(true);
                                   }}
@@ -2448,7 +2397,7 @@ Gracias.`;
         </>
       )}
 
-      {/* Modal de Registro de Pago - REDISEÑADO */}
+      {/* Modal de Registro de Pago - REDISEÃ‘ADO */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -2460,14 +2409,14 @@ Gracias.`;
               <div className="mt-3 p-4 bg-blue-50 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
                   <div className="font-semibold text-gray-900">
-                    {currentDebtor?.client_type === 'student' && '👨‍🎓 Estudiante: '}
-                    {currentDebtor?.client_type === 'teacher' && '👨‍🏫 Profesor: '}
-                    {currentDebtor?.client_type === 'manual' && '📝 Cliente: '}
+                    {currentDebtor?.client_type === 'student' && 'ðŸ‘¨â€ðŸŽ“ Estudiante: '}
+                    {currentDebtor?.client_type === 'teacher' && 'ðŸ‘¨â€ðŸ« Profesor: '}
+                    {currentDebtor?.client_type === 'manual' && 'ðŸ“ Cliente: '}
                     {currentDebtor?.client_name}
                   </div>
                 </div>
                 {currentDebtor?.client_type === 'student' && currentDebtor.parent_name && (
-                  <div className="font-semibold text-gray-900">👤 Padre: {currentDebtor.parent_name}</div>
+                  <div className="font-semibold text-gray-900">ðŸ‘¤ Padre: {currentDebtor.parent_name}</div>
                 )}
                 <div className="text-2xl font-bold text-red-600 mt-2">Total a Cobrar: S/ {currentDebtor?.total_amount.toFixed(2)}</div>
                 <div className="text-sm text-gray-600">{currentDebtor?.transaction_count} consumo(s) pendiente(s)</div>
@@ -2479,7 +2428,7 @@ Gracias.`;
             {/* Monto a Pagar - MUY GRANDE Y VISIBLE */}
             <Card className="bg-green-50 border-green-200">
               <CardContent className="p-6">
-                <Label className="text-xl font-bold mb-4 block">💰 Monto a Pagar *</Label>
+                <Label className="text-xl font-bold mb-4 block">ðŸ’° Monto a Pagar *</Label>
                 <div className="relative">
                   <span className="absolute left-6 top-1/2 -translate-y-1/2 text-7xl font-black text-green-700">S/</span>
                   <Input
@@ -2506,9 +2455,9 @@ Gracias.`;
               </CardContent>
             </Card>
 
-            {/* Método de Pago - BOTONES GRANDES */}
+            {/* MÃ©todo de Pago - BOTONES GRANDES */}
             <div className="space-y-3">
-              <Label className="text-lg font-semibold">💳 Método de Pago *</Label>
+              <Label className="text-lg font-semibold">ðŸ’³ MÃ©todo de Pago *</Label>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <Button
                   type="button"
@@ -2517,7 +2466,7 @@ Gracias.`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'efectivo' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">💵</span>
+                    <span className="text-2xl">ðŸ’µ</span>
                     <span>Efectivo</span>
                   </div>
                 </Button>
@@ -2550,7 +2499,7 @@ Gracias.`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'transferencia' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">🏦</span>
+                    <span className="text-2xl">ðŸ¦</span>
                     <span>Transferencia</span>
                   </div>
                 </Button>
@@ -2561,18 +2510,18 @@ Gracias.`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'tarjeta' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">💳</span>
+                    <span className="text-2xl">ðŸ’³</span>
                     <span>Tarjeta</span>
                   </div>
                 </Button>
               </div>
             </div>
 
-            {/* Número de Operación - OBLIGATORIO */}
+            {/* NÃºmero de OperaciÃ³n - OBLIGATORIO */}
             {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
               <div className="space-y-2">
                 <Label className="text-base font-semibold">
-                  🔢 Número de Operación *
+                  ðŸ”¢ NÃºmero de OperaciÃ³n *
                   <span className="text-red-600 ml-1">(OBLIGATORIO)</span>
                 </Label>
                 <Input
@@ -2584,7 +2533,7 @@ Gracias.`;
                 />
                 {!paymentData.operation_number && (
                   <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
-                    ⚠️ El número de operación es obligatorio para este método de pago
+                    âš ï¸ El nÃºmero de operaciÃ³n es obligatorio para este mÃ©todo de pago
                   </p>
                 )}
               </div>
@@ -2592,7 +2541,7 @@ Gracias.`;
 
             {/* Tipo de Documento - BOTONES */}
             <div className="space-y-3">
-              <Label className="text-lg font-semibold">📄 Tipo de Documento</Label>
+              <Label className="text-lg font-semibold">ðŸ“„ Tipo de Documento</Label>
               <div className="grid grid-cols-3 gap-3">
                 <Button
                   type="button"
@@ -2600,7 +2549,7 @@ Gracias.`;
                   className={`h-16 text-base ${paymentData.document_type === 'ticket' ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                   onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'ticket' }))}
                 >
-                  🎫 Ticket
+                  ðŸŽ« Ticket
                 </Button>
                 <div className="relative">
                   <Button
@@ -2609,7 +2558,7 @@ Gracias.`;
                     className="h-16 text-base opacity-50 cursor-not-allowed w-full"
                     disabled
                   >
-                    📄 Boleta
+                    ðŸ“„ Boleta
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
@@ -2622,7 +2571,7 @@ Gracias.`;
                     className="h-16 text-base opacity-50 cursor-not-allowed w-full"
                     disabled
                   >
-                    📋 Factura
+                    ðŸ“‹ Factura
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
@@ -2630,14 +2579,14 @@ Gracias.`;
                 </div>
               </div>
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
-                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
+                âš ï¸ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexiÃ³n con la API de SUNAT. 
+                Por ahora solo estÃ¡ disponible <strong>Ticket</strong> (comprobante interno).
               </p>
             </div>
 
             {/* Notas */}
             <div className="space-y-2">
-              <Label className="text-base font-semibold">📝 Notas (Opcional)</Label>
+              <Label className="text-base font-semibold">ðŸ“ Notas (Opcional)</Label>
               <Input
                 placeholder="Observaciones adicionales..."
                 value={paymentData.notes}
@@ -2687,13 +2636,13 @@ Gracias.`;
                              selectedTransaction.students?.full_name || 
                              selectedTransaction.teacher_profiles?.full_name || 
                              selectedTransaction.manual_client_name || 
-                             '🛒 Cliente Genérico Sin Cuenta';
+                             'ðŸ›’ Cliente GenÃ©rico Sin Cuenta';
             const clientType = selectedTransaction.client_type === 'student' ? 'Estudiante' :
                               selectedTransaction.client_type === 'teacher' ? 'Profesor' :
                               selectedTransaction.client_type === 'manual' ? 'Cliente Sin Cuenta' :
                               selectedTransaction.student_id ? 'Estudiante' : 
                               selectedTransaction.teacher_id ? 'Profesor' : 
-                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente Genérico Sin Cuenta';
+                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente GenÃ©rico Sin Cuenta';
             const schoolName = selectedTransaction.school_name || 
                               selectedTransaction.schools?.name || 
                               'Sin sede';
@@ -2706,17 +2655,17 @@ Gracias.`;
             const accountEmail = selectedTransaction.teacher_profiles?.email || 
                                 selectedTransaction.students?.email || null;
             
-            // Determinar quién hizo el pedido - SIEMPRE mostrar nombre y cómo lo hizo
+            // Determinar quiÃ©n hizo el pedido - SIEMPRE mostrar nombre y cÃ³mo lo hizo
             const getOriginInfo = () => {
-              // CASO 1: created_by = el mismo profesor → Él lo creó desde su perfil
+              // CASO 1: created_by = el mismo profesor â†’ Ã‰l lo creÃ³ desde su perfil
               if (selectedTransaction.created_by && selectedTransaction.created_by === selectedTransaction.teacher_id) {
                 const teacherName = selectedTransaction.teacher_profiles?.full_name || 
                                    selectedTransaction.client_name || clientName;
                 return {
                   createdByName: teacherName,
                   createdByRole: 'Profesor',
-                  createdByMethod: 'Creó el pedido desde su perfil en la plataforma',
-                  icon: '👨‍🏫'
+                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
+                  icon: 'ðŸ‘¨â€ðŸ«'
                 };
               }
               
@@ -2727,8 +2676,8 @@ Gracias.`;
                 return {
                   createdByName: studentName,
                   createdByRole: 'Estudiante',
-                  createdByMethod: 'Creó el pedido desde su perfil en la plataforma',
-                  icon: '🎒'
+                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
+                  icon: 'ðŸŽ’'
                 };
               }
               
@@ -2737,8 +2686,8 @@ Gracias.`;
                 return {
                   createdByName: userInfo.name,
                   createdByRole: userInfo.role,
-                  createdByMethod: 'Lo registró desde el sistema de administración',
-                  icon: '🏢'
+                  createdByMethod: 'Lo registrÃ³ desde el sistema de administraciÃ³n',
+                  icon: 'ðŸ¢'
                 };
               }
               
@@ -2748,19 +2697,19 @@ Gracias.`;
                   createdByName: 'Usuario del sistema',
                   createdByRole: 'No se pudo cargar el perfil',
                   createdByMethod: 'Registrado desde el sistema',
-                  icon: '🏢'
+                  icon: 'ðŸ¢'
                 };
               }
               
-              // CASO 5: created_by = null + teacher_id → El profesor lo pidió desde su cuenta
+              // CASO 5: created_by = null + teacher_id â†’ El profesor lo pidiÃ³ desde su cuenta
               if (!selectedTransaction.created_by && selectedTransaction.teacher_id) {
                 const teacherName = selectedTransaction.teacher_profiles?.full_name || 
                                    selectedTransaction.client_name || clientName;
                 return {
                   createdByName: teacherName,
                   createdByRole: 'Profesor',
-                  createdByMethod: 'Creó el pedido desde su perfil en la plataforma',
-                  icon: '👨‍🏫'
+                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
+                  icon: 'ðŸ‘¨â€ðŸ«'
                 };
               }
               
@@ -2771,8 +2720,8 @@ Gracias.`;
                 return {
                   createdByName: studentName,
                   createdByRole: 'Estudiante',
-                  createdByMethod: 'Creó el pedido desde su perfil en la plataforma',
-                  icon: '🎒'
+                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
+                  icon: 'ðŸŽ’'
                 };
               }
               
@@ -2782,16 +2731,16 @@ Gracias.`;
                   createdByName: selectedTransaction.manual_client_name,
                   createdByRole: 'Cliente sin cuenta',
                   createdByMethod: 'Venta registrada en caja',
-                  icon: '🛒'
+                  icon: 'ðŸ›’'
                 };
               }
               
-              // CASO 8: Sin información
+              // CASO 8: Sin informaciÃ³n
               return {
                 createdByName: 'Sistema',
-                createdByRole: 'Automático',
-                createdByMethod: 'Generado automáticamente por el sistema',
-                icon: '⚙️'
+                createdByRole: 'AutomÃ¡tico',
+                createdByMethod: 'Generado automÃ¡ticamente por el sistema',
+                icon: 'âš™ï¸'
               };
             };
             
@@ -2816,23 +2765,23 @@ Gracias.`;
                 </DialogHeader>
                 
                 <div className="space-y-4 mt-4">
-                  {/* Estado de la transacción */}
+                  {/* Estado de la transacciÃ³n */}
                   {isPending && (
                     <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3 text-center">
-                      <span className="text-red-700 font-bold text-lg">⏳ DEUDA PENDIENTE DE PAGO</span>
+                      <span className="text-red-700 font-bold text-lg">â³ DEUDA PENDIENTE DE PAGO</span>
                     </div>
                   )}
                   
                   {/* Cliente */}
                   <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
-                    <h3 className="font-bold text-lg text-gray-900 mb-2">👤 Cliente</h3>
+                    <h3 className="font-bold text-lg text-gray-900 mb-2">ðŸ‘¤ Cliente</h3>
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Nombre:</span>
                         <span className="font-semibold text-gray-900">{clientName}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">Categoría:</span>
+                        <span className="text-gray-600">CategorÃ­a:</span>
                         <span className="font-semibold text-gray-900">{clientType}</span>
                       </div>
                       <div className="flex justify-between">
@@ -2843,11 +2792,11 @@ Gracias.`;
                         <span className="text-gray-600">Cuenta:</span>
                         {hasAccount ? (
                           <span className="font-semibold text-green-700 flex items-center gap-1">
-                            ✅ Tiene cuenta en el sistema
+                            âœ… Tiene cuenta en el sistema
                           </span>
                         ) : (
                           <span className="font-semibold text-red-600 flex items-center gap-1">
-                            ❌ No tiene cuenta
+                            âŒ No tiene cuenta
                           </span>
                         )}
                       </div>
@@ -2860,12 +2809,12 @@ Gracias.`;
                     </div>
                   </div>
 
-                  {/* Información del Monto y Estado */}
+                  {/* InformaciÃ³n del Monto y Estado */}
                   <div className={`rounded-lg p-4 border ${isPending 
                     ? 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200' 
                     : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'}`}>
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      {isPending ? '💰 Información de la Deuda' : '💳 Información del Pago'}
+                      {isPending ? 'ðŸ’° InformaciÃ³n de la Deuda' : 'ðŸ’³ InformaciÃ³n del Pago'}
                     </h3>
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -2878,17 +2827,17 @@ Gracias.`;
                         <span className="text-gray-600">Estado:</span>
                         {isPending ? (
                           <span className="font-bold text-red-600 bg-red-100 px-3 py-1 rounded-full text-sm">
-                            ⏳ Pendiente de Pago
+                            â³ Pendiente de Pago
                           </span>
                         ) : (
                           <span className="font-bold text-green-600 bg-green-100 px-3 py-1 rounded-full text-sm">
-                            ✅ Pagado
+                            âœ… Pagado
                           </span>
                         )}
                       </div>
                       {isPaid && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Método de pago:</span>
+                          <span className="text-gray-600">MÃ©todo de pago:</span>
                           <span className="font-semibold text-gray-900 capitalize">
                             {selectedTransaction.payment_method 
                               ? selectedTransaction.payment_method === 'teacher_account' 
@@ -2896,7 +2845,7 @@ Gracias.`;
                                 : selectedTransaction.payment_method
                               : selectedTransaction.ticket_code 
                                 ? 'Pago directo en caja' 
-                                : 'Método no registrado'}
+                                : 'MÃ©todo no registrado'}
                           </span>
                         </div>
                       )}
@@ -2915,47 +2864,47 @@ Gracias.`;
                       )}
                       {selectedTransaction.operation_number && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Nº de operación:</span>
+                          <span className="text-gray-600">NÂº de operaciÃ³n:</span>
                           <span className="font-semibold text-gray-900">{selectedTransaction.operation_number}</span>
                         </div>
                       )}
                       {selectedTransaction.ticket_code && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">🎫 Nº de ticket:</span>
+                          <span className="text-gray-600">ðŸŽ« NÂº de ticket:</span>
                           <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{selectedTransaction.ticket_code}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* 🍽️ Detalle de Consumo */}
+                  {/* ðŸ½ï¸ Detalle de Consumo */}
                   <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border-2 border-blue-300 shadow-md">
                     <h3 className="font-bold text-xl text-gray-900 mb-3 flex items-center gap-2">
-                      🍽️ Detalle de Consumo
+                      ðŸ½ï¸ Detalle de Consumo
                     </h3>
                     
-                    {/* Fechas e información del consumo */}
+                    {/* Fechas e informaciÃ³n del consumo */}
                     <div className="space-y-1.5 bg-white/60 rounded-lg p-3">
-                      {/* Descripción del consumo */}
+                      {/* DescripciÃ³n del consumo */}
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">📝 Descripción:</span>
+                        <span className="text-gray-600">ðŸ“ DescripciÃ³n:</span>
                         <span className="font-semibold text-gray-800 text-right max-w-[60%]">
-                          {selectedTransaction.description || 'Sin descripción'}
+                          {selectedTransaction.description || 'Sin descripciÃ³n'}
                         </span>
                       </div>
-                      {/* Fecha del almuerzo (para qué día es) */}
+                      {/* Fecha del almuerzo (para quÃ© dÃ­a es) */}
                       {selectedTransaction.metadata?.order_date && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">📅 Almuerzo para el día:</span>
+                          <span className="text-gray-600">ðŸ“… Almuerzo para el dÃ­a:</span>
                           <span className="font-bold text-blue-800">
                             {format(new Date(selectedTransaction.metadata.order_date + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}
                           </span>
                         </div>
                       )}
-                      {/* Fecha de creación del pedido (cuándo el profesor/padre hizo el pedido) */}
+                      {/* Fecha de creaciÃ³n del pedido (cuÃ¡ndo el profesor/padre hizo el pedido) */}
                       {selectedTransaction.metadata?.order_created_at && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">🛒 Pedido registrado el:</span>
+                          <span className="text-gray-600">ðŸ›’ Pedido registrado el:</span>
                           <span className="font-semibold text-green-800">
                             {format(new Date(selectedTransaction.metadata.order_created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
                           </span>
@@ -2963,25 +2912,25 @@ Gracias.`;
                       )}
                       {!selectedTransaction.metadata?.order_created_at && selectedTransaction.metadata?.source && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">🛒 Pedido registrado el:</span>
+                          <span className="text-gray-600">ðŸ›’ Pedido registrado el:</span>
                           <span className="font-medium text-orange-600 italic">
-                            No se registró la fecha de creación
+                            No se registrÃ³ la fecha de creaciÃ³n
                           </span>
                         </div>
                       )}
-                      {/* Fecha de registro / confirmación del pedido */}
+                      {/* Fecha de registro / confirmaciÃ³n del pedido */}
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">
-                          {selectedTransaction.payment_status === 'paid' ? '✅ Pedido confirmado el:' : '🕐 Pedido registrado el:'}
+                          {selectedTransaction.payment_status === 'paid' ? 'âœ… Pedido confirmado el:' : 'ðŸ• Pedido registrado el:'}
                         </span>
                         <span className={`font-semibold ${selectedTransaction.payment_status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
                           {format(new Date(selectedTransaction.created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
                         </span>
                       </div>
-                      {/* Categoría del menú */}
+                      {/* CategorÃ­a del menÃº */}
                       {selectedTransaction.metadata?.menu_name && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">🍽️ Categoría:</span>
+                          <span className="text-gray-600">ðŸ½ï¸ CategorÃ­a:</span>
                           <span className="font-bold text-purple-800">
                             {selectedTransaction.metadata.menu_name}
                           </span>
@@ -2990,7 +2939,7 @@ Gracias.`;
                       {/* Origen */}
                       {selectedTransaction.metadata?.source && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">📱 Origen:</span>
+                          <span className="text-gray-600">ðŸ“± Origen:</span>
                           <span className="font-medium text-gray-700">
                             {selectedTransaction.metadata.source === 'unified_calendar_teacher' ? 'Calendario del Profesor' :
                              selectedTransaction.metadata.source === 'unified_calendar_v2_teacher' ? 'Calendario del Profesor' :
@@ -3005,7 +2954,7 @@ Gracias.`;
                              selectedTransaction.metadata.source === 'physical_order_wizard_paid' ? 'Pedido presencial - Pagado' :
                              selectedTransaction.metadata.source === 'lunch_orders_confirm' ? 'Confirmado desde Pedidos de Almuerzo' :
                              selectedTransaction.metadata.source === 'lunch_order' ? 'Pedido de Almuerzo' :
-                             selectedTransaction.metadata.source === 'lunch_fast' ? 'Pedido rápido de Almuerzo' :
+                             selectedTransaction.metadata.source === 'lunch_fast' ? 'Pedido rÃ¡pido de Almuerzo' :
                              selectedTransaction.metadata.source || 'No especificado'}
                           </span>
                         </div>
@@ -3013,10 +2962,10 @@ Gracias.`;
                     </div>
                   </div>
 
-                  {/* 📋 Quién realizó el pedido */}
+                  {/* ðŸ“‹ QuiÃ©n realizÃ³ el pedido */}
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      📋 {isPending ? 'Responsable del Pedido' : 'Registrado por'}
+                      ðŸ“‹ {isPending ? 'Responsable del Pedido' : 'Registrado por'}
                     </h3>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -3038,13 +2987,13 @@ Gracias.`;
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">ID de transacción:</span>
+                        <span className="text-gray-600">ID de transacciÃ³n:</span>
                         <span className="font-mono text-xs text-gray-500">{selectedTransaction.id}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Botón PDF */}
+                  {/* BotÃ³n PDF */}
                   {isPaid ? (
                     <Button
                       onClick={() => {

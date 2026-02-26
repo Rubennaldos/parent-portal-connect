@@ -131,19 +131,28 @@ export const VoucherApproval = () => {
         .flatMap((r: any) => r.lunch_order_ids as string[]);
 
       // Mapa: lunch_order_id → ticket_code
+      // ✅ JSONB: Supabase no soporta .in() con metadata->>key,
+      //    así que usamos .or() con contains para batches pequeños
       const ticketByOrderId = new Map<string, string>();
       if (allLunchOrderIds.length > 0) {
         try {
-          const { data: txRows } = await supabase
-            .from('transactions')
-            .select('ticket_code, metadata')
-            .eq('type', 'purchase')
-            .not('ticket_code', 'is', null)
-            .in('metadata->>lunch_order_id', allLunchOrderIds);
+          // Dividir en lotes de 30 para evitar queries muy largas
+          const uniqueIds = [...new Set(allLunchOrderIds)];
+          const batchSize = 30;
+          for (let i = 0; i < uniqueIds.length; i += batchSize) {
+            const batch = uniqueIds.slice(i, i + batchSize);
+            const orFilter = batch.map(id => `metadata.cs.{"lunch_order_id":"${id}"}`).join(',');
+            const { data: txRows } = await supabase
+              .from('transactions')
+              .select('ticket_code, metadata')
+              .eq('type', 'purchase')
+              .not('ticket_code', 'is', null)
+              .or(orFilter);
 
-          for (const tx of txRows || []) {
-            const orderId = tx.metadata?.lunch_order_id;
-            if (orderId && tx.ticket_code) ticketByOrderId.set(orderId, tx.ticket_code);
+            for (const tx of txRows || []) {
+              const orderId = (tx.metadata as any)?.lunch_order_id;
+              if (orderId && tx.ticket_code) ticketByOrderId.set(orderId, tx.ticket_code);
+            }
           }
         } catch (e) {
           console.warn('No se pudieron obtener tickets de lunch_orders en batch:', e);
