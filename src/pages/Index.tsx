@@ -16,11 +16,13 @@ import {
   Receipt,
   Users as UsersIcon,
   AlertCircle,
+  AlertTriangle,
   Menu as MenuIcon,
   Home,
   Wallet,
   UtensilsCrossed,
-  Calendar
+  Calendar,
+  CreditCard
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -83,6 +85,7 @@ const Index = () => {
   
   const [students, setStudents] = useState<Student[]>([]);
   const [studentDebts, setStudentDebts] = useState<Record<string, number>>({}); // 💰 Deudas por estudiante
+  const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
   const [loading, setLoading] = useState(true);
   const [parentName, setParentName] = useState<string>('');
   const [parentProfileData, setParentProfileData] = useState<any>(null); // 👤 Datos del perfil del padre
@@ -93,9 +96,12 @@ const Index = () => {
     return sessionStorage.getItem('parentPortalTab') || 'alumnos';
   });
 
-  // Guardar la pestaña activa cuando cambia
+  // Guardar la pestaña activa cuando cambia + refrescar pagos pendientes
   useEffect(() => {
     sessionStorage.setItem('parentPortalTab', activeTab);
+    // Refrescar contador de pagos pendientes al cambiar de pestaña
+    // (especialmente útil cuando el padre vuelve de Pagos después de pagar)
+    fetchPendingPaymentsCount();
   }, [activeTab]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showParentDataForm, setShowParentDataForm] = useState(false);
@@ -129,6 +135,14 @@ const Index = () => {
     fetchStudents();
     fetchParentProfile();
     checkOnboardingStatus();
+    fetchPendingPaymentsCount();
+  }, [user]);
+
+  // 🔴 Refrescar contador de pagos pendientes cada 30 segundos
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(fetchPendingPaymentsCount, 30000);
+    return () => clearInterval(interval);
   }, [user]);
 
   const fetchParentProfile = async () => {
@@ -373,6 +387,40 @@ const Index = () => {
     }
     
     setStudentDebts(debtsMap);
+  };
+
+  // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
+  const fetchPendingPaymentsCount = async () => {
+    if (!user) return;
+    try {
+      // Obtener todos los estudiantes del padre
+      const { data: studentsList } = await supabase
+        .from('students')
+        .select('id')
+        .eq('parent_id', user.id)
+        .eq('is_active', true);
+
+      if (!studentsList || studentsList.length === 0) {
+        setPendingPaymentsCount(0);
+        return;
+      }
+
+      const studentIds = studentsList.map(s => s.id);
+
+      // Contar transacciones pendientes de pago
+      const { count, error } = await supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .in('student_id', studentIds)
+        .eq('type', 'purchase')
+        .eq('payment_status', 'pending');
+
+      if (!error) {
+        setPendingPaymentsCount(count || 0);
+      }
+    } catch (err) {
+      console.error('Error fetching pending payments count:', err);
+    }
   };
 
   const handleRecharge = async (amount: number, method: string) => {
@@ -686,6 +734,37 @@ const Index = () => {
           </div>
         </div>
       </header>
+
+      {/* 🔴 BANNER DE PAGOS PENDIENTES - Visible desde cualquier pestaña */}
+      {pendingPaymentsCount > 0 && activeTab !== 'pagos' && (
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3 sm:pt-4">
+          <div 
+            onClick={() => setActiveTab('pagos')}
+            className="cursor-pointer bg-gradient-to-r from-red-50 via-red-100 to-orange-50 border-2 border-red-300 rounded-xl p-3 sm:p-4 shadow-md animate-pulse hover:shadow-lg transition-all duration-300"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex-shrink-0 p-2 bg-red-200 rounded-full">
+                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm sm:text-base font-bold text-red-800">
+                  ⚠️ {pendingPaymentsCount === 1 ? 'Tienes 1 pedido pendiente de pago' : `Tienes ${pendingPaymentsCount} pedidos pendientes de pago`}
+                </p>
+                <p className="text-[10px] sm:text-xs text-red-600 mt-0.5">
+                  Toca aquí para ir a <strong>Pagos</strong> y completar tu pago
+                </p>
+              </div>
+              <div className="flex-shrink-0">
+                <div className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-sm">
+                  <CreditCard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Pagar ahora</span>
+                  <span className="sm:hidden">Pagar</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content - Padding responsivo */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
@@ -1006,14 +1085,27 @@ const Index = () => {
 
             <button
               onClick={() => setActiveTab('pagos')}
-              className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
+              className={`relative flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
                 activeTab === 'pagos'
                   ? 'text-emerald-700 bg-emerald-50'
-                  : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
+                  : pendingPaymentsCount > 0
+                    ? 'text-red-500 hover:text-red-600 hover:bg-red-50/30'
+                    : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
               }`}
             >
-              <Wallet className="h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1" />
-              <span className="text-[10px] sm:text-xs font-normal tracking-wide">Pagos</span>
+              {/* 🔴 Indicador parpadeante de pagos pendientes */}
+              {pendingPaymentsCount > 0 && (
+                <span className="absolute top-1.5 right-1/4 flex h-4 w-4 sm:h-5 sm:w-5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex items-center justify-center rounded-full h-4 w-4 sm:h-5 sm:w-5 bg-red-500 text-white text-[8px] sm:text-[9px] font-bold">
+                    {pendingPaymentsCount > 9 ? '9+' : pendingPaymentsCount}
+                  </span>
+                </span>
+              )}
+              <Wallet className={`h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1 ${pendingPaymentsCount > 0 && activeTab !== 'pagos' ? 'animate-bounce' : ''}`} />
+              <span className={`text-[10px] sm:text-xs font-normal tracking-wide ${pendingPaymentsCount > 0 && activeTab !== 'pagos' ? 'font-semibold text-red-600' : ''}`}>
+                Pagos
+              </span>
             </button>
 
             <button

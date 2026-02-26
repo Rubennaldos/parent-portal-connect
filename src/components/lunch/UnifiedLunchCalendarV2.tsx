@@ -1170,20 +1170,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row justify-center gap-3 mt-6">
+              <div className="flex flex-col justify-center gap-3 mt-6">
                 {/* Botón Pagar para padres — OBLIGATORIO */}
                 {userType === 'parent' && totalOrderAmount > 0 ? (
-                  <Button
-                    onClick={() => {
-                      closeWizard();
-                      setTimeout(() => setShowPaymentModal(true), 300);
-                    }}
-                    size="lg"
-                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold w-full"
-                  >
-                    <CreditCardIcon className="h-5 w-5 mr-2" />
-                    Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
-                  </Button>
+                  <>
+                    <Button
+                      onClick={() => {
+                        closeWizard();
+                        setTimeout(() => setShowPaymentModal(true), 300);
+                      }}
+                      size="lg"
+                      className="bg-purple-600 hover:bg-purple-700 text-white font-bold w-full"
+                    >
+                      <CreditCardIcon className="h-5 w-5 mr-2" />
+                      Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        closeWizard();
+                        toast({
+                          title: '⚠️ Pago pendiente',
+                          description: 'Recuerda completar tu pago desde la pestaña "Pagos". Tu pedido estará pendiente hasta que pagues.',
+                          duration: 8000,
+                        });
+                      }}
+                      size="sm"
+                      className="w-full text-xs text-gray-500 border-gray-200 hover:bg-gray-50"
+                    >
+                      Pagar después (desde pestaña Pagos)
+                    </Button>
+                  </>
                 ) : (
                   <Button 
                     onClick={closeWizard} 
