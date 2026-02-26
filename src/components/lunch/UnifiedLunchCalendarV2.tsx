@@ -649,7 +649,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       setSelectedMenu(menu);
 
       // ¿Tiene modificadores habilitados?
-      if ((menu as any).allows_modifiers) {
+      if (menu.allows_modifiers) {
         const hasGroups = await loadMenuModifiers(menu.id);
         if (hasGroups) {
           await loadFavorites(category.id);
@@ -671,7 +671,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setSelectedMenu(menu);
 
     // ¿Tiene modificadores habilitados?
-    if ((menu as any).allows_modifiers) {
+    if (menu.allows_modifiers) {
       const hasGroups = await loadMenuModifiers(menu.id);
       if (hasGroups) {
         if (selectedCategory) await loadFavorites(selectedCategory.id);
@@ -819,6 +819,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         setSelectedMenu(null);
         setCategoryMenuOptions([]);
         setQuantity(1);
+        setMenuModifierGroups([]);
+        setSelectedModifiers([]);
+        setModifierFavorites([]);
       } else {
         setWizardStep('done');
       }
@@ -841,6 +844,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setCategoryMenuOptions([]);
     setQuantity(1);
     setSelectedDates(new Set());
+    setMenuModifierGroups([]);
+    setSelectedModifiers([]);
+    setModifierFavorites([]);
 
     // Refresh data if any orders were created
     if (ordersCreated > 0) {

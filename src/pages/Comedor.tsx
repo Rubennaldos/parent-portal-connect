@@ -137,7 +137,9 @@ const Comedor = () => {
       .from('lunch_orders')
       .select(`
         id, order_date, status, quantity, is_cancelled, selected_modifiers,
-        category_id, menu_id
+        category_id, menu_id,
+        lunch_categories(name),
+        lunch_menus(main_course)
       `)
       .eq('school_id', schoolId)
       .eq('order_date', selectedDate)
@@ -156,6 +158,8 @@ const Comedor = () => {
       const modSummary = mods.length > 0
         ? mods.map((m: any) => `${m.group_name}: ${m.selected_name}`).join(' | ')
         : 'Estándar (sin cambios)';
+      const catName = (order as any).lunch_categories?.name || 'Sin categoría';
+      const menuName = (order as any).lunch_menus?.main_course || '';
       const key = `${order.category_id}-${order.menu_id}-${modSummary}`;
 
       if (groupMap.has(key)) {
@@ -164,8 +168,8 @@ const Comedor = () => {
         existing.order_ids.push(order.id);
       } else {
         groupMap.set(key, {
-          category_name: order.category_id || 'Sin categoría',
-          menu_main_course: '',
+          category_name: catName,
+          menu_main_course: menuName,
           modifiers_summary: modSummary,
           order_count: order.quantity || 1,
           order_ids: [order.id],
