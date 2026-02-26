@@ -306,7 +306,7 @@ export const BillingCollection = () => {
         .in('payment_status', ['pending', 'partial']) // Excluir 'paid'
         .order('created_at', { ascending: false }); // âœ… MÃ¡s reciente primero
 
-      // Filtrar por fecha lÃ­mite si estÃ¡ definida
+      // Filtrar por fecha lÃ­mite si está definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -347,10 +347,10 @@ export const BillingCollection = () => {
           schools(id, name),
           lunch_categories(id, name, price)
         `)
-        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no estÃ¡n pagados)
+        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no están pagados)
         .eq('is_cancelled', false);
 
-      // Filtrar por fecha lÃ­mite si estÃ¡ definida
+      // Filtrar por fecha lÃ­mite si está definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -374,7 +374,7 @@ export const BillingCollection = () => {
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
       
-      // Si hay transacciones con lunch_order_id, verificar cuÃ¡les estÃ¡n cancelados
+      // Si hay transacciones con lunch_order_id, verificar cuÃ¡les están cancelados
       let cancelledOrderIds = new Set<string>();
       if (lunchOrderIds.length > 0) {
         const { data: cancelledOrders } = await supabase
@@ -399,7 +399,7 @@ export const BillingCollection = () => {
       
       // ðŸ”§ FIX CRÃTICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
       // Las transacciones viejas sin metadata tambiÃ©n deben detectarse por descripciÃ³n
-      // âš ï¸ FIX: Supabase tiene lÃ­mite default de 1000 rows â†’ forzar .limit() alto
+      // ⚠️ FIX: Supabase tiene lÃ­mite default de 1000 rows â†’ forzar .limit() alto
       let paidQuery = supabase
         .from('transactions')
         .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
@@ -445,7 +445,7 @@ export const BillingCollection = () => {
       ];
       
       lunchOrders?.forEach((order: any) => {
-        // Si ya estÃ¡ en existingOrderKeys (por metadata), no buscar mÃ¡s
+        // Si ya está en existingOrderKeys (por metadata), no buscar mÃ¡s
         if (existingOrderKeys.has(order.id)) return;
         
         const orderDate = order.order_date; // Formato: "2026-02-09"
@@ -534,7 +534,7 @@ export const BillingCollection = () => {
             unitPrice = 7.50 * orderQuantity; // Precio por defecto
           }
 
-          // Determinar school_id si no estÃ¡ en el pedido
+          // Determinar school_id si no está en el pedido
           if (!schoolId) {
             if (order.students?.school_id) {
               schoolId = order.students.school_id;
@@ -543,7 +543,7 @@ export const BillingCollection = () => {
             }
           }
 
-          // Aplicar filtro de school_id si estÃ¡ configurado (despuÃ©s de determinar el school_id correcto)
+          // Aplicar filtro de school_id si está configurado (despuÃ©s de determinar el school_id correcto)
           if (schoolIdFilter && schoolId !== schoolIdFilter) {
             return; // Saltar este pedido
           }
@@ -673,7 +673,7 @@ export const BillingCollection = () => {
         }
       }
       
-      // Para transacciones virtuales, la fecha de creaciÃ³n ya estÃ¡ en created_at (viene del lunch_order)
+      // Para transacciones virtuales, la fecha de creaciÃ³n ya está en created_at (viene del lunch_order)
       allTransactions.forEach((t: any) => {
         if (t.id?.toString().startsWith('lunch_') && t.created_at && !t.metadata?.order_created_at) {
           t.metadata = { ...t.metadata, order_created_at: t.created_at };
@@ -958,7 +958,7 @@ export const BillingCollection = () => {
       );
       
 
-      // 1. ACTUALIZAR transacciones reales existentes (que ya estÃ¡n en la BD)
+      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
       if (realTransactions.length > 0) {
         const realIds = realTransactions.map((t: any) => t.id);
 
@@ -1098,7 +1098,7 @@ export const BillingCollection = () => {
             .in('id', lunchOrderIdsToDeliver);
           
           if (deliverError) {
-            console.error('âš ï¸ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
+            console.error('⚠️ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
             // No lanzar error - el pago ya se registrÃ³, esto es secundario
           } else {
           }
@@ -1121,7 +1121,7 @@ export const BillingCollection = () => {
             .in('id', realLunchOrderIds);
           
           if (deliverRealError) {
-            console.error('âš ï¸ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
+            console.error('⚠️ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
           } else {
           }
         }
@@ -1525,7 +1525,7 @@ Agradecemos su pronta atención. 🙏`;
         query = query.eq('school_id', schoolIdFilter);
       }
 
-      // Filtrar por fecha si estÃ¡ definida
+      // Filtrar por fecha si está definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -1875,10 +1875,10 @@ Agradecemos su pronta atención. 🙏`;
       <Alert className="bg-amber-50 border-amber-200">
         <AlertTriangle className="h-5 w-5 text-amber-600" />
         <AlertDescription className="text-amber-900">
-          <strong>âš ï¸ API de FacturaciÃ³n SUNAT aÃºn no conectado</strong>
+          <strong>⚠️ API de Facturación SUNAT aún no conectado</strong>
           <br />
-          Por el momento, los documentos se generarÃ¡n como comprobantes internos. 
-          PrÃ³ximamente se habilitarÃ¡ la facturaciÃ³n electrÃ³nica oficial.
+          Por el momento, los documentos se generarán como comprobantes internos. 
+          Próximamente se habilitará la facturación electrónica oficial.
         </AlertDescription>
       </Alert>
 
@@ -1955,7 +1955,7 @@ Agradecemos su pronta atención. 🙏`;
                     const today = new Date();
                     const filterDate = new Date(untilDate + 'T00:00:00');
                     if (filterDate < today) {
-                      return ' âš ï¸ (Puede que falten pedidos de fechas posteriores)';
+                      return ' ⚠️ (Puede que falten pedidos de fechas posteriores)';
                     }
                     return '';
                   })()}
@@ -2453,7 +2453,7 @@ Agradecemos su pronta atención. 🙏`;
                                     </p>
                                     {!transaction.payment_method && (
                                       <p className="text-xs text-amber-600 mt-0.5">
-                                        âš ï¸ TransacciÃ³n anterior al sistema de cobros
+                                        ⚠️ TransacciÃ³n anterior al sistema de cobros
                                       </p>
                                     )}
                                   </div>
@@ -2677,7 +2677,7 @@ Agradecemos su pronta atención. 🙏`;
                 />
                 {!paymentData.operation_number && (
                   <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
-                    âš ï¸ El nÃºmero de operaciÃ³n es obligatorio para este mÃ©todo de pago
+                    ⚠️ El nÃºmero de operaciÃ³n es obligatorio para este mÃ©todo de pago
                   </p>
                 )}
               </div>
@@ -2723,8 +2723,8 @@ Agradecemos su pronta atención. 🙏`;
                 </div>
               </div>
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                âš ï¸ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexiÃ³n con la API de SUNAT. 
-                Por ahora solo estÃ¡ disponible <strong>Ticket</strong> (comprobante interno).
+                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
+                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
               </p>
             </div>
 
