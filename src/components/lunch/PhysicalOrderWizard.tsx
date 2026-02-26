@@ -38,6 +38,7 @@ interface LunchMenu {
   dessert: string | null;
   category_id: string;
   allows_modifiers?: boolean;
+  garnishes?: string[];
 }
 
 interface MenuModifierGroup {
@@ -98,6 +99,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   }>>([]);
   const [loadingModifiers, setLoadingModifiers] = useState(false);
 
+  // ── Guarniciones ──
+  const [availableGarnishes, setAvailableGarnishes] = useState<string[]>([]);
+  const [selectedGarnishes, setSelectedGarnishes] = useState<Set<string>>(new Set());
+
   const handleClose = () => {
     setStep(1);
     setTargetType(null);
@@ -124,6 +129,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     setSearchTerm('');
     setMenuModifiers([]);
     setSelectedModifiers([]);
+    setAvailableGarnishes([]);
+    setSelectedGarnishes(new Set());
     onClose();
   };
 
@@ -160,6 +167,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const loadModifiersForMenu = async (menu: LunchMenu) => {
     setMenuModifiers([]);
     setSelectedModifiers([]);
+    
+    // Cargar guarniciones
+    const garnishes = (menu.garnishes as string[]) || [];
+    setAvailableGarnishes(garnishes);
+    setSelectedGarnishes(new Set());
+
     if (!menu.allows_modifiers) return;
 
     setLoadingModifiers(true);
@@ -365,7 +378,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       console.log('🔧 [fetchCategories] Buscando menús...');
       const { data: menusData, error: menusError } = await supabase
         .from('lunch_menus')
-        .select('id, category_id, date, starter, main_course, beverage, dessert, allows_modifiers')
+        .select('id, category_id, date, starter, main_course, beverage, dessert, allows_modifiers, garnishes')
         .eq('school_id', schoolId)
         .eq('date', targetDate)
         .or(`target_type.eq.${targetType},target_type.eq.both,target_type.is.null`);
@@ -588,6 +601,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           base_price: selectedCategory.price || 0,
           final_price: totalPrice,
           selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
+          selected_garnishes: Array.from(selectedGarnishes),
         };
 
         if (paymentType === 'credit') {
@@ -1149,6 +1163,42 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* ── Guarniciones opcionales ── */}
+            {selectedMenu && availableGarnishes.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+                <p className="text-sm font-semibold text-orange-800">🍟 Guarniciones opcionales:</p>
+                <div className="flex flex-wrap gap-2">
+                  {availableGarnishes.map((garnish) => {
+                    const isSelected = selectedGarnishes.has(garnish);
+                    return (
+                      <button
+                        key={garnish}
+                        type="button"
+                        onClick={() => {
+                          setSelectedGarnishes(prev => {
+                            const newSet = new Set(prev);
+                            if (newSet.has(garnish)) {
+                              newSet.delete(garnish);
+                            } else {
+                              newSet.add(garnish);
+                            }
+                            return newSet;
+                          });
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                          isSelected
+                            ? 'bg-orange-600 text-white border-2 border-orange-700'
+                            : 'bg-white text-orange-700 border-2 border-orange-300 hover:border-orange-500'
+                        }`}
+                      >
+                        {isSelected ? '✓ ' : ''}{garnish}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

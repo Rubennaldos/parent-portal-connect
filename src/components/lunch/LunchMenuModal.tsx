@@ -84,6 +84,7 @@ export const LunchMenuModal = ({
   const [loading, setLoading] = useState(false);
   const [isKitchenProduct, setIsKitchenProduct] = useState(false);
   const [categoryToppings, setCategoryToppings] = useState<Array<{name: string, price: number}>>([]);
+  const [garnishesInput, setGarnishesInput] = useState(''); // Campo de texto simple: "Papas fritas, Ensalada extra, Salsa"
 
   // ── Estado de personalización por campo ──
   const [fieldConfigs, setFieldConfigs] = useState({
@@ -179,6 +180,7 @@ export const LunchMenuModal = ({
         beverage:   { ...FIELD_DEFAULT },
         dessert:    { ...FIELD_DEFAULT },
       });
+      setGarnishesInput('');
       if (preSelectedCategoryId) {
         checkIfKitchenCategory(preSelectedCategoryId);
       }
@@ -264,6 +266,10 @@ export const LunchMenuModal = ({
           dessert:    { ...FIELD_DEFAULT },
         });
       }
+
+      // Cargar guarniciones
+      const garnishes = (data.garnishes as string[]) || [];
+      setGarnishesInput(garnishes.join(', '));
     } catch (error) {
       toast({ title: 'Error', description: 'No se pudo cargar el menú', variant: 'destructive' });
     } finally {
@@ -467,6 +473,13 @@ export const LunchMenuModal = ({
         payload.category_id = null;
         payload.target_type = 'both';
       }
+
+      // Guarniciones: convertir string separado por comas a array JSONB
+      const garnishesArray = garnishesInput
+        .split(',')
+        .map(g => g.trim())
+        .filter(g => g.length > 0);
+      payload.garnishes = garnishesArray;
 
       if (menuId) {
         const { error } = await supabase.from('lunch_menus').update(payload).eq('id', menuId);
@@ -755,6 +768,24 @@ export const LunchMenuModal = ({
               disabled={loading} rows={2} className="mt-1"
             />
           </div>
+
+          {/* Guarniciones (solo para menús normales) */}
+          {!isKitchenProduct && (
+            <div>
+              <Label htmlFor="garnishes">🍟 Guarniciones opcionales</Label>
+              <Input
+                id="garnishes"
+                value={garnishesInput}
+                onChange={(e) => setGarnishesInput(e.target.value)}
+                placeholder="Ej: Papas fritas, Ensalada extra, Salsa extra"
+                disabled={loading}
+                className="mt-1"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Separa las guarniciones con comas. Los padres podrán seleccionarlas al hacer el pedido.
+              </p>
+            </div>
+          )}
 
           <DialogFooter className="gap-2 pt-4 border-t">
             {menuId && (

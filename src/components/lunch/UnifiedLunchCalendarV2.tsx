@@ -71,6 +71,7 @@ interface LunchMenu {
   category_id: string | null;
   category?: LunchCategory | null;
   allows_modifiers?: boolean;
+  garnishes?: string[];
 }
 
 interface SpecialDay {
@@ -208,6 +209,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     id: string; favorite_name: string; modifiers: any[];
   }>>([]);
 
+  // ── Guarniciones ──
+  const [availableGarnishes, setAvailableGarnishes] = useState<string[]>([]);
+  const [selectedGarnishes, setSelectedGarnishes] = useState<Set<string>>(new Set());
+
   // View existing orders modal
   const [viewOrdersModal, setViewOrdersModal] = useState(false);
   const [viewOrdersDate, setViewOrdersDate] = useState<string | null>(null);
@@ -297,7 +302,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const targetType = userType === 'parent' ? 'students' : 'teachers';
       const { data: menusData, error: menusError } = await supabase
         .from('lunch_menus')
-        .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers')
+        .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
         .eq('school_id', effectiveSchoolId)
         .or(`target_type.eq.${targetType},target_type.eq.both,target_type.is.null`)
         .gte('date', startStr)
@@ -670,6 +675,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const handleMenuSelect = async (menu: LunchMenu) => {
     setSelectedMenu(menu);
 
+    // Cargar guarniciones disponibles
+    const garnishes = (menu.garnishes as string[]) || [];
+    setAvailableGarnishes(garnishes);
+    setSelectedGarnishes(new Set()); // Reset selección
+
     // ¿Tiene modificadores habilitados?
     if (menu.allows_modifiers) {
       const hasGroups = await loadMenuModifiers(menu.id);
@@ -738,6 +748,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           final_price: unitPrice * quantity,
           created_by: userId,
           selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
+          selected_garnishes: Array.from(selectedGarnishes),
         }])
         .select('id')
         .single();
@@ -822,6 +833,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         setMenuModifierGroups([]);
         setSelectedModifiers([]);
         setModifierFavorites([]);
+        setAvailableGarnishes([]);
+        setSelectedGarnishes(new Set());
       } else {
         setWizardStep('done');
       }
@@ -847,6 +860,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setMenuModifierGroups([]);
     setSelectedModifiers([]);
     setModifierFavorites([]);
+    setAvailableGarnishes([]);
+    setSelectedGarnishes(new Set());
 
     // Refresh data if any orders were created
     if (ordersCreated > 0) {
@@ -1350,6 +1365,42 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                         )}
                       </CardContent>
                     </Card>
+
+                    {/* Guarniciones opcionales */}
+                    {availableGarnishes.length > 0 && (
+                      <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+                        <p className="text-sm font-semibold text-orange-800">🍟 Guarniciones opcionales:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {availableGarnishes.map((garnish) => {
+                            const isSelected = selectedGarnishes.has(garnish);
+                            return (
+                              <button
+                                key={garnish}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedGarnishes(prev => {
+                                    const newSet = new Set(prev);
+                                    if (newSet.has(garnish)) {
+                                      newSet.delete(garnish);
+                                    } else {
+                                      newSet.add(garnish);
+                                    }
+                                    return newSet;
+                                  });
+                                }}
+                                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                                  isSelected
+                                    ? 'bg-orange-600 text-white border-2 border-orange-700'
+                                    : 'bg-white text-orange-700 border-2 border-orange-300 hover:border-orange-500'
+                                }`}
+                              >
+                                {isSelected ? '✓ ' : ''}{garnish}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Quantity Selector */}
                     <div className="flex items-center justify-between p-4 bg-white rounded-lg border-2">
