@@ -1212,9 +1212,9 @@ const POS = () => {
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: isFreeAccount ? 'debt' : 'cash', // Si es cuenta libre, es "fiado"
-            cash_received: isFreeAccount ? null : parseFloat(cashGiven) || total,
-            change_given: isFreeAccount ? null : (parseFloat(cashGiven) || total) - total,
+            payment_method: isFreeAccount ? 'debt' : (paymentMethod || 'efectivo'), // ✅ FIX: usar método real en vez de hardcode 'cash'
+            cash_received: isFreeAccount ? null : (paymentMethod === 'efectivo' || !paymentMethod ? parseFloat(cashGiven) || total : null),
+            change_given: isFreeAccount ? null : (paymentMethod === 'efectivo' || !paymentMethod ? (parseFloat(cashGiven) || total) - total : null),
             items: salesItems,
           });
         
@@ -1388,9 +1388,9 @@ const POS = () => {
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: paymentMethod || 'cash',
-            cash_received: parseFloat(cashGiven) || total,
-            change_given: (parseFloat(cashGiven) || total) - total,
+            payment_method: paymentMethod || 'efectivo',
+            cash_received: (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
+            change_given: (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
             items: salesItems,
           });
         

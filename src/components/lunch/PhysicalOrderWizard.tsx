@@ -152,11 +152,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   useEffect(() => {
     if (cashPaymentMethod === 'efectivo' && selectedCategory?.price && paymentDetails.amountReceived) {
       const received = parseFloat(paymentDetails.amountReceived) || 0;
-      const price = selectedCategory.price;
-      const change = received - price;
-      setPaymentDetails(prev => ({ ...prev, change: change >= 0 ? change : 0 }));
+      const totalPrice = selectedCategory.price * quantity; // ✅ FIX: usar precio total (unitario × cantidad)
+      const change = received - totalPrice;
+      setPaymentDetails(prev => ({ ...prev, change })); // ✅ Mostrar valor real (puede ser negativo para indicar insuficiente)
     }
-  }, [paymentDetails.amountReceived, selectedCategory, cashPaymentMethod]);
+  }, [paymentDetails.amountReceived, selectedCategory, cashPaymentMethod, quantity]);
 
   const isPaymentDetailsComplete = () => {
     if (!cashPaymentMethod) return false;

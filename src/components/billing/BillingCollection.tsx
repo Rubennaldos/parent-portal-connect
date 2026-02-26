@@ -79,6 +79,7 @@ interface Debtor {
   transaction_count: number;
   transactions: any[];
   voucher_status?: 'none' | 'pending' | 'rejected'; // Estado del voucher enviado por el padre
+  has_lunch_debt?: boolean; // Si tiene deuda de almuerzo (para mostrar indicador de voucher y WhatsApp)
 }
 
 export const BillingCollection = () => {
@@ -759,6 +760,14 @@ export const BillingCollection = () => {
         debtorsMap[clientId].total_amount += Math.abs(transaction.amount);
         debtorsMap[clientId].transaction_count += 1;
         debtorsMap[clientId].transactions.push(transaction);
+
+        // Detectar si tiene deuda de almuerzo
+        const isLunchTx = transaction.metadata?.lunch_order_id || 
+                          transaction.metadata?.source?.includes('lunch') ||
+                          transaction.description?.toLowerCase().includes('almuerzo');
+        if (isLunchTx) {
+          debtorsMap[clientId].has_lunch_debt = true;
+        }
       });
 
       const debtorsArray = Object.values(debtorsMap);
@@ -1251,7 +1260,7 @@ Gracias.`;
     });
   };
 
-  // 📱 ENVIAR WHATSAPP INDIVIDUAL A UN DEUDOR
+  // 📱 ENVIAR WHATSAPP INDIVIDUAL A UN DEUDOR (solo para almuerzos)
   const sendWhatsAppReminder = (debtor: Debtor) => {
     const phone = debtor.parent_phone || '';
     if (!phone) {
@@ -1263,40 +1272,32 @@ Gracias.`;
       return;
     }
 
-    const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
+    // Calcular monto solo de transacciones de almuerzo
+    const lunchTransactions = debtor.transactions.filter((t: any) => 
+      t.metadata?.lunch_order_id || 
+      t.metadata?.source?.includes('lunch') || 
+      t.description?.toLowerCase().includes('almuerzo')
+    );
+    const lunchAmount = lunchTransactions.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
+    const lunchCount = lunchTransactions.length;
 
-    let recipientLine = '';
-    let clientLine = '';
+    const message = `🔔 *AVISO DE PAGO DE ALMUERZO PENDIENTE*
 
-    if (debtor.client_type === 'student') {
-      recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
-      clientLine = `el alumno *${debtor.client_name}* tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
-    } else if (debtor.client_type === 'teacher') {
-      recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
-      clientLine = `usted tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
-    } else {
-      recipientLine = `Estimado(a) ${debtor.client_name}`;
-      clientLine = `usted tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
-    }
+Estimado(a) padre de familia,
 
-    const message = `🔔 *AVISO DE PAGO PENDIENTE*
+Le informamos que su hijo(a) *${debtor.client_name}* tiene *${lunchCount} almuerzo(s) pendiente(s) de pago* por un monto total de *S/ ${lunchAmount.toFixed(2)}*.
 
-${recipientLine},
+⚠️ Es necesario que cancele su almuerzo para que pueda ser procesado y reflejado en el sistema.
 
-Le informamos que ${clientLine}
-
-⚠️ Para que su pedido de almuerzo sea procesado y reflejado correctamente, es necesario realizar el pago correspondiente y enviar su comprobante a través de la aplicación.
-
-📲 *Pasos para pagar:*
-1. Ingrese a la app
+📲 *¿Cómo pagar?*
+1. Ingrese a la aplicación
 2. Vaya a la sección "Pagos"
-3. Seleccione sus deudas pendientes
-4. Suba su comprobante de pago
+3. Seleccione los almuerzos pendientes
+4. Suba su comprobante de pago (voucher)
 
-Si ya realizó el pago, por favor envíe su comprobante lo antes posible.
+Si ya realizó el pago, por favor envíe su comprobante lo antes posible para que podamos procesarlo.
 
-Gracias por su atención. 🙏`;
+Agradecemos su pronta atención. 🙏`;
 
     // Limpiar número de teléfono
     let cleanPhone = phone.replace(/[^0-9+]/g, '');
@@ -2126,28 +2127,28 @@ Gracias por su atención. 🙏`;
                                 <Building2 className="h-4 w-4" />
                                 {debtor.school_name}
                               </div>
-                              {/* 📋 INDICADOR DE VOUCHER */}
-                              {debtor.voucher_status === 'none' && (
+                              {/* 📋 INDICADOR DE VOUCHER (solo para deudas de almuerzo de estudiantes) */}
+                              {debtor.has_lunch_debt && debtor.client_type === 'student' && debtor.voucher_status === 'none' && (
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300 text-xs">
                                     <AlertCircle className="h-3 w-3 mr-1" />
-                                    Sin voucher enviado
+                                    🍽️ Almuerzo sin voucher enviado
                                   </Badge>
                                 </div>
                               )}
-                              {debtor.voucher_status === 'pending' && (
+                              {debtor.has_lunch_debt && debtor.voucher_status === 'pending' && (
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs">
                                     <History className="h-3 w-3 mr-1" />
-                                    Voucher pendiente de aprobación
+                                    🍽️ Voucher pendiente de aprobación
                                   </Badge>
                                 </div>
                               )}
-                              {debtor.voucher_status === 'rejected' && (
+                              {debtor.has_lunch_debt && debtor.voucher_status === 'rejected' && (
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-300 text-xs">
                                     <AlertTriangle className="h-3 w-3 mr-1" />
-                                    Voucher rechazado
+                                    🍽️ Voucher rechazado
                                   </Badge>
                                 </div>
                               )}
@@ -2319,8 +2320,8 @@ Gracias por su atención. 🙏`;
                               PDF
                             </Button>
 
-                            {/* 📱 BOTÓN WHATSAPP INDIVIDUAL */}
-                            {debtor.parent_phone && (
+                            {/* 📱 BOTÓN WHATSAPP INDIVIDUAL (solo para deudas de almuerzo) */}
+                            {debtor.has_lunch_debt && debtor.parent_phone && (
                               <Button
                                 size="sm"
                                 variant="outline"
