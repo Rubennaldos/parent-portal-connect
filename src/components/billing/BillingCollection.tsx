@@ -40,7 +40,8 @@ import {
   AlertCircle,
   History,
   Eye,
-  User
+  User,
+  Phone
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -77,6 +78,7 @@ interface Debtor {
   total_amount: number;
   transaction_count: number;
   transactions: any[];
+  voucher_status?: 'none' | 'pending' | 'rejected'; // Estado del voucher enviado por el padre
 }
 
 export const BillingCollection = () => {
@@ -761,13 +763,55 @@ export const BillingCollection = () => {
 
       const debtorsArray = Object.values(debtorsMap);
       
-      // âœ… ORDENAR: Deudores por fecha mÃ¡s reciente (transacciÃ³n mÃ¡s nueva primero)
+      // ✅ ORDENAR: Deudores por fecha más reciente (transacción más nueva primero)
       debtorsArray.sort((a, b) => {
         const aLatest = Math.max(...a.transactions.map(t => new Date(t.created_at).getTime()));
         const bLatest = Math.max(...b.transactions.map(t => new Date(t.created_at).getTime()));
         return bLatest - aLatest;
       });
-      
+
+      // 📋 DETECTAR ESTADO DE VOUCHER: ¿El padre ya envió comprobante?
+      // Recoger todos los student_ids de deudores tipo 'student'
+      const studentDebtorIds = debtorsArray
+        .filter(d => d.client_type === 'student')
+        .map(d => d.id)
+        .filter(Boolean);
+
+      if (studentDebtorIds.length > 0) {
+        try {
+          // Buscar recharge_requests pendientes o rechazadas para estos estudiantes
+          const { data: voucherRequests } = await supabase
+            .from('recharge_requests')
+            .select('student_id, status')
+            .in('student_id', studentDebtorIds)
+            .in('request_type', ['lunch_payment', 'debt_payment'])
+            .in('status', ['pending', 'rejected'])
+            .order('created_at', { ascending: false });
+
+          // Mapa: student_id → mejor estado de voucher
+          const voucherMap = new Map<string, 'pending' | 'rejected'>();
+          (voucherRequests || []).forEach((vr: any) => {
+            // Si ya tiene uno 'pending', no sobrescribir con 'rejected'
+            if (!voucherMap.has(vr.student_id) || vr.status === 'pending') {
+              voucherMap.set(vr.student_id, vr.status as 'pending' | 'rejected');
+            }
+          });
+
+          // Asignar voucher_status a cada deudor
+          debtorsArray.forEach(d => {
+            if (d.client_type === 'student' && voucherMap.has(d.id)) {
+              d.voucher_status = voucherMap.get(d.id)!;
+            } else {
+              d.voucher_status = 'none';
+            }
+          });
+        } catch (e) {
+          // Si falla, simplemente no mostramos el indicador
+          debtorsArray.forEach(d => { d.voucher_status = 'none'; });
+        }
+      } else {
+        debtorsArray.forEach(d => { d.voucher_status = 'none'; });
+      }
       
       setDebtors(debtorsArray);
     } catch (error) {
@@ -1204,6 +1248,72 @@ Gracias.`;
     toast({
       title: 'âœ… PDF generado',
       description: `Estado de cuenta de ${debtor.client_name}`,
+    });
+  };
+
+  // 📱 ENVIAR WHATSAPP INDIVIDUAL A UN DEUDOR
+  const sendWhatsAppReminder = (debtor: Debtor) => {
+    const phone = debtor.parent_phone || '';
+    if (!phone) {
+      toast({
+        variant: 'destructive',
+        title: 'Sin número de teléfono',
+        description: 'Este deudor no tiene un número de teléfono registrado.',
+      });
+      return;
+    }
+
+    const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
+    const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
+
+    let recipientLine = '';
+    let clientLine = '';
+
+    if (debtor.client_type === 'student') {
+      recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
+      clientLine = `el alumno *${debtor.client_name}* tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
+    } else if (debtor.client_type === 'teacher') {
+      recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
+      clientLine = `usted tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
+    } else {
+      recipientLine = `Estimado(a) ${debtor.client_name}`;
+      clientLine = `usted tiene un consumo ${periodText} de *S/ ${debtor.total_amount.toFixed(2)}*.`;
+    }
+
+    const message = `🔔 *AVISO DE PAGO PENDIENTE*
+
+${recipientLine},
+
+Le informamos que ${clientLine}
+
+⚠️ Para que su pedido de almuerzo sea procesado y reflejado correctamente, es necesario realizar el pago correspondiente y enviar su comprobante a través de la aplicación.
+
+📲 *Pasos para pagar:*
+1. Ingrese a la app
+2. Vaya a la sección "Pagos"
+3. Seleccione sus deudas pendientes
+4. Suba su comprobante de pago
+
+Si ya realizó el pago, por favor envíe su comprobante lo antes posible.
+
+Gracias por su atención. 🙏`;
+
+    // Limpiar número de teléfono
+    let cleanPhone = phone.replace(/[^0-9+]/g, '');
+    // Si empieza con 9 y tiene 9 dígitos, agregar código de país Perú
+    if (/^9\d{8}$/.test(cleanPhone)) {
+      cleanPhone = '51' + cleanPhone;
+    }
+    // Si empieza con +, quitarlo (wa.me no lo necesita)
+    cleanPhone = cleanPhone.replace(/^\+/, '');
+
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
+    window.open(whatsappUrl, '_blank');
+
+    toast({
+      title: '📱 Abriendo WhatsApp',
+      description: `Enviando recordatorio a ${debtor.parent_name || debtor.client_name}`,
     });
   };
 
@@ -2016,6 +2126,31 @@ Gracias.`;
                                 <Building2 className="h-4 w-4" />
                                 {debtor.school_name}
                               </div>
+                              {/* 📋 INDICADOR DE VOUCHER */}
+                              {debtor.voucher_status === 'none' && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300 text-xs">
+                                    <AlertCircle className="h-3 w-3 mr-1" />
+                                    Sin voucher enviado
+                                  </Badge>
+                                </div>
+                              )}
+                              {debtor.voucher_status === 'pending' && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs">
+                                    <History className="h-3 w-3 mr-1" />
+                                    Voucher pendiente de aprobación
+                                  </Badge>
+                                </div>
+                              )}
+                              {debtor.voucher_status === 'rejected' && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-300 text-xs">
+                                    <AlertTriangle className="h-3 w-3 mr-1" />
+                                    Voucher rechazado
+                                  </Badge>
+                                </div>
+                              )}
                             </div>
                             <div className="text-right">
                               <p className="text-3xl font-bold text-red-600">
@@ -2183,6 +2318,19 @@ Gracias.`;
                               <FileText className="h-4 w-4 mr-1" />
                               PDF
                             </Button>
+
+                            {/* 📱 BOTÓN WHATSAPP INDIVIDUAL */}
+                            {debtor.parent_phone && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="bg-green-50 hover:bg-green-100 text-green-700 border-green-300"
+                                onClick={() => sendWhatsAppReminder(debtor)}
+                              >
+                                <Phone className="h-4 w-4 mr-1" />
+                                WhatsApp
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </div>
