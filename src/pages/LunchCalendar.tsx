@@ -89,6 +89,7 @@ interface LunchMenu {
   is_special_day: boolean;
   special_day_type?: string;
   special_day_title?: string;
+  allows_modifiers?: boolean;
 }
 
 interface DayData {
@@ -1179,6 +1180,29 @@ const LunchCalendar = () => {
                             </span>
                           </div>
                         )}
+                        {/* Target type badge */}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {(!menu.target_type || menu.target_type === 'both') && (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                              👥 Para todos
+                            </span>
+                          )}
+                          {menu.target_type === 'students' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                              👨‍🎓 Alumnos
+                            </span>
+                          )}
+                          {menu.target_type === 'teachers' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">
+                              👩‍🏫 Profesores
+                            </span>
+                          )}
+                          {menu.allows_modifiers && (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
+                              ✨ Personalizable
+                            </span>
+                          )}
+                        </div>
                       </div>
                       {canEdit && (
                         <Button 

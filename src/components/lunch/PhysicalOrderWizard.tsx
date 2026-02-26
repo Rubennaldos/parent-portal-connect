@@ -37,6 +37,14 @@ interface LunchMenu {
   beverage: string | null;
   dessert: string | null;
   category_id: string;
+  allows_modifiers?: boolean;
+}
+
+interface MenuModifierGroup {
+  id: string;
+  name: string;
+  is_required: boolean;
+  options: Array<{ id: string; name: string; is_default: boolean }>;
 }
 
 interface Person {
@@ -83,6 +91,13 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const [menus, setMenus] = useState<LunchMenu[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // ── Modificadores / Personalización ──
+  const [menuModifiers, setMenuModifiers] = useState<MenuModifierGroup[]>([]);
+  const [selectedModifiers, setSelectedModifiers] = useState<Array<{
+    group_id: string; group_name: string; selected_option_id: string; selected_name: string;
+  }>>([]);
+  const [loadingModifiers, setLoadingModifiers] = useState(false);
+
   const handleClose = () => {
     setStep(1);
     setTargetType(null);
@@ -107,6 +122,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     setCategories([]);
     setMenus([]);
     setSearchTerm('');
+    setMenuModifiers([]);
+    setSelectedModifiers([]);
     onClose();
   };
 
@@ -136,6 +153,49 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         return true; // ✅ Siempre válido para "Pagar Luego"
       default:
         return false;
+    }
+  };
+
+  // ── Cargar modificadores cuando se selecciona un menú ──
+  const loadModifiersForMenu = async (menu: LunchMenu) => {
+    setMenuModifiers([]);
+    setSelectedModifiers([]);
+    if (!menu.allows_modifiers) return;
+
+    setLoadingModifiers(true);
+    try {
+      const { data: groups } = await supabase
+        .from('menu_modifier_groups')
+        .select('id, name, is_required, max_selections')
+        .eq('menu_id', menu.id)
+        .order('display_order', { ascending: true });
+
+      if (!groups?.length) return;
+
+      const groupIds = groups.map(g => g.id);
+      const { data: options } = await supabase
+        .from('menu_modifier_options')
+        .select('id, group_id, name, is_default')
+        .in('group_id', groupIds)
+        .order('display_order', { ascending: true });
+
+      const enriched = groups.map(g => ({
+        ...g,
+        options: (options || []).filter(o => o.group_id === g.id),
+      }));
+
+      setMenuModifiers(enriched);
+
+      // Pre-seleccionar valores por defecto
+      const defaults = enriched.map(g => {
+        const def = g.options.find(o => o.is_default) || g.options[0];
+        return { group_id: g.id, group_name: g.name, selected_option_id: def?.id || '', selected_name: def?.name || '' };
+      });
+      setSelectedModifiers(defaults);
+    } catch (err) {
+      console.error('Error loading modifiers:', err);
+    } finally {
+      setLoadingModifiers(false);
     }
   };
 
@@ -305,7 +365,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       console.log('🔧 [fetchCategories] Buscando menús...');
       const { data: menusData, error: menusError } = await supabase
         .from('lunch_menus')
-        .select('id, category_id, date, starter, main_course, beverage, dessert')
+        .select('id, category_id, date, starter, main_course, beverage, dessert, allows_modifiers')
         .eq('school_id', schoolId)
         .eq('date', targetDate)
         .or(`target_type.eq.${targetType},target_type.eq.both,target_type.is.null`);
@@ -527,6 +587,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           quantity,
           base_price: selectedCategory.price || 0,
           final_price: totalPrice,
+          selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
         };
 
         if (paymentType === 'credit') {
@@ -1007,11 +1068,16 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                     className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
                       selectedMenu?.id === menu.id ? 'ring-2 ring-green-500' : ''
                     }`}
-                    onClick={() => setSelectedMenu(menu)}
+                    onClick={() => { setSelectedMenu(menu); loadModifiersForMenu(menu); }}
                   >
-                    <p className="font-bold mb-2">
-                      {format(new Date(menu.date + 'T00:00:00'), "EEEE d 'de' MMMM", { locale: es })}
-                    </p>
+                    <div className="flex items-start justify-between">
+                      <p className="font-bold mb-2">
+                        {format(new Date(menu.date + 'T00:00:00'), "EEEE d 'de' MMMM", { locale: es })}
+                      </p>
+                      {menu.allows_modifiers && (
+                        <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">✨ Personalizable</span>
+                      )}
+                    </div>
                     <div className="text-sm space-y-1">
                       {menu.starter && <p>• Entrada: {menu.starter}</p>}
                       <p className="font-medium text-green-700">• Segundo: {menu.main_course}</p>
@@ -1022,6 +1088,70 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 ))}
               </div>
             )}
+
+            {/* ── Opciones de personalización (si el menú las tiene) ── */}
+            {selectedMenu && loadingModifiers && (
+              <div className="text-center py-3">
+                <Loader2 className="h-5 w-5 animate-spin mx-auto text-purple-500" />
+                <p className="text-xs text-gray-500 mt-1">Cargando opciones...</p>
+              </div>
+            )}
+            {selectedMenu && !loadingModifiers && menuModifiers.length > 0 && (
+              <div className="space-y-3 border-t pt-3 mt-1">
+                <p className="text-sm font-semibold text-purple-700">✨ Personaliza el pedido:</p>
+                {menuModifiers.map(group => {
+                  const sel = selectedModifiers.find(m => m.group_id === group.id);
+                  const fieldEmoji: Record<string, string> = {
+                    'Entrada': '🥗', 'Segundo Plato': '🍲', 'Bebida': '🥤', 'Postre': '🍰',
+                  };
+                  return (
+                    <div key={group.id} className="bg-gray-50 rounded-lg p-3 space-y-2">
+                      <p className="text-sm font-medium text-gray-700">{fieldEmoji[group.name] || '🍽️'} {group.name}</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {group.options.map(opt => {
+                          const isSelected = sel?.selected_option_id === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setSelectedModifiers(prev =>
+                                prev.map(m => m.group_id === group.id
+                                  ? { ...m, selected_option_id: opt.id, selected_name: opt.name }
+                                  : m
+                                )
+                              )}
+                              className={`p-2 rounded-lg border-2 text-xs text-left transition-all ${
+                                isSelected ? 'border-purple-500 bg-purple-50 text-purple-900 font-semibold' : 'border-gray-200 hover:border-purple-300 text-gray-700'
+                              }`}
+                            >
+                              {isSelected ? '✓ ' : ''}{opt.name}
+                            </button>
+                          );
+                        })}
+                        {/* Botón quitar */}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedModifiers(prev =>
+                            prev.map(m => m.group_id === group.id
+                              ? { ...m, selected_option_id: 'skip', selected_name: `Sin ${group.name.toLowerCase()}` }
+                              : m
+                            )
+                          )}
+                          className={`p-2 rounded-lg border-2 text-xs text-left transition-all ${
+                            sel?.selected_option_id === 'skip'
+                              ? 'border-gray-500 bg-gray-100 text-gray-700 font-semibold'
+                              : 'border-dashed border-gray-300 hover:border-gray-400 text-gray-400'
+                          }`}
+                        >
+                          {sel?.selected_option_id === 'skip' ? '✓ ' : ''}Sin {group.name.toLowerCase()}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="flex justify-between gap-2 pt-4">
               <Button variant="outline" onClick={() => setStep(4)}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Atrás

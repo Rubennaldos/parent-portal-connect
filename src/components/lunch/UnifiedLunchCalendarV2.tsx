@@ -1192,9 +1192,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   <div className="space-y-4">
                     {/* Menú base */}
                     <Card className="bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-200">
-                      <CardContent className="p-3">
-                        <p className="text-sm text-gray-600">Menú seleccionado:</p>
-                        <p className="font-bold">{selectedMenu.main_course}</p>
+                      <CardContent className="p-3 space-y-1">
+                        <p className="text-xs text-purple-600 font-semibold uppercase tracking-wide">Personaliza tu pedido</p>
+                        <p className="font-bold text-gray-900">{selectedMenu.main_course}</p>
+                        <p className="text-xs text-gray-500">Elige las opciones que prefieras. El precio no cambia.</p>
                       </CardContent>
                     </Card>
 
@@ -1219,18 +1220,27 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                       </div>
                     )}
 
-                    {/* Grupos de modificadores */}
+                    {/* Grupos de modificadores (uno por campo: Entrada, Segundo, Bebida, Postre) */}
                     {menuModifierGroups.map(group => {
                       const currentSelection = selectedModifiers.find(m => m.group_id === group.id);
+                      const isSkipped = currentSelection?.selected_option_id === 'skip';
+
+                      // Emoji por nombre de campo
+                      const fieldEmoji: Record<string, string> = {
+                        'Entrada': '🥗', 'Segundo Plato': '🍲', 'Bebida': '🥤', 'Postre': '🍰',
+                      };
+                      const emoji = fieldEmoji[group.name] || '🍽️';
+
                       return (
                         <div key={group.id} className="bg-white rounded-lg border-2 border-gray-200 p-3 space-y-2">
                           <p className="font-semibold text-sm text-gray-800">
-                            {group.name}
-                            {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                            {emoji} {group.name}
+                            <span className="ml-2 text-xs font-normal text-gray-400">elige una opción</span>
                           </p>
                           <div className="grid grid-cols-2 gap-2">
+                            {/* Opciones del campo */}
                             {group.options.map(option => {
-                              const isSelected = currentSelection?.selected_option_id === option.id;
+                              const isSelected = !isSkipped && currentSelection?.selected_option_id === option.id;
                               return (
                                 <button
                                   key={option.id}
@@ -1245,7 +1255,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                                     );
                                   }}
                                   className={cn(
-                                    "p-3 rounded-lg border-2 text-sm font-medium transition-all text-left",
+                                    "p-2.5 rounded-lg border-2 text-sm font-medium transition-all text-left",
                                     isSelected
                                       ? "border-purple-500 bg-purple-50 text-purple-900"
                                       : "border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 text-gray-700"
@@ -1257,14 +1267,43 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                                     ) : (
                                       <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
                                     )}
-                                    {option.name}
+                                    <span>{option.name}</span>
                                   </span>
-                                  {option.is_default && (
-                                    <span className="text-xs text-gray-400 ml-6">por defecto</span>
+                                  {option.is_default && !isSelected && (
+                                    <span className="text-xs text-gray-400 block mt-0.5 ml-6">por defecto</span>
                                   )}
                                 </button>
                               );
                             })}
+
+                            {/* Botón "Sin [campo]" — siempre disponible para quitar */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedModifiers(prev =>
+                                  prev.map(m =>
+                                    m.group_id === group.id
+                                      ? { ...m, selected_option_id: 'skip', selected_name: `Sin ${group.name.toLowerCase()}` }
+                                      : m
+                                  )
+                                );
+                              }}
+                              className={cn(
+                                "p-2.5 rounded-lg border-2 text-sm font-medium transition-all text-left",
+                                isSkipped
+                                  ? "border-gray-500 bg-gray-100 text-gray-700"
+                                  : "border-dashed border-gray-300 hover:border-gray-400 hover:bg-gray-50 text-gray-400"
+                              )}
+                            >
+                              <span className="flex items-center gap-2">
+                                {isSkipped ? (
+                                  <CheckCircle2 className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                                ) : (
+                                  <Ban className="h-4 w-4 text-gray-300 flex-shrink-0" />
+                                )}
+                                Sin {group.name.toLowerCase()}
+                              </span>
+                            </button>
                           </div>
                         </div>
                       );
@@ -1272,7 +1311,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
                     {/* Precio (no cambia) */}
                     <div className="bg-green-50 p-3 rounded-lg border border-green-200 flex justify-between items-center">
-                      <span className="text-sm text-green-700">El precio no cambia por personalización</span>
+                      <span className="text-sm text-green-700">✓ El precio no cambia al personalizar</span>
                       <span className="font-bold text-green-800">
                         S/ {(selectedCategory.price || config?.lunch_price || 0).toFixed(2)}
                       </span>
