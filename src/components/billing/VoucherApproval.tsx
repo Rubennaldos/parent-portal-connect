@@ -122,50 +122,76 @@ export const VoucherApproval = () => {
       if (error) throw error;
 
       // ── Enriquecer con ticket_codes de las transacciones asociadas ──
-      const enriched = data || [];
-      const lunchPayments = enriched.filter(r => (r.request_type === 'lunch_payment' || r.request_type === 'debt_payment') && r.lunch_order_ids?.length);
+      // ✅ OPTIMIZADO: en vez de 1 query por pedido, se hace 1 sola query con todos los IDs
+      const enriched = (data || []) as any[];
 
-      for (const req of lunchPayments) {
-        const codes: string[] = [];
-        for (const orderId of (req.lunch_order_ids || [])) {
-          try {
-            const { data: tx } = await supabase
-              .from('transactions')
-              .select('ticket_code')
-              .eq('type', 'purchase')
-              .contains('metadata', { lunch_order_id: orderId })
-              .not('ticket_code', 'is', null)
-              .maybeSingle();
-            if (tx?.ticket_code) {
-              codes.push(tx.ticket_code);
-            }
-          } catch (e) {
-            console.warn('No se pudo obtener ticket para order:', orderId, e);
+      // --- 1. Recoger todos los lunch_order_ids de golpe ---
+      const allLunchOrderIds = enriched
+        .filter(r => (r.request_type === 'lunch_payment' || r.request_type === 'debt_payment') && r.lunch_order_ids?.length)
+        .flatMap((r: any) => r.lunch_order_ids as string[]);
+
+      // Mapa: lunch_order_id → ticket_code
+      const ticketByOrderId = new Map<string, string>();
+      if (allLunchOrderIds.length > 0) {
+        try {
+          const { data: txRows } = await supabase
+            .from('transactions')
+            .select('ticket_code, metadata')
+            .eq('type', 'purchase')
+            .not('ticket_code', 'is', null)
+            .in('metadata->>lunch_order_id', allLunchOrderIds);
+
+          for (const tx of txRows || []) {
+            const orderId = tx.metadata?.lunch_order_id;
+            if (orderId && tx.ticket_code) ticketByOrderId.set(orderId, tx.ticket_code);
           }
+        } catch (e) {
+          console.warn('No se pudieron obtener tickets de lunch_orders en batch:', e);
         }
-        (req as any)._ticket_codes = codes;
       }
 
-      // Enriquecer debt_payments con ticket_codes de paid_transaction_ids
-      const debtPayments = enriched.filter(r => r.request_type === 'debt_payment' && r.paid_transaction_ids?.length);
-      for (const req of debtPayments) {
-        const existingCodes: string[] = (req as any)._ticket_codes || [];
-        for (const txId of (req.paid_transaction_ids || [])) {
-          try {
-            const { data: tx } = await supabase
-              .from('transactions')
-              .select('ticket_code')
-              .eq('id', txId)
-              .not('ticket_code', 'is', null)
-              .maybeSingle();
-            if (tx?.ticket_code && !existingCodes.includes(tx.ticket_code)) {
-              existingCodes.push(tx.ticket_code);
-            }
-          } catch (e) {
-            console.warn('No se pudo obtener ticket para tx:', txId, e);
-          }
+      // Asignar _ticket_codes usando el mapa
+      for (const req of enriched) {
+        if ((req.request_type === 'lunch_payment' || req.request_type === 'debt_payment') && req.lunch_order_ids?.length) {
+          req._ticket_codes = (req.lunch_order_ids as string[])
+            .map((id: string) => ticketByOrderId.get(id))
+            .filter(Boolean) as string[];
         }
-        (req as any)._ticket_codes = existingCodes;
+      }
+
+      // --- 2. Recoger todos los paid_transaction_ids de golpe ---
+      const allTxIds = enriched
+        .filter(r => r.request_type === 'debt_payment' && r.paid_transaction_ids?.length)
+        .flatMap((r: any) => r.paid_transaction_ids as string[]);
+
+      // Mapa: tx_id → ticket_code
+      const ticketByTxId = new Map<string, string>();
+      if (allTxIds.length > 0) {
+        try {
+          const { data: txRows2 } = await supabase
+            .from('transactions')
+            .select('id, ticket_code')
+            .not('ticket_code', 'is', null)
+            .in('id', allTxIds);
+
+          for (const tx of txRows2 || []) {
+            if (tx.id && tx.ticket_code) ticketByTxId.set(tx.id, tx.ticket_code);
+          }
+        } catch (e) {
+          console.warn('No se pudieron obtener tickets de paid_transaction_ids en batch:', e);
+        }
+      }
+
+      // Completar _ticket_codes con paid_transaction_ids
+      for (const req of enriched) {
+        if (req.request_type === 'debt_payment' && req.paid_transaction_ids?.length) {
+          const existing: string[] = req._ticket_codes || [];
+          for (const txId of req.paid_transaction_ids as string[]) {
+            const code = ticketByTxId.get(txId);
+            if (code && !existing.includes(code)) existing.push(code);
+          }
+          req._ticket_codes = existing;
+        }
       }
 
       setRequests(enriched);
