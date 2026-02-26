@@ -670,6 +670,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         return;
       }
 
+      // 🧹 Limpiar estados de modifiers/garnishes (no aplican para plato configurable)
+      setMenuModifierGroups([]);
+      setSelectedModifiers([]);
+      setModifierFavorites([]);
+      setAvailableGarnishes([]);
+      setSelectedGarnishes(new Set());
+
       // Cargar grupos de opciones configurables
       await loadConfigurableGroups(category.id);
       setWizardStep('configurable_select');
@@ -833,7 +840,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         orderPayload.configurable_selections = configSelections;
       }
 
-      const { data: insertedOrder, error: orderError } = await supabase
+      let insertedOrder: { id: string } | null = null;
+
+      // Intentar insertar con columnas opcionales
+      const { data: orderData, error: orderError } = await supabase
         .from('lunch_orders')
         .insert([orderPayload])
         .select('id')
@@ -850,8 +860,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           setSubmitting(false);
           return;
         }
-        throw orderError;
+
+        // 🔧 Si falla por columna no encontrada (migración no ejecutada), reintentar sin columnas opcionales
+        if (orderError.code === 'PGRST204' || orderError.message?.includes('column')) {
+          console.warn('⚠️ Columna opcional no existe, reintentando sin columnas JSONB opcionales...');
+          delete orderPayload.selected_modifiers;
+          delete orderPayload.selected_garnishes;
+          delete orderPayload.configurable_selections;
+
+          const { data: retryData, error: retryError } = await supabase
+            .from('lunch_orders')
+            .insert([orderPayload])
+            .select('id')
+            .single();
+
+          if (retryError) {
+            if (retryError.code === '23505') {
+              toast({ variant: 'destructive', title: '⚠️ Pedido duplicado', description: 'Ya existe un pedido para esta categoría en este día.' });
+              setSubmitting(false);
+              return;
+            }
+            throw retryError;
+          }
+          insertedOrder = retryData;
+        } else {
+          throw orderError;
+        }
+      } else {
+        insertedOrder = orderData;
       }
+
+      if (!insertedOrder) throw new Error('No se pudo crear el pedido');
 
       // 2. Create transaction (pending)
       const dateFormatted = format(getPeruDateOnly(currentDateStr), "d 'de' MMMM", { locale: es });

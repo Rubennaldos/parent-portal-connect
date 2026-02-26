@@ -697,14 +697,37 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           }
         }
 
+        let insertedOrderResult: { id: string } | null = null;
         const { data: insertedOrder, error: orderError } = await supabase
           .from('lunch_orders')
           .insert([orderData])
           .select('id')
           .single();
 
-        if (orderError) throw orderError;
-        insertedOrderId = insertedOrder.id;
+        if (orderError) {
+          // 🔧 Si falla por columna no encontrada (migración no ejecutada), reintentar sin columnas opcionales
+          if (orderError.code === 'PGRST204' || orderError.message?.includes('column')) {
+            console.warn('⚠️ Columna opcional no existe, reintentando sin columnas JSONB opcionales...');
+            delete orderData.selected_modifiers;
+            delete orderData.selected_garnishes;
+            delete orderData.configurable_selections;
+
+            const { data: retryData, error: retryError } = await supabase
+              .from('lunch_orders')
+              .insert([orderData])
+              .select('id')
+              .single();
+
+            if (retryError) throw retryError;
+            insertedOrderResult = retryData;
+          } else {
+            throw orderError;
+          }
+        } else {
+          insertedOrderResult = insertedOrder;
+        }
+        if (!insertedOrderResult) throw new Error('No se pudo crear el pedido');
+        insertedOrderId = insertedOrderResult.id;
       }
 
       // 🎫 Generar ticket_code para TODAS las transacciones (crédito, fiado Y pago inmediato)
