@@ -256,8 +256,7 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
         .select('*')
         .eq('school_id', selectedSchoolId)
         .eq('level_id', levelId)
-        // Removido temporalmente el filtro is_active para debugging
-        // .eq('is_active', true)
+        .eq('is_active', true)
         .order('order_index');
 
       if (error) throw error;

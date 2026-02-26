@@ -216,10 +216,14 @@ const POS = () => {
   interface PaymentSplit {
     method: string;
     amount: number;
+    operationCode?: string; // para tarjeta, transferencia, yape_qr, plin_qr
+    phoneNumber?: string;   // para yape_numero, plin_numero
   }
   const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([]);
   const [currentSplitMethod, setCurrentSplitMethod] = useState('');
   const [currentSplitAmount, setCurrentSplitAmount] = useState('');
+  const [currentSplitOperationCode, setCurrentSplitOperationCode] = useState('');
+  const [currentSplitPhoneNumber, setCurrentSplitPhoneNumber] = useState('');
 
   // NUEVO: Modal para seleccionar tipo de comprobante
   const [showDocumentTypeDialog, setShowDocumentTypeDialog] = useState(false);
@@ -1131,6 +1135,18 @@ const POS = () => {
           if (paymentSplits.length > 0) studentPaymentDetails.payment_splits = paymentSplits;
         }
 
+        // ✅ Calcular montos por método para pago mixto
+        const isMixedPayment = paymentMethod === 'mixto' && paymentSplits.length > 0;
+        const mixedCashAmount = isMixedPayment
+          ? paymentSplits.filter(p => p.method === 'efectivo').reduce((s, p) => s + p.amount, 0)
+          : 0;
+        const mixedCardAmount = isMixedPayment
+          ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
+          : 0;
+        const mixedYapeAmount = isMixedPayment
+          ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
+          : 0;
+
         const { data: transaction, error: transError} = await supabase
           .from('transactions')
           .insert({
@@ -1145,6 +1161,11 @@ const POS = () => {
             payment_status: isFreeAccount ? 'pending' : 'paid', // Si es cuenta libre, queda pendiente
             payment_method: isFreeAccount ? null : (paymentMethod || 'efectivo'),
             metadata: Object.keys(studentPaymentDetails).length > 0 ? { source: 'pos', ...studentPaymentDetails } : { source: 'pos' },
+            // ✅ Columnas para pago mixto (usadas por calculate_daily_totals)
+            paid_with_mixed: isMixedPayment,
+            cash_amount: mixedCashAmount,
+            card_amount: mixedCardAmount,
+            yape_amount: mixedYapeAmount,
           })
           .select()
           .single();
@@ -1299,6 +1320,18 @@ const POS = () => {
         if (cashGiven) genericPaymentDetails.cash_given = parseFloat(cashGiven);
         if (paymentSplits.length > 0) genericPaymentDetails.payment_splits = paymentSplits;
 
+        // ✅ Calcular montos por método para pago mixto
+        const isMixedGeneric = paymentMethod === 'mixto' && paymentSplits.length > 0;
+        const genericMixedCash = isMixedGeneric
+          ? paymentSplits.filter(p => p.method === 'efectivo').reduce((s, p) => s + p.amount, 0)
+          : 0;
+        const genericMixedCard = isMixedGeneric
+          ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
+          : 0;
+        const genericMixedYape = isMixedGeneric
+          ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
+          : 0;
+
         const { data: transaction, error: transError } = await supabase
           .from('transactions')
           .insert({
@@ -1313,6 +1346,11 @@ const POS = () => {
             payment_status: 'paid', // 🔥 Cliente genérico PAGA en el momento
             payment_method: paymentMethod || 'efectivo', // Método de pago real
             metadata: genericPaymentDetails,
+            // ✅ Columnas para pago mixto (usadas por calculate_daily_totals)
+            paid_with_mixed: isMixedGeneric,
+            cash_amount: genericMixedCash,
+            card_amount: genericMixedCard,
+            yape_amount: genericMixedYape,
           })
           .select()
           .single();
@@ -2312,14 +2350,21 @@ const POS = () => {
                     <p className="text-sm font-bold text-orange-900">Métodos Agregados:</p>
                     {paymentSplits.map((split, index) => (
                       <div key={index} className="bg-white border-2 border-orange-200 rounded-lg p-3 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {split.method === 'efectivo' && <Banknote className="h-5 w-5 text-emerald-600" />}
-                          {split.method === 'tarjeta' && <CreditCard className="h-5 w-5 text-blue-600" />}
-                          {split.method === 'yape' && <Smartphone className="h-5 w-5 text-purple-600" />}
-                          {split.method === 'plin' && <Smartphone className="h-5 w-5 text-pink-600" />}
-                          <span className="font-bold text-sm capitalize">{split.method}</span>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {split.method === 'efectivo' && <Banknote className="h-5 w-5 text-emerald-600 shrink-0" />}
+                          {split.method === 'tarjeta' && <CreditCard className="h-5 w-5 text-blue-600 shrink-0" />}
+                          {(split.method === 'yape_qr' || split.method === 'yape_numero') && <Smartphone className="h-5 w-5 text-purple-600 shrink-0" />}
+                          {(split.method === 'plin_qr' || split.method === 'plin_numero') && <Smartphone className="h-5 w-5 text-pink-600 shrink-0" />}
+                          {split.method === 'transferencia' && <CreditCard className="h-5 w-5 text-amber-600 shrink-0" />}
+                          <div className="min-w-0">
+                            <span className="font-bold text-sm block capitalize">
+                              {split.method === 'yape_qr' ? 'Yape QR' : split.method === 'yape_numero' ? 'Yape Número' : split.method === 'plin_qr' ? 'Plin QR' : split.method === 'plin_numero' ? 'Plin Número' : split.method === 'tarjeta' ? 'Tarjeta' : split.method === 'transferencia' ? 'Transferencia' : 'Efectivo'}
+                            </span>
+                            {split.operationCode && <span className="text-xs text-gray-500">Op: {split.operationCode}</span>}
+                            {split.phoneNumber && <span className="text-xs text-gray-500">Cel: {split.phoneNumber}</span>}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 shrink-0">
                           <span className="font-black text-lg">S/ {split.amount.toFixed(2)}</span>
                           <button
                             onClick={() => setPaymentSplits(paymentSplits.filter((_, i) => i !== index))}
@@ -2338,22 +2383,86 @@ const POS = () => {
                   <div className="bg-white border-2 border-orange-300 rounded-lg p-4 space-y-3">
                     <p className="text-sm font-bold text-orange-900">Agregar Método de Pago</p>
                     
-                    <div className="grid grid-cols-4 gap-2">
-                      {['efectivo', 'tarjeta', 'yape', 'plin'].map((method) => (
+                    {/* Botones de métodos — mismos que el pago independiente */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'efectivo',     label: 'Efectivo',       color: 'emerald' },
+                        { id: 'tarjeta',      label: 'Tarjeta',        color: 'blue'    },
+                        { id: 'yape_qr',      label: 'Yape QR',        color: 'purple'  },
+                        { id: 'yape_numero',  label: 'Yape Número',    color: 'purple'  },
+                        { id: 'plin_qr',      label: 'Plin QR',        color: 'pink'    },
+                        { id: 'plin_numero',  label: 'Plin Número',    color: 'pink'    },
+                        { id: 'transferencia',label: 'Transferencia',  color: 'amber'   },
+                      ].map(({ id, label }) => (
                         <button
-                          key={method}
-                          onClick={() => setCurrentSplitMethod(method)}
-                          className={`p-3 border-2 rounded-lg text-xs font-bold capitalize transition-all ${
-                            currentSplitMethod === method
+                          key={id}
+                          onClick={() => {
+                            setCurrentSplitMethod(id);
+                            setCurrentSplitOperationCode('');
+                            setCurrentSplitPhoneNumber('');
+                          }}
+                          className={`p-2 border-2 rounded-lg text-xs font-bold transition-all ${
+                            currentSplitMethod === id
                               ? 'border-orange-500 bg-orange-100 text-orange-900'
                               : 'border-gray-200 text-gray-600 hover:border-orange-300'
                           }`}
                         >
-                          {method}
+                          {label}
                         </button>
                       ))}
                     </div>
 
+                    {/* Campo extra: Número de celular para Yape Número */}
+                    {currentSplitMethod === 'yape_numero' && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                        <Label className="text-xs font-bold text-purple-900 mb-1 block">Número de Celular (Yape)</Label>
+                        <Input
+                          type="text"
+                          value={currentSplitPhoneNumber}
+                          onChange={(e) => setCurrentSplitPhoneNumber(e.target.value)}
+                          placeholder="999 999 999"
+                          className="h-10 text-sm font-semibold"
+                          maxLength={9}
+                        />
+                      </div>
+                    )}
+
+                    {/* Campo extra: Número de celular para Plin Número */}
+                    {currentSplitMethod === 'plin_numero' && (
+                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3">
+                        <Label className="text-xs font-bold text-pink-900 mb-1 block">Número de Celular (Plin)</Label>
+                        <Input
+                          type="text"
+                          value={currentSplitPhoneNumber}
+                          onChange={(e) => setCurrentSplitPhoneNumber(e.target.value)}
+                          placeholder="999 999 999"
+                          className="h-10 text-sm font-semibold"
+                          maxLength={9}
+                        />
+                      </div>
+                    )}
+
+                    {/* Campo extra: Código de operación para tarjeta, transferencia, yape_qr, plin_qr */}
+                    {(currentSplitMethod === 'tarjeta' || currentSplitMethod === 'transferencia' || currentSplitMethod === 'yape_qr' || currentSplitMethod === 'plin_qr') && (
+                      <div className={`border rounded-lg p-3 ${
+                        currentSplitMethod === 'tarjeta' ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'
+                      }`}>
+                        <Label className={`text-xs font-bold mb-1 block ${
+                          currentSplitMethod === 'tarjeta' ? 'text-blue-900' : 'text-amber-900'
+                        }`}>
+                          {currentSplitMethod === 'tarjeta' ? 'Nº de Operación (Voucher)' : 'Código de Operación'}
+                        </Label>
+                        <Input
+                          type="text"
+                          value={currentSplitOperationCode}
+                          onChange={(e) => setCurrentSplitOperationCode(e.target.value)}
+                          placeholder={currentSplitMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
+                          className="h-10 text-sm font-semibold uppercase"
+                        />
+                      </div>
+                    )}
+
+                    {/* Monto */}
                     <div>
                       <Label className="text-sm font-bold text-gray-700">Monto</Label>
                       <Input
@@ -2369,13 +2478,22 @@ const POS = () => {
                     <Button
                       onClick={() => {
                         if (currentSplitMethod && parseFloat(currentSplitAmount) > 0) {
+                          // Validar campos extra requeridos
+                          if ((currentSplitMethod === 'yape_numero' || currentSplitMethod === 'plin_numero') && !currentSplitPhoneNumber) {
+                            toast({ variant: 'destructive', title: 'Error', description: 'Ingresa el número de celular' });
+                            return;
+                          }
                           const amount = parseFloat(currentSplitAmount);
                           const totalPaid = paymentSplits.reduce((sum, p) => sum + p.amount, 0);
-                          
                           if (totalPaid + amount <= getTotal()) {
-                            setPaymentSplits([...paymentSplits, { method: currentSplitMethod, amount }]);
+                            const newSplit: PaymentSplit = { method: currentSplitMethod, amount };
+                            if (currentSplitOperationCode) newSplit.operationCode = currentSplitOperationCode;
+                            if (currentSplitPhoneNumber) newSplit.phoneNumber = currentSplitPhoneNumber;
+                            setPaymentSplits([...paymentSplits, newSplit]);
                             setCurrentSplitMethod('');
                             setCurrentSplitAmount('');
+                            setCurrentSplitOperationCode('');
+                            setCurrentSplitPhoneNumber('');
                           } else {
                             toast({
                               variant: 'destructive',
