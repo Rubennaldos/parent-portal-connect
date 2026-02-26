@@ -299,6 +299,18 @@ const Dashboard = () => {
           is_enabled: false,
           status: 'functional' as const,
         },
+        {
+          id: '15',
+          code: 'comedor',
+          name: 'Vista Cocina',
+          description: 'Pedidos del día, variaciones y estadísticas de preferencias',
+          icon: 'UtensilsCrossed',
+          color: 'orange',
+          route: '/comedor',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
       ];
 
       // Admin General tiene acceso a TODO
