@@ -45,6 +45,7 @@ interface OrderDetail {
   category_name: string;
   menu_name: string;
   selected_modifiers: any[];
+  configurable_selections: any[];
   created_at: string;
 }
 
@@ -136,7 +137,7 @@ const Comedor = () => {
     const { data, error } = await supabase
       .from('lunch_orders')
       .select(`
-        id, order_date, status, quantity, is_cancelled, selected_modifiers,
+        id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections,
         category_id, menu_id,
         lunch_categories(name),
         lunch_menus(main_course)
@@ -155,9 +156,15 @@ const Comedor = () => {
     const groupMap = new Map<string, KitchenOrderGroup>();
     for (const order of (data || [])) {
       const mods = order.selected_modifiers || [];
-      const modSummary = mods.length > 0
-        ? mods.map((m: any) => `${m.group_name}: ${m.selected_name}`).join(' | ')
-        : 'Estándar (sin cambios)';
+      const configSels = (order as any).configurable_selections || [];
+      let modSummary: string;
+      if (configSels.length > 0) {
+        modSummary = configSels.map((s: any) => `${s.group_name}: ${s.selected}`).join(' | ');
+      } else if (mods.length > 0) {
+        modSummary = mods.map((m: any) => `${m.group_name}: ${m.selected_name}`).join(' | ');
+      } else {
+        modSummary = 'Estándar (sin cambios)';
+      }
       const catName = (order as any).lunch_categories?.name || 'Sin categoría';
       const menuName = (order as any).lunch_menus?.main_course || '';
       const key = `${order.category_id}-${order.menu_id}-${modSummary}`;
@@ -187,7 +194,7 @@ const Comedor = () => {
     const { data, error } = await supabase
       .from('lunch_orders')
       .select(`
-        id, order_date, status, quantity, is_cancelled, selected_modifiers, created_at,
+        id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections, created_at,
         students(full_name),
         teacher_profiles(full_name),
         lunch_categories(name),
@@ -203,7 +210,7 @@ const Comedor = () => {
       // Fallback sin joins
       const { data: fallbackData } = await supabase
         .from('lunch_orders')
-        .select('id, order_date, status, quantity, is_cancelled, selected_modifiers, created_at, manual_name')
+        .select('id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections, created_at, manual_name')
         .eq('school_id', schoolId)
         .eq('order_date', selectedDate)
         .eq('is_cancelled', false)
@@ -221,6 +228,7 @@ const Comedor = () => {
         category_name: '',
         menu_name: '',
         selected_modifiers: o.selected_modifiers || [],
+        configurable_selections: o.configurable_selections || [],
         created_at: o.created_at,
       }));
 
@@ -242,6 +250,7 @@ const Comedor = () => {
       category_name: o.lunch_categories?.name || '',
       menu_name: o.lunch_menus?.main_course || '',
       selected_modifiers: o.selected_modifiers || [],
+      configurable_selections: o.configurable_selections || [],
       created_at: o.created_at,
     }));
 
@@ -507,6 +516,11 @@ const Comedor = () => {
                             {order.selected_modifiers && order.selected_modifiers.length > 0 && (
                               <p className="text-xs text-purple-600 mt-1">
                                 ✨ {order.selected_modifiers.map((m: any) => `${m.group_name}: ${m.selected_name}`).join(' | ')}
+                              </p>
+                            )}
+                            {order.configurable_selections && order.configurable_selections.length > 0 && (
+                              <p className="text-xs text-amber-600 mt-1">
+                                🍽️ {order.configurable_selections.map((s: any) => `${s.group_name}: ${s.selected}`).join(' | ')}
                               </p>
                             )}
                           </div>

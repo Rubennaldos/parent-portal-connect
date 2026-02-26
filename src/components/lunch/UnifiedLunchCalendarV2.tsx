@@ -58,6 +58,15 @@ interface LunchCategory {
   icon: string;
   price: number | null;
   target_type: 'students' | 'teachers' | 'both';
+  menu_mode?: 'standard' | 'configurable';
+}
+
+interface ConfigPlateGroup {
+  id: string;
+  name: string;
+  is_required: boolean;
+  max_selections: number;
+  options: Array<{ id: string; name: string }>;
 }
 
 interface LunchMenu {
@@ -190,7 +199,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // Wizard state - processes days sequentially (REDESIGNED)
   const [wizardDates, setWizardDates] = useState<string[]>([]);
   const [wizardCurrentIndex, setWizardCurrentIndex] = useState(0);
-  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'select_menu' | 'modifiers' | 'confirm' | 'done'>('idle');
+  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'select_menu' | 'modifiers' | 'configurable_select' | 'confirm' | 'done'>('idle');
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
   const [categoryMenuOptions, setCategoryMenuOptions] = useState<LunchMenu[]>([]); // Menús disponibles para la categoría seleccionada
@@ -212,6 +221,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // ── Guarniciones ──
   const [availableGarnishes, setAvailableGarnishes] = useState<string[]>([]);
   const [selectedGarnishes, setSelectedGarnishes] = useState<Set<string>>(new Set());
+
+  // ── Plato Configurable ──
+  const [configPlateGroups, setConfigPlateGroups] = useState<ConfigPlateGroup[]>([]);
+  const [configSelections, setConfigSelections] = useState<Array<{ group_name: string; selected: string }>>([]);
 
   // View existing orders modal
   const [viewOrdersModal, setViewOrdersModal] = useState(false);
@@ -337,8 +350,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
         console.log(`📦 [V2-DEBUG] Categories: ${categoriesData?.length || 0} total, ${lunchCategories.length} after filtering (removed kitchen_sale). Active filter NOT applied.`);
         lunchCategories.forEach((cat: any) => {
-          console.log(`  📂 Category: ${cat.name} | school_id: ${cat.school_id} | target: ${cat.target_type} | active: ${cat.is_active} | kitchen: ${cat.is_kitchen_sale}`);
-          categoriesMap.set(cat.id, cat);
+          console.log(`  📂 Category: ${cat.name} | school_id: ${cat.school_id} | target: ${cat.target_type} | active: ${cat.is_active} | kitchen: ${cat.is_kitchen_sale} | mode: ${cat.menu_mode || 'standard'}`);
+          categoriesMap.set(cat.id, { ...cat, menu_mode: cat.menu_mode || 'standard' });
         });
       }
 
@@ -642,6 +655,28 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const handleCategorySelect = async (category: LunchCategory) => {
     setSelectedCategory(category);
 
+    // ── Plato Configurable: flujo especial ──
+    if (category.menu_mode === 'configurable') {
+      const currentDateStr = wizardDates[wizardCurrentIndex];
+      const dayMenus = menus.get(currentDateStr) || [];
+      const categoryMenus = dayMenus.filter(m => m.category_id === category.id);
+      
+      // Auto-seleccionar el primer menú (es un placeholder)
+      if (categoryMenus.length > 0) {
+        setSelectedMenu(categoryMenus[0]);
+      } else {
+        // Si no hay menú para este día en esta categoría, no se puede pedir
+        toast({ variant: 'destructive', title: '⚠️ Sin menú', description: `No hay menú disponible para "${category.name}" este día` });
+        return;
+      }
+
+      // Cargar grupos de opciones configurables
+      await loadConfigurableGroups(category.id);
+      setWizardStep('configurable_select');
+      return;
+    }
+
+    // ── Categoría estándar: flujo normal ──
     const currentDateStr = wizardDates[wizardCurrentIndex];
     const dayMenus = menus.get(currentDateStr) || [];
     const categoryMenus = dayMenus.filter(m => m.category_id === category.id);
@@ -669,6 +704,47 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       // Múltiples menús → mostrar paso de selección
       setSelectedMenu(null);
       setWizardStep('select_menu');
+    }
+  };
+
+  // ── Cargar opciones configurables de la categoría ──
+  const loadConfigurableGroups = async (categoryId: string) => {
+    try {
+      const { data: groups } = await supabase
+        .from('configurable_plate_groups')
+        .select('id, name, is_required, max_selections')
+        .eq('category_id', categoryId)
+        .order('display_order', { ascending: true });
+
+      if (!groups || groups.length === 0) {
+        setConfigPlateGroups([]);
+        setConfigSelections([]);
+        return;
+      }
+
+      const groupIds = groups.map(g => g.id);
+      const { data: options } = await supabase
+        .from('configurable_plate_options')
+        .select('id, group_id, name')
+        .in('group_id', groupIds)
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      const fullGroups: ConfigPlateGroup[] = groups.map(g => ({
+        ...g,
+        options: (options || []).filter(o => o.group_id === g.id),
+      }));
+
+      setConfigPlateGroups(fullGroups);
+      // Inicializar selecciones (vacías o con la primera opción por defecto)
+      setConfigSelections(fullGroups.map(g => ({
+        group_name: g.name,
+        selected: g.options.length > 0 ? g.options[0].name : '',
+      })));
+    } catch (err) {
+      console.error('Error loading configurable groups:', err);
+      setConfigPlateGroups([]);
+      setConfigSelections([]);
     }
   };
 
@@ -749,6 +825,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           created_by: userId,
           selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
           selected_garnishes: Array.from(selectedGarnishes),
+          configurable_selections: configSelections.length > 0 ? configSelections : [],
         }])
         .select('id')
         .single();
@@ -835,6 +912,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         setModifierFavorites([]);
         setAvailableGarnishes([]);
         setSelectedGarnishes(new Set());
+        setConfigPlateGroups([]);
+        setConfigSelections([]);
       } else {
         setWizardStep('done');
       }
@@ -862,6 +941,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setModifierFavorites([]);
     setAvailableGarnishes([]);
     setSelectedGarnishes(new Set());
+    setConfigPlateGroups([]);
+    setConfigSelections([]);
 
     // Refresh data if any orders were created
     if (ordersCreated > 0) {
@@ -1124,6 +1205,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                 <DialogDescription>
                   {wizardStep === 'category' && 'Selecciona la categoría del menú'}
                   {wizardStep === 'select_menu' && 'Elige el menú que deseas'}
+                  {wizardStep === 'configurable_select' && '🍽️ Elige tus opciones'}
                   {wizardStep === 'modifiers' && '✨ Personaliza tu pedido'}
                   {wizardStep === 'confirm' && 'Selecciona la cantidad y confirma tu pedido'}
                 </DialogDescription>
@@ -1199,6 +1281,81 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                         </CardContent>
                       </Card>
                     ))}
+                  </div>
+                )}
+
+                {/* STEP: Configurable Plate Selection (Plato Configurable) */}
+                {wizardStep === 'configurable_select' && selectedCategory && (
+                  <div className="space-y-4">
+                    <Card className="bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200">
+                      <CardContent className="p-3 space-y-1">
+                        <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">🍽️ {selectedCategory.name}</p>
+                        <p className="text-sm text-gray-600">Elige tus opciones. El precio no cambia.</p>
+                      </CardContent>
+                    </Card>
+
+                    {configPlateGroups.length === 0 ? (
+                      <div className="text-center py-6 text-gray-500">
+                        <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">No se han configurado opciones para este plato</p>
+                      </div>
+                    ) : (
+                      configPlateGroups.map((group, gIdx) => {
+                        const currentSelection = configSelections.find(s => s.group_name === group.name);
+                        return (
+                          <div key={group.id} className="bg-white rounded-lg border-2 border-amber-200 p-3 space-y-2">
+                            <p className="font-semibold text-sm text-amber-900">
+                              {group.name}
+                              {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                              <span className="ml-2 text-xs font-normal text-gray-400">elige una opción</span>
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {group.options.map(option => {
+                                const isSelected = currentSelection?.selected === option.name;
+                                return (
+                                  <button
+                                    key={option.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setConfigSelections(prev =>
+                                        prev.map(s =>
+                                          s.group_name === group.name
+                                            ? { ...s, selected: option.name }
+                                            : s
+                                        )
+                                      );
+                                    }}
+                                    className={cn(
+                                      "p-2.5 rounded-lg border-2 text-sm font-medium transition-all text-left",
+                                      isSelected
+                                        ? "border-amber-500 bg-amber-50 text-amber-900"
+                                        : "border-gray-200 hover:border-amber-300 hover:bg-amber-50/50 text-gray-700"
+                                    )}
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      {isSelected ? (
+                                        <CheckCircle2 className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                                      ) : (
+                                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                                      )}
+                                      <span>{option.name}</span>
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+
+                    {/* Precio */}
+                    <div className="bg-green-50 p-3 rounded-lg border border-green-200 flex justify-between items-center">
+                      <span className="text-sm text-green-700">✓ El precio no cambia al personalizar</span>
+                      <span className="font-bold text-green-800">
+                        S/ {(selectedCategory.price || config?.lunch_price || 0).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -1352,7 +1509,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                           </div>
                         )}
 
-                        {/* Resumen de personalizaciones */}
+                        {/* Resumen de selecciones configurables */}
+                        {configSelections.length > 0 && configSelections.some(s => s.selected) && (
+                          <div className="border-t pt-2 mt-2 bg-amber-50 -mx-4 -mb-4 p-3 rounded-b-lg">
+                            <p className="text-xs text-amber-700 font-semibold mb-1">🍽️ Tu selección:</p>
+                            {configSelections.filter(s => s.selected).map((sel, i) => (
+                              <p key={i} className="text-sm text-amber-900">
+                                • {sel.group_name}: <strong>{sel.selected}</strong>
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Resumen de personalizaciones (menú estándar) */}
                         {selectedModifiers.length > 0 && selectedModifiers.some(m => m.selected_name) && (
                           <div className="border-t pt-2 mt-2 bg-purple-50 -mx-4 -mb-4 p-3 rounded-b-lg">
                             <p className="text-xs text-purple-700 font-semibold mb-1">✨ Personalización:</p>
@@ -1443,6 +1612,29 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     ← Cambiar categoría
                   </Button>
                 )}
+                {wizardStep === 'configurable_select' && (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setWizardStep('category');
+                        setSelectedCategory(null);
+                        setSelectedMenu(null);
+                        setConfigPlateGroups([]);
+                        setConfigSelections([]);
+                      }}
+                    >
+                      ← Cambiar categoría
+                    </Button>
+                    <Button
+                      onClick={() => setWizardStep('confirm')}
+                      className="bg-amber-600 hover:bg-amber-700"
+                      disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                    >
+                      Continuar →
+                    </Button>
+                  </>
+                )}
                 {wizardStep === 'modifiers' && (
                   <>
                     <Button
@@ -1483,8 +1675,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   <Button
                     variant="outline"
                     onClick={() => {
-                      // Si tenía modificadores, volver a modifiers; si no, lógica normal
-                      if (menuModifierGroups.length > 0) {
+                      // Si es plato configurable, volver a configurable_select
+                      if (configPlateGroups.length > 0) {
+                        setWizardStep('configurable_select');
+                        setQuantity(1);
+                      } else if (menuModifierGroups.length > 0) {
                         setWizardStep('modifiers');
                         setQuantity(1);
                       } else if (categoryMenuOptions.length > 1) {
@@ -1500,7 +1695,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     }}
                     disabled={submitting}
                   >
-                    ← {menuModifierGroups.length > 0 ? 'Cambiar personalización' : categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
+                    ← {configPlateGroups.length > 0 ? 'Cambiar opciones' : menuModifierGroups.length > 0 ? 'Cambiar personalización' : categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
                   </Button>
                 )}
                 <Button variant="ghost" onClick={closeWizard} disabled={submitting}>

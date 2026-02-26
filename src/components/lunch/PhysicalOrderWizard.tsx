@@ -27,6 +27,14 @@ interface LunchCategory {
   icon: string;
   price: number;
   target_type: 'students' | 'teachers';
+  menu_mode?: 'standard' | 'configurable';
+}
+
+interface ConfigPlateGroup {
+  id: string;
+  name: string;
+  is_required: boolean;
+  options: Array<{ id: string; name: string }>;
 }
 
 interface LunchMenu {
@@ -103,6 +111,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const [availableGarnishes, setAvailableGarnishes] = useState<string[]>([]);
   const [selectedGarnishes, setSelectedGarnishes] = useState<Set<string>>(new Set());
 
+  // ── Plato Configurable ──
+  const [configPlateGroups, setConfigPlateGroups] = useState<ConfigPlateGroup[]>([]);
+  const [configSelections, setConfigSelections] = useState<Array<{ group_name: string; selected: string }>>([]);
+
   const handleClose = () => {
     setStep(1);
     setTargetType(null);
@@ -131,6 +143,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     setSelectedModifiers([]);
     setAvailableGarnishes([]);
     setSelectedGarnishes(new Set());
+    setConfigPlateGroups([]);
+    setConfigSelections([]);
     onClose();
   };
 
@@ -160,6 +174,46 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         return true; // ✅ Siempre válido para "Pagar Luego"
       default:
         return false;
+    }
+  };
+
+  // ── Cargar opciones de plato configurable ──
+  const loadConfigurableGroups = async (categoryId: string) => {
+    try {
+      const { data: groups } = await supabase
+        .from('configurable_plate_groups')
+        .select('id, name, is_required')
+        .eq('category_id', categoryId)
+        .order('display_order', { ascending: true });
+
+      if (!groups || groups.length === 0) {
+        setConfigPlateGroups([]);
+        setConfigSelections([]);
+        return;
+      }
+
+      const groupIds = groups.map(g => g.id);
+      const { data: options } = await supabase
+        .from('configurable_plate_options')
+        .select('id, group_id, name')
+        .in('group_id', groupIds)
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      const fullGroups: ConfigPlateGroup[] = groups.map(g => ({
+        ...g,
+        options: (options || []).filter(o => o.group_id === g.id),
+      }));
+
+      setConfigPlateGroups(fullGroups);
+      setConfigSelections(fullGroups.map(g => ({
+        group_name: g.name,
+        selected: g.options.length > 0 ? g.options[0].name : '',
+      })));
+    } catch (err) {
+      console.error('Error loading configurable groups:', err);
+      setConfigPlateGroups([]);
+      setConfigSelections([]);
     }
   };
 
@@ -229,9 +283,25 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   // Paso 5: Cargar menús
   useEffect(() => {
     if (step === 5 && selectedCategory) {
-      fetchMenus();
+      fetchMenus().then(() => {
+        // Si es configurable, auto-seleccionar el primer menú
+        if (selectedCategory.menu_mode === 'configurable') {
+          // El auto-select se hace después de que fetchMenus actualice el estado
+          loadConfigurableGroups(selectedCategory.id);
+        } else {
+          setConfigPlateGroups([]);
+          setConfigSelections([]);
+        }
+      });
     }
   }, [step, selectedCategory]);
+
+  // Auto-seleccionar primer menú para categorías configurables
+  useEffect(() => {
+    if (selectedCategory?.menu_mode === 'configurable' && menus.length > 0 && !selectedMenu) {
+      setSelectedMenu(menus[0]);
+    }
+  }, [menus, selectedCategory, selectedMenu]);
 
   // 🆕 NUEVO: Cargar pedidos existentes cuando se selecciona una persona (Step 3)
   useEffect(() => {
@@ -602,6 +672,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           final_price: totalPrice,
           selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
           selected_garnishes: Array.from(selectedGarnishes),
+          configurable_selections: configSelections.length > 0 ? configSelections : [],
         };
 
         if (paymentType === 'credit') {
@@ -1054,53 +1125,116 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           </div>
         )}
 
-        {/* PASO 5: Seleccionar menú */}
+        {/* PASO 5: Seleccionar menú (o opciones de plato configurable) */}
         {step === 5 && (
           <div className="space-y-4 py-4">
-            <p className="text-center text-gray-600">
-              Selecciona el menú 
-              {selectedDate && ` del ${format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM", { locale: es })}`}
-            </p>
-            {loading ? (
-              <div className="text-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400" />
-              </div>
-            ) : menus.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-gray-500 mb-2">❌ No hay menús disponibles</p>
-                {selectedDate && (
-                  <p className="text-sm text-gray-400">
-                    Para el día {format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })}
-                  </p>
+            {/* ── Plato Configurable: mostrar opciones ── */}
+            {selectedCategory?.menu_mode === 'configurable' ? (
+              <>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="font-semibold text-amber-900">🍽️ {selectedCategory.name}</p>
+                  <p className="text-xs text-amber-700">Selecciona las opciones para este plato</p>
+                </div>
+
+                {loading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto text-amber-400" />
+                  </div>
+                ) : configPlateGroups.length === 0 ? (
+                  <div className="text-center py-6 text-gray-500">
+                    <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400" />
+                    <p className="text-sm">No hay opciones configuradas para esta categoría</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {configPlateGroups.map((group) => {
+                      const currentSel = configSelections.find(s => s.group_name === group.name);
+                      return (
+                        <div key={group.id} className="bg-white rounded-lg border-2 border-amber-200 p-3 space-y-2">
+                          <p className="font-semibold text-sm text-amber-900">
+                            {group.name}
+                            {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {group.options.map(opt => {
+                              const isSelected = currentSel?.selected === opt.name;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setConfigSelections(prev =>
+                                      prev.map(s => s.group_name === group.name ? { ...s, selected: opt.name } : s)
+                                    );
+                                  }}
+                                  className={`p-2.5 rounded-lg border-2 text-xs text-left transition-all ${
+                                    isSelected
+                                      ? 'border-amber-500 bg-amber-50 text-amber-900 font-semibold'
+                                      : 'border-gray-200 hover:border-amber-300 text-gray-700'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : ''}{opt.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-              </div>
+
+                {/* Info: se auto-selecciona el primer menú disponible */}
+              </>
             ) : (
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {menus.map((menu: any) => (
-                  <Card
-                    key={menu.id}
-                    className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
-                      selectedMenu?.id === menu.id ? 'ring-2 ring-green-500' : ''
-                    }`}
-                    onClick={() => { setSelectedMenu(menu); loadModifiersForMenu(menu); }}
-                  >
-                    <div className="flex items-start justify-between">
-                      <p className="font-bold mb-2">
-                        {format(new Date(menu.date + 'T00:00:00'), "EEEE d 'de' MMMM", { locale: es })}
+              /* ── Menú Estándar: selector normal ── */
+              <>
+                <p className="text-center text-gray-600">
+                  Selecciona el menú 
+                  {selectedDate && ` del ${format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM", { locale: es })}`}
+                </p>
+                {loading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400" />
+                  </div>
+                ) : menus.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500 mb-2">❌ No hay menús disponibles</p>
+                    {selectedDate && (
+                      <p className="text-sm text-gray-400">
+                        Para el día {format(new Date((typeof selectedDate === 'string' ? selectedDate : format(selectedDate, 'yyyy-MM-dd')) + 'T00:00:00'), "dd 'de' MMMM, yyyy", { locale: es })}
                       </p>
-                      {menu.allows_modifiers && (
-                        <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">✨ Personalizable</span>
-                      )}
-                    </div>
-                    <div className="text-sm space-y-1">
-                      {menu.starter && <p>• Entrada: {menu.starter}</p>}
-                      <p className="font-medium text-green-700">• Segundo: {menu.main_course}</p>
-                      {menu.beverage && <p>• Bebida: {menu.beverage}</p>}
-                      {menu.dessert && <p>• Postre: {menu.dessert}</p>}
-                    </div>
-                  </Card>
-                ))}
-              </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {menus.map((menu: any) => (
+                      <Card
+                        key={menu.id}
+                        className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
+                          selectedMenu?.id === menu.id ? 'ring-2 ring-green-500' : ''
+                        }`}
+                        onClick={() => { setSelectedMenu(menu); loadModifiersForMenu(menu); }}
+                      >
+                        <div className="flex items-start justify-between">
+                          <p className="font-bold mb-2">
+                            {format(new Date(menu.date + 'T00:00:00'), "EEEE d 'de' MMMM", { locale: es })}
+                          </p>
+                          {menu.allows_modifiers && (
+                            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">✨ Personalizable</span>
+                          )}
+                        </div>
+                        <div className="text-sm space-y-1">
+                          {menu.starter && <p>• Entrada: {menu.starter}</p>}
+                          <p className="font-medium text-green-700">• Segundo: {menu.main_course}</p>
+                          {menu.beverage && <p>• Bebida: {menu.beverage}</p>}
+                          {menu.dessert && <p>• Postre: {menu.dessert}</p>}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
 
             {/* ── Opciones de personalización (si el menú las tiene) ── */}

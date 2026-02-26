@@ -84,6 +84,23 @@ interface LunchCategory {
   display_order: number;
   is_kitchen_sale?: boolean;
   allows_addons?: boolean;
+  menu_mode?: 'standard' | 'configurable';
+}
+
+interface ConfigurableGroup {
+  id?: string;
+  name: string;
+  is_required: boolean;
+  max_selections: number;
+  display_order: number;
+  options: ConfigurableOption[];
+}
+
+interface ConfigurableOption {
+  id?: string;
+  name: string;
+  is_active: boolean;
+  display_order: number;
 }
 
 interface CategoryManagerProps {
@@ -101,6 +118,11 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   const [managingAddonsForCategory, setManagingAddonsForCategory] = useState<LunchCategory | null>(null);
   const [addonsCount, setAddonsCount] = useState<Record<string, number>>({});
 
+  // ── Estado para editor de Plato Configurable ──
+  const [configuringCategory, setConfiguringCategory] = useState<LunchCategory | null>(null);
+  const [configGroups, setConfigGroups] = useState<ConfigurableGroup[]>([]);
+  const [savingConfig, setSavingConfig] = useState(false);
+
   // Diálogos de confirmación con impacto
   const [deleteConfirmCategory, setDeleteConfirmCategory] = useState<LunchCategory | null>(null);
   const [toggleConfirmCategory, setToggleConfirmCategory] = useState<LunchCategory | null>(null);
@@ -116,6 +138,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
     icon: 'utensils',
     price: '',
     is_active: true,
+    menu_mode: 'standard' as 'standard' | 'configurable',
   });
 
   useEffect(() => {
@@ -199,6 +222,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
         price: parseFloat(formData.price),
         is_active: formData.is_active,
         display_order: editingCategory ? editingCategory.display_order : categories.length,
+        menu_mode: formData.menu_mode,
       };
 
       if (editingCategory) {
@@ -252,6 +276,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
       icon: category.icon,
       price: category.price?.toString() || '',
       is_active: category.is_active,
+      menu_mode: category.menu_mode || 'standard',
     });
     setShowForm(true);
   };
@@ -418,6 +443,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
       icon: 'utensils',
       price: '',
       is_active: true,
+      menu_mode: 'standard',
     });
     setEditingCategory(null);
     setShowForm(false);
@@ -425,6 +451,150 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
 
   const getIconComponent = (iconName: string) => {
     return AVAILABLE_ICONS.find(i => i.value === iconName)?.icon || Utensils;
+  };
+
+  // ── Funciones para editor de Plato Configurable ──
+  const openConfigurableEditor = async (category: LunchCategory) => {
+    setConfiguringCategory(category);
+    setConfigGroups([]);
+
+    // Cargar grupos existentes
+    try {
+      const { data: groups } = await supabase
+        .from('configurable_plate_groups')
+        .select('id, name, is_required, max_selections, display_order')
+        .eq('category_id', category.id)
+        .order('display_order', { ascending: true });
+
+      if (groups && groups.length > 0) {
+        const groupIds = groups.map(g => g.id);
+        const { data: options } = await supabase
+          .from('configurable_plate_options')
+          .select('id, group_id, name, is_active, display_order')
+          .in('group_id', groupIds)
+          .order('display_order', { ascending: true });
+
+        setConfigGroups(groups.map(g => ({
+          ...g,
+          options: (options || []).filter(o => o.group_id === g.id),
+        })));
+      } else {
+        // Agregar un grupo por defecto
+        setConfigGroups([{
+          name: 'Proteína',
+          is_required: true,
+          max_selections: 1,
+          display_order: 0,
+          options: [{ name: '', is_active: true, display_order: 0 }],
+        }]);
+      }
+    } catch (err) {
+      console.error('Error loading configurable groups:', err);
+    }
+  };
+
+  const addConfigGroup = () => {
+    setConfigGroups(prev => [...prev, {
+      name: '',
+      is_required: true,
+      max_selections: 1,
+      display_order: prev.length,
+      options: [{ name: '', is_active: true, display_order: 0 }],
+    }]);
+  };
+
+  const removeConfigGroup = (idx: number) => {
+    setConfigGroups(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateConfigGroup = (idx: number, field: string, value: any) => {
+    setConfigGroups(prev => prev.map((g, i) => i === idx ? { ...g, [field]: value } : g));
+  };
+
+  const addConfigOption = (groupIdx: number) => {
+    setConfigGroups(prev => prev.map((g, i) => i === groupIdx ? {
+      ...g,
+      options: [...g.options, { name: '', is_active: true, display_order: g.options.length }],
+    } : g));
+  };
+
+  const removeConfigOption = (groupIdx: number, optIdx: number) => {
+    setConfigGroups(prev => prev.map((g, i) => i === groupIdx ? {
+      ...g,
+      options: g.options.filter((_, oi) => oi !== optIdx),
+    } : g));
+  };
+
+  const updateConfigOption = (groupIdx: number, optIdx: number, value: string) => {
+    setConfigGroups(prev => prev.map((g, i) => i === groupIdx ? {
+      ...g,
+      options: g.options.map((o, oi) => oi === optIdx ? { ...o, name: value } : o),
+    } : g));
+  };
+
+  const saveConfigurableGroups = async () => {
+    if (!configuringCategory) return;
+
+    // Validar
+    const invalid = configGroups.some(g => !g.name.trim() || g.options.some(o => !o.name.trim()));
+    if (invalid) {
+      toast({ variant: 'destructive', title: 'Campos vacíos', description: 'Completa todos los nombres de grupos y opciones' });
+      return;
+    }
+
+    if (configGroups.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin grupos', description: 'Agrega al menos un grupo de opciones' });
+      return;
+    }
+
+    setSavingConfig(true);
+    try {
+      // Borrar grupos existentes (cascade borra opciones)
+      await supabase.from('configurable_plate_groups').delete().eq('category_id', configuringCategory.id);
+
+      // Insertar nuevos grupos y opciones
+      for (let i = 0; i < configGroups.length; i++) {
+        const group = configGroups[i];
+        const { data: newGroup, error: gErr } = await supabase
+          .from('configurable_plate_groups')
+          .insert({
+            category_id: configuringCategory.id,
+            name: group.name.trim(),
+            is_required: group.is_required,
+            max_selections: group.max_selections,
+            display_order: i,
+          })
+          .select('id')
+          .single();
+
+        if (gErr || !newGroup) {
+          console.error('Error creating group:', gErr);
+          continue;
+        }
+
+        // Insertar opciones
+        const optionsToInsert = group.options
+          .filter(o => o.name.trim())
+          .map((o, oi) => ({
+            group_id: newGroup.id,
+            name: o.name.trim(),
+            is_active: true,
+            display_order: oi,
+          }));
+
+        if (optionsToInsert.length > 0) {
+          await supabase.from('configurable_plate_options').insert(optionsToInsert);
+        }
+      }
+
+      toast({ title: '✅ Opciones guardadas', description: `Se configuraron ${configGroups.length} grupo(s) de opciones para "${configuringCategory.name}"` });
+      setConfiguringCategory(null);
+    } catch (err: any) {
+      console.error('Error saving configurable groups:', err);
+      toast({ variant: 'destructive', title: 'Error', description: err.message || 'No se pudieron guardar las opciones' });
+    } finally {
+      setSavingConfig(false);
+    }
   };
 
   return (
@@ -573,6 +743,31 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                       />
                       <Label htmlFor="is_active">Categoría activa</Label>
                     </div>
+
+                    <div className="md:col-span-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-lg p-4 space-y-2">
+                      <div className="flex items-center space-x-3">
+                        <Switch
+                          id="menu_mode"
+                          checked={formData.menu_mode === 'configurable'}
+                          onCheckedChange={(checked) => setFormData({ ...formData, menu_mode: checked ? 'configurable' : 'standard' })}
+                        />
+                        <div>
+                          <Label htmlFor="menu_mode" className="text-base font-semibold text-amber-900">
+                            🍽️ Plato Configurable
+                          </Label>
+                          <p className="text-xs text-amber-700 mt-0.5">
+                            {formData.menu_mode === 'configurable'
+                              ? 'Los padres eligen opciones (proteína, guarnición, etc.) en vez de ver un menú fijo.'
+                              : 'Menú tradicional con Entrada, Segundo, Bebida y Postre.'}
+                          </p>
+                        </div>
+                      </div>
+                      {formData.menu_mode === 'configurable' && (
+                        <p className="text-xs text-amber-600 ml-12">
+                          ⚡ Después de guardar, usa el botón <strong>⚙️</strong> para configurar las opciones (Proteína, Guarnición, etc.)
+                        </p>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex gap-2">
@@ -616,6 +811,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                       <TableHead>Color/Icono</TableHead>
                       <TableHead>Precio</TableHead>
                       <TableHead>Toppings</TableHead>
+                      <TableHead>Modo</TableHead>
                       <TableHead>Estado</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
@@ -678,6 +874,15 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                             )}
                           </TableCell>
                           <TableCell>
+                            {category.menu_mode === 'configurable' ? (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">
+                                🍽️ Configurable
+                              </Badge>
+                            ) : (
+                              <span className="text-gray-400 text-xs">Estándar</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
                             <div className="flex items-center gap-2">
                               <Switch
                                 checked={category.is_active}
@@ -691,6 +896,20 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
+                              {/* Botón de configurar plato configurable */}
+                              {category.menu_mode === 'configurable' && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => openConfigurableEditor(category)}
+                                  disabled={loading}
+                                  title="Configurar opciones del plato"
+                                  className="bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-300"
+                                >
+                                  ⚙️
+                                </Button>
+                              )}
+
                               {/* Botón de Gestionar Agregados (solo para categorías normales, no venta de cocina) */}
                               {!category.is_kitchen_sale && (
                                 <Button
@@ -906,6 +1125,117 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
               disabled={loading || loadingImpact}
             >
               {loading ? 'Desactivando...' : 'Sí, desactivar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ======================================================
+          DIALOG DE CONFIGURACIÓN DE PLATO CONFIGURABLE
+          ====================================================== */}
+      <Dialog open={!!configuringCategory} onOpenChange={() => setConfiguringCategory(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-800">
+              🍽️ Configurar Plato: "{configuringCategory?.name}"
+            </DialogTitle>
+            <DialogDescription>
+              Define los grupos de opciones. Ejemplo: "Proteína" con opciones Pollo, Pescado, Carne. Los padres elegirán una opción de cada grupo.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-2">
+            {configGroups.map((group, gIdx) => (
+              <Card key={gIdx} className="border-2 border-amber-200">
+                <CardContent className="p-4 space-y-3">
+                  {/* Cabecera del grupo */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <Label className="text-xs text-gray-500">Nombre del grupo</Label>
+                      <Input
+                        value={group.name}
+                        onChange={(e) => updateConfigGroup(gIdx, 'name', e.target.value)}
+                        placeholder="Ej: Proteína, Guarnición, Ensalada"
+                        className="font-semibold border-amber-200"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeConfigGroup(gIdx)}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50 mt-5"
+                      disabled={savingConfig}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Opciones del grupo */}
+                  <div className="pl-4 border-l-2 border-amber-200 space-y-2">
+                    <p className="text-xs text-amber-700 font-medium">Opciones disponibles:</p>
+                    {group.options.map((opt, oIdx) => (
+                      <div key={oIdx} className="flex items-center gap-2">
+                        <span className="text-xs text-amber-500 w-6">{oIdx + 1}.</span>
+                        <Input
+                          value={opt.name}
+                          onChange={(e) => updateConfigOption(gIdx, oIdx, e.target.value)}
+                          placeholder={`Opción ${oIdx + 1} (ej: Pollo a la plancha)`}
+                          className="text-sm h-9 border-amber-200"
+                          disabled={savingConfig}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeConfigOption(gIdx, oIdx)}
+                          disabled={savingConfig || group.options.length <= 1}
+                          className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addConfigOption(gIdx)}
+                      disabled={savingConfig}
+                      className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Agregar opción
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+
+            {/* Botón agregar grupo */}
+            <Button
+              variant="outline"
+              onClick={addConfigGroup}
+              disabled={savingConfig}
+              className="w-full border-dashed border-2 border-amber-300 text-amber-700 hover:bg-amber-50"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Agregar grupo de opciones
+            </Button>
+          </div>
+
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => setConfiguringCategory(null)} disabled={savingConfig}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={saveConfigurableGroups}
+              disabled={savingConfig}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {savingConfig ? (
+                <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />Guardando...</>
+              ) : (
+                <><Save className="h-4 w-4 mr-2" />Guardar opciones</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

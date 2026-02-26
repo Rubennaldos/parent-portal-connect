@@ -90,6 +90,7 @@ interface LunchMenu {
   special_day_type?: string;
   special_day_title?: string;
   allows_modifiers?: boolean;
+  is_configurable_plate?: boolean; // Derivado de la categoría
 }
 
 interface DayData {
@@ -274,6 +275,26 @@ const LunchCalendar = () => {
 
       if (error) throw error;
 
+      // Enriquecer con menu_mode de las categorías
+      const categoryIds = [...new Set((data || []).map((m: any) => m.category_id).filter(Boolean))];
+      let configurableCategoryIds = new Set<string>();
+      if (categoryIds.length > 0) {
+        const { data: catData } = await supabase
+          .from('lunch_categories')
+          .select('id, menu_mode')
+          .in('id', categoryIds)
+          .eq('menu_mode', 'configurable');
+        if (catData) {
+          configurableCategoryIds = new Set(catData.map((c: any) => c.id));
+        }
+      }
+
+      // Marcar menús de categorías configurables
+      const enrichedData = (data || []).map((m: any) => ({
+        ...m,
+        is_configurable_plate: m.category_id ? configurableCategoryIds.has(m.category_id) : false,
+      }));
+
       // Construir estructura de calendario
       const daysInMonth = new Date(year, month, 0).getDate();
       const calendarDays: DayData[] = [];
@@ -283,7 +304,7 @@ const LunchCalendar = () => {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const date = new Date(year, month - 1, day); // Solo para mostrar en UI
 
-        const menusForDay = (data || []).filter(
+        const menusForDay = enrichedData.filter(
           (m: LunchMenu) => m.date === dateStr
         );
 
@@ -1200,6 +1221,11 @@ const LunchCalendar = () => {
                           {menu.allows_modifiers && (
                             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
                               ✨ Personalizable
+                            </span>
+                          )}
+                          {menu.is_configurable_plate && (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                              🍽️ Configurable
                             </span>
                           )}
                         </div>

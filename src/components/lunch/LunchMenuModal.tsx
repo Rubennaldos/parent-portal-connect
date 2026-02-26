@@ -83,6 +83,8 @@ export const LunchMenuModal = ({
 
   const [loading, setLoading] = useState(false);
   const [isKitchenProduct, setIsKitchenProduct] = useState(false);
+  const [isConfigurablePlate, setIsConfigurablePlate] = useState(false); // 🍽️ Plato Configurable
+  const [configurableGroups, setConfigurableGroups] = useState<Array<{ name: string; options: string[] }>>([]);
   const [categoryToppings, setCategoryToppings] = useState<Array<{name: string, price: number}>>([]);
   const [garnishesInput, setGarnishesInput] = useState(''); // Campo de texto simple: "Papas fritas, Ensalada extra, Salsa"
 
@@ -194,11 +196,13 @@ export const LunchMenuModal = ({
     try {
       const { data, error } = await supabase
         .from('lunch_categories')
-        .select('is_kitchen_sale, target_type')
+        .select('is_kitchen_sale, target_type, menu_mode')
         .eq('id', categoryId)
         .single();
       if (error) throw error;
       setIsKitchenProduct(data?.is_kitchen_sale === true);
+      const isConfigurable = data?.menu_mode === 'configurable';
+      setIsConfigurablePlate(isConfigurable);
       if (data?.target_type) {
         setFormData(prev => ({ ...prev, target_type: data.target_type }));
       }
@@ -207,9 +211,46 @@ export const LunchMenuModal = ({
       } else {
         setCategoryToppings([]);
       }
+      // Si es configurable, cargar los grupos de opciones para mostrar info
+      if (isConfigurable) {
+        loadConfigurableInfo(categoryId);
+      } else {
+        setConfigurableGroups([]);
+      }
     } catch {
       setIsKitchenProduct(false);
+      setIsConfigurablePlate(false);
       setCategoryToppings([]);
+      setConfigurableGroups([]);
+    }
+  };
+
+  const loadConfigurableInfo = async (categoryId: string) => {
+    try {
+      const { data: groups } = await supabase
+        .from('configurable_plate_groups')
+        .select('id, name')
+        .eq('category_id', categoryId)
+        .order('display_order', { ascending: true });
+
+      if (groups && groups.length > 0) {
+        const groupIds = groups.map(g => g.id);
+        const { data: options } = await supabase
+          .from('configurable_plate_options')
+          .select('group_id, name')
+          .in('group_id', groupIds)
+          .eq('is_active', true)
+          .order('display_order', { ascending: true });
+
+        setConfigurableGroups(groups.map(g => ({
+          name: g.name,
+          options: (options || []).filter(o => o.group_id === g.id).map(o => o.name),
+        })));
+      } else {
+        setConfigurableGroups([]);
+      }
+    } catch {
+      setConfigurableGroups([]);
     }
   };
 
@@ -417,6 +458,11 @@ export const LunchMenuModal = ({
         toast({ title: 'Campos incompletos', description: 'Completa sede, fecha, nombre del producto y precio', variant: 'destructive' });
         return;
       }
+    } else if (isConfigurablePlate) {
+      if (!formData.school_id || !formData.date) {
+        toast({ title: 'Campos incompletos', description: 'Completa sede y fecha', variant: 'destructive' });
+        return;
+      }
     } else {
       if (!formData.school_id || !formData.date || !formData.main_course.trim()) {
         toast({ title: 'Campos incompletos', description: 'Completa sede, fecha y segundo plato', variant: 'destructive' });
@@ -426,7 +472,7 @@ export const LunchMenuModal = ({
 
     setLoading(true);
     try {
-      if (!isKitchenProduct) {
+      if (!isKitchenProduct && !isConfigurablePlate) {
         await Promise.all([
           supabase.rpc('upsert_lunch_item', { p_type: 'entrada',  p_name: formData.starter.trim() }),
           supabase.rpc('upsert_lunch_item', { p_type: 'segundo',  p_name: formData.main_course.trim() }),
@@ -451,6 +497,18 @@ export const LunchMenuModal = ({
         payload.dessert = null;
         payload.notes = formData.notes.trim() || null;
         payload.allows_modifiers = false;
+      } else if (isConfigurablePlate) {
+        // Plato configurable: no tiene entrada/segundo/bebida/postre fijos
+        // El main_course se usa como nombre descriptivo del plato del día
+        payload.is_kitchen_product = false;
+        payload.main_course = formData.main_course.trim() || preSelectedCategoryName || 'Plato del día';
+        payload.starter = null;
+        payload.beverage = null;
+        payload.dessert = null;
+        payload.notes = formData.notes.trim() || null;
+        payload.product_name = null;
+        payload.product_price = null;
+        payload.allows_modifiers = false; // Las opciones están en la categoría, no en modifiers
       } else {
         payload.is_kitchen_product = false;
         payload.starter = formData.starter.trim() || null;
@@ -485,9 +543,9 @@ export const LunchMenuModal = ({
         const { error } = await supabase.from('lunch_menus').update(payload).eq('id', menuId);
         if (error) throw error;
 
-        if (hasCustomization) {
+        if (!isConfigurablePlate && hasCustomization) {
           await saveFieldModifiers(menuId);
-        } else {
+        } else if (!isConfigurablePlate) {
           // Limpiar grupos existentes si se desactivó toda personalización
           await supabase.from('menu_modifier_groups').delete().eq('menu_id', menuId);
         }
@@ -498,7 +556,7 @@ export const LunchMenuModal = ({
           .from('lunch_menus').insert([payload]).select('id').single();
         if (error) throw error;
 
-        if (hasCustomization && newMenu) {
+        if (!isConfigurablePlate && hasCustomization && newMenu) {
           await saveFieldModifiers(newMenu.id);
         }
 
@@ -646,8 +704,8 @@ export const LunchMenuModal = ({
           <DialogTitle className="flex items-center gap-2">
             <Save className="h-5 w-5 text-green-600" />
             {menuId
-              ? (isKitchenProduct ? 'Editar Producto de Cocina' : 'Editar Menú')
-              : (isKitchenProduct ? 'Nuevo Producto de Cocina' : 'Nuevo Menú de Almuerzo')}
+              ? (isKitchenProduct ? 'Editar Producto de Cocina' : isConfigurablePlate ? 'Editar Plato Configurable' : 'Editar Menú')
+              : (isKitchenProduct ? 'Nuevo Producto de Cocina' : isConfigurablePlate ? 'Nuevo Plato Configurable' : 'Nuevo Menú de Almuerzo')}
           </DialogTitle>
           <div className="space-y-2 pt-1">
             {formattedDate && (
@@ -738,6 +796,57 @@ export const LunchMenuModal = ({
                   onChange={(e) => setFormData(p => ({ ...p, product_price: e.target.value }))}
                   placeholder="0.00" disabled={loading} className="mt-1" required
                 />
+              </div>
+            </div>
+          ) : isConfigurablePlate ? (
+            /* ── Plato Configurable: form simplificado ── */
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🍽️</span>
+                  <div>
+                    <p className="font-semibold text-amber-900">Plato Configurable</p>
+                    <p className="text-xs text-amber-700">Los padres elegirán sus opciones al pedir. Las opciones se configuran en la categoría.</p>
+                  </div>
+                </div>
+
+                {/* Mostrar resumen de las opciones configuradas */}
+                {configurableGroups.length > 0 ? (
+                  <div className="space-y-2 mt-2">
+                    {configurableGroups.map((g, i) => (
+                      <div key={i} className="bg-white rounded-lg p-2.5 border border-amber-200">
+                        <p className="text-sm font-semibold text-amber-800">{g.name}:</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {g.options.map((opt, oi) => (
+                            <Badge key={oi} variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">
+                              {opt}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-red-50 border border-red-200 rounded p-2 text-sm text-red-700">
+                    ⚠️ No se han configurado opciones para esta categoría. Ve a <strong>Gestionar Categorías → ⚙️</strong> para agregar opciones.
+                  </div>
+                )}
+              </div>
+
+              {/* Nombre del plato del día (opcional pero útil) */}
+              <div>
+                <Label htmlFor="main_course">🍲 Nombre del plato del día (opcional)</Label>
+                <Input
+                  id="main_course"
+                  value={formData.main_course}
+                  onChange={(e) => setFormData(p => ({ ...p, main_course: e.target.value }))}
+                  placeholder={`Ej: ${preSelectedCategoryName || 'Menú Light'} del día`}
+                  disabled={loading}
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Si lo dejas vacío, se usará el nombre de la categoría.
+                </p>
               </div>
             </div>
           ) : (
