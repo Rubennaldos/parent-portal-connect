@@ -661,6 +661,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         console.log(`✅ Pedido existente actualizado: cantidad ${existingOrderForCategory.quantity || 1} → ${newQuantity}`);
       } else {
         // ── Crear pedido NUEVO ──
+        // Solo incluir columnas opcionales si tienen datos (evita error si la migración no se ejecutó)
         const orderData: any = {
           menu_id: selectedMenu.id,
           order_date: selectedMenu.date,
@@ -670,10 +671,16 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           quantity,
           base_price: selectedCategory.price || 0,
           final_price: totalPrice,
-          selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
-          selected_garnishes: Array.from(selectedGarnishes),
-          configurable_selections: configSelections.length > 0 ? configSelections : [],
         };
+        if (selectedModifiers.length > 0) {
+          orderData.selected_modifiers = selectedModifiers;
+        }
+        if (selectedGarnishes.size > 0) {
+          orderData.selected_garnishes = Array.from(selectedGarnishes);
+        }
+        if (configSelections.length > 0) {
+          orderData.configurable_selections = configSelections;
+        }
 
         if (paymentType === 'credit') {
           if (targetType === 'students') {

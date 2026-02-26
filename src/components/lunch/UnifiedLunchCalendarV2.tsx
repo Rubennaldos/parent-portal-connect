@@ -809,24 +809,33 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const unitPrice = selectedCategory.price || config.lunch_price;
 
       // 1. Create lunch_order (con modificadores si los hay)
+      // Solo incluir columnas opcionales si tienen datos (evita error si la migración no se ejecutó)
+      const orderPayload: Record<string, any> = {
+        [personField]: personId,
+        order_date: currentDateStr,
+        status: 'pending',
+        category_id: selectedCategory.id,
+        menu_id: selectedMenu.id,
+        school_id: effectiveSchoolId,
+        quantity,
+        base_price: unitPrice,
+        addons_total: 0,
+        final_price: unitPrice * quantity,
+        created_by: userId,
+      };
+      if (selectedModifiers.length > 0) {
+        orderPayload.selected_modifiers = selectedModifiers;
+      }
+      if (selectedGarnishes.size > 0) {
+        orderPayload.selected_garnishes = Array.from(selectedGarnishes);
+      }
+      if (configSelections.length > 0) {
+        orderPayload.configurable_selections = configSelections;
+      }
+
       const { data: insertedOrder, error: orderError } = await supabase
         .from('lunch_orders')
-        .insert([{
-          [personField]: personId,
-          order_date: currentDateStr,
-          status: 'pending',
-          category_id: selectedCategory.id,
-          menu_id: selectedMenu.id,
-          school_id: effectiveSchoolId,
-          quantity,
-          base_price: unitPrice,
-          addons_total: 0,
-          final_price: unitPrice * quantity,
-          created_by: userId,
-          selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
-          selected_garnishes: Array.from(selectedGarnishes),
-          configurable_selections: configSelections.length > 0 ? configSelections : [],
-        }])
+        .insert([orderPayload])
         .select('id')
         .single();
 

@@ -134,10 +134,12 @@ const Comedor = () => {
   // ── Fallback si la función RPC no existe aún ──
   const loadKitchenFallback = async () => {
     if (!schoolId) return;
-    const { data, error } = await supabase
+    // Intentar primero con todas las columnas opcionales
+    let queryData: any[] | null = null;
+    const { data: fullData, error: fullError } = await supabase
       .from('lunch_orders')
       .select(`
-        id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections,
+        id, order_date, status, quantity, is_cancelled, configurable_selections,
         category_id, menu_id,
         lunch_categories(name),
         lunch_menus(main_course)
@@ -147,15 +149,16 @@ const Comedor = () => {
       .eq('is_cancelled', false)
       .neq('status', 'cancelled');
 
-    if (error) {
-      console.error('Fallback query error:', error);
+    if (fullError) {
+      console.error('Fallback query error:', fullError);
       return;
     }
+    queryData = fullData;
 
     // Agrupar manualmente
     const groupMap = new Map<string, KitchenOrderGroup>();
-    for (const order of (data || [])) {
-      const mods = order.selected_modifiers || [];
+    for (const order of (queryData || [])) {
+      const mods = (order as any).selected_modifiers || [];
       const configSels = (order as any).configurable_selections || [];
       let modSummary: string;
       if (configSels.length > 0) {
@@ -194,7 +197,7 @@ const Comedor = () => {
     const { data, error } = await supabase
       .from('lunch_orders')
       .select(`
-        id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections, created_at,
+        id, order_date, status, quantity, is_cancelled, configurable_selections, created_at,
         students(full_name),
         teacher_profiles(full_name),
         lunch_categories(name),
@@ -210,7 +213,7 @@ const Comedor = () => {
       // Fallback sin joins
       const { data: fallbackData } = await supabase
         .from('lunch_orders')
-        .select('id, order_date, status, quantity, is_cancelled, selected_modifiers, configurable_selections, created_at, manual_name')
+        .select('id, order_date, status, quantity, is_cancelled, configurable_selections, created_at, manual_name')
         .eq('school_id', schoolId)
         .eq('order_date', selectedDate)
         .eq('is_cancelled', false)
@@ -227,7 +230,7 @@ const Comedor = () => {
         manual_name: o.manual_name || null,
         category_name: '',
         menu_name: '',
-        selected_modifiers: o.selected_modifiers || [],
+        selected_modifiers: (o as any).selected_modifiers || [],
         configurable_selections: o.configurable_selections || [],
         created_at: o.created_at,
       }));
@@ -249,7 +252,7 @@ const Comedor = () => {
       manual_name: null,
       category_name: o.lunch_categories?.name || '',
       menu_name: o.lunch_menus?.main_course || '',
-      selected_modifiers: o.selected_modifiers || [],
+      selected_modifiers: (o as any).selected_modifiers || [],
       configurable_selections: o.configurable_selections || [],
       created_at: o.created_at,
     }));
