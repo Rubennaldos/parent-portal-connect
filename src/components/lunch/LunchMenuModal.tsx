@@ -21,10 +21,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Save, Tag } from 'lucide-react';
+import { Loader2, Save, Tag, Settings2, Plus, Trash2, GripVertical } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+// ── Interfaces para modificadores ──
+interface ModifierOption {
+  id?: string;
+  name: string;
+  is_default: boolean;
+  display_order: number;
+}
+
+interface ModifierGroup {
+  id?: string;
+  name: string;
+  is_required: boolean;
+  max_selections: number;
+  display_order: number;
+  options: ModifierOption[];
+}
 
 interface School {
   id: string;
@@ -63,6 +81,9 @@ export const LunchMenuModal = ({
   const [loading, setLoading] = useState(false);
   const [isKitchenProduct, setIsKitchenProduct] = useState(false);
   const [categoryToppings, setCategoryToppings] = useState<Array<{name: string, price: number}>>([]);
+  const [allowsModifiers, setAllowsModifiers] = useState(false);
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
+  const [savedMenuId, setSavedMenuId] = useState<string | null>(menuId || null);
   const [formData, setFormData] = useState({
     school_id: userSchoolId || '',
     date: initialDate ? initialDate.toISOString().split('T')[0] : '',
@@ -184,7 +205,16 @@ export const LunchMenuModal = ({
         notes: data.notes || '',
         category_id: data.category_id || '',
         target_type: data.target_type || 'students',
+        product_name: data.product_name || '',
+        product_price: data.product_price?.toString() || '',
       });
+
+      // Cargar estado de modificadores
+      setAllowsModifiers(data.allows_modifiers === true);
+      setSavedMenuId(menuId);
+      if (data.allows_modifiers) {
+        await loadModifierGroups(menuId);
+      }
     } catch (error) {
       console.error('Error loading menu:', error);
       toast({
@@ -194,6 +224,168 @@ export const LunchMenuModal = ({
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── Cargar grupos de modificadores existentes ──
+  const loadModifierGroups = async (mId: string) => {
+    try {
+      const { data: groups, error } = await supabase
+        .from('menu_modifier_groups')
+        .select('id, name, is_required, max_selections, display_order')
+        .eq('menu_id', mId)
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+      if (!groups || groups.length === 0) {
+        setModifierGroups([]);
+        return;
+      }
+
+      // Cargar opciones para cada grupo
+      const groupIds = groups.map(g => g.id);
+      const { data: options, error: optError } = await supabase
+        .from('menu_modifier_options')
+        .select('id, group_id, name, is_default, display_order')
+        .in('group_id', groupIds)
+        .order('display_order', { ascending: true });
+
+      if (optError) throw optError;
+
+      const groupsWithOptions: ModifierGroup[] = groups.map(g => ({
+        ...g,
+        options: (options || []).filter(o => o.group_id === g.id),
+      }));
+
+      setModifierGroups(groupsWithOptions);
+    } catch (error) {
+      console.error('Error loading modifier groups:', error);
+    }
+  };
+
+  // ── Agregar un grupo de modificadores ──
+  const addModifierGroup = () => {
+    setModifierGroups(prev => [
+      ...prev,
+      {
+        name: '',
+        is_required: true,
+        max_selections: 1,
+        display_order: prev.length,
+        options: [{ name: '', is_default: true, display_order: 0 }],
+      },
+    ]);
+  };
+
+  // ── Eliminar un grupo ──
+  const removeModifierGroup = async (index: number) => {
+    const group = modifierGroups[index];
+    if (group.id) {
+      // Eliminar de la BD
+      await supabase.from('menu_modifier_groups').delete().eq('id', group.id);
+    }
+    setModifierGroups(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // ── Actualizar un grupo ──
+  const updateModifierGroup = (index: number, field: string, value: any) => {
+    setModifierGroups(prev => prev.map((g, i) => i === index ? { ...g, [field]: value } : g));
+  };
+
+  // ── Agregar opción a un grupo ──
+  const addOptionToGroup = (groupIndex: number) => {
+    setModifierGroups(prev => prev.map((g, i) => {
+      if (i !== groupIndex) return g;
+      return {
+        ...g,
+        options: [...g.options, { name: '', is_default: false, display_order: g.options.length }],
+      };
+    }));
+  };
+
+  // ── Eliminar opción de un grupo ──
+  const removeOptionFromGroup = async (groupIndex: number, optionIndex: number) => {
+    const option = modifierGroups[groupIndex]?.options[optionIndex];
+    if (option?.id) {
+      await supabase.from('menu_modifier_options').delete().eq('id', option.id);
+    }
+    setModifierGroups(prev => prev.map((g, i) => {
+      if (i !== groupIndex) return g;
+      return { ...g, options: g.options.filter((_, oi) => oi !== optionIndex) };
+    }));
+  };
+
+  // ── Actualizar opción ──
+  const updateOption = (groupIndex: number, optionIndex: number, field: string, value: any) => {
+    setModifierGroups(prev => prev.map((g, gi) => {
+      if (gi !== groupIndex) return g;
+      return {
+        ...g,
+        options: g.options.map((o, oi) => {
+          if (oi !== optionIndex) return field === 'is_default' && value ? { ...o, is_default: false } : o;
+          return { ...o, [field]: value };
+        }),
+      };
+    }));
+  };
+
+  // ── Guardar modificadores en la BD ──
+  const saveModifiers = async (menuIdToSave: string) => {
+    if (!allowsModifiers || modifierGroups.length === 0) return;
+
+    for (const group of modifierGroups) {
+      if (!group.name.trim()) continue;
+
+      let groupId = group.id;
+
+      if (groupId) {
+        // Actualizar grupo existente
+        await supabase.from('menu_modifier_groups').update({
+          name: group.name.trim(),
+          is_required: group.is_required,
+          max_selections: group.max_selections,
+          display_order: group.display_order,
+        }).eq('id', groupId);
+      } else {
+        // Crear nuevo grupo
+        const { data: newGroup, error } = await supabase
+          .from('menu_modifier_groups')
+          .insert({
+            menu_id: menuIdToSave,
+            name: group.name.trim(),
+            is_required: group.is_required,
+            max_selections: group.max_selections,
+            display_order: group.display_order,
+          })
+          .select('id')
+          .single();
+
+        if (error) {
+          console.error('Error creating modifier group:', error);
+          continue;
+        }
+        groupId = newGroup.id;
+      }
+
+      // Guardar opciones del grupo
+      for (const option of group.options) {
+        if (!option.name.trim()) continue;
+
+        if (option.id) {
+          await supabase.from('menu_modifier_options').update({
+            name: option.name.trim(),
+            is_default: option.is_default,
+            display_order: option.display_order,
+          }).eq('id', option.id);
+        } else {
+          await supabase.from('menu_modifier_options').insert({
+            group_id: groupId,
+            name: option.name.trim(),
+            is_default: option.is_default,
+            display_order: option.display_order,
+          });
+        }
+      }
     }
   };
 
@@ -287,6 +479,11 @@ export const LunchMenuModal = ({
         payload.target_type = 'both'; // Sin categoría = visible para todos
       }
 
+      // Agregar allows_modifiers al payload (solo para menús normales)
+      if (!isKitchenProduct) {
+        payload.allows_modifiers = allowsModifiers;
+      }
+
       if (menuId) {
         // Actualizar
         const { error } = await supabase
@@ -296,21 +493,37 @@ export const LunchMenuModal = ({
 
         if (error) throw error;
 
+        // Guardar modificadores si están habilitados
+        if (allowsModifiers) {
+          await saveModifiers(menuId);
+        }
+
         toast({
           title: isKitchenProduct ? 'Producto actualizado' : 'Menú actualizado',
           description: isKitchenProduct ? 'El producto se actualizó correctamente' : 'El menú se actualizó correctamente',
         });
       } else {
         // Crear
-        const { error } = await supabase
+        const { data: newMenu, error } = await supabase
           .from('lunch_menus')
-          .insert([payload]);
+          .insert([payload])
+          .select('id')
+          .single();
 
         if (error) throw error;
 
+        // Guardar modificadores si están habilitados
+        if (allowsModifiers && newMenu) {
+          await saveModifiers(newMenu.id);
+        }
+
         toast({
           title: isKitchenProduct ? 'Producto creado' : 'Menú creado',
-          description: isKitchenProduct ? 'El producto se creó correctamente' : 'El menú se creó correctamente',
+          description: isKitchenProduct
+            ? 'El producto se creó correctamente'
+            : allowsModifiers
+              ? 'Menú creado con personalización habilitada ✨'
+              : 'El menú se creó correctamente',
         });
       }
 
@@ -562,6 +775,115 @@ export const LunchMenuModal = ({
               className="mt-2"
             />
           </div>
+
+          {/* ── Sección de Personalización (solo menús normales) ── */}
+          {!isKitchenProduct && (
+            <div className="border rounded-lg p-4 space-y-4 bg-gradient-to-r from-purple-50 to-indigo-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Settings2 className="h-5 w-5 text-purple-600" />
+                  <div>
+                    <Label className="text-sm font-semibold text-purple-900">
+                      Permitir personalización
+                    </Label>
+                    <p className="text-xs text-purple-600">
+                      Los padres podrán cambiar componentes del menú (sin cambio de precio)
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={allowsModifiers}
+                  onCheckedChange={setAllowsModifiers}
+                  disabled={loading}
+                />
+              </div>
+
+              {allowsModifiers && (
+                <div className="space-y-3 pt-2 border-t border-purple-200">
+                  <p className="text-xs text-purple-700 font-medium">
+                    Configura los grupos de opciones. Ej: "Proteína" → Pollo, Pescado, Res
+                  </p>
+
+                  {modifierGroups.map((group, gi) => (
+                    <div key={gi} className="bg-white rounded-lg border border-purple-200 p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <GripVertical className="h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="Nombre del grupo (ej: Proteína)"
+                          value={group.name}
+                          onChange={(e) => updateModifierGroup(gi, 'name', e.target.value)}
+                          className="text-sm font-semibold flex-1"
+                          disabled={loading}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeModifierGroup(gi)}
+                          className="text-red-500 hover:text-red-700 h-8 w-8 p-0"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      {/* Opciones del grupo */}
+                      <div className="pl-6 space-y-1">
+                        {group.options.map((option, oi) => (
+                          <div key={oi} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`default-${gi}`}
+                              checked={option.is_default}
+                              onChange={() => updateOption(gi, oi, 'is_default', true)}
+                              className="text-purple-600"
+                              title="Marcar como opción por defecto"
+                            />
+                            <Input
+                              placeholder="Nombre de opción (ej: Pollo)"
+                              value={option.name}
+                              onChange={(e) => updateOption(gi, oi, 'name', e.target.value)}
+                              className="text-sm flex-1 h-8"
+                              disabled={loading}
+                            />
+                            {group.options.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeOptionFromGroup(gi, oi)}
+                                className="text-red-400 hover:text-red-600 h-6 w-6 p-0"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => addOptionToGroup(gi)}
+                          className="text-purple-600 hover:text-purple-800 h-7 text-xs"
+                        >
+                          <Plus className="h-3 w-3 mr-1" /> Agregar opción
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addModifierGroup}
+                    className="w-full border-dashed border-purple-300 text-purple-700 hover:bg-purple-50"
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> Agregar grupo de personalización
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           <DialogFooter className="gap-2 pt-4 border-t">
             {menuId && (

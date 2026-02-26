@@ -70,6 +70,7 @@ interface LunchMenu {
   notes: string | null;
   category_id: string | null;
   category?: LunchCategory | null;
+  allows_modifiers?: boolean;
 }
 
 interface SpecialDay {
@@ -188,12 +189,24 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // Wizard state - processes days sequentially (REDESIGNED)
   const [wizardDates, setWizardDates] = useState<string[]>([]);
   const [wizardCurrentIndex, setWizardCurrentIndex] = useState(0);
-  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'select_menu' | 'confirm' | 'done'>('idle');
+  const [wizardStep, setWizardStep] = useState<'idle' | 'category' | 'select_menu' | 'modifiers' | 'confirm' | 'done'>('idle');
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
   const [categoryMenuOptions, setCategoryMenuOptions] = useState<LunchMenu[]>([]); // Menús disponibles para la categoría seleccionada
   const [quantity, setQuantity] = useState<number>(1);
   const [ordersCreated, setOrdersCreated] = useState<number>(0);
+
+  // ── Modificadores (personalización) ──
+  const [menuModifierGroups, setMenuModifierGroups] = useState<Array<{
+    id: string; name: string; is_required: boolean; max_selections: number;
+    options: Array<{ id: string; name: string; is_default: boolean }>;
+  }>>([]);
+  const [selectedModifiers, setSelectedModifiers] = useState<Array<{
+    group_id: string; group_name: string; selected_option_id: string; selected_name: string;
+  }>>([]);
+  const [modifierFavorites, setModifierFavorites] = useState<Array<{
+    id: string; favorite_name: string; modifiers: any[];
+  }>>([]);
 
   // View existing orders modal
   const [viewOrdersModal, setViewOrdersModal] = useState(false);
@@ -284,7 +297,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const targetType = userType === 'parent' ? 'students' : 'teachers';
       const { data: menusData, error: menusError } = await supabase
         .from('lunch_menus')
-        .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type')
+        .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers')
         .eq('school_id', effectiveSchoolId)
         .or(`target_type.eq.${targetType},target_type.eq.both,target_type.is.null`)
         .gte('date', startStr)
@@ -522,9 +535,106 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setSelectedMenu(null);
     setQuantity(1);
     setOrdersCreated(0);
+    setMenuModifierGroups([]);
+    setSelectedModifiers([]);
+    setModifierFavorites([]);
   };
 
-  const handleCategorySelect = (category: LunchCategory) => {
+  // ── Cargar modificadores de un menú ──
+  const loadMenuModifiers = async (menuId: string): Promise<boolean> => {
+    try {
+      const { data: groups, error } = await supabase
+        .from('menu_modifier_groups')
+        .select('id, name, is_required, max_selections')
+        .eq('menu_id', menuId)
+        .order('display_order', { ascending: true });
+
+      if (error || !groups || groups.length === 0) {
+        setMenuModifierGroups([]);
+        return false;
+      }
+
+      const groupIds = groups.map(g => g.id);
+      const { data: options } = await supabase
+        .from('menu_modifier_options')
+        .select('id, group_id, name, is_default')
+        .in('group_id', groupIds)
+        .order('display_order', { ascending: true });
+
+      const enrichedGroups = groups.map(g => ({
+        ...g,
+        options: (options || []).filter(o => o.group_id === g.id),
+      }));
+
+      setMenuModifierGroups(enrichedGroups);
+
+      // Pre-seleccionar opciones por defecto
+      const defaults = enrichedGroups.map(g => {
+        const defaultOpt = g.options.find(o => o.is_default) || g.options[0];
+        return {
+          group_id: g.id,
+          group_name: g.name,
+          selected_option_id: defaultOpt?.id || '',
+          selected_name: defaultOpt?.name || '',
+        };
+      });
+      setSelectedModifiers(defaults);
+
+      return true;
+    } catch (err) {
+      console.error('Error loading menu modifiers:', err);
+      return false;
+    }
+  };
+
+  // ── Cargar favoritos del usuario para una categoría ──
+  const loadFavorites = async (categoryId: string) => {
+    try {
+      const personId = userType === 'parent' ? selectedStudent?.id : userId;
+      let query = supabase
+        .from('modifier_favorites')
+        .select('id, favorite_name, modifiers')
+        .eq('user_id', userId)
+        .eq('category_id', categoryId)
+        .order('use_count', { ascending: false })
+        .limit(5);
+
+      if (userType === 'parent' && personId) {
+        query = query.eq('student_id', personId);
+      }
+
+      const { data } = await query;
+      setModifierFavorites(data || []);
+    } catch (err) {
+      console.error('Error loading favorites:', err);
+    }
+  };
+
+  // ── Aplicar un favorito ──
+  const applyFavorite = (favorite: { id: string; modifiers: any[] }) => {
+    setSelectedModifiers(favorite.modifiers);
+  };
+
+  // ── Guardar como favorito ──
+  const saveAsFavorite = async () => {
+    if (!selectedCategory || selectedModifiers.length === 0) return;
+    try {
+      const personId = userType === 'parent' ? selectedStudent?.id : null;
+      await supabase.from('modifier_favorites').insert({
+        user_id: userId,
+        student_id: personId,
+        category_id: selectedCategory.id,
+        favorite_name: 'Mi Favorito',
+        modifiers: selectedModifiers,
+      });
+      toast({ title: '⭐ Favorito guardado', description: 'Se usará como sugerencia la próxima vez' });
+      if (selectedCategory) loadFavorites(selectedCategory.id);
+    } catch (err) {
+      console.error('Error saving favorite:', err);
+    }
+  };
+
+  const handleCategorySelect = async (category: LunchCategory) => {
     setSelectedCategory(category);
 
     const currentDateStr = wizardDates[wizardCurrentIndex];
@@ -534,8 +644,21 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setCategoryMenuOptions(categoryMenus);
 
     if (categoryMenus.length === 1) {
-      // Solo 1 menú → auto-seleccionar e ir a confirmar
-      setSelectedMenu(categoryMenus[0]);
+      // Solo 1 menú → auto-seleccionar
+      const menu = categoryMenus[0];
+      setSelectedMenu(menu);
+
+      // ¿Tiene modificadores habilitados?
+      if ((menu as any).allows_modifiers) {
+        const hasGroups = await loadMenuModifiers(menu.id);
+        if (hasGroups) {
+          await loadFavorites(category.id);
+          setWizardStep('modifiers');
+          return;
+        }
+      }
+      setMenuModifierGroups([]);
+      setSelectedModifiers([]);
       setWizardStep('confirm');
     } else if (categoryMenus.length > 1) {
       // Múltiples menús → mostrar paso de selección
@@ -544,8 +667,20 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   };
 
-  const handleMenuSelect = (menu: LunchMenu) => {
+  const handleMenuSelect = async (menu: LunchMenu) => {
     setSelectedMenu(menu);
+
+    // ¿Tiene modificadores habilitados?
+    if ((menu as any).allows_modifiers) {
+      const hasGroups = await loadMenuModifiers(menu.id);
+      if (hasGroups) {
+        if (selectedCategory) await loadFavorites(selectedCategory.id);
+        setWizardStep('modifiers');
+        return;
+      }
+    }
+    setMenuModifierGroups([]);
+    setSelectedModifiers([]);
     setWizardStep('confirm');
   };
 
@@ -587,7 +722,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
       const unitPrice = selectedCategory.price || config.lunch_price;
 
-      // 1. Create lunch_order
+      // 1. Create lunch_order (con modificadores si los hay)
       const { data: insertedOrder, error: orderError } = await supabase
         .from('lunch_orders')
         .insert([{
@@ -602,6 +737,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           addons_total: 0,
           final_price: unitPrice * quantity,
           created_by: userId,
+          selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : [],
         }])
         .select('id')
         .single();
@@ -967,6 +1103,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                 <DialogDescription>
                   {wizardStep === 'category' && 'Selecciona la categoría del menú'}
                   {wizardStep === 'select_menu' && 'Elige el menú que deseas'}
+                  {wizardStep === 'modifiers' && '✨ Personaliza tu pedido'}
                   {wizardStep === 'confirm' && 'Selecciona la cantidad y confirma tu pedido'}
                 </DialogDescription>
               </DialogHeader>
@@ -1044,6 +1181,99 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   </div>
                 )}
 
+                {/* STEP: Modifiers (Personalización) */}
+                {wizardStep === 'modifiers' && selectedCategory && selectedMenu && (
+                  <div className="space-y-4">
+                    {/* Menú base */}
+                    <Card className="bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-200">
+                      <CardContent className="p-3">
+                        <p className="text-sm text-gray-600">Menú seleccionado:</p>
+                        <p className="font-bold">{selectedMenu.main_course}</p>
+                      </CardContent>
+                    </Card>
+
+                    {/* Favoritos guardados */}
+                    {modifierFavorites.length > 0 && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <p className="text-xs font-semibold text-yellow-800 mb-2">⭐ Mi Platito Favorito:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {modifierFavorites.map(fav => (
+                            <Button
+                              key={fav.id}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => applyFavorite(fav)}
+                              className="text-xs border-yellow-300 hover:bg-yellow-100"
+                            >
+                              ⭐ {fav.favorite_name}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Grupos de modificadores */}
+                    {menuModifierGroups.map(group => {
+                      const currentSelection = selectedModifiers.find(m => m.group_id === group.id);
+                      return (
+                        <div key={group.id} className="bg-white rounded-lg border-2 border-gray-200 p-3 space-y-2">
+                          <p className="font-semibold text-sm text-gray-800">
+                            {group.name}
+                            {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {group.options.map(option => {
+                              const isSelected = currentSelection?.selected_option_id === option.id;
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedModifiers(prev =>
+                                      prev.map(m =>
+                                        m.group_id === group.id
+                                          ? { ...m, selected_option_id: option.id, selected_name: option.name }
+                                          : m
+                                      )
+                                    );
+                                  }}
+                                  className={cn(
+                                    "p-3 rounded-lg border-2 text-sm font-medium transition-all text-left",
+                                    isSelected
+                                      ? "border-purple-500 bg-purple-50 text-purple-900"
+                                      : "border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 text-gray-700"
+                                  )}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    {isSelected ? (
+                                      <CheckCircle2 className="h-4 w-4 text-purple-600 flex-shrink-0" />
+                                    ) : (
+                                      <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                                    )}
+                                    {option.name}
+                                  </span>
+                                  {option.is_default && (
+                                    <span className="text-xs text-gray-400 ml-6">por defecto</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Precio (no cambia) */}
+                    <div className="bg-green-50 p-3 rounded-lg border border-green-200 flex justify-between items-center">
+                      <span className="text-sm text-green-700">El precio no cambia por personalización</span>
+                      <span className="font-bold text-green-800">
+                        S/ {(selectedCategory.price || config?.lunch_price || 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* STEP: Confirm with Quantity */}
                 {wizardStep === 'confirm' && selectedCategory && (
                   <div className="space-y-4">
@@ -1059,6 +1289,18 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                             <p className="text-sm font-semibold">• {selectedMenu.main_course}</p>
                             {selectedMenu.beverage && <p className="text-sm">• {selectedMenu.beverage}</p>}
                             {selectedMenu.dessert && <p className="text-sm">• {selectedMenu.dessert}</p>}
+                          </div>
+                        )}
+
+                        {/* Resumen de personalizaciones */}
+                        {selectedModifiers.length > 0 && selectedModifiers.some(m => m.selected_name) && (
+                          <div className="border-t pt-2 mt-2 bg-purple-50 -mx-4 -mb-4 p-3 rounded-b-lg">
+                            <p className="text-xs text-purple-700 font-semibold mb-1">✨ Personalización:</p>
+                            {selectedModifiers.map((mod, i) => (
+                              <p key={i} className="text-sm text-purple-900">
+                                • {mod.group_name}: <strong>{mod.selected_name}</strong>
+                              </p>
+                            ))}
                           </div>
                         )}
                       </CardContent>
@@ -1105,12 +1347,51 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     ← Cambiar categoría
                   </Button>
                 )}
+                {wizardStep === 'modifiers' && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (categoryMenuOptions.length > 1) {
+                          setWizardStep('select_menu');
+                          setSelectedMenu(null);
+                        } else {
+                          setWizardStep('category');
+                          setSelectedCategory(null);
+                          setSelectedMenu(null);
+                        }
+                        setMenuModifierGroups([]);
+                        setSelectedModifiers([]);
+                      }}
+                    >
+                      ← Atrás
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={saveAsFavorite}
+                      className="text-yellow-700 border-yellow-300"
+                    >
+                      ⭐ Guardar favorito
+                    </Button>
+                    <Button
+                      onClick={() => setWizardStep('confirm')}
+                      className="bg-purple-600 hover:bg-purple-700"
+                    >
+                      Continuar →
+                    </Button>
+                  </>
+                )}
                 {wizardStep === 'confirm' && (
                   <Button
                     variant="outline"
                     onClick={() => {
-                      // Si había múltiples menús, volver a select_menu; si no, a category
-                      if (categoryMenuOptions.length > 1) {
+                      // Si tenía modificadores, volver a modifiers; si no, lógica normal
+                      if (menuModifierGroups.length > 0) {
+                        setWizardStep('modifiers');
+                        setQuantity(1);
+                      } else if (categoryMenuOptions.length > 1) {
                         setWizardStep('select_menu');
                         setSelectedMenu(null);
                         setQuantity(1);
@@ -1123,7 +1404,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     }}
                     disabled={submitting}
                   >
-                    ← {categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
+                    ← {menuModifierGroups.length > 0 ? 'Cambiar personalización' : categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
                   </Button>
                 )}
                 <Button variant="ghost" onClick={closeWizard} disabled={submitting}>
