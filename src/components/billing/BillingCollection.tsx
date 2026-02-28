@@ -82,7 +82,7 @@ interface Debtor {
   has_lunch_debt?: boolean; // Si tiene deuda de almuerzo (para mostrar indicador de voucher y WhatsApp)
 }
 
-export const BillingCollection = () => {
+export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 'config' } = {}) => {
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
@@ -94,6 +94,11 @@ export const BillingCollection = () => {
   const [paidTransactions, setPaidTransactions] = useState<any[]>([]);
   const [loadingPaid, setLoadingPaid] = useState(false);
   const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>('cobrar');
+
+  // Sincronizar con la sección controlada desde el padre (Cobranzas.tsx)
+  useEffect(() => {
+    if (section) setActiveTab(section);
+  }, [section]);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
@@ -2160,6 +2165,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
           {/* Pestañas: Cobrar / Pagos Realizados / Configuración + botón Guía - Sin Radix */}
           <div className="w-full">
+            {/* Solo mostrar la barra de sub-pestañas si NO se controla desde Cobranzas.tsx */}
+            {!section && (
             <div className="flex items-center gap-2 mb-6">
               {/* Tabs */}
               <div className={`flex-1 grid ${!canViewAllSchools ? 'grid-cols-3' : 'grid-cols-2'} bg-muted p-1 rounded-lg`}>
@@ -2172,7 +2179,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 }`}
               >
                 <DollarSign className="h-4 w-4" />
-                �Cobrar!
+                ¡Cobrar!
               </button>
               <button
                 onClick={() => setActiveTab('pagos')}
@@ -2223,6 +2230,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 </Button>
               </div>
             </div>
+            )}
 
             {activeTab === 'cobrar' && (
             <div className="mt-0">

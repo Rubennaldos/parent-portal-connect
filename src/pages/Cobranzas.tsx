@@ -36,6 +36,8 @@ interface TabPermissions {
   statistics: boolean;
   config: boolean;
   vouchers: boolean;
+  pagos_realizados: boolean; // Historial de pagos — visible para todos los que pueden cobrar
+  config_sede: boolean;      // Configuración de sede — solo para gestores de unidad
 }
 
 const Cobranzas = () => {
@@ -51,6 +53,8 @@ const Cobranzas = () => {
     statistics: false,
     config: false,
     vouchers: false,
+    pagos_realizados: false,
+    config_sede: false,
   });
   const [pendingVouchers, setPendingVouchers] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -75,6 +79,8 @@ const Cobranzas = () => {
           statistics: true,
           config: true,
           vouchers: true,
+          pagos_realizados: true,
+          config_sede: false, // admin_general usa BillingConfig completo, no la versión de sede
         });
         setActiveTab('dashboard');
         fetchPendingVouchers();
@@ -110,6 +116,8 @@ const Cobranzas = () => {
         statistics: false,
         config: false,
         vouchers: false,
+        pagos_realizados: false,
+        config_sede: false,
       };
 
       // Mapear los permisos de la BD a las pestañas
@@ -125,6 +133,8 @@ const Cobranzas = () => {
             case 'cobrar_personalizado':
               perms.collect = true;
               perms.vouchers = true; // Admins que cobran también aprueban recargas
+              perms.pagos_realizados = true; // Historial de pagos
+              perms.config_sede = true; // Configuración de su sede
               break;
             case 'sacar_reportes':
               perms.reports = true;
@@ -146,6 +156,8 @@ const Cobranzas = () => {
       // Establecer la primera pestaña disponible
       if (perms.dashboard) setActiveTab('dashboard');
       else if (perms.collect) setActiveTab('collect');
+      else if (perms.pagos_realizados) setActiveTab('pagos_realizados');
+      else if (perms.config_sede) setActiveTab('config_sede');
       else if (perms.vouchers) setActiveTab('vouchers');
       else if (perms.reports) setActiveTab('reports');
       else if (perms.statistics) setActiveTab('statistics');
@@ -204,8 +216,10 @@ const Cobranzas = () => {
   const visibleTabCount = [
     permissions.dashboard,
     permissions.collect,
+    permissions.pagos_realizados,
     // permissions.reports — eliminado de la UI
     permissions.vouchers,
+    permissions.config_sede,
     permissions.config,
   ].filter(Boolean).length;
 
@@ -280,6 +294,32 @@ const Cobranzas = () => {
                       ¡Cobrar!
                     </button>
                   )}
+                  {permissions.pagos_realizados && (
+                    <button
+                      onClick={() => setActiveTab('pagos_realizados')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'pagos_realizados'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <FileText className="h-4 w-4" />
+                      Pagos
+                    </button>
+                  )}
+                  {permissions.config_sede && (
+                    <button
+                      onClick={() => setActiveTab('config_sede')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'config_sede'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <Settings className="h-4 w-4" />
+                      Configuración
+                    </button>
+                  )}
                   {permissions.vouchers && (
                     <button
                       onClick={() => setActiveTab('vouchers')}
@@ -341,6 +381,32 @@ const Cobranzas = () => {
                       ¡Cobrar!
                     </button>
                   )}
+                  {permissions.pagos_realizados && (
+                    <button
+                      onClick={() => setActiveTab('pagos_realizados')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'pagos_realizados'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Pagos
+                    </button>
+                  )}
+                  {permissions.config_sede && (
+                    <button
+                      onClick={() => setActiveTab('config_sede')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'config_sede'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      Configuración
+                    </button>
+                  )}
                   {permissions.vouchers && (
                     <button
                       onClick={() => setActiveTab('vouchers')}
@@ -391,10 +457,16 @@ const Cobranzas = () => {
                 </div>
               )}
 
-              {/* Cobrar Tab */}
-              {activeTab === 'collect' && permissions.collect && (
+              {/* Cobrar / Pagos Realizados / Configuración Sede — misma instancia, distinta sección */}
+              {(activeTab === 'collect' || activeTab === 'pagos_realizados' || activeTab === 'config_sede') && permissions.collect && (
                 <div className="mt-4 sm:mt-6">
-                  <BillingCollection />
+                  <BillingCollection
+                    section={
+                      activeTab === 'pagos_realizados' ? 'pagos' :
+                      activeTab === 'config_sede' ? 'config' :
+                      'cobrar'
+                    }
+                  />
                 </div>
               )}
 
