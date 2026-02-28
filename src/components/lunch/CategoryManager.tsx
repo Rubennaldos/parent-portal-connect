@@ -1140,7 +1140,7 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
               🍽️ Configurar Plato: "{configuringCategory?.name}"
             </DialogTitle>
             <DialogDescription>
-              Define los grupos de opciones. Ejemplo: "Proteína" con opciones Pollo, Pescado, Carne. Los padres elegirán una opción de cada grupo.
+              Define los grupos de opciones. Ejemplo: "Proteína" con opciones Pollo, Pescado, Carne. Activa "Opción múltiple" si los padres pueden elegir más de una opción por grupo.
             </DialogDescription>
           </DialogHeader>
 
@@ -1169,6 +1169,51 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
+
+                  {/* Opción múltiple toggle + max selections */}
+                  <div className="flex items-center gap-4 p-2.5 bg-amber-50/60 rounded-lg border border-amber-100">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id={`multi-${gIdx}`}
+                        checked={group.max_selections > 1}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            updateConfigGroup(gIdx, 'max_selections', Math.min(2, group.options.length || 2));
+                          } else {
+                            updateConfigGroup(gIdx, 'max_selections', 1);
+                          }
+                        }}
+                        disabled={savingConfig}
+                      />
+                      <Label htmlFor={`multi-${gIdx}`} className="text-xs font-medium text-amber-900 cursor-pointer">
+                        Opción múltiple
+                      </Label>
+                    </div>
+                    {group.max_selections > 1 && (
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-amber-700 whitespace-nowrap">Máximo:</Label>
+                        <Input
+                          type="number"
+                          min={2}
+                          max={group.options.length || 10}
+                          value={group.max_selections}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 2;
+                            const max = group.options.length || 10;
+                            updateConfigGroup(gIdx, 'max_selections', Math.max(2, Math.min(val, max)));
+                          }}
+                          className="w-16 h-7 text-xs text-center border-amber-200"
+                          disabled={savingConfig}
+                        />
+                        <span className="text-[10px] text-amber-600">de {group.options.length} opciones</span>
+                      </div>
+                    )}
+                  </div>
+                  {group.max_selections > 1 && (
+                    <p className="text-[11px] text-amber-600 -mt-1 ml-1">
+                      Los padres podrán elegir hasta <strong>{group.max_selections}</strong> opciones de este grupo
+                    </p>
+                  )}
 
                   {/* Opciones del grupo */}
                   <div className="pl-4 border-l-2 border-amber-200 space-y-2">

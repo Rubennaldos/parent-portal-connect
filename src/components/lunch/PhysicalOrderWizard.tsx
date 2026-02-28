@@ -34,6 +34,7 @@ interface ConfigPlateGroup {
   id: string;
   name: string;
   is_required: boolean;
+  max_selections: number;
   options: Array<{ id: string; name: string }>;
 }
 
@@ -182,7 +183,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     try {
       const { data: groups } = await supabase
         .from('configurable_plate_groups')
-        .select('id, name, is_required')
+        .select('id, name, is_required, max_selections')
         .eq('category_id', categoryId)
         .order('display_order', { ascending: true });
 
@@ -202,13 +203,17 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
       const fullGroups: ConfigPlateGroup[] = groups.map(g => ({
         ...g,
+        max_selections: g.max_selections || 1,
         options: (options || []).filter(o => o.group_id === g.id),
       }));
 
       setConfigPlateGroups(fullGroups);
+      // Single-select pre-selects first option, multi-select starts empty
       setConfigSelections(fullGroups.map(g => ({
         group_name: g.name,
-        selected: g.options.length > 0 ? g.options[0].name : '',
+        selected: (g.max_selections || 1) > 1
+          ? ''
+          : (g.options.length > 0 ? g.options[0].name : ''),
       })));
     } catch (err) {
       console.error('Error loading configurable groups:', err);
@@ -1179,31 +1184,71 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                   <div className="space-y-3">
                     {configPlateGroups.map((group) => {
                       const currentSel = configSelections.find(s => s.group_name === group.name);
+                      const isMultiSelect = (group.max_selections || 1) > 1;
+                      const selectedItems = currentSel?.selected ? currentSel.selected.split(', ').filter(Boolean) : [];
+                      const maxSel = group.max_selections || 1;
+
                       return (
                         <div key={group.id} className="bg-white rounded-lg border-2 border-amber-200 p-3 space-y-2">
                           <p className="font-semibold text-sm text-amber-900">
                             {group.name}
                             {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                            {isMultiSelect ? (
+                              <span className="ml-2 text-xs font-normal text-gray-400">
+                                hasta {maxSel} opciones ({selectedItems.length}/{maxSel})
+                              </span>
+                            ) : (
+                              <span className="ml-2 text-xs font-normal text-gray-400">elige una</span>
+                            )}
                           </p>
                           <div className="grid grid-cols-2 gap-2">
                             {group.options.map(opt => {
-                              const isSelected = currentSel?.selected === opt.name;
+                              const isSelected = isMultiSelect
+                                ? selectedItems.includes(opt.name)
+                                : currentSel?.selected === opt.name;
+                              const isDisabled = isMultiSelect && !isSelected && selectedItems.length >= maxSel;
+
                               return (
                                 <button
                                   key={opt.id}
                                   type="button"
+                                  disabled={isDisabled}
                                   onClick={() => {
-                                    setConfigSelections(prev =>
-                                      prev.map(s => s.group_name === group.name ? { ...s, selected: opt.name } : s)
-                                    );
+                                    if (isMultiSelect) {
+                                      setConfigSelections(prev =>
+                                        prev.map(s => {
+                                          if (s.group_name !== group.name) return s;
+                                          const current = s.selected ? s.selected.split(', ').filter(Boolean) : [];
+                                          let updated: string[];
+                                          if (current.includes(opt.name)) {
+                                            updated = current.filter(n => n !== opt.name);
+                                          } else if (current.length < maxSel) {
+                                            updated = [...current, opt.name];
+                                          } else {
+                                            return s;
+                                          }
+                                          return { ...s, selected: updated.join(', ') };
+                                        })
+                                      );
+                                    } else {
+                                      setConfigSelections(prev =>
+                                        prev.map(s => s.group_name === group.name ? { ...s, selected: opt.name } : s)
+                                      );
+                                    }
                                   }}
                                   className={`p-2.5 rounded-lg border-2 text-xs text-left transition-all ${
                                     isSelected
                                       ? 'border-amber-500 bg-amber-50 text-amber-900 font-semibold'
-                                      : 'border-gray-200 hover:border-amber-300 text-gray-700'
+                                      : isDisabled
+                                        ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
+                                        : 'border-gray-200 hover:border-amber-300 text-gray-700'
                                   }`}
                                 >
-                                  {isSelected ? '✓ ' : ''}{opt.name}
+                                  {isMultiSelect
+                                    ? (isSelected ? '☑ ' : '☐ ')
+                                    : (isSelected ? '✓ ' : '')
+                                  }
+                                  {opt.name}
                                 </button>
                               );
                             })}

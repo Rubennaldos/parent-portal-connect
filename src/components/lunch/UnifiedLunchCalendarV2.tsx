@@ -743,10 +743,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       }));
 
       setConfigPlateGroups(fullGroups);
-      // Inicializar selecciones (vacías o con la primera opción por defecto)
+      // Inicializar selecciones: single-select pre-selecciona la primera, multi-select empieza vacío
       setConfigSelections(fullGroups.map(g => ({
         group_name: g.name,
-        selected: g.options.length > 0 ? g.options[0].name : '',
+        selected: (g.max_selections || 1) > 1
+          ? '' // Multi-select: empieza sin selección
+          : (g.options.length > 0 ? g.options[0].name : ''),
       })));
     } catch (err) {
       console.error('Error loading configurable groups:', err);
@@ -1367,41 +1369,86 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     ) : (
                       configPlateGroups.map((group, gIdx) => {
                         const currentSelection = configSelections.find(s => s.group_name === group.name);
+                        const isMultiSelect = (group.max_selections || 1) > 1;
+                        const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
+                        const maxSel = group.max_selections || 1;
+
                         return (
                           <div key={group.id} className="bg-white rounded-lg border-2 border-amber-200 p-3 space-y-2">
                             <p className="font-semibold text-sm text-amber-900">
                               {group.name}
                               {group.is_required && <span className="text-red-500 ml-1">*</span>}
-                              <span className="ml-2 text-xs font-normal text-gray-400">elige una opción</span>
+                              {isMultiSelect ? (
+                                <span className="ml-2 text-xs font-normal text-gray-400">
+                                  elige hasta {maxSel} opciones ({selectedItems.length}/{maxSel})
+                                </span>
+                              ) : (
+                                <span className="ml-2 text-xs font-normal text-gray-400">elige una opción</span>
+                              )}
                             </p>
                             <div className="grid grid-cols-2 gap-2">
                               {group.options.map(option => {
-                                const isSelected = currentSelection?.selected === option.name;
+                                const isSelected = isMultiSelect
+                                  ? selectedItems.includes(option.name)
+                                  : currentSelection?.selected === option.name;
+                                const isDisabled = isMultiSelect && !isSelected && selectedItems.length >= maxSel;
+
                                 return (
                                   <button
                                     key={option.id}
                                     type="button"
+                                    disabled={isDisabled}
                                     onClick={() => {
-                                      setConfigSelections(prev =>
-                                        prev.map(s =>
-                                          s.group_name === group.name
-                                            ? { ...s, selected: option.name }
-                                            : s
-                                        )
-                                      );
+                                      if (isMultiSelect) {
+                                        // Toggle multi-select
+                                        setConfigSelections(prev =>
+                                          prev.map(s => {
+                                            if (s.group_name !== group.name) return s;
+                                            const current = s.selected ? s.selected.split(', ').filter(Boolean) : [];
+                                            let updated: string[];
+                                            if (current.includes(option.name)) {
+                                              updated = current.filter(n => n !== option.name);
+                                            } else if (current.length < maxSel) {
+                                              updated = [...current, option.name];
+                                            } else {
+                                              return s;
+                                            }
+                                            return { ...s, selected: updated.join(', ') };
+                                          })
+                                        );
+                                      } else {
+                                        // Single select
+                                        setConfigSelections(prev =>
+                                          prev.map(s =>
+                                            s.group_name === group.name
+                                              ? { ...s, selected: option.name }
+                                              : s
+                                          )
+                                        );
+                                      }
                                     }}
                                     className={cn(
                                       "p-2.5 rounded-lg border-2 text-sm font-medium transition-all text-left",
                                       isSelected
                                         ? "border-amber-500 bg-amber-50 text-amber-900"
-                                        : "border-gray-200 hover:border-amber-300 hover:bg-amber-50/50 text-gray-700"
+                                        : isDisabled
+                                          ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed"
+                                          : "border-gray-200 hover:border-amber-300 hover:bg-amber-50/50 text-gray-700"
                                     )}
                                   >
                                     <span className="flex items-center gap-2">
-                                      {isSelected ? (
-                                        <CheckCircle2 className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                                      {isMultiSelect ? (
+                                        isSelected ? (
+                                          <CheckCircle2 className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                                        ) : (
+                                          <div className="h-4 w-4 rounded border-2 border-gray-300 flex-shrink-0" />
+                                        )
                                       ) : (
-                                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                                        isSelected ? (
+                                          <CheckCircle2 className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                                        ) : (
+                                          <div className="h-4 w-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                                        )
                                       )}
                                       <span>{option.name}</span>
                                     </span>
