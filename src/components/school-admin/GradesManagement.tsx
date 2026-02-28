@@ -355,35 +355,59 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
   const createLevel = async () => {
     if (!selectedSchoolId || !newLevelName.trim()) return;
 
-    // console.log('📝 [createLevel] Creando nuevo grado:', newLevelName);
-
     try {
-      const { data, error } = await supabase
+      // 🔍 Primero verificar si ya existe un grado inactivo con ese nombre
+      // (esto ocurre cuando se elimina un grado y luego se intenta recrear)
+      const { data: existingInactive } = await supabase
         .from('school_levels')
-        .insert({
-          school_id: selectedSchoolId,
-          name: newLevelName.trim(),
-          order_index: levels.length,
-          is_active: true, // ✅ CRÍTICO: Establecer is_active en true
-        })
-        .select()
-        .single();
+        .select('id')
+        .eq('school_id', selectedSchoolId)
+        .eq('name', newLevelName.trim())
+        .eq('is_active', false)
+        .maybeSingle();
 
-      if (error) throw error;
+      let newLevelId: string | null = null;
 
-      // console.log('✅ [createLevel] Grado creado exitosamente:', data);
+      if (existingInactive) {
+        // ♻️ Reactivar el grado existente en vez de crear uno nuevo
+        const { data: reactivated, error: reactivateError } = await supabase
+          .from('school_levels')
+          .update({ is_active: true, order_index: levels.length })
+          .eq('id', existingInactive.id)
+          .select()
+          .single();
 
-      toast({ title: '✅ Grado creado', description: `${newLevelName} agregado correctamente` });
+        if (reactivateError) throw reactivateError;
+
+        newLevelId = reactivated?.id || null;
+        toast({ title: '✅ Grado restaurado', description: `${newLevelName} fue reactivado correctamente` });
+      } else {
+        // 🆕 Crear nuevo grado
+        const { data, error } = await supabase
+          .from('school_levels')
+          .insert({
+            school_id: selectedSchoolId,
+            name: newLevelName.trim(),
+            order_index: levels.length,
+            is_active: true,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        newLevelId = data?.id || null;
+        toast({ title: '✅ Grado creado', description: `${newLevelName} agregado correctamente` });
+      }
+
       setNewLevelName('');
       setShowNewLevelModal(false);
       
-      // Primero establecer el nuevo grado como seleccionado
-      if (data) {
-        // console.log('🆕 [createLevel] Seleccionando nuevo grado:', data.id, data.name);
-        setSelectedLevel(data.id);
+      // Seleccionar el grado nuevo/reactivado
+      if (newLevelId) {
+        setSelectedLevel(newLevelId);
       }
       
-      // Luego actualizar la lista
       fetchLevels();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -393,24 +417,45 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
   const createClassroom = async () => {
     if (!selectedSchoolId || !selectedLevel || !newClassroomName.trim()) return;
 
-    // console.log('🎓 [GradesManagement] Creando aula:', { school_id, level_id, name });
-
     try {
-      const { error } = await supabase
+      // 🔍 Primero verificar si ya existe un aula inactiva con ese nombre
+      // (esto ocurre cuando se elimina un aula y luego se intenta recrear)
+      const { data: existingInactive } = await supabase
         .from('school_classrooms')
-        .insert({
-          school_id: selectedSchoolId,
-          level_id: selectedLevel,
-          name: newClassroomName.trim(),
-          order_index: classrooms.length,
-          is_active: true, // ✅ CRÍTICO: Establecer is_active en true
-        });
+        .select('id')
+        .eq('school_id', selectedSchoolId)
+        .eq('level_id', selectedLevel)
+        .eq('name', newClassroomName.trim())
+        .eq('is_active', false)
+        .maybeSingle();
 
-      if (error) throw error;
+      if (existingInactive) {
+        // ♻️ Reactivar el aula existente en vez de crear una nueva
+        const { error: reactivateError } = await supabase
+          .from('school_classrooms')
+          .update({ is_active: true, order_index: classrooms.length })
+          .eq('id', existingInactive.id);
 
-      // console.log('✅ [GradesManagement] Aula creada exitosamente');
+        if (reactivateError) throw reactivateError;
 
-      toast({ title: '✅ Aula creada', description: `${newClassroomName} agregada correctamente` });
+        toast({ title: '✅ Aula restaurada', description: `${newClassroomName} fue reactivada correctamente` });
+      } else {
+        // 🆕 Crear nueva aula
+        const { error } = await supabase
+          .from('school_classrooms')
+          .insert({
+            school_id: selectedSchoolId,
+            level_id: selectedLevel,
+            name: newClassroomName.trim(),
+            order_index: classrooms.length,
+            is_active: true,
+          });
+
+        if (error) throw error;
+
+        toast({ title: '✅ Aula creada', description: `${newClassroomName} agregada correctamente` });
+      }
+
       setNewClassroomName('');
       setShowNewClassroomModal(false);
       fetchClassrooms(selectedLevel);
