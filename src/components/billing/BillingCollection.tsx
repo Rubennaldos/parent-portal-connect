@@ -102,12 +102,12 @@ export const BillingCollection = () => {
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [untilDate, setUntilDate] = useState<string>(''); // Nueva fecha lÃ­mite
+  const [untilDate, setUntilDate] = useState<string>(''); // Nueva fecha l�mite
   
-  // SelecciÃ³n mÃºltiple
+  // Selecci�n m�ltiple
   const [selectedDebtors, setSelectedDebtors] = useState<Set<string>>(new Set());
   
-  // ðŸ†• SelecciÃ³n de transacciones individuales por deudor
+  // 🆕 Selecci�n de transacciones individuales por deudor
   const [selectedTransactionsByDebtor, setSelectedTransactionsByDebtor] = useState<Map<string, Set<string>>>(new Map());
   
   // Modal de pago
@@ -122,7 +122,7 @@ export const BillingCollection = () => {
   });
   const [saving, setSaving] = useState(false);
 
-  // Modal de envÃ­o masivo
+  // Modal de env�o masivo
   const [showMassiveModal, setShowMassiveModal] = useState(false);
   const [generatingExport, setGeneratingExport] = useState(false);
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
@@ -137,7 +137,7 @@ export const BillingCollection = () => {
     if (!user || !role) return;
 
     try {
-      console.log('ðŸ” Verificando permisos de Cobranzas/Cobrar para rol:', role);
+      console.log('🔍 Verificando permisos de Cobranzas/Cobrar para rol:', role);
 
       // Admin General tiene todos los permisos
       if (role === 'admin_general') {
@@ -160,11 +160,11 @@ export const BillingCollection = () => {
         .eq('granted', true);
 
       if (error) {
-        console.error('âŒ Error consultando permisos:', error);
+        console.error('❌ Error consultando permisos:', error);
         return;
       }
 
-      console.log('ðŸ“¦ Permisos obtenidos para Cobrar:', data);
+      console.log('📦 Permisos obtenidos para Cobrar:', data);
 
       let canViewAll = false;
       let canCollectPerm = false;
@@ -185,7 +185,7 @@ export const BillingCollection = () => {
         }
       });
 
-      console.log('âœ… Permisos de Cobrar:', { canCollectPerm, canViewAll });
+      console.log('✅ Permisos de Cobrar:', { canCollectPerm, canViewAll });
       setCanViewAllSchools(canViewAll);
       setCanCollect(canCollectPerm);
 
@@ -200,14 +200,14 @@ export const BillingCollection = () => {
   }, []);
 
   useEffect(() => {
-    // Cargar perÃ­odos
+    // Cargar per�odos
     if (selectedSchool) {
       fetchPeriods();
     }
     
     // Cargar deudores:
     // - Si es admin_general (canViewAllSchools), puede cargar inmediatamente
-    // - Si NO es admin_general, espera a que userSchoolId estÃ© disponible
+    // - Si NO es admin_general, espera a que userSchoolId est� disponible
     if (canViewAllSchools || (userSchoolId !== null && !canViewAllSchools)) {
       const timer = setTimeout(() => {
         fetchDebtors();
@@ -304,9 +304,9 @@ export const BillingCollection = () => {
         `)
         .eq('type', 'purchase')
         .in('payment_status', ['pending', 'partial']) // Excluir 'paid'
-        .order('created_at', { ascending: false }); // âœ… MÃ¡s reciente primero
+        .order('created_at', { ascending: false }); // ✅ M�s reciente primero
 
-      // Filtrar por fecha lÃ­mite si está definida
+      // Filtrar por fecha l�mite si est� definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -321,11 +321,11 @@ export const BillingCollection = () => {
       const { data: transactions, error } = await query;
 
       if (error) {
-        console.error('âŒ [BillingCollection] Error:', error);
+        console.error('❌ [BillingCollection] Error:', error);
         throw error;
       }
 
-      // ðŸ†• BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
+      // 🆕 BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
       
       let lunchOrdersQuery = supabase
         .from('lunch_orders')
@@ -347,10 +347,10 @@ export const BillingCollection = () => {
           schools(id, name),
           lunch_categories(id, name, price)
         `)
-        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no están pagados)
+        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no est�n pagados)
         .eq('is_cancelled', false);
 
-      // Filtrar por fecha lÃ­mite si está definida
+      // Filtrar por fecha l�mite si est� definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -358,23 +358,23 @@ export const BillingCollection = () => {
         lunchOrdersQuery = lunchOrdersQuery.lte('order_date', dateStr);
       }
 
-      // NO filtrar por school_id aquÃ­ porque los pedidos pueden no tenerlo
-      // El filtro se harÃ¡ despuÃ©s de obtener los datos
+      // NO filtrar por school_id aqu� porque los pedidos pueden no tenerlo
+      // El filtro se har� despu�s de obtener los datos
       const { data: lunchOrders, error: lunchOrdersError } = await lunchOrdersQuery;
 
       if (lunchOrdersError) {
-        console.error('âŒ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
+        console.error('❌ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
       } else {
       }
 
-      // ðŸ”¥ FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
       
       // Obtener todos los lunch_order_ids de las transacciones
       const lunchOrderIds = transactions
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
       
-      // Si hay transacciones con lunch_order_id, verificar cuÃ¡les están cancelados
+      // Si hay transacciones con lunch_order_id, verificar cu�les est�n cancelados
       let cancelledOrderIds = new Set<string>();
       if (lunchOrderIds.length > 0) {
         const { data: cancelledOrders } = await supabase
@@ -395,17 +395,17 @@ export const BillingCollection = () => {
       }) || [];
       
       
-      // ðŸ”¥ BUSCAR TAMBIÃ‰N TRANSACCIONES PAID PARA EVITAR DUPLICADOS
+      // 🔥 BUSCAR TAMBIÉN TRANSACCIONES PAID PARA EVITAR DUPLICADOS
       
-      // ðŸ”§ FIX CRÃTICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
-      // Las transacciones viejas sin metadata tambiÃ©n deben detectarse por descripciÃ³n
-      // ⚠️ FIX: Supabase tiene lÃ­mite default de 1000 rows â†’ forzar .limit() alto
+      // 🔧 FIX CR�TICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
+      // Las transacciones viejas sin metadata tambi�n deben detectarse por descripci�n
+      // ⚠️� FIX: Supabase tiene l�mite default de 1000 rows → forzar .limit() alto
       let paidQuery = supabase
         .from('transactions')
         .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
-        .limit(100000); // ðŸ”§ FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
+        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
       
       if (schoolIdFilter) {
         paidQuery = paidQuery.eq('school_id', schoolIdFilter);
@@ -417,40 +417,40 @@ export const BillingCollection = () => {
       // Obtener IDs de pedidos que ya tienen transacciones asociadas (PENDING O PAID)
       const existingOrderKeys = new Set<string>();
       
-      // MÃ©todo 1: Por metadata.lunch_order_id (transacciones virtuales convertidas a reales)
+      // M�todo 1: Por metadata.lunch_order_id (transacciones virtuales convertidas a reales)
       validTransactions.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) {
           existingOrderKeys.add(t.metadata.lunch_order_id);
         }
       });
       
-      // Agregar tambiÃ©n los IDs de transacciones PAID
+      // Agregar tambi�n los IDs de transacciones PAID
       paidLunchTransactions?.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) {
           existingOrderKeys.add(t.metadata.lunch_order_id);
         }
       });
       
-      // MÃ©todo 2: Por coincidencia de teacher_id/student_id + fecha EN DESCRIPCIÃ“N (para transacciones sin metadata)
-      // ðŸ”§ FIX CRÃTICO: Antes comparÃ¡bamos created_at con order_date, pero cuando un profesor
-      // pide almuerzos para varios dÃ­as en una sola sesiÃ³n, TODOS tienen el mismo created_at.
-      // Ahora extraemos la fecha del PEDIDO desde la descripciÃ³n de la transacciÃ³n.
-      // ðŸ”§ FIX v2: Ahora busca TANTO en transacciones PENDING como PAID (sin metadata)
+      // M�todo 2: Por coincidencia de teacher_id/student_id + fecha EN DESCRIPCIÓN (para transacciones sin metadata)
+      // 🔧 FIX CR�TICO: Antes compar�bamos created_at con order_date, pero cuando un profesor
+      // pide almuerzos para varios d�as en una sola sesi�n, TODOS tienen el mismo created_at.
+      // Ahora extraemos la fecha del PEDIDO desde la descripci�n de la transacci�n.
+      // 🔧 FIX v2: Ahora busca TANTO en transacciones PENDING como PAID (sin metadata)
       // para evitar crear virtuales de pedidos que YA fueron pagados sin metadata.
       
-      // Combinar pending + paid para bÃºsqueda por descripciÃ³n
+      // Combinar pending + paid para b�squeda por descripci�n
       const allTransactionsForMatching = [
         ...validTransactions, 
         ...(paidLunchTransactions || [])
       ];
       
       lunchOrders?.forEach((order: any) => {
-        // Si ya está en existingOrderKeys (por metadata), no buscar mÃ¡s
+        // Si ya est� en existingOrderKeys (por metadata), no buscar m�s
         if (existingOrderKeys.has(order.id)) return;
         
         const orderDate = order.order_date; // Formato: "2026-02-09"
         
-        // Formatear la fecha del pedido para buscarla en la descripciÃ³n
+        // Formatear la fecha del pedido para buscarla en la descripci�n
         const orderDateFormatted = new Date(orderDate + 'T12:00:00').toLocaleDateString('es-PE', { 
           day: 'numeric', 
           month: 'long' 
@@ -460,22 +460,22 @@ export const BillingCollection = () => {
           const descMatches = t.description?.includes('Almuerzo') || t.description?.includes('almuerzo');
           if (!descMatches) return false;
           
-          // Verificar que la transacciÃ³n es del mismo cliente
+          // Verificar que la transacci�n es del mismo cliente
           const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
           const sameStudent = order.student_id && t.student_id === order.student_id;
-          // ðŸ”§ FIX: TambiÃ©n verificar clientes manuales (sin teacher_id ni student_id)
+          // 🔧 FIX: Tambi�n verificar clientes manuales (sin teacher_id ni student_id)
           const sameManual = order.manual_name && t.manual_client_name && 
             order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
           
           if (!sameTeacher && !sameStudent && !sameManual) return false;
           
-          // ðŸ”§ Verificar si la descripciÃ³n contiene la fecha del pedido
-          // Esto funciona con descripciones como "Almuerzo - MenÃº Light - 11 de febrero"
+          // 🔧 Verificar si la descripci�n contiene la fecha del pedido
+          // Esto funciona con descripciones como "Almuerzo - Men� Light - 11 de febrero"
           if (t.description?.includes(orderDateFormatted)) {
             return true;
           }
           
-          // Fallback: comparar created_at con order_date (solo para mismo dÃ­a exacto)
+          // Fallback: comparar created_at con order_date (solo para mismo d�a exacto)
           const transDate = t.created_at.split('T')[0];
           if (transDate === orderDate) {
             return true;
@@ -513,7 +513,7 @@ export const BillingCollection = () => {
         });
 
         lunchOrders.forEach((order: any) => {
-          // Verificar si este pedido ya tiene una transacciÃ³n
+          // Verificar si este pedido ya tiene una transacci�n
           if (existingOrderKeys.has(order.id)) {
             return; // Saltar este pedido
           }
@@ -534,7 +534,7 @@ export const BillingCollection = () => {
             unitPrice = 7.50 * orderQuantity; // Precio por defecto
           }
 
-          // Determinar school_id si no está en el pedido
+          // Determinar school_id si no est� en el pedido
           if (!schoolId) {
             if (order.students?.school_id) {
               schoolId = order.students.school_id;
@@ -543,20 +543,20 @@ export const BillingCollection = () => {
             }
           }
 
-          // Aplicar filtro de school_id si está configurado (despuÃ©s de determinar el school_id correcto)
+          // Aplicar filtro de school_id si est� configurado (despu�s de determinar el school_id correcto)
           if (schoolIdFilter && schoolId !== schoolIdFilter) {
             return; // Saltar este pedido
           }
 
-          // ðŸ”‘ Si es cliente manual que YA PAGÃ“ (mÃ©todo != pagar_luego), NO crear deuda virtual
+          // 🔑 Si es cliente manual que YA PAGÓ (m�todo != pagar_luego), NO crear deuda virtual
           if (order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') {
-            return; // No crear transacciÃ³n virtual - el cliente ya pagÃ³
+            return; // No crear transacci�n virtual - el cliente ya pag�
           }
 
-          // Crear transacciÃ³n virtual solo si el pedido tiene un cliente identificado
+          // Crear transacci�n virtual solo si el pedido tiene un cliente identificado
           if (order.student_id || order.teacher_id || order.manual_name) {
-            // Mejorar la descripciÃ³n para incluir el tipo de menÃº
-            const menuName = order.lunch_categories?.name || order.menu_item || 'MenÃº';
+            // Mejorar la descripci�n para incluir el tipo de men�
+            const menuName = order.lunch_categories?.name || order.menu_item || 'Men�';
             const dateFormatted = new Date(order.order_date + 'T12:00:00').toLocaleDateString('es-PE', { 
               day: 'numeric', 
               month: 'long',
@@ -592,7 +592,7 @@ export const BillingCollection = () => {
       // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
 
-      // ðŸ†• Obtener informaciÃ³n del creador (created_by) para transacciones del tab "Â¡Cobrar!"
+      // 🆕 Obtener informaci�n del creador (created_by) para transacciones del tab "�Cobrar!"
       const creatorIds = [...new Set(allTransactions.map((t: any) => t.created_by).filter(Boolean))];
       let debtorCreatedByMap = new Map();
       
@@ -615,7 +615,7 @@ export const BillingCollection = () => {
           });
         }
 
-        // TambiÃ©n buscar en teacher_profiles
+        // Tambi�n buscar en teacher_profiles
         const { data: creatorTeachers } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
@@ -643,14 +643,14 @@ export const BillingCollection = () => {
         }
       }
 
-      // Agregar created_by_profile a cada transacciÃ³n
+      // Agregar created_by_profile a cada transacci�n
       allTransactions.forEach((t: any) => {
         if (t.created_by && debtorCreatedByMap.has(t.created_by)) {
           t.created_by_profile = debtorCreatedByMap.get(t.created_by);
         }
       });
 
-      // ðŸ†• Obtener fecha de creaciÃ³n original del pedido (lunch_order.created_at)
+      // 🆕 Obtener fecha de creaci�n original del pedido (lunch_order.created_at)
       // Para transacciones reales que tienen lunch_order_id en metadata
       const lunchOrderIdsForDates = allTransactions
         .filter((t: any) => t.metadata?.lunch_order_id && !t.id?.toString().startsWith('lunch_'))
@@ -673,14 +673,14 @@ export const BillingCollection = () => {
         }
       }
       
-      // Para transacciones virtuales, la fecha de creaciÃ³n ya está en created_at (viene del lunch_order)
+      // Para transacciones virtuales, la fecha de creaci�n ya est� en created_at (viene del lunch_order)
       allTransactions.forEach((t: any) => {
         if (t.id?.toString().startsWith('lunch_') && t.created_at && !t.metadata?.order_created_at) {
           t.metadata = { ...t.metadata, order_created_at: t.created_at };
         }
       });
 
-      // Obtener IDs Ãºnicos de padres (solo para estudiantes)
+      // Obtener IDs �nicos de padres (solo para estudiantes)
       const parentIds = [...new Set(allTransactions
         .filter((t: any) => t.student_id && t.students?.parent_id)
         .map((t: any) => t.students.parent_id)
@@ -696,13 +696,13 @@ export const BillingCollection = () => {
           .in('user_id', parentIds);
 
         if (parentError) {
-          console.error('âŒ [BillingCollection] Error fetching parent profiles:', parentError);
+          console.error('❌ [BillingCollection] Error fetching parent profiles:', parentError);
         } else {
           parentProfiles = data || [];
         }
       }
 
-      // Crear mapa de padres para acceso rÃ¡pido
+      // Crear mapa de padres para acceso r�pido
       const parentMap = new Map();
       parentProfiles?.forEach((p: any) => {
         parentMap.set(p.user_id, p);
@@ -736,7 +736,7 @@ export const BillingCollection = () => {
           clientName = transaction.manual_client_name;
           clientType = 'manual';
         } else {
-          // TransacciÃ³n sin cliente identificado, saltar
+          // Transacci�n sin cliente identificado, saltar
           return;
         }
 
@@ -772,14 +772,14 @@ export const BillingCollection = () => {
 
       const debtorsArray = Object.values(debtorsMap);
       
-      // ✅ ORDENAR: Deudores por fecha más reciente (transacción más nueva primero)
+      // ✅ ORDENAR: Deudores por fecha m�s reciente (transacci�n m�s nueva primero)
       debtorsArray.sort((a, b) => {
         const aLatest = Math.max(...a.transactions.map(t => new Date(t.created_at).getTime()));
         const bLatest = Math.max(...b.transactions.map(t => new Date(t.created_at).getTime()));
         return bLatest - aLatest;
       });
 
-      // 📋 DETECTAR ESTADO DE VOUCHER: ¿El padre ya envió comprobante?
+      // �� DETECTAR ESTADO DE VOUCHER: �El padre ya envi� comprobante?
       // Recoger todos los student_ids de deudores tipo 'student'
       const studentDebtorIds = debtorsArray
         .filter(d => d.client_type === 'student')
@@ -845,7 +845,7 @@ export const BillingCollection = () => {
     );
   });
 
-  // âœ… Filtrar pagos realizados por tÃ©rmino de bÃºsqueda (MEJORADO)
+  // ✅ Filtrar pagos realizados por t�rmino de b�squeda (MEJORADO)
   const filteredPaidTransactions = paidTransactions.filter(transaction => {
     if (!searchTerm) return true;
     const search = searchTerm.toLowerCase();
@@ -886,8 +886,8 @@ export const BillingCollection = () => {
   };
 
   const handleOpenPayment = (debtor: Debtor) => {
-    // ðŸ†• Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
-    // ðŸ”§ FIX: Usar debtor.id que ES el student_id, teacher_id o manual_name
+    // 🆕 Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
+    // 🔧 FIX: Usar debtor.id que ES el student_id, teacher_id o manual_name
     const debtorKey = debtor.id;
     const selectedTxIds = selectedTransactionsByDebtor.get(debtorKey);
     
@@ -898,12 +898,12 @@ export const BillingCollection = () => {
       // Si hay transacciones seleccionadas, cobrar solo esas
       transactionsToPay = debtor.transactions.filter((t: any) => selectedTxIds.has(t.id));
       transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
-      console.log(`ðŸ’° Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
+      console.log(`💰 Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
     } else {
-      // Si no hay selecciÃ³n, cobrar todas
+      // Si no hay selecci�n, cobrar todas
       transactionsToPay = debtor.transactions;
       transactionsToPayAmount = debtor.total_amount;
-      console.log(`ðŸ’° Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
+      console.log(`💰 Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
     }
     
     // Guardar el deudor con las transacciones filtradas
@@ -935,12 +935,12 @@ export const BillingCollection = () => {
       return;
     }
 
-    // âœ… VALIDACIÃ“N: NÃºmero de operaciÃ³n obligatorio (excepto efectivo)
+    // ✅ VALIDACIÓN: N�mero de operaci�n obligatorio (excepto efectivo)
     if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && !paymentData.operation_number) {
       toast({
         variant: 'destructive',
-        title: 'NÃºmero de OperaciÃ³n Obligatorio',
-        description: 'Debe ingresar el nÃºmero de operaciÃ³n para este mÃ©todo de pago',
+        title: 'N�mero de Operaci�n Obligatorio',
+        description: 'Debe ingresar el n�mero de operaci�n para este m�todo de pago',
       });
       return;
     }
@@ -958,7 +958,7 @@ export const BillingCollection = () => {
       );
       
 
-      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
+      // 1. ACTUALIZAR transacciones reales existentes (que ya est�n en la BD)
       if (realTransactions.length > 0) {
         const realIds = realTransactions.map((t: any) => t.id);
 
@@ -968,21 +968,21 @@ export const BillingCollection = () => {
             payment_status: 'paid',
             payment_method: paymentData.payment_method,
             operation_number: paymentData.operation_number || null,
-            created_by: user.id, // ðŸ”§ FIX: Registrar quiÃ©n cobrÃ³
+            created_by: user.id, // 🔧 FIX: Registrar qui�n cobr�
           })
           .in('id', realIds);
 
         if (updateError) {
-          console.error('âŒ [BillingCollection] Error actualizando transacciones:', updateError);
+          console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
           throw updateError;
         }
         
       }
 
-      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacciÃ³n)
+      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacci�n)
       if (virtualTransactions.length > 0) {
         
-        // ðŸŽ« Generar ticket_code para las transacciones de almuerzo
+        // 🎫 Generar ticket_code para las transacciones de almuerzo
         let ticketCodeBase = '';
         try {
           const { data: ticketNumber, error: ticketError } = await supabase
@@ -994,7 +994,7 @@ export const BillingCollection = () => {
         } catch (err) {
         }
         
-        // Fallback: generar cÃ³digo de ticket basado en timestamp
+        // Fallback: generar c�digo de ticket basado en timestamp
         if (!ticketCodeBase) {
           const now = new Date();
           const dateStr = now.toISOString().slice(0,10).replace(/-/g,'');
@@ -1002,14 +1002,14 @@ export const BillingCollection = () => {
           ticketCodeBase = `COB-${dateStr}-${timeStr}`;
         }
         
-        // ðŸ”§ ANTI-DUPLICADO: Verificar que no existan transacciones reales para estos lunch_orders
+        // 🔧 ANTI-DUPLICADO: Verificar que no existan transacciones reales para estos lunch_orders
         const lunchOrderIds = virtualTransactions
           .map((vt: any) => vt.metadata?.lunch_order_id)
           .filter(Boolean);
         
         let existingLunchOrderIds = new Set<string>();
         if (lunchOrderIds.length > 0) {
-          // ðŸ”§ FIX: Buscar solo transacciones de tipo purchase con metadata, con lÃ­mite alto
+          // 🔧 FIX: Buscar solo transacciones de tipo purchase con metadata, con l�mite alto
           const { data: existingTx } = await supabase
             .from('transactions')
             .select('metadata')
@@ -1029,7 +1029,7 @@ export const BillingCollection = () => {
         let ticketCounter = 0;
         const transactionsToCreate = virtualTransactions
           .filter((vt: any) => {
-            // ðŸ”§ FILTRAR: No crear si ya existe una transacciÃ³n real para este lunch_order
+            // 🔧 FILTRAR: No crear si ya existe una transacci�n real para este lunch_order
             if (vt.metadata?.lunch_order_id && existingLunchOrderIds.has(vt.metadata.lunch_order_id)) {
               return false;
             }
@@ -1037,7 +1037,7 @@ export const BillingCollection = () => {
           })
           .map((vt: any) => {
             ticketCounter++;
-            // ðŸŽ« Generar ticket_code Ãºnico: base + sufijo si hay mÃºltiples
+            // 🎫 Generar ticket_code �nico: base + sufijo si hay m�ltiples
             const ticketCode = virtualTransactions.length > 1 
               ? `${ticketCodeBase}-${ticketCounter}` 
               : ticketCodeBase;
@@ -1053,11 +1053,11 @@ export const BillingCollection = () => {
               teacher_id: vt.teacher_id || null,
               manual_client_name: vt.manual_client_name || null,
               school_id: vt.school_id,
-              // âœ… FIX: NO establecer created_at manualmente â†’ DB auto-asigna NOW()
+              // ✅ FIX: NO establecer created_at manualmente → DB auto-asigna NOW()
               // Esto corrige el bug donde todos los pagos mostraban 19:00
               // La fecha del pedido se mantiene en metadata.order_date
               created_by: user.id,
-              ticket_code: ticketCode, // ðŸŽ« Siempre con ticket
+              ticket_code: ticketCode, // 🎫 Siempre con ticket
             };
             
             // Agregar metadata con lunch_order_id
@@ -1075,14 +1075,14 @@ export const BillingCollection = () => {
             .select();
 
           if (createError) {
-            console.error('âŒ [BillingCollection] Error creando transacciones:', createError);
+            console.error('❌ [BillingCollection] Error creando transacciones:', createError);
             throw createError;
           }
 
         } else {
         }
 
-        // ðŸ”§ FIX CRÃTICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
+        // 🔧 FIX CR�TICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
         // Esto previene que un pedido cobrado vuelva a aparecer como virtual
         const lunchOrderIdsToDeliver = virtualTransactions
           .map((vt: any) => vt.metadata?.lunch_order_id)
@@ -1098,14 +1098,14 @@ export const BillingCollection = () => {
             .in('id', lunchOrderIdsToDeliver);
           
           if (deliverError) {
-            console.error('⚠️ [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
-            // No lanzar error - el pago ya se registrÃ³, esto es secundario
+            console.error('⚠️� [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
+            // No lanzar error - el pago ya se registr�, esto es secundario
           } else {
           }
         }
       }
 
-      // ðŸ”§ FIX: TambiÃ©n marcar lunch_orders de transacciones REALES como 'delivered'
+      // 🔧 FIX: Tambi�n marcar lunch_orders de transacciones REALES como 'delivered'
       if (realTransactions.length > 0) {
         const realLunchOrderIds = realTransactions
           .map((t: any) => t.metadata?.lunch_order_id)
@@ -1121,15 +1121,15 @@ export const BillingCollection = () => {
             .in('id', realLunchOrderIds);
           
           if (deliverRealError) {
-            console.error('⚠️ [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
+            console.error('⚠️� [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
           } else {
           }
         }
       }
 
       toast({
-        title: 'âœ… Pago registrado',
-        description: `Se registrÃ³ el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
+        title: '✅ Pago registrado',
+        description: `Se registr� el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
       });
 
       // Cerrar modal y limpiar
@@ -1159,7 +1159,7 @@ export const BillingCollection = () => {
 
   const copyMessage = (debtor: Debtor) => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const periodText = period ? `del perÃ­odo: ${period.period_name}` : 'pendiente';
+    const periodText = period ? `del per�odo: ${period.period_name}` : 'pendiente';
     
     let clientLine = '';
     let recipientLine = '';
@@ -1175,23 +1175,23 @@ export const BillingCollection = () => {
       recipientLine = `Estimado(a) ${debtor.client_name}`;
     }
     
-    const message = `ðŸ”” *COBRANZA LIMA CAFÃ‰ 28*
+    const message = `🔔 *COBRANZA LIMA CAFÉ 28*
 
 ${recipientLine}
 
 ${clientLine}
 
-ðŸ’° Monto Total: S/ ${debtor.total_amount.toFixed(2)}
+💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}
 
-ðŸ“Ž Adjuntamos el detalle completo.
+📎 Adjuntamos el detalle completo.
 
-Para pagar, contacte con administraciÃ³n.
+Para pagar, contacte con administraci�n.
 Gracias.`;
 
     navigator.clipboard.writeText(message);
     toast({
-      title: 'ðŸ“‹ Mensaje copiado',
-      description: 'El mensaje se copiÃ³ al portapapeles',
+      title: '📋 Mensaje copiado',
+      description: 'El mensaje se copi� al portapapeles',
     });
   };
 
@@ -1255,19 +1255,19 @@ Gracias.`;
     });
 
     toast({
-      title: 'âœ… PDF generado',
+      title: '✅ PDF generado',
       description: `Estado de cuenta de ${debtor.client_name}`,
     });
   };
 
-  // 📱 ENVIAR WHATSAPP INDIVIDUAL A UN DEUDOR (solo para almuerzos)
+  // �� ENVIAR WHATSAPP INDIVIDUAL A UN DEUDOR (solo para almuerzos)
   const sendWhatsAppReminder = (debtor: Debtor) => {
     const phone = debtor.parent_phone || '';
     if (!phone) {
       toast({
         variant: 'destructive',
-        title: 'Sin número de teléfono',
-        description: 'Este deudor no tiene un número de teléfono registrado.',
+        title: 'Sin n�mero de tel�fono',
+        description: 'Este deudor no tiene un n�mero de tel�fono registrado.',
       });
       return;
     }
@@ -1281,7 +1281,7 @@ Gracias.`;
     const lunchAmount = lunchTransactions.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
     const lunchCount = lunchTransactions.length;
 
-    const message = `🔔 *AVISO DE PAGO DE ALMUERZO PENDIENTE*
+    const message = `�� *AVISO DE PAGO DE ALMUERZO PENDIENTE*
 
 Estimado(a) padre de familia,
 
@@ -1289,19 +1289,19 @@ Le informamos que su hijo(a) *${debtor.client_name}* tiene *${lunchCount} almuer
 
 ⚠️ Es necesario que cancele su almuerzo para que pueda ser procesado y reflejado en el sistema.
 
-📲 *¿Cómo pagar?*
-1. Ingrese a la aplicación
-2. Vaya a la sección "Pagos"
+�� *�C�mo pagar?*
+1. Ingrese a la aplicaci�n
+2. Vaya a la secci�n "Pagos"
 3. Seleccione los almuerzos pendientes
 4. Suba su comprobante de pago (voucher)
 
-Si ya realizó el pago, por favor envíe su comprobante lo antes posible para que podamos procesarlo.
+Si ya realiz� el pago, por favor env�e su comprobante lo antes posible para que podamos procesarlo.
 
-Agradecemos su pronta atención. 🙏`;
+Agradecemos su pronta atenci�n. ��`;
 
-    // Limpiar número de teléfono
+    // Limpiar n�mero de tel�fono
     let cleanPhone = phone.replace(/[^0-9+]/g, '');
-    // Si empieza con 9 y tiene 9 dígitos, agregar código de país Perú
+    // Si empieza con 9 y tiene 9 d�gitos, agregar c�digo de pa�s Per�
     if (/^9\d{8}$/.test(cleanPhone)) {
       cleanPhone = '51' + cleanPhone;
     }
@@ -1313,7 +1313,7 @@ Agradecemos su pronta atención. 🙏`;
     window.open(whatsappUrl, '_blank');
 
     toast({
-      title: '📱 Abriendo WhatsApp',
+      title: '�� Abriendo WhatsApp',
       description: `Enviando recordatorio a ${debtor.parent_name || debtor.client_name}`,
     });
   };
@@ -1342,9 +1342,9 @@ Agradecemos su pronta atención. 🙏`;
         student_name: debtor.client_name,
         amount: debtor.total_amount.toFixed(2),
         period: period?.period_name || 'Cuenta Pendiente',
-        message: `ðŸ”” *COBRANZA LIMA CAFÃ‰ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del perÃ­odo: ${period.period_name}` : ''}\n\nðŸ’° Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\nðŸ“Ž Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraciÃ³n.\nGracias.`,
+        message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del per�odo: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraci�n.\nGracias.`,
         delay_seconds: delay,
-        pdf_url: '', // Se generarÃ¡ despuÃ©s
+        pdf_url: '', // Se generar� despu�s
       };
     });
 
@@ -1358,7 +1358,7 @@ Agradecemos su pronta atención. 🙏`;
     link.click();
 
     toast({
-      title: 'âœ… ExportaciÃ³n generada',
+      title: '✅ Exportaci�n generada',
       description: `${messages.length} mensajes con intervalos aleatorios (15-300 seg)`,
     });
   };
@@ -1376,7 +1376,7 @@ Agradecemos su pronta atención. 🙏`;
     }
 
     toast({
-      title: 'ðŸ“„ Generando PDFs...',
+      title: '📄 Generando PDFs...',
       description: `Procesando ${selectedDebtorsList.length} documento(s)`,
     });
 
@@ -1394,14 +1394,14 @@ Agradecemos su pronta atención. 🙏`;
       console.error('Error cargando logo:', error);
     }
 
-    // Generar PDFs con pequeÃ±o delay entre cada uno
+    // Generar PDFs con peque�o delay entre cada uno
     for (let i = 0; i < selectedDebtorsList.length; i++) {
       const debtor = selectedDebtorsList[i];
       
       const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
       const periodName = period ? period.period_name : 'Todas las deudas';
       
-      // Calcular fechas reales basadas en las transacciones si no hay perÃ­odo
+      // Calcular fechas reales basadas en las transacciones si no hay per�odo
       let startDate: string;
       let endDate: string;
       
@@ -1442,26 +1442,26 @@ Agradecemos su pronta atención. 🙏`;
         logo_base64: logoBase64
       });
 
-      // PequeÃ±o delay entre PDFs para evitar bloqueo del navegador
+      // Peque�o delay entre PDFs para evitar bloqueo del navegador
       if (i < selectedDebtorsList.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
     toast({
-      title: 'âœ… PDFs generados',
+      title: '✅ PDFs generados',
       description: `Se generaron ${selectedDebtorsList.length} documentos exitosamente`,
     });
   };
 
   const currentPeriod = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
 
-  // FunciÃ³n para obtener el cargo y descripciÃ³n completa del usuario
+  // Funci�n para obtener el cargo y descripci�n completa del usuario
   const getUserRoleDescription = (profile: any, schoolName: string) => {
     if (!profile) return null;
     
     const name = profile.full_name || profile.email || 'Usuario';
-    // Usar el school_name del perfil si existe, si no, usar el que viene de la transacciÃ³n
+    // Usar el school_name del perfil si existe, si no, usar el que viene de la transacci�n
     const finalSchoolName = profile.school_name || profile.teacher_school_name || schoolName;
     let roleDescription = '';
     
@@ -1499,7 +1499,7 @@ Agradecemos su pronta atención. 🙏`;
     };
   };
 
-  // FunciÃ³n para obtener pagos realizados
+  // Funci�n para obtener pagos realizados
   const fetchPaidTransactions = async () => {
     try {
       setLoadingPaid(true);
@@ -1519,13 +1519,13 @@ Agradecemos su pronta atención. 🙏`;
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .order('created_at', { ascending: false })
-        .limit(100000); // ðŸ”§ FIX: Evitar truncamiento silencioso (default: 1000)
+        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso (default: 1000)
 
       if (schoolIdFilter) {
         query = query.eq('school_id', schoolIdFilter);
       }
 
-      // Filtrar por fecha si está definida
+      // Filtrar por fecha si est� definida
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
@@ -1537,7 +1537,7 @@ Agradecemos su pronta atención. 🙏`;
 
       if (error) throw error;
 
-      // ðŸ”¥ FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
       const lunchOrderIds = data
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
@@ -1560,7 +1560,7 @@ Agradecemos su pronta atención. 🙏`;
         return true;
       }) || [];
 
-      // ðŸ†• Obtener informaciÃ³n del creador (created_by) manualmente
+      // 🆕 Obtener informaci�n del creador (created_by) manualmente
       const userIds = [...new Set(validTransactions.map((t: any) => t.created_by).filter(Boolean))];
       let createdByMap = new Map();
       
@@ -1587,7 +1587,7 @@ Agradecemos su pronta atención. 🙏`;
           });
         }
 
-        // TambiÃ©n buscar en teacher_profiles por si el created_by es un profesor
+        // Tambi�n buscar en teacher_profiles por si el created_by es un profesor
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
@@ -1617,7 +1617,7 @@ Agradecemos su pronta atención. 🙏`;
         }
       }
 
-      // Agregar la informaciÃ³n del creador a cada transacciÃ³n
+      // Agregar la informaci�n del creador a cada transacci�n
       const transactionsWithCreator = validTransactions.map((t: any) => ({
         ...t,
         created_by_profile: createdByMap.get(t.created_by) || null
@@ -1637,7 +1637,7 @@ Agradecemos su pronta atención. 🙏`;
     }
   };
 
-  // Cargar pagos realizados cuando cambia la pestaÃ±a
+  // Cargar pagos realizados cuando cambia la pesta�a
   useEffect(() => {
     if (activeTab === 'pagos' && (canViewAllSchools || userSchoolId)) {
       fetchPaidTransactions();
@@ -1671,22 +1671,22 @@ Agradecemos su pronta atención. 🙏`;
         doc.addImage(logoBase64, 'PNG', 15, 15, 30, 30);
       }
 
-      // TÃ­tulo
+      // T�tulo
       doc.setFontSize(20);
       doc.setTextColor(34, 139, 34); // Verde
       doc.text('COMPROBANTE DE PAGO', pageWidth / 2, 25, { align: 'center' });
 
-      // SubtÃ­tulo
+      // Subt�tulo
       doc.setFontSize(12);
       doc.setTextColor(100, 100, 100);
-      doc.text('Lima CafÃ© - Sistema de Cobranzas', pageWidth / 2, 32, { align: 'center' });
+      doc.text('Lima Caf� - Sistema de Cobranzas', pageWidth / 2, 32, { align: 'center' });
 
-      // LÃ­nea separadora
+      // L�nea separadora
       doc.setDrawColor(34, 139, 34);
       doc.setLineWidth(0.5);
       doc.line(15, 50, pageWidth - 15, 50);
 
-      // InformaciÃ³n del pago
+      // Informaci�n del pago
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
       
@@ -1757,9 +1757,9 @@ Agradecemos su pronta atención. 🙏`;
         }
       }
 
-      // MÃ©todo de pago
+      // M�todo de pago
       doc.setFont('helvetica', 'bold');
-      doc.text('MÃ‰TODO DE PAGO:', 15, yPos);
+      doc.text('MÉTODO DE PAGO:', 15, yPos);
       doc.setFont('helvetica', 'normal');
       const methodText = transaction.payment_method 
         ? transaction.payment_method === 'teacher_account' ? 'CUENTA PROFESOR' : transaction.payment_method
@@ -1767,19 +1767,19 @@ Agradecemos su pronta atención. 🙏`;
       doc.text(methodText.toUpperCase(), 70, yPos);
       yPos += 7;
 
-      // NÃºmero de ticket (si existe)
+      // N�mero de ticket (si existe)
       if (transaction.ticket_code) {
         doc.setFont('helvetica', 'bold');
-        doc.text('NÂº TICKET:', 15, yPos);
+        doc.text('Nº TICKET:', 15, yPos);
         doc.setFont('helvetica', 'normal');
         doc.text(transaction.ticket_code, 70, yPos);
         yPos += 7;
       }
 
-      // NÃºmero de operaciÃ³n (si existe)
+      // N�mero de operaci�n (si existe)
       if (transaction.operation_number) {
         doc.setFont('helvetica', 'bold');
-        doc.text('NÂº OPERACIÃ“N:', 15, yPos);
+        doc.text('Nº OPERACIÓN:', 15, yPos);
         doc.setFont('helvetica', 'normal');
         doc.text(transaction.operation_number, 70, yPos);
         yPos += 7;
@@ -1796,17 +1796,17 @@ Agradecemos su pronta atención. 🙏`;
 
       yPos += 3;
 
-      // ðŸ½ï¸ DETALLE DE CONSUMO - MUY DESTACADO CON RECUADRO AZUL
+      // 🍽️ DETALLE DE CONSUMO - MUY DESTACADO CON RECUADRO AZUL
       doc.setFillColor(59, 130, 246); // Azul
       doc.rect(15, yPos - 2, pageWidth - 30, 8, 'F');
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(255, 255, 255);
-      doc.text('ðŸ½ï¸ DETALLE DE CONSUMO', 18, yPos + 4);
+      doc.text('🍽️ DETALLE DE CONSUMO', 18, yPos + 4);
       
       yPos += 12;
       
-      // DescripciÃ³n del consumo en recuadro blanco
+      // Descripci�n del consumo en recuadro blanco
       doc.setFillColor(240, 245, 255); // Azul muy claro
       doc.setDrawColor(59, 130, 246);
       doc.setLineWidth(0.5);
@@ -1814,7 +1814,7 @@ Agradecemos su pronta atención. 🙏`;
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      const description = transaction.description || 'Sin descripciÃ³n';
+      const description = transaction.description || 'Sin descripci�n';
       const descriptionLines = doc.splitTextToSize(description, pageWidth - 40);
       const descHeight = descriptionLines.length * 5 + 8;
       
@@ -1822,7 +1822,7 @@ Agradecemos su pronta atención. 🙏`;
       doc.text(descriptionLines, 20, yPos + 3);
       yPos += descHeight + 5;
 
-      // LÃ­nea separadora
+      // L�nea separadora
       doc.setDrawColor(200, 200, 200);
       doc.setLineWidth(0.3);
       doc.line(15, yPos, pageWidth - 15, yPos);
@@ -1847,7 +1847,7 @@ Agradecemos su pronta atención. 🙏`;
       doc.setFont('helvetica', 'italic');
       
       const footerY = pageHeight - 30;
-      doc.text('Este es un comprobante interno generado por el sistema Lima CafÃ©', pageWidth / 2, footerY, { align: 'center' });
+      doc.text('Este es un comprobante interno generado por el sistema Lima Caf�', pageWidth / 2, footerY, { align: 'center' });
       doc.text(`Generado el: ${format(new Date(), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}`, pageWidth / 2, footerY + 5, { align: 'center' });
       doc.text('Para consultas: contacto@limacafe.pe', pageWidth / 2, footerY + 10, { align: 'center' });
 
@@ -1856,8 +1856,8 @@ Agradecemos su pronta atención. 🙏`;
       doc.save(fileName);
 
       toast({
-        title: 'âœ… Comprobante generado',
-        description: `Se descargÃ³ el comprobante de pago exitosamente`,
+        title: '✅ Comprobante generado',
+        description: `Se descarg� el comprobante de pago exitosamente`,
       });
     } catch (error) {
       console.error('Error generando comprobante:', error);
@@ -1875,10 +1875,10 @@ Agradecemos su pronta atención. 🙏`;
       <Alert className="bg-amber-50 border-amber-200">
         <AlertTriangle className="h-5 w-5 text-amber-600" />
         <AlertDescription className="text-amber-900">
-          <strong>⚠️ API de Facturación SUNAT aún no conectado</strong>
+          <strong>⚠️� API de Facturaci�n SUNAT a�n no conectado</strong>
           <br />
-          Por el momento, los documentos se generarán como comprobantes internos. 
-          Próximamente se habilitará la facturación electrónica oficial.
+          Por el momento, los documentos se generar�n como comprobantes internos. 
+          Pr�ximamente se habilitar� la facturaci�n electr�nica oficial.
         </AlertDescription>
       </Alert>
 
@@ -1905,9 +1905,9 @@ Agradecemos su pronta atención. 🙏`;
               </div>
             )}
 
-            {/* PerÃ­odo (OPCIONAL) */}
+            {/* Per�odo (OPCIONAL) */}
             <div className="space-y-2">
-              <Label>PerÃ­odo de Cobranza (Opcional)</Label>
+              <Label>Per�odo de Cobranza (Opcional)</Label>
               <select
                 value={selectedPeriod || 'all'}
                 onChange={(e) => setSelectedPeriod(e.target.value === 'all' ? '' : e.target.value)}
@@ -1922,7 +1922,7 @@ Agradecemos su pronta atención. 🙏`;
               </select>
             </div>
 
-            {/* NUEVO: Filtro de fecha lÃ­mite */}
+            {/* NUEVO: Filtro de fecha l�mite */}
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
@@ -1934,7 +1934,7 @@ Agradecemos su pronta atención. 🙏`;
                   value={untilDate}
                   onChange={(e) => setUntilDate(e.target.value)}
                   className="flex-1"
-                  placeholder="Seleccionar fecha lÃ­mite"
+                  placeholder="Seleccionar fecha l�mite"
                 />
                 <Button
                   variant="default"
@@ -1945,7 +1945,7 @@ Agradecemos su pronta atención. 🙏`;
                     setUntilDate(localDate);
                   }}
                 >
-                  ðŸ“… Hasta Hoy
+                  📅 Hasta Hoy
                 </Button>
               </div>
               {untilDate && (
@@ -1955,7 +1955,7 @@ Agradecemos su pronta atención. 🙏`;
                     const today = new Date();
                     const filterDate = new Date(untilDate + 'T00:00:00');
                     if (filterDate < today) {
-                      return ' ⚠️ (Puede que falten pedidos de fechas posteriores)';
+                      return ' ⚠️� (Puede que falten pedidos de fechas posteriores)';
                     }
                     return '';
                   })()}
@@ -2033,7 +2033,7 @@ Agradecemos su pronta atención. 🙏`;
             </Card>
           )}
 
-          {/* PestaÃ±as: Cobrar / Pagos Realizados - Sin Radix */}
+          {/* Pesta�as: Cobrar / Pagos Realizados - Sin Radix */}
           <div className="w-full">
             <div className="grid w-full grid-cols-2 mb-6 bg-muted p-1 rounded-lg">
               <button
@@ -2045,7 +2045,7 @@ Agradecemos su pronta atención. 🙏`;
                 }`}
               >
                 <DollarSign className="h-4 w-4" />
-                Â¡Cobrar!
+                �Cobrar!
               </button>
               <button
                 onClick={() => setActiveTab('pagos')}
@@ -2068,17 +2068,17 @@ Agradecemos su pronta atención. 🙏`;
               <CardContent className="py-12 text-center">
                 <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-green-500" />
                 <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                  Â¡Sin deudas pendientes!
+                  �Sin deudas pendientes!
                 </h3>
                 <p className="text-gray-500">
-                  No hay consumos sin facturar en el perÃ­odo seleccionado
+                  No hay consumos sin facturar en el per�odo seleccionado
                 </p>
               </CardContent>
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {filteredDebtors.map((debtor) => {
-                // Calcular fechas mÃ­n y mÃ¡x de las transacciones
+                // Calcular fechas m�n y m�x de las transacciones
                 const dates = debtor.transactions.map(t => new Date(t.created_at));
                 const minDate = dates.length > 0 ? new Date(Math.min(...dates.map(d => d.getTime()))) : null;
                 const maxDate = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
@@ -2101,23 +2101,23 @@ Agradecemos su pronta atención. 🙏`;
                                 <h3 className="font-bold text-xl text-gray-900">{debtor.client_name}</h3>
                                 {debtor.client_type === 'teacher' && (
                                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                                    ðŸ‘¨â€ðŸ« Profesor
+                                    👨‍🏫 Profesor
                                   </Badge>
                                 )}
                                 {debtor.client_type === 'manual' && (
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                    ðŸ“ Sin Cuenta
+                                    📝 Sin Cuenta
                                   </Badge>
                                 )}
                               </div>
                               {debtor.client_type === 'student' && debtor.parent_name && (
                                 <>
                                   <p className="text-sm text-gray-600 mt-1">
-                                    ðŸ‘¤ Padre: <span className="font-semibold">{debtor.parent_name}</span>
+                                    👤 Padre: <span className="font-semibold">{debtor.parent_name}</span>
                                   </p>
                                   {debtor.parent_phone && (
                                     <p className="text-sm text-gray-600">
-                                      ðŸ“± {debtor.parent_phone}
+                                      📱 {debtor.parent_phone}
                                     </p>
                                   )}
                                 </>
@@ -2127,12 +2127,12 @@ Agradecemos su pronta atención. 🙏`;
                                 <Building2 className="h-4 w-4" />
                                 {debtor.school_name}
                               </div>
-                              {/* 📋 INDICADOR DE VOUCHER (solo para deudas de almuerzo de estudiantes) */}
+                              {/* �� INDICADOR DE VOUCHER (solo para deudas de almuerzo de estudiantes) */}
                               {debtor.has_lunch_debt && debtor.client_type === 'student' && debtor.voucher_status === 'none' && (
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300 text-xs">
                                     <AlertCircle className="h-3 w-3 mr-1" />
-                                    🍽️ Almuerzo sin voucher enviado
+                                    ��️ Almuerzo sin voucher enviado
                                   </Badge>
                                 </div>
                               )}
@@ -2140,7 +2140,7 @@ Agradecemos su pronta atención. 🙏`;
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs">
                                     <History className="h-3 w-3 mr-1" />
-                                    🍽️ Voucher pendiente de aprobación
+                                    ��️ Voucher pendiente de aprobaci�n
                                   </Badge>
                                 </div>
                               )}
@@ -2148,7 +2148,7 @@ Agradecemos su pronta atención. 🙏`;
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-300 text-xs">
                                     <AlertTriangle className="h-3 w-3 mr-1" />
-                                    🍽️ Voucher rechazado
+                                    ��️ Voucher rechazado
                                   </Badge>
                                 </div>
                               )}
@@ -2163,17 +2163,17 @@ Agradecemos su pronta atención. 🙏`;
                             </div>
                           </div>
 
-                          {/* InformaciÃ³n de fechas y comprobantes */}
+                          {/* Informaci�n de fechas y comprobantes */}
                           <div className="bg-gray-50 rounded-lg p-3 mb-3 space-y-2">
                             <div className="grid grid-cols-2 gap-3 text-sm">
                               <div>
-                                <p className="text-gray-500">ðŸ“… Primer consumo:</p>
+                                <p className="text-gray-500">📅 Primer consumo:</p>
                                 <p className="font-semibold text-gray-900">
                                   {minDate ? format(minDate, "dd/MM/yyyy 'a las' HH:mm", { locale: es }) : 'N/A'}
                                 </p>
                               </div>
                               <div>
-                                <p className="text-gray-500">ðŸ“… Ãšltimo consumo:</p>
+                                <p className="text-gray-500">📅 Último consumo:</p>
                                 <p className="font-semibold text-gray-900">
                                   {maxDate ? format(maxDate, "dd/MM/yyyy 'a las' HH:mm", { locale: es }) : 'N/A'}
                                 </p>
@@ -2183,10 +2183,10 @@ Agradecemos su pronta atención. 🙏`;
                             {/* Desglose de transacciones */}
                             <details className="cursor-pointer">
                               <summary className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-                                Ver detalles de {debtor.transaction_count} transacciÃ³n(es) â–¼
+                                Ver detalles de {debtor.transaction_count} transacci�n(es) ▼
                               </summary>
                               <div className="mt-2">
-                                {/* BotÃ³n para seleccionar todas */}
+                                {/* Bot�n para seleccionar todas */}
                                 <button
                                   onClick={() => {
                                     const debtorKey = debtor.id;
@@ -2261,10 +2261,10 @@ Agradecemos su pronta atención. 🙏`;
                                           <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                               <span className="font-semibold text-blue-600 hover:text-blue-700">#{idx + 1}</span>
-                                              {/* Mostrar fecha del pedido si viene del metadata, si no de la descripciÃ³n */}
+                                              {/* Mostrar fecha del pedido si viene del metadata, si no de la descripci�n */}
                                               {t.metadata?.order_date ? (
                                                 <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                                  ðŸ“… {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
+                                                  📅 {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
                                                 </span>
                                               ) : null}
                                               {t.metadata?.menu_name && (
@@ -2276,9 +2276,9 @@ Agradecemos su pronta atención. 🙏`;
                                             <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
                                           </div>
                                           <div className="text-gray-600 mt-0.5 text-[10px]">
-                                            {t.description} â€¢ {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
+                                            {t.description} • {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
                                             {t.ticket_code && (
-                                              <span className="ml-1 text-indigo-700 font-bold">â€¢ ðŸŽ« {t.ticket_code}</span>
+                                              <span className="ml-1 text-indigo-700 font-bold">• 🎫 {t.ticket_code}</span>
                                             )}
                                           </div>
                                         </div>
@@ -2290,7 +2290,7 @@ Agradecemos su pronta atención. 🙏`;
                             </details>
                           </div>
 
-                          {/* Botones de acciÃ³n */}
+                          {/* Botones de acci�n */}
                           <div className="flex flex-wrap gap-2">
                             <Button
                               size="sm"
@@ -2320,7 +2320,7 @@ Agradecemos su pronta atención. 🙏`;
                               PDF
                             </Button>
 
-                            {/* 📱 BOTÓN WHATSAPP INDIVIDUAL (solo para deudas de almuerzo) */}
+                            {/* �� BOT�N WHATSAPP INDIVIDUAL (solo para deudas de almuerzo) */}
                             {debtor.has_lunch_debt && debtor.parent_phone && (
                               <Button
                                 size="sm"
@@ -2362,7 +2362,7 @@ Agradecemos su pronta atención. 🙏`;
                       {searchTerm ? 'No se encontraron resultados' : 'No hay pagos registrados'}
                     </h3>
                     <p className="text-gray-500">
-                      {searchTerm ? 'Intenta con otro tÃ©rmino de bÃºsqueda' : 'Los pagos realizados aparecerÃ¡n aquÃ­'}
+                      {searchTerm ? 'Intenta con otro t�rmino de b�squeda' : 'Los pagos realizados aparecer�n aqu�'}
                     </p>
                   </CardContent>
                 </Card>
@@ -2375,10 +2375,10 @@ Agradecemos su pronta atención. 🙏`;
                                      transaction.manual_client_name || 
                                      null;
                     
-                    // Si no hay nombre, es una venta de cocina genÃ©rica
+                    // Si no hay nombre, es una venta de cocina gen�rica
                     const isGenericSale = !clientName && !transaction.student_id && !transaction.teacher_id;
                     if (isGenericSale) {
-                      clientName = 'ðŸ›’ Cliente GenÃ©rico Sin Cuenta';
+                      clientName = '🛒 Cliente Gen�rico Sin Cuenta';
                     }
                     
                     const clientType = transaction.student_id ? 'student' : 
@@ -2395,21 +2395,21 @@ Agradecemos su pronta atención. 🙏`;
                                 <h3 className="font-bold text-xl text-gray-900">{clientName}</h3>
                                 {clientType === 'teacher' && (
                                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                                    ðŸ‘¨â€ðŸ« Profesor
+                                    👨‍🏫 Profesor
                                   </Badge>
                                 )}
                                 {clientType === 'generic' && (
                                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                                    ðŸ›’ Sin Cliente
+                                    🛒 Sin Cliente
                                   </Badge>
                                 )}
                                 {clientType === 'manual' && (
                                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                    ðŸ“ Sin Cuenta
+                                    📝 Sin Cuenta
                                   </Badge>
                                 )}
                                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                  âœ… Pagado
+                                  ✅ Pagado
                                 </Badge>
                               </div>
                               
@@ -2419,29 +2419,29 @@ Agradecemos su pronta atención. 🙏`;
                               </div>
 
                               <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                                {/* ðŸ½ï¸ DETALLE DE CONSUMO - Lo mÃ¡s importante primero */}
+                                {/* 🍽️ DETALLE DE CONSUMO - Lo m�s importante primero */}
                                 <div className="bg-white border-l-4 border-l-blue-500 rounded-md p-3 mb-3">
-                                  <p className="text-gray-500 text-sm font-semibold mb-1">ðŸ½ï¸ Detalle de Consumo:</p>
+                                  <p className="text-gray-500 text-sm font-semibold mb-1">🍽️ Detalle de Consumo:</p>
                                   <p className="font-bold text-gray-900 text-base">
-                                    {transaction.description || 'Sin descripciÃ³n'}
+                                    {transaction.description || 'Sin descripci�n'}
                                   </p>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3 text-sm">
                                   <div>
-                                    <p className="text-gray-500">ðŸ“… Fecha de pago:</p>
+                                    <p className="text-gray-500">📅 Fecha de pago:</p>
                                     <p className="font-semibold text-gray-900">
                                       {format(new Date(transaction.created_at), "dd/MM/yyyy", { locale: es })}
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-gray-500">ðŸ• Hora de pago:</p>
+                                    <p className="text-gray-500">🕐 Hora de pago:</p>
                                     <p className="font-semibold text-gray-900">
                                       {format(new Date(transaction.created_at), "HH:mm", { locale: es })}
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-gray-500">ðŸ’³ MÃ©todo de pago:</p>
+                                    <p className="text-gray-500">💳 M�todo de pago:</p>
                                     <p className="font-semibold text-gray-900 capitalize">
                                       {transaction.payment_method 
                                         ? transaction.payment_method === 'teacher_account' 
@@ -2449,17 +2449,17 @@ Agradecemos su pronta atención. 🙏`;
                                           : transaction.payment_method
                                         : transaction.ticket_code 
                                           ? 'Pago directo en caja' 
-                                          : 'MÃ©todo no registrado'}
+                                          : 'M�todo no registrado'}
                                     </p>
                                     {!transaction.payment_method && (
                                       <p className="text-xs text-amber-600 mt-0.5">
-                                        ⚠️ TransacciÃ³n anterior al sistema de cobros
+                                        ⚠️� Transacci�n anterior al sistema de cobros
                                       </p>
                                     )}
                                   </div>
                                   {transaction.operation_number && (
                                     <div>
-                                      <p className="text-gray-500">ðŸ”¢ NÂ° de operaciÃ³n:</p>
+                                      <p className="text-gray-500">🔢 N° de operaci�n:</p>
                                       <p className="font-semibold text-gray-900">
                                         {transaction.operation_number}
                                       </p>
@@ -2467,7 +2467,7 @@ Agradecemos su pronta atención. 🙏`;
                                   )}
                                   {transaction.ticket_code && (
                                     <div>
-                                      <p className="text-gray-500">ðŸŽ« NÂ° de ticket:</p>
+                                      <p className="text-gray-500">🎫 N° de ticket:</p>
                                       <p className="font-bold text-indigo-700">
                                         {transaction.ticket_code}
                                       </p>
@@ -2482,7 +2482,7 @@ Agradecemos su pronta atención. 🙏`;
                                   );
                                   return userInfo ? (
                                     <div className="border-t pt-2 mt-2">
-                                      <p className="text-gray-500 text-sm">ðŸ‘¤ Registrado por:</p>
+                                      <p className="text-gray-500 text-sm">👤 Registrado por:</p>
                                       <p className="font-semibold text-gray-900">{userInfo.name}</p>
                                       <p className="text-xs text-gray-600 mt-1">{userInfo.role}</p>
                                     </div>
@@ -2491,7 +2491,7 @@ Agradecemos su pronta atención. 🙏`;
 
                                 {transaction.document_type && (
                                   <div className="border-t pt-2 mt-2">
-                                    <p className="text-gray-500 text-sm">ðŸ“„ Tipo de documento:</p>
+                                    <p className="text-gray-500 text-sm">📄 Tipo de documento:</p>
                                     <p className="font-semibold text-gray-900 capitalize">
                                       {transaction.document_type}
                                     </p>
@@ -2541,7 +2541,7 @@ Agradecemos su pronta atención. 🙏`;
         </>
       )}
 
-      {/* Modal de Registro de Pago - REDISEÃ‘ADO */}
+      {/* Modal de Registro de Pago - REDISEÑADO */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -2553,14 +2553,14 @@ Agradecemos su pronta atención. 🙏`;
               <div className="mt-3 p-4 bg-blue-50 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
                   <div className="font-semibold text-gray-900">
-                    {currentDebtor?.client_type === 'student' && 'ðŸ‘¨â€ðŸŽ“ Estudiante: '}
-                    {currentDebtor?.client_type === 'teacher' && 'ðŸ‘¨â€ðŸ« Profesor: '}
-                    {currentDebtor?.client_type === 'manual' && 'ðŸ“ Cliente: '}
+                    {currentDebtor?.client_type === 'student' && '👨‍🎓 Estudiante: '}
+                    {currentDebtor?.client_type === 'teacher' && '👨‍🏫 Profesor: '}
+                    {currentDebtor?.client_type === 'manual' && '📝 Cliente: '}
                     {currentDebtor?.client_name}
                   </div>
                 </div>
                 {currentDebtor?.client_type === 'student' && currentDebtor.parent_name && (
-                  <div className="font-semibold text-gray-900">ðŸ‘¤ Padre: {currentDebtor.parent_name}</div>
+                  <div className="font-semibold text-gray-900">👤 Padre: {currentDebtor.parent_name}</div>
                 )}
                 <div className="text-2xl font-bold text-red-600 mt-2">Total a Cobrar: S/ {currentDebtor?.total_amount.toFixed(2)}</div>
                 <div className="text-sm text-gray-600">{currentDebtor?.transaction_count} consumo(s) pendiente(s)</div>
@@ -2572,7 +2572,7 @@ Agradecemos su pronta atención. 🙏`;
             {/* Monto a Pagar - MUY GRANDE Y VISIBLE */}
             <Card className="bg-green-50 border-green-200">
               <CardContent className="p-6">
-                <Label className="text-xl font-bold mb-4 block">ðŸ’° Monto a Pagar *</Label>
+                <Label className="text-xl font-bold mb-4 block">💰 Monto a Pagar *</Label>
                 <div className="relative">
                   <span className="absolute left-6 top-1/2 -translate-y-1/2 text-7xl font-black text-green-700">S/</span>
                   <Input
@@ -2599,9 +2599,9 @@ Agradecemos su pronta atención. 🙏`;
               </CardContent>
             </Card>
 
-            {/* MÃ©todo de Pago - BOTONES GRANDES */}
+            {/* M�todo de Pago - BOTONES GRANDES */}
             <div className="space-y-3">
-              <Label className="text-lg font-semibold">ðŸ’³ MÃ©todo de Pago *</Label>
+              <Label className="text-lg font-semibold">💳 M�todo de Pago *</Label>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <Button
                   type="button"
@@ -2610,7 +2610,7 @@ Agradecemos su pronta atención. 🙏`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'efectivo' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">ðŸ’µ</span>
+                    <span className="text-2xl">💵</span>
                     <span>Efectivo</span>
                   </div>
                 </Button>
@@ -2643,7 +2643,7 @@ Agradecemos su pronta atención. 🙏`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'transferencia' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">ðŸ¦</span>
+                    <span className="text-2xl">🏦</span>
                     <span>Transferencia</span>
                   </div>
                 </Button>
@@ -2654,18 +2654,18 @@ Agradecemos su pronta atención. 🙏`;
                   onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'tarjeta' }))}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">ðŸ’³</span>
+                    <span className="text-2xl">💳</span>
                     <span>Tarjeta</span>
                   </div>
                 </Button>
               </div>
             </div>
 
-            {/* NÃºmero de OperaciÃ³n - OBLIGATORIO */}
+            {/* N�mero de Operaci�n - OBLIGATORIO */}
             {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
               <div className="space-y-2">
                 <Label className="text-base font-semibold">
-                  ðŸ”¢ NÃºmero de OperaciÃ³n *
+                  🔢 N�mero de Operaci�n *
                   <span className="text-red-600 ml-1">(OBLIGATORIO)</span>
                 </Label>
                 <Input
@@ -2677,7 +2677,7 @@ Agradecemos su pronta atención. 🙏`;
                 />
                 {!paymentData.operation_number && (
                   <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
-                    ⚠️ El nÃºmero de operaciÃ³n es obligatorio para este mÃ©todo de pago
+                    ⚠️� El n�mero de operaci�n es obligatorio para este m�todo de pago
                   </p>
                 )}
               </div>
@@ -2685,7 +2685,7 @@ Agradecemos su pronta atención. 🙏`;
 
             {/* Tipo de Documento - BOTONES */}
             <div className="space-y-3">
-              <Label className="text-lg font-semibold">ðŸ“„ Tipo de Documento</Label>
+              <Label className="text-lg font-semibold">📄 Tipo de Documento</Label>
               <div className="grid grid-cols-3 gap-3">
                 <Button
                   type="button"
@@ -2693,7 +2693,7 @@ Agradecemos su pronta atención. 🙏`;
                   className={`h-16 text-base ${paymentData.document_type === 'ticket' ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                   onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'ticket' }))}
                 >
-                  ðŸŽ« Ticket
+                  🎫 Ticket
                 </Button>
                 <div className="relative">
                   <Button
@@ -2702,7 +2702,7 @@ Agradecemos su pronta atención. 🙏`;
                     className="h-16 text-base opacity-50 cursor-not-allowed w-full"
                     disabled
                   >
-                    ðŸ“„ Boleta
+                    📄 Boleta
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
@@ -2715,7 +2715,7 @@ Agradecemos su pronta atención. 🙏`;
                     className="h-16 text-base opacity-50 cursor-not-allowed w-full"
                     disabled
                   >
-                    ðŸ“‹ Factura
+                    📋 Factura
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
@@ -2723,14 +2723,14 @@ Agradecemos su pronta atención. 🙏`;
                 </div>
               </div>
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
-                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
+                ⚠️� <strong>Boleta</strong> y <strong>Factura</strong> requieren conexi�n con la API de SUNAT. 
+                Por ahora solo est� disponible <strong>Ticket</strong> (comprobante interno).
               </p>
             </div>
 
             {/* Notas */}
             <div className="space-y-2">
-              <Label className="text-base font-semibold">ðŸ“ Notas (Opcional)</Label>
+              <Label className="text-base font-semibold">📝 Notas (Opcional)</Label>
               <Input
                 placeholder="Observaciones adicionales..."
                 value={paymentData.notes}
@@ -2780,13 +2780,13 @@ Agradecemos su pronta atención. 🙏`;
                              selectedTransaction.students?.full_name || 
                              selectedTransaction.teacher_profiles?.full_name || 
                              selectedTransaction.manual_client_name || 
-                             'ðŸ›’ Cliente GenÃ©rico Sin Cuenta';
+                             '🛒 Cliente Gen�rico Sin Cuenta';
             const clientType = selectedTransaction.client_type === 'student' ? 'Estudiante' :
                               selectedTransaction.client_type === 'teacher' ? 'Profesor' :
                               selectedTransaction.client_type === 'manual' ? 'Cliente Sin Cuenta' :
                               selectedTransaction.student_id ? 'Estudiante' : 
                               selectedTransaction.teacher_id ? 'Profesor' : 
-                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente GenÃ©rico Sin Cuenta';
+                              selectedTransaction.manual_client_name ? 'Cliente Sin Cuenta' : 'Cliente Gen�rico Sin Cuenta';
             const schoolName = selectedTransaction.school_name || 
                               selectedTransaction.schools?.name || 
                               'Sin sede';
@@ -2799,17 +2799,17 @@ Agradecemos su pronta atención. 🙏`;
             const accountEmail = selectedTransaction.teacher_profiles?.email || 
                                 selectedTransaction.students?.email || null;
             
-            // Determinar quiÃ©n hizo el pedido - SIEMPRE mostrar nombre y cÃ³mo lo hizo
+            // Determinar qui�n hizo el pedido - SIEMPRE mostrar nombre y c�mo lo hizo
             const getOriginInfo = () => {
-              // CASO 1: created_by = el mismo profesor â†’ Ã‰l lo creÃ³ desde su perfil
+              // CASO 1: created_by = el mismo profesor → Él lo cre� desde su perfil
               if (selectedTransaction.created_by && selectedTransaction.created_by === selectedTransaction.teacher_id) {
                 const teacherName = selectedTransaction.teacher_profiles?.full_name || 
                                    selectedTransaction.client_name || clientName;
                 return {
                   createdByName: teacherName,
                   createdByRole: 'Profesor',
-                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
-                  icon: 'ðŸ‘¨â€ðŸ«'
+                  createdByMethod: 'Cre� el pedido desde su perfil en la plataforma',
+                  icon: '👨‍🏫'
                 };
               }
               
@@ -2820,8 +2820,8 @@ Agradecemos su pronta atención. 🙏`;
                 return {
                   createdByName: studentName,
                   createdByRole: 'Estudiante',
-                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
-                  icon: 'ðŸŽ’'
+                  createdByMethod: 'Cre� el pedido desde su perfil en la plataforma',
+                  icon: '🎒'
                 };
               }
               
@@ -2830,8 +2830,8 @@ Agradecemos su pronta atención. 🙏`;
                 return {
                   createdByName: userInfo.name,
                   createdByRole: userInfo.role,
-                  createdByMethod: 'Lo registrÃ³ desde el sistema de administraciÃ³n',
-                  icon: 'ðŸ¢'
+                  createdByMethod: 'Lo registr� desde el sistema de administraci�n',
+                  icon: '🏢'
                 };
               }
               
@@ -2841,19 +2841,19 @@ Agradecemos su pronta atención. 🙏`;
                   createdByName: 'Usuario del sistema',
                   createdByRole: 'No se pudo cargar el perfil',
                   createdByMethod: 'Registrado desde el sistema',
-                  icon: 'ðŸ¢'
+                  icon: '🏢'
                 };
               }
               
-              // CASO 5: created_by = null + teacher_id â†’ El profesor lo pidiÃ³ desde su cuenta
+              // CASO 5: created_by = null + teacher_id → El profesor lo pidi� desde su cuenta
               if (!selectedTransaction.created_by && selectedTransaction.teacher_id) {
                 const teacherName = selectedTransaction.teacher_profiles?.full_name || 
                                    selectedTransaction.client_name || clientName;
                 return {
                   createdByName: teacherName,
                   createdByRole: 'Profesor',
-                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
-                  icon: 'ðŸ‘¨â€ðŸ«'
+                  createdByMethod: 'Cre� el pedido desde su perfil en la plataforma',
+                  icon: '👨‍🏫'
                 };
               }
               
@@ -2864,8 +2864,8 @@ Agradecemos su pronta atención. 🙏`;
                 return {
                   createdByName: studentName,
                   createdByRole: 'Estudiante',
-                  createdByMethod: 'CreÃ³ el pedido desde su perfil en la plataforma',
-                  icon: 'ðŸŽ’'
+                  createdByMethod: 'Cre� el pedido desde su perfil en la plataforma',
+                  icon: '🎒'
                 };
               }
               
@@ -2875,16 +2875,16 @@ Agradecemos su pronta atención. 🙏`;
                   createdByName: selectedTransaction.manual_client_name,
                   createdByRole: 'Cliente sin cuenta',
                   createdByMethod: 'Venta registrada en caja',
-                  icon: 'ðŸ›’'
+                  icon: '🛒'
                 };
               }
               
-              // CASO 8: Sin informaciÃ³n
+              // CASO 8: Sin informaci�n
               return {
                 createdByName: 'Sistema',
-                createdByRole: 'AutomÃ¡tico',
-                createdByMethod: 'Generado automÃ¡ticamente por el sistema',
-                icon: 'âš™ï¸'
+                createdByRole: 'Autom�tico',
+                createdByMethod: 'Generado autom�ticamente por el sistema',
+                icon: '⚙️'
               };
             };
             
@@ -2909,23 +2909,23 @@ Agradecemos su pronta atención. 🙏`;
                 </DialogHeader>
                 
                 <div className="space-y-4 mt-4">
-                  {/* Estado de la transacciÃ³n */}
+                  {/* Estado de la transacci�n */}
                   {isPending && (
                     <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3 text-center">
-                      <span className="text-red-700 font-bold text-lg">â³ DEUDA PENDIENTE DE PAGO</span>
+                      <span className="text-red-700 font-bold text-lg">⏳ DEUDA PENDIENTE DE PAGO</span>
                     </div>
                   )}
                   
                   {/* Cliente */}
                   <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
-                    <h3 className="font-bold text-lg text-gray-900 mb-2">ðŸ‘¤ Cliente</h3>
+                    <h3 className="font-bold text-lg text-gray-900 mb-2">👤 Cliente</h3>
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Nombre:</span>
                         <span className="font-semibold text-gray-900">{clientName}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">CategorÃ­a:</span>
+                        <span className="text-gray-600">Categor�a:</span>
                         <span className="font-semibold text-gray-900">{clientType}</span>
                       </div>
                       <div className="flex justify-between">
@@ -2936,11 +2936,11 @@ Agradecemos su pronta atención. 🙏`;
                         <span className="text-gray-600">Cuenta:</span>
                         {hasAccount ? (
                           <span className="font-semibold text-green-700 flex items-center gap-1">
-                            âœ… Tiene cuenta en el sistema
+                            ✅ Tiene cuenta en el sistema
                           </span>
                         ) : (
                           <span className="font-semibold text-red-600 flex items-center gap-1">
-                            âŒ No tiene cuenta
+                            ❌ No tiene cuenta
                           </span>
                         )}
                       </div>
@@ -2953,12 +2953,12 @@ Agradecemos su pronta atención. 🙏`;
                     </div>
                   </div>
 
-                  {/* InformaciÃ³n del Monto y Estado */}
+                  {/* Informaci�n del Monto y Estado */}
                   <div className={`rounded-lg p-4 border ${isPending 
                     ? 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200' 
                     : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'}`}>
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      {isPending ? 'ðŸ’° InformaciÃ³n de la Deuda' : 'ðŸ’³ InformaciÃ³n del Pago'}
+                      {isPending ? '💰 Informaci�n de la Deuda' : '💳 Informaci�n del Pago'}
                     </h3>
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -2971,17 +2971,17 @@ Agradecemos su pronta atención. 🙏`;
                         <span className="text-gray-600">Estado:</span>
                         {isPending ? (
                           <span className="font-bold text-red-600 bg-red-100 px-3 py-1 rounded-full text-sm">
-                            â³ Pendiente de Pago
+                            ⏳ Pendiente de Pago
                           </span>
                         ) : (
                           <span className="font-bold text-green-600 bg-green-100 px-3 py-1 rounded-full text-sm">
-                            âœ… Pagado
+                            ✅ Pagado
                           </span>
                         )}
                       </div>
                       {isPaid && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">MÃ©todo de pago:</span>
+                          <span className="text-gray-600">M�todo de pago:</span>
                           <span className="font-semibold text-gray-900 capitalize">
                             {selectedTransaction.payment_method 
                               ? selectedTransaction.payment_method === 'teacher_account' 
@@ -2989,7 +2989,7 @@ Agradecemos su pronta atención. 🙏`;
                                 : selectedTransaction.payment_method
                               : selectedTransaction.ticket_code 
                                 ? 'Pago directo en caja' 
-                                : 'MÃ©todo no registrado'}
+                                : 'M�todo no registrado'}
                           </span>
                         </div>
                       )}
@@ -3008,47 +3008,47 @@ Agradecemos su pronta atención. 🙏`;
                       )}
                       {selectedTransaction.operation_number && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">NÂº de operaciÃ³n:</span>
+                          <span className="text-gray-600">Nº de operaci�n:</span>
                           <span className="font-semibold text-gray-900">{selectedTransaction.operation_number}</span>
                         </div>
                       )}
                       {selectedTransaction.ticket_code && (
                         <div className="flex justify-between">
-                          <span className="text-gray-600">ðŸŽ« NÂº de ticket:</span>
+                          <span className="text-gray-600">🎫 Nº de ticket:</span>
                           <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{selectedTransaction.ticket_code}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* ðŸ½ï¸ Detalle de Consumo */}
+                  {/* 🍽️ Detalle de Consumo */}
                   <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border-2 border-blue-300 shadow-md">
                     <h3 className="font-bold text-xl text-gray-900 mb-3 flex items-center gap-2">
-                      ðŸ½ï¸ Detalle de Consumo
+                      🍽️ Detalle de Consumo
                     </h3>
                     
-                    {/* Fechas e informaciÃ³n del consumo */}
+                    {/* Fechas e informaci�n del consumo */}
                     <div className="space-y-1.5 bg-white/60 rounded-lg p-3">
-                      {/* DescripciÃ³n del consumo */}
+                      {/* Descripci�n del consumo */}
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">ðŸ“ DescripciÃ³n:</span>
+                        <span className="text-gray-600">📝 Descripci�n:</span>
                         <span className="font-semibold text-gray-800 text-right max-w-[60%]">
-                          {selectedTransaction.description || 'Sin descripciÃ³n'}
+                          {selectedTransaction.description || 'Sin descripci�n'}
                         </span>
                       </div>
-                      {/* Fecha del almuerzo (para quÃ© dÃ­a es) */}
+                      {/* Fecha del almuerzo (para qu� d�a es) */}
                       {selectedTransaction.metadata?.order_date && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">ðŸ“… Almuerzo para el dÃ­a:</span>
+                          <span className="text-gray-600">📅 Almuerzo para el d�a:</span>
                           <span className="font-bold text-blue-800">
                             {format(new Date(selectedTransaction.metadata.order_date + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}
                           </span>
                         </div>
                       )}
-                      {/* Fecha de creaciÃ³n del pedido (cuÃ¡ndo el profesor/padre hizo el pedido) */}
+                      {/* Fecha de creaci�n del pedido (cu�ndo el profesor/padre hizo el pedido) */}
                       {selectedTransaction.metadata?.order_created_at && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">ðŸ›’ Pedido registrado el:</span>
+                          <span className="text-gray-600">🛒 Pedido registrado el:</span>
                           <span className="font-semibold text-green-800">
                             {format(new Date(selectedTransaction.metadata.order_created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
                           </span>
@@ -3056,25 +3056,25 @@ Agradecemos su pronta atención. 🙏`;
                       )}
                       {!selectedTransaction.metadata?.order_created_at && selectedTransaction.metadata?.source && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">ðŸ›’ Pedido registrado el:</span>
+                          <span className="text-gray-600">🛒 Pedido registrado el:</span>
                           <span className="font-medium text-orange-600 italic">
-                            No se registrÃ³ la fecha de creaciÃ³n
+                            No se registr� la fecha de creaci�n
                           </span>
                         </div>
                       )}
-                      {/* Fecha de registro / confirmaciÃ³n del pedido */}
+                      {/* Fecha de registro / confirmaci�n del pedido */}
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">
-                          {selectedTransaction.payment_status === 'paid' ? 'âœ… Pedido confirmado el:' : 'ðŸ• Pedido registrado el:'}
+                          {selectedTransaction.payment_status === 'paid' ? '✅ Pedido confirmado el:' : '🕐 Pedido registrado el:'}
                         </span>
                         <span className={`font-semibold ${selectedTransaction.payment_status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
                           {format(new Date(selectedTransaction.created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })}
                         </span>
                       </div>
-                      {/* CategorÃ­a del menÃº */}
+                      {/* Categor�a del men� */}
                       {selectedTransaction.metadata?.menu_name && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">ðŸ½ï¸ CategorÃ­a:</span>
+                          <span className="text-gray-600">🍽️ Categor�a:</span>
                           <span className="font-bold text-purple-800">
                             {selectedTransaction.metadata.menu_name}
                           </span>
@@ -3083,7 +3083,7 @@ Agradecemos su pronta atención. 🙏`;
                       {/* Origen */}
                       {selectedTransaction.metadata?.source && (
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">ðŸ“± Origen:</span>
+                          <span className="text-gray-600">📱 Origen:</span>
                           <span className="font-medium text-gray-700">
                             {selectedTransaction.metadata.source === 'unified_calendar_teacher' ? 'Calendario del Profesor' :
                              selectedTransaction.metadata.source === 'unified_calendar_v2_teacher' ? 'Calendario del Profesor' :
@@ -3098,7 +3098,7 @@ Agradecemos su pronta atención. 🙏`;
                              selectedTransaction.metadata.source === 'physical_order_wizard_paid' ? 'Pedido presencial - Pagado' :
                              selectedTransaction.metadata.source === 'lunch_orders_confirm' ? 'Confirmado desde Pedidos de Almuerzo' :
                              selectedTransaction.metadata.source === 'lunch_order' ? 'Pedido de Almuerzo' :
-                             selectedTransaction.metadata.source === 'lunch_fast' ? 'Pedido rÃ¡pido de Almuerzo' :
+                             selectedTransaction.metadata.source === 'lunch_fast' ? 'Pedido r�pido de Almuerzo' :
                              selectedTransaction.metadata.source || 'No especificado'}
                           </span>
                         </div>
@@ -3106,10 +3106,10 @@ Agradecemos su pronta atención. 🙏`;
                     </div>
                   </div>
 
-                  {/* ðŸ“‹ QuiÃ©n realizÃ³ el pedido */}
+                  {/* 📋 Qui�n realiz� el pedido */}
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      ðŸ“‹ {isPending ? 'Responsable del Pedido' : 'Registrado por'}
+                      📋 {isPending ? 'Responsable del Pedido' : 'Registrado por'}
                     </h3>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -3131,13 +3131,13 @@ Agradecemos su pronta atención. 🙏`;
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">ID de transacciÃ³n:</span>
+                        <span className="text-gray-600">ID de transacci�n:</span>
                         <span className="font-mono text-xs text-gray-500">{selectedTransaction.id}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* BotÃ³n PDF */}
+                  {/* Bot�n PDF */}
                   {isPaid ? (
                     <Button
                       onClick={() => {
