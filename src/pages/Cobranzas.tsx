@@ -303,8 +303,8 @@ const Cobranzas = () => {
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      <FileText className="h-4 w-4" />
-                      Pagos
+                      <BarChart3 className="h-4 w-4" />
+                      Reportes
                     </button>
                   )}
                   {permissions.config_sede && (
@@ -330,7 +330,7 @@ const Cobranzas = () => {
                       }`}
                     >
                       <Wallet className="h-4 w-4" />
-                      Pagos
+                      Vouchers
                       {pendingVouchers > 0 && (
                         <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
                           {pendingVouchers > 9 ? '9+' : pendingVouchers}
@@ -390,8 +390,8 @@ const Cobranzas = () => {
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      <FileText className="h-3.5 w-3.5" />
-                      Pagos
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      Reportes
                     </button>
                   )}
                   {permissions.config_sede && (
@@ -417,7 +417,7 @@ const Cobranzas = () => {
                       }`}
                     >
                       <Wallet className="h-3.5 w-3.5" />
-                      Pagos
+                      Vouchers
                       {pendingVouchers > 0 && (
                         <span className="ml-0.5 bg-amber-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center">
                           {pendingVouchers > 9 ? '9+' : pendingVouchers}
@@ -470,7 +470,7 @@ const Cobranzas = () => {
                 </div>
               )}
 
-              {/* Recargas / Vouchers Tab */}
+              {/* Vouchers de Pago Tab */}
               {activeTab === 'vouchers' && permissions.vouchers && (
                 <div className="mt-4 sm:mt-6">
                   <VoucherApproval />

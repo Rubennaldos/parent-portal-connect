@@ -1254,6 +1254,31 @@ Gracias.`;
       console.error('Error cargando logo para PDF:', error);
     }
 
+    // Obtener los items reales de transacciones POS (transaction_items)
+    const realTxIds = debtor.transactions
+      .filter((t: any) => !t.id?.toString().startsWith('lunch_') && t.id)
+      .map((t: any) => t.id);
+
+    let itemsByTxId = new Map<string, any[]>();
+    if (realTxIds.length > 0) {
+      try {
+        const { data: txItems } = await supabase
+          .from('transaction_items')
+          .select('transaction_id, product_name, quantity, unit_price, subtotal')
+          .in('transaction_id', realTxIds);
+
+        if (txItems) {
+          txItems.forEach((item: any) => {
+            const existing = itemsByTxId.get(item.transaction_id) || [];
+            existing.push(item);
+            itemsByTxId.set(item.transaction_id, existing);
+          });
+        }
+      } catch (e) {
+        console.error('Error fetching transaction items for PDF:', e);
+      }
+    }
+
     generateBillingPDF({
       student_name: debtor.client_name,
       parent_name: debtor.parent_name,
@@ -1263,12 +1288,21 @@ Gracias.`;
       start_date: startDate,
       end_date: endDate,
       transactions: debtor.transactions.map(t => {
-        // Construir descripción enriquecida con detalles del consumo
+        // Construir descripcion enriquecida con detalles del consumo
         let desc = t.description || 'Consumo';
-        if (t.metadata?.menu_name && !desc.toLowerCase().includes(t.metadata.menu_name.toLowerCase())) {
+
+        // Si tiene items reales de POS, mostrar los productos en vez de la descripcion generica
+        const items = itemsByTxId.get(t.id);
+        if (items && items.length > 0) {
+          const productLines = items.map((item: any) => 
+            `${item.product_name}${item.quantity > 1 ? ` x${item.quantity}` : ''}`
+          );
+          desc = productLines.join(', ');
+        } else if (t.metadata?.menu_name && !desc.toLowerCase().includes(t.metadata.menu_name.toLowerCase())) {
           desc = `${desc} — ${t.metadata.menu_name}`;
         }
-        // Usar fecha del pedido si está disponible, si no la fecha de la transacción
+
+        // Usar fecha del pedido si esta disponible, si no la fecha de la transaccion
         const orderDate = t.metadata?.order_created_at || t.created_at;
         return {
           id: t.id,
