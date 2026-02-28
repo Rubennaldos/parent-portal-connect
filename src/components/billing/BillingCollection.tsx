@@ -394,22 +394,30 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
       
-      // Si hay transacciones con lunch_order_id, verificar cu�les est�n cancelados
+      // Si hay transacciones con lunch_order_id, verificar cuáles están cancelados O fueron borrados
       let cancelledOrderIds = new Set<string>();
+      let existingLunchOrderIds = new Set<string>(); // IDs que AÚN existen en la BD
       if (lunchOrderIds.length > 0) {
-        const { data: cancelledOrders } = await supabase
+        const { data: existingOrders } = await supabase
           .from('lunch_orders')
-          .select('id')
-          .in('id', lunchOrderIds)
-          .eq('is_cancelled', true);
+          .select('id, is_cancelled')
+          .in('id', lunchOrderIds);
         
-        cancelledOrderIds = new Set(cancelledOrders?.map((o: any) => o.id) || []);
+        // IDs que existen y están cancelados
+        cancelledOrderIds = new Set(
+          existingOrders?.filter((o: any) => o.is_cancelled).map((o: any) => o.id) || []
+        );
+        // IDs que existen (cancelados o no)
+        existingLunchOrderIds = new Set(existingOrders?.map((o: any) => o.id) || []);
       }
       
-      // Filtrar transacciones, excluyendo las de pedidos cancelados
+      // Filtrar transacciones: excluir las de pedidos cancelados O BORRADOS (huérfanas)
       const validTransactions = transactions?.filter((t: any) => {
-        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) {
-          return false;
+        if (t.metadata?.lunch_order_id) {
+          // Si el pedido fue cancelado → excluir
+          if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+          // Si el pedido ya no existe en la BD (fue borrado) → excluir
+          if (!existingLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
         }
         return true;
       }) || [];
@@ -1610,19 +1618,23 @@ Agradecemos su pronta atenci�n. ��`;
         .filter(Boolean) || [];
       
       let cancelledOrderIds = new Set<string>();
+      let existingLunchOrderIds2 = new Set<string>();
       if (lunchOrderIds.length > 0) {
-        const { data: cancelledOrders } = await supabase
+        const { data: existingOrders2 } = await supabase
           .from('lunch_orders')
-          .select('id')
-          .in('id', lunchOrderIds)
-          .eq('is_cancelled', true);
+          .select('id, is_cancelled')
+          .in('id', lunchOrderIds);
         
-        cancelledOrderIds = new Set(cancelledOrders?.map((o: any) => o.id) || []);
+        cancelledOrderIds = new Set(
+          existingOrders2?.filter((o: any) => o.is_cancelled).map((o: any) => o.id) || []
+        );
+        existingLunchOrderIds2 = new Set(existingOrders2?.map((o: any) => o.id) || []);
       }
       
       const validTransactions = data?.filter((t: any) => {
-        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) {
-          return false;
+        if (t.metadata?.lunch_order_id) {
+          if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+          if (!existingLunchOrderIds2.has(t.metadata.lunch_order_id)) return false;
         }
         return true;
       }) || [];
