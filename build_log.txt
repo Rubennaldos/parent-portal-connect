@@ -1,0 +1,7 @@
+
+> vite_react_shadcn_ts@1.22.0 build
+> vite build
+
+[36mvite v5.4.19 [32mbuilding for production...[36m[39m
+transforming...
+¨Desea terminar el trabajo por lotes (S/N)? 

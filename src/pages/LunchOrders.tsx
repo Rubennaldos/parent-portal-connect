@@ -23,12 +23,18 @@ import {
   Eye,
   Trash2,
   Download,
-  PackagePlus
+  PackagePlus,
+  FileSpreadsheet,
+  FileText,
+  Settings2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
 
 interface LunchOrder {
@@ -141,6 +147,38 @@ export default function LunchOrders() {
     clientName: string;
   } | null>(null);
   const [lunchConfig, setLunchConfig] = useState<{ cancellation_deadline_time?: string; cancellation_deadline_days?: number } | null>(null);
+
+  // ── Modal de exportación ──────────────────────────────────────────────────
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
+  const [exportColumns, setExportColumns] = useState({
+    nombre:        true,
+    sede:          true,
+    grado:         true,
+    fecha:         true,
+    hora:          true,
+    categoria:     true,
+    plato:         true,
+    observaciones: true,
+    estado:        true,
+    pago:          true,
+    total:         true,
+    origen:        false,
+  });
+  const ALL_EXPORT_COLUMNS = [
+    { key: 'nombre',        label: 'Nombre del alumno / cliente' },
+    { key: 'sede',          label: 'Sede' },
+    { key: 'grado',         label: 'Grado y sección' },
+    { key: 'fecha',         label: 'Fecha del pedido' },
+    { key: 'hora',          label: 'Hora del pedido' },
+    { key: 'categoria',     label: 'Categoría del menú' },
+    { key: 'plato',         label: 'Detalle del plato (entrada, segundo, postre, bebida)' },
+    { key: 'observaciones', label: 'Observaciones / Notas' },
+    { key: 'estado',        label: 'Estado del pedido' },
+    { key: 'pago',          label: 'Estado de pago' },
+    { key: 'total',         label: 'Total (S/)' },
+    { key: 'origen',        label: 'Origen del pedido (app / manual)' },
+  ] as const;
 
   useEffect(() => {
     if (!roleLoading && role && user) {
@@ -1448,198 +1486,255 @@ export default function LunchOrders() {
   };
 
   // ========================================
+  // HELPERS PARA EXPORTACIÓN
+  // ========================================
+
+  /** Construye la fila de datos de un pedido según columnas activas */
+  const buildOrderRow = (order: LunchOrder) => {
+    const clientName   = order.student?.full_name || order.teacher?.full_name || order.manual_name || 'N/A';
+    const schoolName   = order.school?.name || (order.student?.school_id ? schools.find(s => s.id === order.student?.school_id)?.name : null) || 'N/A';
+    const grade        = order.student ? `${order.student.grade || ''} ${order.student.section || ''}`.trim() || '-' : '-';
+    const orderDate    = format(new Date(order.order_date), 'dd/MM/yyyy', { locale: es });
+    const orderTime    = new Date(order.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Lima' });
+    const categoria    = order.lunch_menus?.lunch_categories?.name || (order.lunch_menus as any)?.category_name || 'Menú del día';
+    const quantity     = order.quantity || 1;
+    const quantityText = quantity > 1 ? `${quantity}x ` : '';
+
+    // Plato detallado
+    let plato = '-';
+    if (order.lunch_menus) {
+      const parts: string[] = [];
+      if (order.lunch_menus.starter)    parts.push(`Entrada: ${order.lunch_menus.starter}`);
+      if (order.lunch_menus.main_course) parts.push(`Segundo: ${order.lunch_menus.main_course}`);
+      if (order.lunch_menus.dessert)    parts.push(`Postre: ${order.lunch_menus.dessert}`);
+      if (order.lunch_menus.beverage)   parts.push(`Bebida: ${order.lunch_menus.beverage}`);
+      plato = parts.length > 0 ? parts.join(' | ') : '-';
+    }
+
+    // Opciones configurables (si existen)
+    const addons = (order as any).lunch_order_addons;
+    let configurableText = '';
+    if (addons && addons.length > 0) {
+      configurableText = addons.map((a: any) => `${a.addon_name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`).join(', ');
+    }
+
+    const statusLabels: Record<string, string> = {
+      pending: 'Pendiente', confirmed: 'Confirmado', delivered: 'Entregado',
+      cancelled: 'Anulado', postponed: 'Postergado', pending_payment: 'Pend. Pago'
+    };
+    const estado = statusLabels[order.status] || order.status;
+    const pago   = getDebtStatus(order).label.replace(/[💰✅💳⏳🆓]/g, '').trim();
+    const total  = order.final_price != null ? `S/ ${order.final_price.toFixed(2)}` : '-';
+    let origen = 'Desconocido';
+    if (order.teacher_id)       origen = 'App Profesor';
+    else if (order.student_id)  origen = order.student?.is_temporary ? 'Cocina (temporal)' : 'App Padre';
+    else if (order.manual_name) origen = 'Registro Manual';
+
+    const notes = order.lunch_menus?.notes || order.cancellation_reason || order.postponement_reason || '-';
+    const observaciones = [notes, configurableText ? `Opciones: ${configurableText}` : ''].filter(Boolean).join(' | ') || '-';
+
+    return { clientName, schoolName, grade, orderDate, orderTime, categoria: `${quantityText}${categoria}`, plato, observaciones, estado, pago, total, origen, configurableText };
+  };
+
+  // ========================================
+  // FUNCIÓN DE EXPORTACIÓN A EXCEL
+  // ========================================
+
+  const exportToExcel = () => {
+    try {
+      // Cabeceras activas
+      const headers: string[] = [];
+      if (exportColumns.nombre)        headers.push('Nombre');
+      if (exportColumns.sede)          headers.push('Sede');
+      if (exportColumns.grado)         headers.push('Grado / Sección');
+      if (exportColumns.fecha)         headers.push('Fecha');
+      if (exportColumns.hora)          headers.push('Hora');
+      if (exportColumns.categoria)     headers.push('Categoría');
+      if (exportColumns.plato)         headers.push('Detalle del Plato');
+      if (exportColumns.observaciones) headers.push('Observaciones');
+      if (exportColumns.estado)        headers.push('Estado');
+      if (exportColumns.pago)          headers.push('Pago');
+      if (exportColumns.total)         headers.push('Total');
+      if (exportColumns.origen)        headers.push('Origen');
+
+      const rows = filteredOrders.map(order => {
+        const r = buildOrderRow(order);
+        const row: (string)[] = [];
+        if (exportColumns.nombre)        row.push(r.clientName);
+        if (exportColumns.sede)          row.push(r.schoolName);
+        if (exportColumns.grado)         row.push(r.grade);
+        if (exportColumns.fecha)         row.push(r.orderDate);
+        if (exportColumns.hora)          row.push(r.orderTime);
+        if (exportColumns.categoria)     row.push(r.categoria);
+        if (exportColumns.plato)         row.push(r.plato);
+        if (exportColumns.observaciones) row.push(r.observaciones);
+        if (exportColumns.estado)        row.push(r.estado);
+        if (exportColumns.pago)          row.push(r.pago);
+        if (exportColumns.total)         row.push(r.total);
+        if (exportColumns.origen)        row.push(r.origen);
+        return row;
+      });
+
+      const wsData = [headers, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      // Estilo de encabezados (ancho de columnas automático)
+      const colWidths = headers.map((_, i) => ({
+        wch: Math.max(headers[i].length, ...rows.map(r => (r[i] || '').length), 12)
+      }));
+      ws['!cols'] = colWidths;
+
+      // Aplicar negrita a la primera fila (encabezados)
+      headers.forEach((_, i) => {
+        const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+        if (ws[cellRef]) {
+          ws[cellRef].s = { font: { bold: true }, fill: { fgColor: { rgb: '3B82F6' } }, font2: { color: { rgb: 'FFFFFF' } } };
+        }
+      });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
+
+      // Hoja resumen
+      const resumenData = [
+        ['RESUMEN', ''],
+        ['Total pedidos', filteredOrders.length],
+        ['Confirmados', filteredOrders.filter(o => o.status === 'confirmed').length],
+        ['Entregados', filteredOrders.filter(o => o.status === 'delivered').length],
+        ['Anulados', filteredOrders.filter(o => o.status === 'cancelled').length],
+        ['', ''],
+        ['Generado el', new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })],
+      ];
+      const wsResumen = XLSX.utils.aoa_to_sheet(resumenData);
+      wsResumen['!cols'] = [{ wch: 20 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
+
+      const fileName = isDateRangeMode
+        ? `Pedidos_Almuerzo_${format(new Date(startDate), 'ddMMyyyy')}_${format(new Date(endDate), 'ddMMyyyy')}.xlsx`
+        : `Pedidos_Almuerzo_${format(new Date(selectedDate), 'ddMMyyyy')}.xlsx`;
+
+      XLSX.writeFile(wb, fileName);
+      setShowExportModal(false);
+      toast({ title: '✅ Excel generado', description: 'El reporte Excel ha sido descargado.' });
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo generar el Excel.' });
+    }
+  };
+
+  // ========================================
   // FUNCIÓN DE EXPORTACIÓN A PDF
   // ========================================
   
   const exportToPDF = () => {
     try {
-      const doc = new jsPDF('l', 'mm', 'a4'); // Landscape para más espacio
-      
-      // Título del documento
-      doc.setFontSize(18);
+      const doc = new jsPDF('l', 'mm', 'a4');
+      const pageW = doc.internal.pageSize.width;
+
+      // ── Encabezado ───────────────────────────────────────────
+      doc.setFillColor(59, 130, 246);
+      doc.rect(0, 0, pageW, 22, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
       doc.setFont('helvetica', 'bold');
-      doc.text('REPORTE DE PEDIDOS DE ALMUERZO', doc.internal.pageSize.width / 2, 15, { align: 'center' });
-      
-      // Información de filtros
-      doc.setFontSize(10);
+      doc.text('REPORTE DE PEDIDOS DE ALMUERZO', pageW / 2, 10, { align: 'center' });
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      
+
       let filterText = '';
       if (isDateRangeMode && startDate && endDate) {
-        filterText = `Período: ${format(new Date(startDate), 'dd/MM/yyyy', { locale: es })} - ${format(new Date(endDate), 'dd/MM/yyyy', { locale: es })}`;
+        filterText = `Período: ${format(new Date(startDate), 'dd/MM/yyyy', { locale: es })} – ${format(new Date(endDate), 'dd/MM/yyyy', { locale: es })}`;
       } else {
-        filterText = `Fecha: ${format(new Date(selectedDate), 'dd/MM/yyyy', { locale: es })}`;
+        filterText = `Fecha: ${format(new Date(selectedDate), "EEEE d 'de' MMMM yyyy", { locale: es })}`;
       }
-      
       if (selectedSchool !== 'all') {
         const school = schools.find(s => s.id === selectedSchool);
-        filterText += ` | Sede: ${school?.name || 'N/A'}`;
+        filterText += `  |  Sede: ${school?.name || 'N/A'}`;
       }
-      
       if (selectedStatus !== 'all') {
-        const statusLabels: Record<string, string> = {
-          confirmed: 'Confirmado',
-          delivered: 'Entregado',
-          cancelled: 'Anulado',
-          postponed: 'Postergado',
-          pending_payment: 'Pendiente de pago'
-        };
-        filterText += ` | Estado: ${statusLabels[selectedStatus] || selectedStatus}`;
+        const sl: Record<string, string> = { confirmed:'Confirmado', delivered:'Entregado', cancelled:'Anulado', postponed:'Postergado', pending_payment:'Pend. Pago' };
+        filterText += `  |  Estado: ${sl[selectedStatus] || selectedStatus}`;
       }
-      
-      doc.text(filterText, 15, 25);
-      doc.text(`Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}`, 15, 30);
-      
-      // Preparar datos para la tabla con TODOS los detalles
-      const tableData = filteredOrders.map(order => {
-        const clientName = order.student?.full_name || order.teacher?.full_name || order.manual_name || 'N/A';
-        const schoolName = order.school?.name || (order.student?.school_id ? schools.find(s => s.id === order.student?.school_id)?.name : null) || 'N/A';
-        const orderDate = format(new Date(order.order_date), 'dd/MM/yyyy', { locale: es });
-        const orderTime = new Date(order.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Lima' });
-        
-        // 📋 Estado del pedido
-        const statusLabels: Record<string, string> = {
-          pending: 'Pendiente',
-          confirmed: 'Confirmado',
-          delivered: 'Entregado',
-          cancelled: 'Anulado',
-          postponed: 'Postergado',
-          pending_payment: 'Pend. Pago'
-        };
-        const status = statusLabels[order.status] || order.status;
-        
-        // 💰 Estado de pago
-        const debtInfo = getDebtStatus(order);
-        const paymentStatus = debtInfo.label.replace(/[💰✅💳⏳]/g, '').trim();
-        
-        // 🍽️ Categoría del menú
-        const menuCategory = order.lunch_menus?.lunch_categories?.name || order.lunch_menus?.category_name || 'Menú del día';
-        
-        // 📊 Cantidad de menús
-        const quantity = order.quantity || 1;
-        const quantityText = quantity > 1 ? `${quantity}x` : '';
-        
-        // 🥗 DETALLE DEL MENÚ (entrada, segundo, postre, bebida)
-        let menuDetails = '';
-        if (order.lunch_menus) {
-          const parts = [];
-          if (order.lunch_menus.starter) parts.push(`Entrada: ${order.lunch_menus.starter}`);
-          if (order.lunch_menus.main_course) parts.push(`Segundo: ${order.lunch_menus.main_course}`);
-          if (order.lunch_menus.dessert) parts.push(`Postre: ${order.lunch_menus.dessert}`);
-          if (order.lunch_menus.beverage) parts.push(`Bebida: ${order.lunch_menus.beverage}`);
-          menuDetails = parts.length > 0 ? parts.join(' | ') : '-';
-        } else {
-          menuDetails = '-';
+      doc.text(filterText, pageW / 2, 17, { align: 'center' });
+
+      // Fila de metadatos
+      doc.setTextColor(80, 80, 80);
+      doc.setFontSize(7);
+      doc.text(`Total pedidos: ${filteredOrders.length}   |   Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}`, 15, 27);
+
+      // ── Construir columnas activas ──────────────────────────
+      const heads: string[] = [];
+      if (exportColumns.nombre)        heads.push('Nombre');
+      if (exportColumns.sede)          heads.push('Sede');
+      if (exportColumns.grado)         heads.push('Grado');
+      if (exportColumns.fecha)         heads.push('Fecha');
+      if (exportColumns.hora)          heads.push('Hora');
+      if (exportColumns.categoria)     heads.push('Categoría');
+      if (exportColumns.plato)         heads.push('Plato / Menú');
+      if (exportColumns.observaciones) heads.push('Observaciones');
+      if (exportColumns.estado)        heads.push('Estado');
+      if (exportColumns.pago)          heads.push('Pago');
+      if (exportColumns.total)         heads.push('Total');
+      if (exportColumns.origen)        heads.push('Origen');
+
+      // ── Filas con soporte de negrita para configurables ─────
+      const tableBody: any[][] = filteredOrders.map(order => {
+        const r = buildOrderRow(order);
+        const row: any[] = [];
+        if (exportColumns.nombre)        row.push(r.clientName);
+        if (exportColumns.sede)          row.push(r.schoolName);
+        if (exportColumns.grado)         row.push(r.grade);
+        if (exportColumns.fecha)         row.push(r.orderDate);
+        if (exportColumns.hora)          row.push(r.orderTime);
+        if (exportColumns.categoria)     row.push(r.categoria);
+        if (exportColumns.plato) {
+          // Si tiene opciones configurables, marcarlas en negrita dentro de la celda
+          row.push(r.configurableText
+            ? { content: r.plato + (r.configurableText ? `\n★ Opciones: ${r.configurableText}` : ''), styles: { fontStyle: 'bold' } }
+            : r.plato);
         }
-        
-        // 📝 Observaciones
-        const notes = order.lunch_menus?.notes || order.cancellation_reason || order.postponement_reason || '-';
-        
-        // 📱 Origen del pedido (por qué medio lo hizo)
-        let origin = 'Desconocido';
-        if (order.teacher_id) {
-          origin = 'App Profesor';
-        } else if (order.student_id) {
-          origin = order.student?.is_temporary ? 'Cocina (Cliente temporal)' : 'App Padre';
-        } else if (order.manual_name) {
-          origin = 'Registro Manual (Admin)';
+        if (exportColumns.observaciones) {
+          const hasObs = r.observaciones !== '-';
+          row.push(hasObs ? { content: r.observaciones, styles: { fontStyle: 'bold', textColor: [120, 53, 15] } } : '-');
         }
-        
-        // 💵 Precio total
-        const totalPrice = order.final_price !== null && order.final_price !== undefined
-          ? `S/ ${order.final_price.toFixed(2)}`
-          : '-';
-        
-        return [
-          clientName,
-          schoolName,
-          orderDate,
-          orderTime,
-          `${quantityText} ${menuCategory}`,
-          menuDetails,
-          notes,
-          origin,
-          status,
-          paymentStatus,
-          totalPrice
-        ];
+        if (exportColumns.estado)        row.push(r.estado);
+        if (exportColumns.pago) {
+          const isPaid = r.pago.toLowerCase().includes('pagado') || r.pago.toLowerCase().includes('saldo');
+          row.push({ content: r.pago, styles: { textColor: isPaid ? [22, 163, 74] : [220, 38, 38], fontStyle: 'bold' } });
+        }
+        if (exportColumns.total)         row.push({ content: r.total, styles: { halign: 'right' } });
+        if (exportColumns.origen)        row.push(r.origen);
+        return row;
       });
-      
-      // Crear tabla con autoTable
+
       autoTable(doc, {
-        head: [['Cliente', 'Sede', 'Fecha', 'Hora', 'Categoría y Cant.', 'Detalle del Menú', 'Observaciones', 'Origen', 'Estado', 'Pago', 'Total']],
-        body: tableData,
-        startY: 35,
-        styles: {
-          fontSize: 6,
-          cellPadding: 1.5,
-          overflow: 'linebreak',
-        },
-        headStyles: {
-          fillColor: [59, 130, 246], // Blue-600
-          textColor: 255,
-          fontStyle: 'bold',
-          halign: 'center',
-          fontSize: 7
-        },
-        alternateRowStyles: {
-          fillColor: [249, 250, 251] // Gray-50
-        },
-        columnStyles: {
-          0: { cellWidth: 28 }, // Cliente
-          1: { cellWidth: 22 }, // Sede
-          2: { cellWidth: 18 }, // Fecha
-          3: { cellWidth: 12 }, // Hora
-          4: { cellWidth: 30 }, // Categoría
-          5: { cellWidth: 50 }, // Detalle del menú (MÁS IMPORTANTE)
-          6: { cellWidth: 25 }, // Observaciones
-          7: { cellWidth: 22 }, // Origen
-          8: { cellWidth: 18 }, // Estado
-          9: { cellWidth: 18 }, // Pago
-          10: { cellWidth: 15, halign: 'right' }  // Total
-        },
+        head: [heads],
+        body: tableBody,
+        startY: 31,
+        styles: { fontSize: 6.5, cellPadding: 1.8, overflow: 'linebreak' },
+        headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', halign: 'center', fontSize: 7 },
+        alternateRowStyles: { fillColor: [239, 246, 255] },
         margin: { left: 10, right: 10 },
       });
-      
-      // Footer con branding
+
+      // ── Footer ───────────────────────────────────────────────
       const pageCount = (doc as any).internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
-        doc.setFontSize(8);
+        doc.setFontSize(7);
         doc.setFont('helvetica', 'italic');
-        doc.setTextColor(128, 128, 128);
-        doc.text(
-          'Este es un reporte interno generado • © 2026 ERP Profesional diseñado por ARQUISIA Soluciones para Lima Café 28',
-          doc.internal.pageSize.width / 2,
-          doc.internal.pageSize.height - 10,
-          { align: 'center' }
-        );
-        doc.text(
-          `Página ${i} de ${pageCount}`,
-          doc.internal.pageSize.width - 15,
-          doc.internal.pageSize.height - 10,
-          { align: 'right' }
-        );
+        doc.setTextColor(160, 160, 160);
+        doc.text('© 2026 ERP Profesional · Lima Café 28 · Generado por ARQUISIA Soluciones', pageW / 2, doc.internal.pageSize.height - 6, { align: 'center' });
+        doc.text(`Pág. ${i} / ${pageCount}`, pageW - 15, doc.internal.pageSize.height - 6, { align: 'right' });
       }
-      
-      // Descargar el PDF
-      const fileName = isDateRangeMode 
+
+      const fileName = isDateRangeMode
         ? `Pedidos_Almuerzo_${format(new Date(startDate), 'ddMMyyyy')}_${format(new Date(endDate), 'ddMMyyyy')}.pdf`
         : `Pedidos_Almuerzo_${format(new Date(selectedDate), 'ddMMyyyy')}.pdf`;
-      
       doc.save(fileName);
-      
-      toast({
-        title: '✅ PDF generado',
-        description: 'El reporte ha sido descargado exitosamente',
-      });
+      setShowExportModal(false);
+      toast({ title: '✅ PDF generado', description: 'El reporte ha sido descargado.' });
     } catch (error: any) {
-      console.error('Error generando PDF:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo generar el PDF',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo generar el PDF.' });
     }
   };
 
@@ -1667,15 +1762,14 @@ export default function LunchOrders() {
         </div>
 
         <div className="flex gap-2">
-          {/* Botón de Exportar PDF */}
           <Button
             variant="outline"
-            onClick={exportToPDF}
+            onClick={() => setShowExportModal(true)}
             disabled={filteredOrders.length === 0}
-            className="gap-2"
+            className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
           >
             <Download className="h-4 w-4" />
-            Exportar PDF
+            Exportar reporte
           </Button>
         </div>
       </div>
@@ -2612,6 +2706,114 @@ export default function LunchOrders() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ══════════════════════════════════════════════════════════
+          MODAL DE EXPORTACIÓN
+      ══════════════════════════════════════════════════════════ */}
+      <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Settings2 className="h-5 w-5 text-blue-600" />
+              Configurar Reporte
+            </DialogTitle>
+            <DialogDescription>
+              Elige el formato y las columnas que deseas exportar.
+              <span className="font-semibold text-blue-700 ml-1">({filteredOrders.length} pedidos)</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+
+            {/* ── Formato ─────────────────────────────── */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">📄 Formato de exportación</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setExportFormat('pdf')}
+                  className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                    exportFormat === 'pdf'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <FileText className="h-8 w-8" />
+                  <div className="text-left">
+                    <p className="font-bold text-sm">PDF</p>
+                    <p className="text-xs opacity-70">Para imprimir</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setExportFormat('excel')}
+                  className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                    exportFormat === 'excel'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <FileSpreadsheet className="h-8 w-8" />
+                  <div className="text-left">
+                    <p className="font-bold text-sm">Excel (.xlsx)</p>
+                    <p className="text-xs opacity-70">Para analizar</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* ── Columnas ────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold text-gray-700">🗂️ Columnas a incluir</p>
+                <div className="flex gap-2">
+                  <button
+                    className="text-xs text-blue-600 underline"
+                    onClick={() => setExportColumns(prev => Object.fromEntries(Object.keys(prev).map(k => [k, true])) as typeof exportColumns)}
+                  >Todas</button>
+                  <button
+                    className="text-xs text-gray-400 underline"
+                    onClick={() => setExportColumns(prev => Object.fromEntries(Object.keys(prev).map(k => [k, false])) as typeof exportColumns)}
+                  >Ninguna</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+                {ALL_EXPORT_COLUMNS.map(col => (
+                  <div key={col.key} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`col-${col.key}`}
+                      checked={exportColumns[col.key]}
+                      onCheckedChange={(v) =>
+                        setExportColumns(prev => ({ ...prev, [col.key]: !!v }))
+                      }
+                    />
+                    <Label htmlFor={`col-${col.key}`} className="text-xs cursor-pointer leading-tight">
+                      {col.label}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+
+          {/* ── Botones ─────────────────────────────── */}
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <Button variant="outline" onClick={() => setShowExportModal(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => exportFormat === 'pdf' ? exportToPDF() : exportToExcel()}
+              disabled={!Object.values(exportColumns).some(Boolean)}
+              className={exportFormat === 'pdf' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}
+            >
+              {exportFormat === 'pdf'
+                ? <><FileText className="h-4 w-4 mr-2" /> Descargar PDF</>
+                : <><FileSpreadsheet className="h-4 w-4 mr-2" /> Descargar Excel</>
+              }
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
