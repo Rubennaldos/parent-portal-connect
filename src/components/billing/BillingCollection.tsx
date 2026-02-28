@@ -2165,6 +2165,32 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
           {/* Pestañas: Cobrar / Pagos Realizados / Configuración + botón Guía - Sin Radix */}
           <div className="w-full">
+
+            {/* Botones de Guía cuando se usa sección externa (sin sub-pestañas) */}
+            {section && (
+              <div className="flex justify-end gap-1 mb-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-blue-300 text-blue-700 hover:bg-blue-50 whitespace-nowrap"
+                  onClick={() => setShowPaymentGuide(true)}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Ver guía</span>
+                  <span className="sm:hidden">Guía</span>
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
+                  onClick={copyPaymentGuide}
+                >
+                  <Copy className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Copiar guía</span>
+                  <span className="sm:hidden">Copiar</span>
+                </Button>
+              </div>
+            )}
+
             {/* Solo mostrar la barra de sub-pestañas si NO se controla desde Cobranzas.tsx */}
             {!section && (
             <div className="flex items-center gap-2 mb-6">
