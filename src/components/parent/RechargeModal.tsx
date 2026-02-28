@@ -23,7 +23,16 @@ import {
   Wallet,
   Copy,
   Check,
+  PlusCircle,
 } from 'lucide-react';
+
+interface ExtraVoucher {
+  id: string;
+  referenceCode: string;
+  voucherFile: File | null;
+  voucherPreview: string | null;
+  amount: string;
+}
 
 interface RechargeModalProps {
   isOpen: boolean;
@@ -94,6 +103,9 @@ export function RechargeModal({
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  // ── Comprobantes adicionales (pago en partes) ──
+  const [extraVouchers, setExtraVouchers] = useState<ExtraVoucher[]>([]);
+  const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const quickAmounts = [10, 20, 50, 100, 150, 200];
 
@@ -105,6 +117,7 @@ export function RechargeModal({
       setVoucherFile(null);
       setVoucherPreview(null);
       setNotes('');
+      setExtraVouchers([]);
 
       if (skipAmountStep) {
         // Pre-llenar monto y saltar al paso de método
@@ -157,6 +170,30 @@ export function RechargeModal({
     reader.readAsDataURL(file);
   };
 
+  // ── Helper: subir imagen a storage ──
+  const uploadVoucherImage = async (file: File, userId: string): Promise<string | null> => {
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const fileName = `${userId}/${safeName}`;
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('vouchers')
+      .upload(fileName, file, { upsert: false });
+    if (uploadError) { console.warn('No se pudo subir imagen:', uploadError.message); return null; }
+    const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
+    return publicUrl;
+  };
+
+  // ── Helper: verificar duplicado de código de operación ──
+  const checkDuplicate = async (code: string): Promise<boolean> => {
+    const { data } = await supabase
+      .from('recharge_requests')
+      .select('id')
+      .eq('reference_code', code.trim())
+      .neq('status', 'rejected')
+      .limit(1);
+    return !!(data && data.length > 0);
+  };
+
   const handleSubmit = async () => {
     if (!user) return;
 
@@ -166,6 +203,7 @@ export function RechargeModal({
       return;
     }
 
+    // ── Validar código principal obligatorio ──
     if (!referenceCode.trim()) {
       toast({
         title: 'Código de operación obligatorio',
@@ -175,25 +213,54 @@ export function RechargeModal({
       return;
     }
 
-    setLoading(true);
-    try {
-      // ── Verificar que el código de operación no esté ya usado en toda la plataforma ──
-      const { data: duplicateRef } = await supabase
-        .from('recharge_requests')
-        .select('id, status, created_at')
-        .eq('reference_code', referenceCode.trim())
-        .neq('status', 'rejected')
-        .limit(1);
-
-      if (duplicateRef && duplicateRef.length > 0) {
+    // ── Validar comprobantes adicionales ──
+    for (const ev of extraVouchers) {
+      if (!ev.referenceCode.trim()) {
         toast({
           variant: 'destructive',
-          title: '🚫 Voucher ya emitido o usado',
-          description: `El código de operación "${referenceCode.trim()}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
-          duration: 8000,
+          title: 'Código obligatorio en comprobante adicional',
+          description: 'Cada comprobante adicional debe tener su número de operación.',
         });
-        setLoading(false);
         return;
+      }
+      const evAmount = parseFloat(ev.amount);
+      if (!evAmount || evAmount <= 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Monto inválido en comprobante adicional',
+          description: 'Ingresa el monto pagado en cada comprobante adicional.',
+        });
+        return;
+      }
+    }
+
+    // ── Verificar que no haya códigos repetidos entre sí ──
+    const allCodes = [referenceCode.trim(), ...extraVouchers.map(ev => ev.referenceCode.trim())];
+    const uniqueCodes = new Set(allCodes);
+    if (uniqueCodes.size !== allCodes.length) {
+      toast({
+        variant: 'destructive',
+        title: '🚫 Códigos repetidos',
+        description: 'Cada comprobante debe tener un código de operación diferente.',
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // ── Verificar duplicados en BD para TODOS los códigos ──
+      for (const code of allCodes) {
+        const isDuplicate = await checkDuplicate(code);
+        if (isDuplicate) {
+          toast({
+            variant: 'destructive',
+            title: '🚫 Voucher ya emitido o usado',
+            description: `El código "${code}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
+            duration: 8000,
+          });
+          setLoading(false);
+          return;
+        }
       }
 
       // ── Prevenir doble envío de voucher para los mismos pedidos ──
@@ -238,62 +305,65 @@ export function RechargeModal({
         }
       }
 
-      let voucherUrl: string | null = null;
-
-      if (voucherFile) {
-        // Sanitizar nombre: quitar espacios, acentos y caracteres especiales
-        const ext = voucherFile.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const safeName = `voucher_${Date.now()}.${ext}`;
-        const fileName = `${user.id}/${safeName}`;
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('vouchers')
-          .upload(fileName, voucherFile, { upsert: false });
-
-        if (uploadError) {
-          console.warn('No se pudo subir imagen:', uploadError.message);
-          // Si NO hay código de referencia Y la imagen falló → no continuar
-          if (!referenceCode.trim()) {
-            toast({
-              variant: 'destructive',
-              title: 'Error al subir imagen',
-              description: 'No se pudo subir tu captura. Intenta de nuevo o escribe el número de operación.',
-            });
-            setLoading(false);
-            return;
-          }
-        } else if (uploadData) {
-          const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
-          voucherUrl = publicUrl;
-        }
-      }
-
       const { data: student } = await supabase
         .from('students')
         .select('school_id')
         .eq('id', studentId)
         .single();
 
+      // ── Subir imagen principal ──
+      let voucherUrl: string | null = null;
+      if (voucherFile) voucherUrl = await uploadVoucherImage(voucherFile, user.id);
+
+      const baseDescription = requestDescription || (
+        requestType === 'lunch_payment' ? 'Pago de almuerzo' :
+        requestType === 'debt_payment' ? 'Pago de deuda pendiente' :
+        'Recarga de saldo'
+      );
+
+      const totalParts = 1 + extraVouchers.length;
+
+      // ── Insertar comprobante principal ──
       const { error: insertError } = await supabase.from('recharge_requests').insert({
         student_id: studentId,
         parent_id: user.id,
         school_id: student?.school_id || null,
         amount: numAmount,
         payment_method: selectedMethod,
-        reference_code: referenceCode.trim() || null,
+        reference_code: referenceCode.trim(),
         voucher_url: voucherUrl,
         notes: notes.trim() || null,
         status: 'pending',
         request_type: requestType,
-        description: requestDescription || (
-          requestType === 'lunch_payment' ? 'Pago de almuerzo' :
-          requestType === 'debt_payment' ? 'Pago de deuda pendiente' :
-          'Recarga de saldo'
-        ),
+        description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
         lunch_order_ids: lunchOrderIds || null,
         paid_transaction_ids: paidTransactionIds || null,
       });
-
       if (insertError) throw insertError;
+
+      // ── Insertar comprobantes adicionales ──
+      for (let i = 0; i < extraVouchers.length; i++) {
+        const ev = extraVouchers[i];
+        let evVoucherUrl: string | null = null;
+        if (ev.voucherFile) evVoucherUrl = await uploadVoucherImage(ev.voucherFile, user.id);
+
+        const { error: evError } = await supabase.from('recharge_requests').insert({
+          student_id: studentId,
+          parent_id: user.id,
+          school_id: student?.school_id || null,
+          amount: parseFloat(ev.amount),
+          payment_method: selectedMethod,
+          reference_code: ev.referenceCode.trim(),
+          voucher_url: evVoucherUrl,
+          notes: notes.trim() || null,
+          status: 'pending',
+          request_type: requestType,
+          description: `${baseDescription} (Pago ${i + 2} de ${totalParts})`,
+          lunch_order_ids: lunchOrderIds || null,
+          paid_transaction_ids: paidTransactionIds || null,
+        });
+        if (evError) throw evError;
+      }
 
       setStep('success');
     } catch (err: any) {
@@ -718,15 +788,122 @@ export function RechargeModal({
         />
       </div>
 
+      {/* ── Comprobantes adicionales (pago en partes) ── */}
+      {extraVouchers.map((ev, idx) => (
+        <div key={ev.id} className="border-2 border-blue-200 rounded-xl p-4 space-y-3 bg-blue-50">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold text-blue-700">💳 Comprobante adicional {idx + 2}</span>
+            <button
+              onClick={() => setExtraVouchers(prev => prev.filter(v => v.id !== ev.id))}
+              className="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Monto del pago parcial */}
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">Monto pagado <span className="text-red-500">*</span></Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">S/</span>
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="0.00"
+                value={ev.amount}
+                onChange={(e) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, amount: e.target.value } : v))}
+                className="pl-9 font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Código de operación adicional */}
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">
+              Código de operación <span className="text-red-500">*</span>
+            </Label>
+            <Input
+              placeholder="Ej: 987654321"
+              value={ev.referenceCode}
+              onChange={(e) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, referenceCode: e.target.value } : v))}
+              className="font-mono"
+            />
+            <p className="text-xs text-red-500 font-medium">Campo obligatorio — debe ser diferente al anterior.</p>
+          </div>
+
+          {/* Imagen adicional */}
+          <div className="space-y-1">
+            <Label className="text-sm">Captura <span className="text-gray-400 text-xs">(opcional)</span></Label>
+            {ev.voucherPreview ? (
+              <div className="relative">
+                <img src={ev.voucherPreview} alt="Voucher adicional" className="w-full max-h-32 object-contain rounded-lg border border-blue-200" />
+                <button
+                  onClick={() => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, voucherFile: null, voucherPreview: null } : v))}
+                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => extraFileRefs.current[ev.id]?.click()}
+                className="w-full h-20 border-2 border-dashed border-blue-300 rounded-xl flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-100 transition-all text-blue-500"
+              >
+                <Upload className="h-5 w-5" />
+                <span className="text-xs">Adjuntar captura</span>
+              </button>
+            )}
+            <input
+              ref={el => { extraFileRefs.current[ev.id] = el; }}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 5 * 1024 * 1024) {
+                  toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' });
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = (ev2) => setExtraVouchers(prev => prev.map(v => v.id === ev.id
+                  ? { ...v, voucherFile: file, voucherPreview: ev2.target?.result as string }
+                  : v
+                ));
+                reader.readAsDataURL(file);
+              }}
+            />
+          </div>
+        </div>
+      ))}
+
+      {/* Botón agregar otro comprobante */}
+      <button
+        onClick={() => setExtraVouchers(prev => [...prev, {
+          id: `extra_${Date.now()}`,
+          referenceCode: '',
+          voucherFile: null,
+          voucherPreview: null,
+          amount: '',
+        }])}
+        className="w-full h-11 border-2 border-dashed border-blue-400 rounded-xl flex items-center justify-center gap-2 text-blue-600 font-semibold hover:bg-blue-50 transition-all text-sm"
+      >
+        <PlusCircle className="h-4 w-4" />
+        Adjuntar otro comprobante (pago en partes)
+      </button>
+
       <div className="flex gap-2">
         <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">← Atrás</Button>
         <Button
           onClick={handleSubmit}
-          disabled={loading || !referenceCode.trim()}
+          disabled={loading || !referenceCode.trim() || extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount)}
           className="flex-grow h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2"
         >
           {loading ? (
             <><Loader2 className="h-4 w-4 animate-spin" /> Enviando...</>
+          ) : extraVouchers.length > 0 ? (
+            <><Send className="h-4 w-4" /> Enviar {1 + extraVouchers.length} comprobantes</>
           ) : (
             <><Send className="h-4 w-4" /> Enviar comprobante</>
           )}
