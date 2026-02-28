@@ -1226,21 +1226,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                       <CreditCardIcon className="h-5 w-5 mr-2" />
                       Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
                     </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        closeWizard();
-                        toast({
-                          title: '⚠️ Pago pendiente',
-                          description: 'Recuerda completar tu pago desde la pestaña "Pagos". Tu pedido estará pendiente hasta que pagues.',
-                          duration: 8000,
-                        });
-                      }}
-                      size="sm"
-                      className="w-full text-xs text-gray-500 border-gray-200 hover:bg-gray-50"
-                    >
-                      Pagar después (desde pestaña Pagos)
-                    </Button>
                   </>
                 ) : (
                   <Button 
