@@ -86,7 +86,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
 
       const studentIds = students.map(s => s.id);
 
-      // Obtener pedidos de almuerzo
+      // Obtener pedidos de almuerzo (sin JOIN a lunch_menus para evitar problemas de FK)
       let query = supabase
         .from('lunch_orders')
         .select(`
@@ -106,15 +106,6 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
             id,
             full_name,
             photo_url
-          ),
-          lunch_menus!lunch_orders_menu_id_fkey (
-            id,
-            date,
-            starter,
-            main_course,
-            beverage,
-            dessert,
-            notes
           ),
           lunch_categories (
             id,
@@ -136,12 +127,25 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
 
       if (error) throw error;
 
-      // Mapear los menús directamente desde el JOIN (ya vienen por menu_id)
+      // Batch lookup de menús por menu_id (confiable, sin depender del nombre del FK)
       if (data && data.length > 0) {
-        const mapped = data.map((order: any) => ({
+        const menuIds = [...new Set((data as any[]).map(o => o.menu_id).filter(Boolean))];
+        let menusMap: Record<string, any> = {};
+
+        if (menuIds.length > 0) {
+          const { data: menusData } = await supabase
+            .from('lunch_menus')
+            .select('id, date, starter, main_course, beverage, dessert, notes')
+            .in('id', menuIds);
+          if (menusData) {
+            menusData.forEach(m => { menusMap[m.id] = m; });
+          }
+        }
+
+        const mapped = (data as any[]).map((order: any) => ({
           ...order,
-          menu: order.lunch_menus || null,
-          category_name: order.lunch_categories?.name || null,
+          menu: order.menu_id ? (menusMap[order.menu_id] || null) : null,
+          category_name: (order.lunch_categories as any)?.name || null,
         }));
 
         // 🔀 Orden inteligente: próximos/pendientes primero (ASC), luego pasados (DESC)
