@@ -96,10 +96,25 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
           cancellation_reason,
           postponement_reason,
           is_no_order_delivery,
+          menu_id,
+          category_id,
           student:students!lunch_orders_student_id_fkey (
             id,
             full_name,
             photo_url
+          ),
+          lunch_menus!lunch_orders_menu_id_fkey (
+            id,
+            date,
+            starter,
+            main_course,
+            beverage,
+            dessert,
+            notes
+          ),
+          lunch_categories (
+            id,
+            name
           )
         `)
         .in('student_id', studentIds)
@@ -117,23 +132,12 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
 
       if (error) throw error;
 
-      // Obtener los menús para las fechas de los pedidos
+      // Mapear los menús directamente desde el JOIN (ya vienen por menu_id)
       if (data && data.length > 0) {
-        const orderDates = [...new Set(data.map(order => order.order_date))];
-        
-        const { data: menusData, error: menusError } = await supabase
-          .from('lunch_menus')
-          .select('id, date, starter, main_course, beverage, dessert, notes')
-          .in('date', orderDates);
-
-        if (menusError) {
-          console.error('⚠️ Error cargando menús:', menusError);
-        }
-
-        // Agregar los menús a los pedidos
-        const ordersWithMenus = data.map(order => ({
+        const ordersWithMenus = data.map((order: any) => ({
           ...order,
-          menu: menusData?.find(menu => menu.date === order.order_date) || null
+          menu: order.lunch_menus || null,
+          category_name: order.lunch_categories?.name || null,
         }));
 
         // 🎫 Batch: obtener ticket_codes de transacciones asociadas
@@ -369,7 +373,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
                   <div className="px-2 sm:px-3 md:px-4 pb-2 sm:pb-3 md:pb-4 pt-1.5 sm:pt-2 border-t bg-gray-50/50">
                     <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 mb-1.5 sm:mb-2">
                       <UtensilsCrossed className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 text-blue-600" />
-                      <span className="text-[10px] sm:text-xs font-semibold text-gray-700">Menú del día:</span>
+                      <span className="text-[10px] sm:text-xs font-semibold text-gray-700">{(order as any).category_name || 'Menú del día'}:</span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 text-[10px] sm:text-xs">
                       {order.menu.starter && (
