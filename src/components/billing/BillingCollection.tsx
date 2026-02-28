@@ -101,6 +101,9 @@ export const BillingCollection = () => {
   // Búsqueda dedicada para pestaña Pagos
   const [paidSearchTerm, setPaidSearchTerm] = useState('');
 
+  // Modal guía de pago
+  const [showPaymentGuide, setShowPaymentGuide] = useState(false);
+
   // Config de sede (mensaje WhatsApp + métodos de pago)
   const [schoolConfig, setSchoolConfig] = useState<any>(null);
   const [loadingSchoolConfig, setLoadingSchoolConfig] = useState(false);
@@ -1724,6 +1727,48 @@ Agradecemos su pronta atenci�n. ��`;
     }
   };
 
+  // Generar guía de pago para padres
+  const getPaymentGuideMessage = () => {
+    return `📋 *GUÍA PARA REALIZAR TU PAGO — LIMA CAFÉ 28*
+
+Hola, te explicamos cómo registrar tu pago paso a paso para que se procese correctamente:
+
+*PASO 1 — Ingresa a la aplicación*
+📱 Abre la app Lima Café 28 desde tu teléfono.
+
+*PASO 2 — Ve a la sección "Pagos"*
+💳 En el menú principal, selecciona la opción *"Pagos"*.
+
+*PASO 3 — Selecciona el pedido pendiente*
+🍽️ Verás tus almuerzos o consumos pendientes de pago. Selecciona el que deseas pagar.
+
+*PASO 4 — Elige tu método de pago*
+Puedes pagar por:
+• 💜 *Yape* — al número registrado de la sede
+• 🟢 *Plin* — al número registrado de la sede
+• 🏦 *Transferencia bancaria* — a la cuenta de la sede
+
+*PASO 5 — Sube tu comprobante (voucher)*
+📸 Después de realizar el pago, toma una captura de pantalla del comprobante y súbela en la app.
+
+*PASO 6 — Espera la confirmación*
+✅ Nuestro equipo revisará tu comprobante y procesará el pago. Recibirás la confirmación en la app.
+
+⚠️ *IMPORTANTE:* El almuerzo solo se confirma una vez que el comprobante haya sido aprobado.
+
+Si tienes dudas, comunícate con la administración de tu sede.
+
+¡Gracias por tu atención! 🙏`;
+  };
+
+  const copyPaymentGuide = () => {
+    navigator.clipboard.writeText(getPaymentGuideMessage());
+    toast({
+      title: '📋 Guía copiada',
+      description: 'La guía de pago fue copiada al portapapeles. Pégala en WhatsApp para enviarla.',
+    });
+  };
+
   // Generar comprobante de pago en PDF
   const generatePaymentReceipt = async (transaction: any) => {
     try {
@@ -2055,6 +2100,42 @@ Agradecemos su pronta atenci�n. ��`;
                   className="pl-10"
                 />
               </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 📋 Banner Guía de Pago */}
+      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                <FileText className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900 text-sm">Guía de Pago para Padres</p>
+                <p className="text-xs text-gray-500">Copia y envía este mensaje por WhatsApp para guiar a los padres a pagar correctamente en la app.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-blue-400 text-blue-700 hover:bg-blue-100"
+                onClick={() => setShowPaymentGuide(true)}
+              >
+                <Eye className="h-4 w-4 mr-2" />
+                Ver guía
+              </Button>
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={copyPaymentGuide}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Copiar guía
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -2815,6 +2896,39 @@ Agradecemos su pronta atenci�n. ��`;
           </div>
         </>
       )}
+
+      {/* Modal Guía de Pago */}
+      <Dialog open={showPaymentGuide} onOpenChange={setShowPaymentGuide}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <FileText className="h-5 w-5 text-blue-600" />
+              Guía de Pago para Padres
+            </DialogTitle>
+            <DialogDescription>
+              Copia este mensaje y envíalo por WhatsApp a los padres para guiarlos a registrar su pago en la app.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 bg-gray-50 rounded-lg p-4 border text-sm whitespace-pre-wrap font-mono text-gray-800 text-xs leading-relaxed">
+            {getPaymentGuideMessage()}
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowPaymentGuide(false)}>
+              Cerrar
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => {
+                copyPaymentGuide();
+                setShowPaymentGuide(false);
+              }}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Copiar y cerrar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Registro de Pago - REDISEÑADO */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
