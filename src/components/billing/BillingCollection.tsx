@@ -2105,42 +2105,6 @@ Si tienes dudas, comunícate con la administración de tu sede.
         </CardContent>
       </Card>
 
-      {/* 📋 Banner Guía de Pago */}
-      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-                <FileText className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <p className="font-semibold text-gray-900 text-sm">Guía de Pago para Padres</p>
-                <p className="text-xs text-gray-500">Copia y envía este mensaje por WhatsApp para guiar a los padres a pagar correctamente en la app.</p>
-              </div>
-            </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-blue-400 text-blue-700 hover:bg-blue-100"
-                onClick={() => setShowPaymentGuide(true)}
-              >
-                <Eye className="h-4 w-4 mr-2" />
-                Ver guía
-              </Button>
-              <Button
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-700"
-                onClick={copyPaymentGuide}
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                Copiar guía
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-red-600" />
@@ -2194,9 +2158,11 @@ Si tienes dudas, comunícate con la administración de tu sede.
             </Card>
           )}
 
-          {/* Pestañas: Cobrar / Pagos Realizados / Configuración - Sin Radix */}
+          {/* Pestañas: Cobrar / Pagos Realizados / Configuración + botón Guía - Sin Radix */}
           <div className="w-full">
-            <div className={`grid w-full ${!canViewAllSchools ? 'grid-cols-3' : 'grid-cols-2'} mb-6 bg-muted p-1 rounded-lg`}>
+            <div className="flex items-center gap-2 mb-6">
+              {/* Tabs */}
+              <div className={`flex-1 grid ${!canViewAllSchools ? 'grid-cols-3' : 'grid-cols-2'} bg-muted p-1 rounded-lg`}>
               <button
                 onClick={() => setActiveTab('cobrar')}
                 className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
@@ -2232,6 +2198,30 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   Configuración
                 </button>
               )}
+              </div>
+
+              {/* Botón Guía de Pago — al lado de las pestañas */}
+              <div className="flex gap-1 flex-shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-blue-300 text-blue-700 hover:bg-blue-50 whitespace-nowrap"
+                  onClick={() => setShowPaymentGuide(true)}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Ver guía</span>
+                  <span className="sm:hidden">Guía</span>
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
+                  onClick={copyPaymentGuide}
+                >
+                  <Copy className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Copiar guía</span>
+                  <span className="sm:hidden">Copiar</span>
+                </Button>
+              </div>
             </div>
 
             {activeTab === 'cobrar' && (
