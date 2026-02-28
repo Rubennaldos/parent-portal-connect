@@ -221,6 +221,18 @@ const MODULE_CONFIG = {
       { action: 'ver_su_sede', label: 'Solo su sede', description: 'Ver únicamente caja de su sede asignada', group: 'scope' },
       { action: 'ver_todas_sedes', label: 'Todas las sedes', description: 'Ver cajas de todas las sedes del sistema', group: 'scope' }
     ]
+  },
+  comedor: {
+    name: 'Vista Cocina',
+    icon: '👨‍🍳',
+    color: 'orange',
+    description: 'Reporte diario de cocina y gestión de pedidos',
+    permissions: [
+      { action: 'ver_modulo', label: 'Ver módulo', description: 'Acceder a la vista de cocina' },
+      { action: 'marcar_entregado', label: 'Marcar entregados', description: 'Marcar pedidos como entregados' },
+      { action: 'ver_estadisticas', label: 'Ver estadísticas', description: 'Ver estadísticas de preferencias' },
+      { action: 'imprimir_reporte', label: 'Imprimir reporte', description: 'Imprimir reporte de preparación' }
+    ]
   }
 };
 

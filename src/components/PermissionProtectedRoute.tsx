@@ -72,7 +72,8 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
         'admin_sede': 'admin_sede',
         'promociones': 'promociones',
         'logistica': 'logistica',
-        'finanzas': 'finanzas'
+        'finanzas': 'finanzas',
+        'comedor': 'comedor'
       };
       
       const permissionModule = moduleMap[moduleCode] || moduleCode;
