@@ -93,10 +93,22 @@ export const BillingCollection = () => {
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [paidTransactions, setPaidTransactions] = useState<any[]>([]);
   const [loadingPaid, setLoadingPaid] = useState(false);
-  const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos'>('cobrar');
+  const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>('cobrar');
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
+
+  // Búsqueda dedicada para pestaña Pagos
+  const [paidSearchTerm, setPaidSearchTerm] = useState('');
+
+  // Config de sede (mensaje WhatsApp + métodos de pago)
+  const [schoolConfig, setSchoolConfig] = useState<any>(null);
+  const [loadingSchoolConfig, setLoadingSchoolConfig] = useState(false);
+  const [savingSchoolConfig, setSavingSchoolConfig] = useState(false);
+  const [configMessageTemplate, setConfigMessageTemplate] = useState('');
+  const [configYapeEnabled, setConfigYapeEnabled] = useState(true);
+  const [configPlinEnabled, setConfigPlinEnabled] = useState(true);
+  const [configTransferenciaEnabled, setConfigTransferenciaEnabled] = useState(true);
   
   // Filtros
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
@@ -845,10 +857,10 @@ export const BillingCollection = () => {
     );
   });
 
-  // ✅ Filtrar pagos realizados por t�rmino de b�squeda (MEJORADO)
+  // ✅ Filtrar pagos realizados por término de búsqueda dedicado (pestaña Pagos)
   const filteredPaidTransactions = paidTransactions.filter(transaction => {
-    if (!searchTerm) return true;
-    const search = searchTerm.toLowerCase();
+    if (!paidSearchTerm) return true;
+    const search = paidSearchTerm.toLowerCase();
     
     const clientName = transaction.students?.full_name || 
                        transaction.teacher_profiles?.full_name || 
@@ -1242,13 +1254,26 @@ Gracias.`;
       period_name: periodName,
       start_date: startDate,
       end_date: endDate,
-      transactions: debtor.transactions.map(t => ({
-        id: t.id,
-        created_at: t.created_at,
-        ticket_code: t.ticket_code,
-        description: t.description || 'Consumo',
-        amount: t.amount,
-      })),
+      transactions: debtor.transactions.map(t => {
+        // Construir descripción enriquecida con detalles del consumo
+        let desc = t.description || 'Consumo';
+        if (t.metadata?.menu_name && !desc.toLowerCase().includes(t.metadata.menu_name.toLowerCase())) {
+          desc = `${desc} — ${t.metadata.menu_name}`;
+        }
+        // Usar fecha del pedido si está disponible, si no la fecha de la transacción
+        const orderDate = t.metadata?.order_created_at || t.created_at;
+        return {
+          id: t.id,
+          created_at: orderDate,
+          payment_date: t.created_at,
+          ticket_code: t.ticket_code,
+          description: desc,
+          amount: t.amount,
+          menu_name: t.metadata?.menu_name || null,
+          menu_date: t.metadata?.menu_date || null,
+          payment_method: t.payment_method || null,
+        };
+      }),
       total_amount: debtor.total_amount,
       pending_amount: debtor.total_amount,
       logo_base64: logoBase64
@@ -1637,12 +1662,67 @@ Agradecemos su pronta atenci�n. ��`;
     }
   };
 
-  // Cargar pagos realizados cuando cambia la pesta�a
+  // Cargar pagos realizados cuando cambia la pestaña
   useEffect(() => {
     if (activeTab === 'pagos' && (canViewAllSchools || userSchoolId)) {
       fetchPaidTransactions();
     }
+    if (activeTab === 'config' && userSchoolId) {
+      fetchSchoolConfig();
+    }
   }, [activeTab, selectedSchool, untilDate, canViewAllSchools, userSchoolId]);
+
+  // Cargar configuración de sede para el panel de config de sede
+  const fetchSchoolConfig = async () => {
+    if (!userSchoolId) return;
+    setLoadingSchoolConfig(true);
+    try {
+      const { data, error } = await supabase
+        .from('billing_config')
+        .select('*')
+        .eq('school_id', userSchoolId)
+        .maybeSingle();
+      if (error) throw error;
+      setSchoolConfig(data || null);
+      setConfigMessageTemplate(data?.message_template || '');
+      setConfigYapeEnabled(data?.yape_enabled ?? true);
+      setConfigPlinEnabled(data?.plin_enabled ?? true);
+      setConfigTransferenciaEnabled(data?.transferencia_enabled ?? true);
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo cargar la configuración de la sede.' });
+    } finally {
+      setLoadingSchoolConfig(false);
+    }
+  };
+
+  // Guardar solo mensaje + habilitaciones (sin editar números)
+  const saveSchoolConfig = async () => {
+    if (!userSchoolId || !user) return;
+    setSavingSchoolConfig(true);
+    try {
+      const payload = {
+        school_id: userSchoolId,
+        message_template: configMessageTemplate,
+        yape_enabled: configYapeEnabled,
+        plin_enabled: configPlinEnabled,
+        transferencia_enabled: configTransferenciaEnabled,
+        updated_by: user.id,
+      };
+      if (schoolConfig) {
+        const { error } = await supabase.from('billing_config').update(payload).eq('id', schoolConfig.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('billing_config').insert(payload);
+        if (error) throw error;
+      }
+      toast({ title: '✅ Configuración guardada', description: 'Los cambios se aplicaron correctamente.' });
+      fetchSchoolConfig();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error al guardar', description: e?.message });
+    } finally {
+      setSavingSchoolConfig(false);
+    }
+  };
 
   // Generar comprobante de pago en PDF
   const generatePaymentReceipt = async (transaction: any) => {
@@ -2033,9 +2113,9 @@ Agradecemos su pronta atenci�n. ��`;
             </Card>
           )}
 
-          {/* Pesta�as: Cobrar / Pagos Realizados - Sin Radix */}
+          {/* Pestañas: Cobrar / Pagos Realizados / Configuración - Sin Radix */}
           <div className="w-full">
-            <div className="grid w-full grid-cols-2 mb-6 bg-muted p-1 rounded-lg">
+            <div className={`grid w-full ${!canViewAllSchools ? 'grid-cols-3' : 'grid-cols-2'} mb-6 bg-muted p-1 rounded-lg`}>
               <button
                 onClick={() => setActiveTab('cobrar')}
                 className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
@@ -2058,6 +2138,19 @@ Agradecemos su pronta atenci�n. ��`;
                 <History className="h-4 w-4" />
                 Pagos Realizados
               </button>
+              {!canViewAllSchools && (
+                <button
+                  onClick={() => setActiveTab('config')}
+                  className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
+                    activeTab === 'config'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  Configuración
+                </button>
+              )}
             </div>
 
             {activeTab === 'cobrar' && (
@@ -2346,6 +2439,26 @@ Agradecemos su pronta atenci�n. ��`;
 
             {activeTab === 'pagos' && (
             <div className="mt-0">
+              {/* 🔍 Buscador inteligente para pestaña Pagos */}
+              <Card className="mb-4">
+                <CardContent className="p-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Buscar por nombre, sede, ticket, descripción..."
+                      value={paidSearchTerm}
+                      onChange={(e) => setPaidSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  {paidSearchTerm && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {filteredPaidTransactions.length} resultado(s) para "{paidSearchTerm}"
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Lista de pagos realizados */}
               {loadingPaid ? (
                 <Card>
@@ -2359,10 +2472,10 @@ Agradecemos su pronta atenci�n. ��`;
                   <CardContent className="py-12 text-center">
                     <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-gray-400" />
                     <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                      {searchTerm ? 'No se encontraron resultados' : 'No hay pagos registrados'}
+                      {paidSearchTerm ? 'No se encontraron resultados' : 'No hay pagos registrados'}
                     </h3>
                     <p className="text-gray-500">
-                      {searchTerm ? 'Intenta con otro t�rmino de b�squeda' : 'Los pagos realizados aparecer�n aqu�'}
+                      {paidSearchTerm ? 'Intenta con otro t�rmino de b�squeda' : 'Los pagos realizados aparecer�n aqu�'}
                     </p>
                   </CardContent>
                 </Card>
@@ -2534,6 +2647,168 @@ Agradecemos su pronta atenci�n. ��`;
                     );
                   })}
                 </div>
+              )}
+            </div>
+            )}
+
+            {/* ⚙️ PESTAÑA CONFIGURACIÓN DE SEDE (solo admins de sede, no admin general) */}
+            {activeTab === 'config' && !canViewAllSchools && (
+            <div className="mt-0 space-y-6">
+              {loadingSchoolConfig ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-gray-500" />
+                    <p className="text-gray-500">Cargando configuración...</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  {/* Sección 1: Mensaje de WhatsApp */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <MessageSquare className="h-5 w-5 text-green-600" />
+                        Mensaje de WhatsApp para deudores
+                      </CardTitle>
+                      <p className="text-sm text-gray-500">
+                        Este mensaje se enviará como recordatorio a los padres de familia con deudas pendientes de almuerzo.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div>
+                        <Label className="mb-2 block text-sm font-medium">Mensaje personalizado</Label>
+                        <textarea
+                          value={configMessageTemplate}
+                          onChange={(e) => setConfigMessageTemplate(e.target.value)}
+                          rows={8}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                          placeholder="Escribe aquí el mensaje que recibirán los padres de familia..."
+                        />
+                        <p className="text-xs text-gray-400 mt-1">
+                          Puedes usar *texto* para negrita en WhatsApp. El mensaje se enviará con los datos del alumno y monto pendiente.
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Sección 2: Métodos de pago de la sede (solo ver + habilitar/deshabilitar) */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <Building2 className="h-5 w-5 text-blue-600" />
+                        Métodos de pago de mi sede
+                      </CardTitle>
+                      <p className="text-sm text-gray-500">
+                        Puedes activar o desactivar los métodos de pago. Para modificar números de cuenta, contacta al administrador general.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Yape */}
+                      <div className="flex items-center justify-between p-3 border rounded-lg bg-purple-50 border-purple-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
+                            <span className="text-white text-xs font-bold">Y</span>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm">Yape</p>
+                            {schoolConfig?.yape_number ? (
+                              <p className="text-xs text-gray-600">Número: {schoolConfig.yape_number}{schoolConfig.yape_holder ? ` (${schoolConfig.yape_holder})` : ''}</p>
+                            ) : (
+                              <p className="text-xs text-gray-400 italic">Sin número configurado</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">{configYapeEnabled ? 'Habilitado' : 'Deshabilitado'}</span>
+                          <button
+                            onClick={() => setConfigYapeEnabled(!configYapeEnabled)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${configYapeEnabled ? 'bg-purple-600' : 'bg-gray-300'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${configYapeEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Plin */}
+                      <div className="flex items-center justify-between p-3 border rounded-lg bg-teal-50 border-teal-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-teal-500 rounded-full flex items-center justify-center">
+                            <span className="text-white text-xs font-bold">P</span>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm">Plin</p>
+                            {schoolConfig?.plin_number ? (
+                              <p className="text-xs text-gray-600">Número: {schoolConfig.plin_number}{schoolConfig.plin_holder ? ` (${schoolConfig.plin_holder})` : ''}</p>
+                            ) : (
+                              <p className="text-xs text-gray-400 italic">Sin número configurado</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">{configPlinEnabled ? 'Habilitado' : 'Deshabilitado'}</span>
+                          <button
+                            onClick={() => setConfigPlinEnabled(!configPlinEnabled)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${configPlinEnabled ? 'bg-teal-500' : 'bg-gray-300'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${configPlinEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Transferencia */}
+                      <div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50 border-orange-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-orange-500 rounded-full flex items-center justify-center">
+                            <Building2 className="h-4 w-4 text-white" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm">Transferencia Bancaria</p>
+                            {schoolConfig?.bank_name && (
+                              <p className="text-xs text-gray-600">{schoolConfig.bank_name}</p>
+                            )}
+                            {schoolConfig?.bank_account_number && (
+                              <p className="text-xs text-gray-600">Cuenta: {schoolConfig.bank_account_number}</p>
+                            )}
+                            {schoolConfig?.bank_cci && (
+                              <p className="text-xs text-gray-600">CCI: {schoolConfig.bank_cci}</p>
+                            )}
+                            {!schoolConfig?.bank_name && !schoolConfig?.bank_account_number && (
+                              <p className="text-xs text-gray-400 italic">Sin cuenta configurada</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">{configTransferenciaEnabled ? 'Habilitado' : 'Deshabilitado'}</span>
+                          <button
+                            onClick={() => setConfigTransferenciaEnabled(!configTransferenciaEnabled)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${configTransferenciaEnabled ? 'bg-orange-500' : 'bg-gray-300'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${configTransferenciaEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
+                        🔒 Los números de cuenta son gestionados por el administrador general y no pueden modificarse desde aquí.
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Botón guardar */}
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={saveSchoolConfig}
+                      disabled={savingSchoolConfig}
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      {savingSchoolConfig ? (
+                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Guardando...</>
+                      ) : (
+                        <><CheckCircle2 className="h-4 w-4 mr-2" /> Guardar cambios</>
+                      )}
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
             )}

@@ -7,9 +7,13 @@ import { APP_CONFIG } from '@/config/app.config';
 interface Transaction {
   id: string;
   created_at: string;
+  payment_date?: string;
   ticket_code: string;
   description: string;
   amount: number;
+  menu_name?: string | null;
+  menu_date?: string | null;
+  payment_method?: string | null;
 }
 
 interface PDFData {
@@ -129,38 +133,72 @@ export const generateBillingPDF = (data: PDFData) => {
   // Tabla de transacciones
   yPos += 5;
   
-  const tableData = data.transactions.map((transaction, index) => [
-    (index + 1).toString(),
-    format(new Date(transaction.created_at), 'dd/MM/yyyy', { locale: es }),
-    transaction.ticket_code || '-',
-    transaction.description || 'Consumo',
-    `S/ ${transaction.amount.toFixed(2)}`,
-  ]);
+  const getPaymentMethodLabel = (method: string | null | undefined): string => {
+    if (!method) return '-';
+    const map: Record<string, string> = {
+      efectivo: 'Efectivo',
+      yape: 'Yape',
+      plin: 'Plin',
+      transferencia: 'Transferencia',
+      tarjeta: 'Tarjeta',
+      teacher_account: 'Cta. Profesor',
+    };
+    return map[method] || method;
+  };
+
+  const tableData = data.transactions.map((transaction, index) => {
+    // Fecha del consumo (cuando se hizo el pedido, no cuando se pagó)
+    const consumptionDate = format(new Date(transaction.created_at), 'dd/MM/yyyy', { locale: es });
+    // Fecha de pago (si existe y es diferente)
+    const paymentDateStr = transaction.payment_date
+      ? format(new Date(transaction.payment_date), 'dd/MM/yyyy', { locale: es })
+      : consumptionDate;
+    // Mostrar "(pago: DD/MM)" solo si es diferente a la fecha de consumo
+    const dateDisplay = paymentDateStr !== consumptionDate
+      ? `${consumptionDate}\n(pago: ${paymentDateStr})`
+      : consumptionDate;
+
+    // Descripción completa
+    let desc = transaction.description || 'Consumo';
+    if (transaction.menu_name && !desc.toLowerCase().includes(transaction.menu_name.toLowerCase())) {
+      desc = `${desc}\n${transaction.menu_name}`;
+    }
+
+    return [
+      (index + 1).toString(),
+      dateDisplay,
+      transaction.ticket_code || '-',
+      desc,
+      getPaymentMethodLabel(transaction.payment_method),
+      `S/ ${Math.abs(transaction.amount).toFixed(2)}`,
+    ];
+  });
 
   autoTable(doc, {
     startY: yPos,
-    head: [['#', 'Fecha', 'Ticket', 'Descripción', 'Monto']],
+    head: [['#', 'Fecha consumo', 'Ticket', 'Detalle', 'Método', 'Monto']],
     body: tableData,
     theme: 'grid',
     headStyles: {
       fillColor: tableHeaderColor,
       textColor: [0, 0, 0],
       fontStyle: 'bold',
-      fontSize: 10,
+      fontSize: 9,
     },
     bodyStyles: {
-      fontSize: 9,
+      fontSize: 8,
       textColor: [0, 0, 0],
     },
     alternateRowStyles: {
       fillColor: [249, 250, 251],
     },
     columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 25, halign: 'center' },
-      2: { cellWidth: 30, halign: 'center' },
-      3: { cellWidth: 80 },
-      4: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+      0: { cellWidth: 8, halign: 'center' },
+      1: { cellWidth: 24, halign: 'center' },
+      2: { cellWidth: 26, halign: 'center' },
+      3: { cellWidth: 68 },
+      4: { cellWidth: 24, halign: 'center' },
+      5: { cellWidth: 22, halign: 'right', fontStyle: 'bold' },
     },
     margin: { left: 14, right: 14 },
   });
