@@ -166,10 +166,10 @@ export function RechargeModal({
       return;
     }
 
-    if (!referenceCode.trim() && !voucherFile) {
+    if (!referenceCode.trim()) {
       toast({
-        title: 'Falta el comprobante',
-        description: 'Ingresa el número de operación o adjunta una captura.',
+        title: 'Código de operación obligatorio',
+        description: 'Debes ingresar el número de operación o código de transacción para continuar.',
         variant: 'destructive',
       });
       return;
@@ -177,6 +177,25 @@ export function RechargeModal({
 
     setLoading(true);
     try {
+      // ── Verificar que el código de operación no esté ya usado en toda la plataforma ──
+      const { data: duplicateRef } = await supabase
+        .from('recharge_requests')
+        .select('id, status, created_at')
+        .eq('reference_code', referenceCode.trim())
+        .neq('status', 'rejected')
+        .limit(1);
+
+      if (duplicateRef && duplicateRef.length > 0) {
+        toast({
+          variant: 'destructive',
+          title: '🚫 Voucher ya emitido o usado',
+          description: `El código de operación "${referenceCode.trim()}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
+          duration: 8000,
+        });
+        setLoading(false);
+        return;
+      }
+
       // ── Prevenir doble envío de voucher para los mismos pedidos ──
       if ((requestType === 'lunch_payment' || requestType === 'debt_payment') && lunchOrderIds && lunchOrderIds.length > 0) {
         const { data: existingReq } = await supabase
@@ -653,7 +672,7 @@ export function RechargeModal({
           onChange={(e) => setReferenceCode(e.target.value)}
           className="font-mono"
         />
-        <p className="text-xs text-gray-400">Lo encuentras en tu app de Yape/Plin/banco después de realizar el pago.</p>
+        <p className="text-xs text-gray-400">Lo encuentras en tu app de Yape/Plin/banco después de realizar el pago. <span className="text-red-500 font-medium">Campo obligatorio — cada código solo puede usarse una vez.</span></p>
       </div>
 
       {/* Subir imagen */}
@@ -703,7 +722,7 @@ export function RechargeModal({
         <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">← Atrás</Button>
         <Button
           onClick={handleSubmit}
-          disabled={loading || (!referenceCode.trim() && !voucherFile)}
+          disabled={loading || !referenceCode.trim()}
           className="flex-grow h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2"
         >
           {loading ? (
