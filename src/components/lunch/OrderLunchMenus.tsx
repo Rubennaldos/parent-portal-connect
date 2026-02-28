@@ -327,18 +327,20 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           const { data: categoriesData } = await supabase
             .from('lunch_categories')
             .select('*')
-            .in('id', categoryIds);
-
-          console.log('📂 Categorías cargadas:', categoriesData);
+            .in('id', categoryIds)
+            .eq('is_active', true); // ✅ Solo categorías activas
 
           const categoriesMap = new Map(
             (categoriesData || []).map(cat => [cat.id, cat])
           );
 
-          const menusWithCategories = filteredMenus.map(menu => ({
-            ...menu,
-            category: menu.category_id ? categoriesMap.get(menu.category_id) : null
-          }));
+          // ✅ Solo mostrar menús cuya categoría está activa (o sin categoría)
+          const menusWithCategories = filteredMenus
+            .filter(menu => !menu.category_id || categoriesMap.has(menu.category_id))
+            .map(menu => ({
+              ...menu,
+              category: menu.category_id ? categoriesMap.get(menu.category_id) : null
+            }));
 
           console.log('🍽️ Menús con categorías:', menusWithCategories);
 

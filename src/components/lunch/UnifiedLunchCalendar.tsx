@@ -233,7 +233,8 @@ export function UnifiedLunchCalendar({ userType, userId, userSchoolId }: Unified
         const { data: categoriesData } = await supabase
           .from('lunch_categories')
           .select('*')
-          .in('id', categoryIds);
+          .in('id', categoryIds)
+          .eq('is_active', true); // ✅ Solo categorías activas
 
         (categoriesData || []).forEach(cat => {
           categoriesMap.set(cat.id, cat);
