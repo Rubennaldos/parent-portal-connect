@@ -573,24 +573,25 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
       setTargetClassroomsForReassign([]);
       setShowReassignLevelModal(true);
     } else {
-      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar directamente
+      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar PERMANENTEMENTE
       if (!confirm(`¿Estás seguro de eliminar el grado "${level.name}"? No tiene estudiantes asignados.`)) return;
       
       try {
-        // También desactivar las aulas de este grado
+        // Primero eliminar las aulas de este grado
         await supabase
           .from('school_classrooms')
-          .update({ is_active: false })
+          .delete()
           .eq('level_id', levelId);
 
+        // Luego eliminar el grado
         const { error } = await supabase
           .from('school_levels')
-          .update({ is_active: false })
+          .delete()
           .eq('id', levelId);
 
         if (error) throw error;
 
-        toast({ title: '✅ Grado eliminado', description: `"${level.name}" fue eliminado correctamente (sin estudiantes afectados)` });
+        toast({ title: '✅ Grado eliminado', description: `"${level.name}" fue eliminado permanentemente` });
         setSelectedLevel(null);
         fetchLevels();
       } catch (error: any) {
@@ -654,16 +655,16 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
 
       if (moveError) throw moveError;
 
-      // 2. Desactivar las aulas del grado eliminado
+      // 2. Eliminar las aulas del grado permanentemente
       await supabase
         .from('school_classrooms')
-        .update({ is_active: false })
+        .delete()
         .eq('level_id', levelToDelete.id);
 
-      // 3. Desactivar el grado
+      // 3. Eliminar el grado permanentemente
       const { error: deleteError } = await supabase
         .from('school_levels')
-        .update({ is_active: false })
+        .delete()
         .eq('id', levelToDelete.id);
 
       if (deleteError) throw deleteError;
@@ -721,18 +722,18 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
       setTargetClassroomForReassign('');
       setShowReassignClassroomModal(true);
     } else {
-      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar directamente
+      // ✅ NO HAY ESTUDIANTES → Confirmar y eliminar PERMANENTEMENTE
       if (!confirm(`¿Estás seguro de eliminar el aula "${classroom.name}"? No tiene estudiantes asignados.`)) return;
       
       try {
         const { error } = await supabase
           .from('school_classrooms')
-          .update({ is_active: false })
+          .delete()
           .eq('id', classroomId);
 
         if (error) throw error;
 
-        toast({ title: '✅ Aula eliminada', description: `"${classroom.name}" fue eliminada correctamente (sin estudiantes afectados)` });
+        toast({ title: '✅ Aula eliminada', description: `"${classroom.name}" fue eliminada permanentemente` });
         if (selectedLevel) fetchClassrooms(selectedLevel);
       } catch (error: any) {
         toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -760,10 +761,10 @@ export const GradesManagement = ({ schoolId }: GradesManagementProps) => {
 
       if (moveError) throw moveError;
 
-      // 2. Desactivar el aula
+      // 2. Eliminar el aula permanentemente
       const { error: deleteError } = await supabase
         .from('school_classrooms')
-        .update({ is_active: false })
+        .delete()
         .eq('id', classroomToDelete.id);
 
       if (deleteError) throw deleteError;
