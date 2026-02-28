@@ -100,3 +100,68 @@ ORDER BY rr.created_at DESC;
 -- WHERE t.student_id = '[STUDENT_ID]'
 -- ORDER BY t.created_at DESC
 -- LIMIT 30;
+
+-- ============================================================
+-- LIMPIEZA COMPLETA #2: IGNACIO YAMADA OMURA  (28-feb-2026)
+-- student_id = 43b21ba6-0a9a-4557-a006-6bc1a4169f72
+-- ============================================================
+
+-- PASO 1: Ver pedidos actuales (verificar antes de borrar)
+SELECT lo.id, lo.order_date, lo.status, lm.main_course, lc.name AS categoria
+FROM lunch_orders lo
+LEFT JOIN lunch_menus lm ON lm.id = lo.menu_id
+LEFT JOIN lunch_categories lc ON lc.id = lo.category_id
+WHERE lo.student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72'
+ORDER BY lo.order_date;
+
+-- PASO 2: Ver transacciones pendientes actuales
+SELECT t.id, t.created_at, t.type, t.amount, t.description, t.payment_status
+FROM transactions t
+WHERE t.student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72'
+  AND t.payment_status = 'pending'
+ORDER BY t.created_at;
+
+-- PASO 3: BORRAR todos los lunch_orders del alumno
+DELETE FROM lunch_orders
+WHERE student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72';
+
+-- PASO 4: BORRAR transacciones pendientes huerfanas
+DELETE FROM transactions
+WHERE student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72'
+  AND payment_status = 'pending';
+
+-- PASO 5: Verificar que quedo limpio
+SELECT 'lunch_orders' AS tabla, COUNT(*) AS registros
+FROM lunch_orders WHERE student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72'
+UNION ALL
+SELECT 'transactions_pending', COUNT(*)
+FROM transactions WHERE student_id = '43b21ba6-0a9a-4557-a006-6bc1a4169f72' AND payment_status = 'pending';
+
+-- ============================================================
+-- DIAGNÓSTICO: ¿Por qué no aparece el pedido del 3 de marzo?
+-- (hijo prueba mc1 - student_id = f00c4391-8a52-405f-a87a-30fc6e91e06e)
+-- ============================================================
+
+-- Q1: Ver TODOS los pedidos de hijo prueba mc1
+SELECT 
+  lo.id,
+  lo.order_date,
+  lo.status,
+  lo.is_cancelled,
+  lo.created_at,
+  lm.main_course,
+  lc.name AS categoria
+FROM lunch_orders lo
+LEFT JOIN lunch_menus lm ON lm.id = lo.menu_id
+LEFT JOIN lunch_categories lc ON lc.id = lo.category_id
+WHERE lo.student_id = 'f00c4391-8a52-405f-a87a-30fc6e91e06e'
+ORDER BY lo.order_date;
+
+-- Q2: ¿Hay menu disponible para el 3 de marzo en MC1?
+SELECT lm.id, lm.date, lm.main_course, lc.name AS categoria, lc.target_type, s.name AS sede
+FROM lunch_menus lm
+JOIN lunch_categories lc ON lc.id = lm.category_id
+JOIN schools s ON s.id = lc.school_id
+WHERE lm.date = '2026-03-03'
+  AND s.name ILIKE '%Champagnat 1%'
+ORDER BY lc.name;

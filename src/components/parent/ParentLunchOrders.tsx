@@ -47,15 +47,19 @@ interface LunchOrder {
   } | null;
 }
 
+const PAGE_SIZE = 5;
+
 export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
   const { toast } = useToast();
   
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<LunchOrder[]>([]);
   const [filter, setFilter] = useState<'all' | 'upcoming' | 'past'>('all');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   useEffect(() => {
     if (parentId) {
+      setVisibleCount(PAGE_SIZE); // reset paginación al cambiar filtro
       fetchOrders();
     }
   }, [parentId, filter]);
@@ -128,17 +132,28 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
         query = query.lt('order_date', today);
       }
 
-      const { data, error } = await query.limit(50);
+      const { data, error } = await query.limit(200);
 
       if (error) throw error;
 
       // Mapear los menús directamente desde el JOIN (ya vienen por menu_id)
       if (data && data.length > 0) {
-        const ordersWithMenus = data.map((order: any) => ({
+        const mapped = data.map((order: any) => ({
           ...order,
           menu: order.lunch_menus || null,
           category_name: order.lunch_categories?.name || null,
         }));
+
+        // 🔀 Orden inteligente: próximos/pendientes primero (ASC), luego pasados (DESC)
+        const today = new Date().toISOString().split('T')[0];
+        const activeStatuses = ['pending', 'confirmed', 'pending_payment'];
+        const upcoming = mapped
+          .filter((o: any) => o.order_date >= today && activeStatuses.includes(o.status))
+          .sort((a: any, b: any) => a.order_date.localeCompare(b.order_date));
+        const past = mapped
+          .filter((o: any) => !(o.order_date >= today && activeStatuses.includes(o.status)))
+          .sort((a: any, b: any) => b.order_date.localeCompare(a.order_date));
+        const ordersWithMenus = [...upcoming, ...past];
 
         // 🎫 Batch: obtener ticket_codes de transacciones asociadas
         if (ordersWithMenus.length > 0) {
@@ -319,7 +334,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
           </div>
         ) : (
           <div className="space-y-2 sm:space-y-3">
-            {orders.map((order) => (
+            {orders.slice(0, visibleCount).map((order) => (
               <div
                 key={order.id}
                 className="border rounded-md sm:rounded-lg hover:bg-gray-50 transition-colors"
@@ -424,6 +439,20 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
                 )}
               </div>
             ))}
+
+            {/* Botón Ver más */}
+            {visibleCount < orders.length && (
+              <div className="flex justify-center pt-1 sm:pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setVisibleCount(v => v + PAGE_SIZE)}
+                  className="text-xs sm:text-sm"
+                >
+                  Ver más ({orders.length - visibleCount} pedidos restantes)
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
