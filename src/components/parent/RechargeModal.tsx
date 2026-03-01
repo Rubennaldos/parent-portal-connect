@@ -34,9 +34,16 @@ interface ExtraVoucher {
   amount: string;
 }
 
+interface BreakdownItem {
+  description: string;
+  amount: number;
+}
+
 interface RechargeModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Callback para el botón "Cancelar" (volver sin pagar) */
+  onCancel?: () => void;
   studentName: string;
   studentId: string;
   currentBalance: number;
@@ -52,6 +59,8 @@ interface RechargeModalProps {
   lunchOrderIds?: string[];
   /** IDs de transacciones que se están pagando (para debt_payment) */
   paidTransactionIds?: string[];
+  /** Desglose de ítems que se están pagando */
+  breakdownItems?: BreakdownItem[];
 }
 
 interface PaymentConfig {
@@ -75,6 +84,7 @@ type PaymentMethod = 'yape' | 'plin' | 'transferencia';
 export function RechargeModal({
   isOpen,
   onClose,
+  onCancel,
   studentName,
   studentId,
   currentBalance,
@@ -85,6 +95,7 @@ export function RechargeModal({
   requestDescription,
   lunchOrderIds,
   paidTransactionIds,
+  breakdownItems,
 }: RechargeModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -93,6 +104,7 @@ export function RechargeModal({
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
   const [step, setStep] = useState<'amount' | 'method' | 'voucher' | 'success'>('amount');
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const [amount, setAmount] = useState('');
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('yape');
   const [referenceCode, setReferenceCode] = useState('');
@@ -726,10 +738,39 @@ export function RechargeModal({
   // ─────────────────────── PASO 3: Subir voucher ───────────────────────
   const renderStepVoucher = () => (
     <div className="space-y-5">
+      {/* Resumen del pago */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center justify-between text-sm">
         <span className="text-gray-600">{requestType === 'lunch_payment' ? 'Pago almuerzo:' : requestType === 'debt_payment' ? 'Pago deuda:' : 'Recarga solicitada:'}</span>
         <span className="font-bold text-blue-700">S/ {parseFloat(amount).toFixed(2)} vía {currentMethodInfo.label}</span>
       </div>
+
+      {/* ── Desglose de compras (solo para debt_payment) ── */}
+      {requestType === 'debt_payment' && breakdownItems && breakdownItems.length > 0 && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowBreakdown(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-gray-100 hover:bg-gray-200 text-xs font-semibold text-gray-700 transition-colors"
+          >
+            <span>📋 Ver desglose de lo que estás pagando ({breakdownItems.length} compra{breakdownItems.length !== 1 ? 's' : ''})</span>
+            <span className="text-gray-500">{showBreakdown ? '▲' : '▼'}</span>
+          </button>
+          {showBreakdown && (
+            <div className="divide-y divide-gray-100 max-h-40 overflow-y-auto">
+              {breakdownItems.map((item, i) => (
+                <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                  <span className="text-gray-700 truncate flex-1 mr-2">{item.description}</span>
+                  <span className="font-semibold text-red-600 flex-shrink-0">S/ {item.amount.toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-3 py-2 bg-gray-50 font-bold text-xs">
+                <span className="text-gray-800">Total a pagar</span>
+                <span className="text-blue-700">S/ {breakdownItems.reduce((s, i) => s + i.amount, 0).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Número de operación */}
       <div className="space-y-1">
@@ -803,7 +844,12 @@ export function RechargeModal({
 
           {/* Monto del pago parcial */}
           <div className="space-y-1">
-            <Label className="text-sm font-semibold">Monto pagado <span className="text-red-500">*</span></Label>
+            <Label className="text-sm font-semibold">
+              Monto exacto de <em>este</em> comprobante <span className="text-red-500">*</span>
+            </Label>
+            <p className="text-[11px] text-blue-600">
+              Como pagas en partes, indica cuánto cubre <strong>este voucher</strong> (puede ser una parte del total).
+            </p>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">S/</span>
               <Input
@@ -909,6 +955,17 @@ export function RechargeModal({
           )}
         </Button>
       </div>
+
+      {/* Botón cancelar (solo cuando hay callback de cancelar, ej. desde PaymentsTab) */}
+      {onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="w-full text-center text-xs text-gray-400 hover:text-gray-600 underline py-1 transition-colors"
+        >
+          Cancelar — volver a la pestaña de pagos
+        </button>
+      )}
     </div>
   );
 

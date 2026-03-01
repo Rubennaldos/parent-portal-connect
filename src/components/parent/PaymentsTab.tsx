@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Wallet, Banknote } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -52,6 +53,40 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
+
+  // ── Selección individual de transacciones por estudiante ──
+  // Mapa: student_id → Set de transaction IDs seleccionados
+  const [selectedTxByStudent, setSelectedTxByStudent] = useState<Map<string, Set<string>>>(new Map());
+
+  const getSelectedTx = (studentId: string) =>
+    selectedTxByStudent.get(studentId) ?? new Set<string>();
+
+  const toggleTransaction = (studentId: string, txId: string, allTxIds: string[]) => {
+    setSelectedTxByStudent(prev => {
+      const next = new Map(prev);
+      const current = new Set(next.get(studentId) ?? allTxIds); // Por defecto, todo seleccionado
+      if (current.has(txId)) {
+        current.delete(txId);
+      } else {
+        current.add(txId);
+      }
+      next.set(studentId, current);
+      return next;
+    });
+  };
+
+  const toggleAllTx = (studentId: string, allTxIds: string[]) => {
+    setSelectedTxByStudent(prev => {
+      const next = new Map(prev);
+      const current = next.get(studentId) ?? new Set(allTxIds);
+      if (current.size === allTxIds.length) {
+        next.set(studentId, new Set()); // Deseleccionar todo
+      } else {
+        next.set(studentId, new Set(allTxIds)); // Seleccionar todo
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchDebts();
@@ -194,33 +229,42 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
   const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
 
   /**
-   * Abre el modal de pago para un estudiante
+   * Abre el modal de pago para un estudiante (con las transacciones seleccionadas)
    */
   const handlePayDebt = (debt: StudentDebt) => {
+    const allIds = debt.pending_transactions.map(t => t.id);
+    // Si no hay selección explícita, inicializar con todo seleccionado
+    if (!selectedTxByStudent.has(debt.student_id)) {
+      setSelectedTxByStudent(prev => new Map(prev).set(debt.student_id, new Set(allIds)));
+    }
     setSelectedDebt(debt);
     setShowPaymentModal(true);
   };
 
   /**
-   * Construye los datos para el modal de pago
+   * Construye los datos para el modal de pago (solo las transacciones seleccionadas)
    */
   const getPaymentData = (debt: StudentDebt) => {
-    // Recoger lunch_order_ids de transacciones con metadata
+    const selectedIds = getSelectedTx(debt.student_id);
+    const allIds = debt.pending_transactions.map(t => t.id);
+    const effectiveIds = selectedIds.size > 0 ? selectedIds : new Set(allIds);
+
+    const selectedTxList = debt.pending_transactions.filter(tx => effectiveIds.has(tx.id));
     const lunchOrderIds: string[] = [];
     const transactionIds: string[] = [];
 
-    debt.pending_transactions.forEach(tx => {
+    selectedTxList.forEach(tx => {
       transactionIds.push(tx.id);
       if (tx.metadata?.lunch_order_id) {
         lunchOrderIds.push(tx.metadata.lunch_order_id);
       }
     });
 
-    // Construir descripción
-    const count = debt.pending_transactions.length;
-    const description = `Pago de deuda: ${count} compra(s) pendiente(s) — ${debt.student_name}`;
+    const totalSelected = selectedTxList.reduce((sum, tx) => sum + tx.amount, 0);
+    const count = selectedTxList.length;
+    const description = `Pago de deuda: ${count} compra(s) — ${debt.student_name}`;
 
-    return { lunchOrderIds, transactionIds, description };
+    return { lunchOrderIds, transactionIds, description, totalSelected, selectedTxList };
   };
 
   /**
@@ -326,6 +370,18 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
       {/* Deudas por Estudiante */}
       {debts.map((debt) => {
         const hasPendingVoucher = pendingDebtVoucherStudents.has(debt.student_id);
+        const allTxIds = debt.pending_transactions.map(t => t.id);
+
+        // Inicializar selección: por defecto todo seleccionado
+        const selectedIds = selectedTxByStudent.has(debt.student_id)
+          ? selectedTxByStudent.get(debt.student_id)!
+          : new Set(allTxIds);
+
+        const allSelected = selectedIds.size === allTxIds.length;
+        const noneSelected = selectedIds.size === 0;
+        const selectedTotal = debt.pending_transactions
+          .filter(tx => selectedIds.has(tx.id))
+          .reduce((sum, tx) => sum + tx.amount, 0);
 
         return (
           <Card key={debt.student_id} className="border-2">
@@ -341,7 +397,7 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
                 <div className="flex-1">
                   <CardTitle className="text-lg">{debt.student_name}</CardTitle>
                   <CardDescription className="text-sm">
-                    Deuda: <span className="font-bold text-red-600">S/ {(debt.total_debt || 0).toFixed(2)}</span>
+                    Deuda total: <span className="font-bold text-red-600">S/ {(debt.total_debt || 0).toFixed(2)}</span>
                     {' • '}
                     {debt.pending_transactions.length} compra(s)
                   </CardDescription>
@@ -349,7 +405,7 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
               </div>
 
               {/* ── Botón de Pagar ── */}
-              <div className="mt-3">
+              <div className="mt-3 space-y-2">
                 {hasPendingVoucher ? (
                   <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
                     <Send className="h-4 w-4 text-blue-600" />
@@ -359,44 +415,97 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
                     </div>
                   </div>
                 ) : (
-                  <Button
-                    onClick={() => handlePayDebt(debt)}
-                    className="w-full h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 text-sm shadow-md"
-                  >
-                    <Banknote className="h-5 w-5" />
-                    Pagar deuda — S/ {debt.total_debt.toFixed(2)}
-                  </Button>
+                  <>
+                    {/* Resumen de selección */}
+                    <div className="flex items-center justify-between text-xs px-1">
+                      <button
+                        onClick={() => toggleAllTx(debt.student_id, allTxIds)}
+                        className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        {allSelected
+                          ? <CheckSquare className="h-4 w-4" />
+                          : <Square className="h-4 w-4" />
+                        }
+                        {allSelected ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                      </button>
+                      <span className="text-gray-500">
+                        {selectedIds.size} de {allTxIds.length} seleccionadas
+                      </span>
+                    </div>
+                    <Button
+                      onClick={() => handlePayDebt(debt)}
+                      disabled={noneSelected}
+                      className="w-full h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 text-sm shadow-md disabled:opacity-50"
+                    >
+                      <Banknote className="h-5 w-5" />
+                      {noneSelected
+                        ? 'Selecciona al menos 1 compra'
+                        : `Pagar seleccionadas — S/ ${selectedTotal.toFixed(2)}`}
+                    </Button>
+                  </>
                 )}
               </div>
             </CardHeader>
 
             <CardContent className="pt-3">
               <div className="space-y-2">
-                {debt.pending_transactions.map((transaction) => (
-                  <div
-                    key={transaction.id}
-                    className="p-3 rounded-lg border bg-white border-gray-200"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Receipt className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-xs sm:text-sm truncate">{transaction.description}</p>
-                        <p className="text-[10px] sm:text-xs text-gray-500">
-                          {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
-                          {transaction.ticket_code && ` • Ticket: ${transaction.ticket_code}`}
-                        </p>
+                {debt.pending_transactions.map((transaction) => {
+                  const isLunch = !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
+                  const isSelected = selectedIds.has(transaction.id);
+                  const vStatus = voucherStatuses.get(transaction.id);
+
+                  return (
+                    <div
+                      key={transaction.id}
+                      className={`p-3 rounded-lg border bg-white transition-all cursor-pointer ${
+                        isSelected ? 'border-green-400 bg-green-50/40' : 'border-gray-200'
+                      }`}
+                      onClick={() => !hasPendingVoucher && toggleTransaction(debt.student_id, transaction.id, allTxIds)}
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* Checkbox */}
+                        {!hasPendingVoucher && (
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, allTxIds)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex-shrink-0"
+                          />
+                        )}
+                        {isLunch
+                          ? <UtensilsCrossed className="h-4 w-4 text-orange-400 flex-shrink-0" />
+                          : <Receipt className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                        }
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-xs sm:text-sm truncate">{transaction.description}</p>
+                          <p className="text-[10px] sm:text-xs text-gray-500">
+                            {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
+                            {transaction.ticket_code && ` • Ticket: ${transaction.ticket_code}`}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-sm sm:text-base font-bold text-red-600">S/ {(transaction.amount || 0).toFixed(2)}</p>
+                          <Badge variant="outline" className="text-[9px] sm:text-[10px] border-amber-300 text-amber-700">
+                            <Clock className="h-2.5 w-2.5 mr-0.5" />
+                            Pendiente
+                          </Badge>
+                        </div>
                       </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-sm sm:text-base font-bold text-red-600">S/ {(transaction.amount || 0).toFixed(2)}</p>
-                        <Badge variant="outline" className="text-[9px] sm:text-[10px] border-amber-300 text-amber-700">
-                          <Clock className="h-2.5 w-2.5 mr-0.5" />
-                          Pendiente
-                        </Badge>
-                      </div>
+
+                      {/* ⚠️ Advertencia para almuerzos */}
+                      {isLunch && !vStatus && (
+                        <div className="mt-2 flex items-start gap-1.5 bg-orange-50 border border-orange-200 rounded px-2 py-1.5">
+                          <UtensilsCrossed className="h-3.5 w-3.5 text-orange-500 mt-0.5 flex-shrink-0" />
+                          <p className="text-[10px] text-orange-700 font-medium leading-tight">
+                            ⚠️ Este almuerzo <strong>no se procesará</strong> hasta que pagues la deuda pendiente.
+                          </p>
+                        </div>
+                      )}
+
+                      {renderVoucherStatus(transaction)}
                     </div>
-                    {renderVoucherStatus(transaction)}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
@@ -412,19 +521,26 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
             onClose={() => {
               setShowPaymentModal(false);
               setSelectedDebt(null);
-              // Refrescar datos después de cerrar
               fetchDebts();
+            }}
+            onCancel={() => {
+              setShowPaymentModal(false);
+              setSelectedDebt(null);
             }}
             studentName={selectedDebt.student_name}
             studentId={selectedDebt.student_id}
             currentBalance={selectedDebt.student_balance}
             accountType="free_account"
             onRecharge={async () => {}}
-            suggestedAmount={selectedDebt.total_debt}
+            suggestedAmount={payData.totalSelected}
             requestType="debt_payment"
             requestDescription={payData.description}
             lunchOrderIds={payData.lunchOrderIds.length > 0 ? payData.lunchOrderIds : undefined}
             paidTransactionIds={payData.transactionIds}
+            breakdownItems={payData.selectedTxList.map(tx => ({
+              description: tx.description,
+              amount: tx.amount,
+            }))}
           />
         );
       })()}
