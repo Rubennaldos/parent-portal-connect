@@ -603,70 +603,45 @@ export const LunchMenuModal = ({
     if (!menuId) return;
     setLoading(true);
     try {
-      // 1. Verificar si hay pedidos activos vinculados a este menú
-      const { count: activeOrders } = await supabase
+      // 1. Verificar si hay pedidos vinculados (activos o pasados)
+      const { count: totalOrders } = await supabase
         .from('lunch_orders')
         .select('*', { count: 'exact', head: true })
         .eq('menu_id', menuId)
         .eq('is_cancelled', false);
 
-      if (activeOrders && activeOrders > 0) {
-        const confirmar = window.confirm(
-          `⚠️ Este menú tiene ${activeOrders} pedido(s) activo(s) vinculados.\n\n` +
-          `Si lo eliminas, esos pedidos quedarán sin menú asociado y se cancelarán automáticamente.\n\n` +
-          `¿Estás seguro de continuar?`
-        );
-        if (!confirmar) { setLoading(false); return; }
-
-        // Cancelar pedidos huérfanos
-        await supabase
-          .from('lunch_orders')
-          .update({ is_cancelled: true, status: 'cancelled' })
-          .eq('menu_id', menuId)
-          .eq('is_cancelled', false);
-
-        // Cancelar transacciones asociadas
-        const { data: ordersToCancel } = await supabase
-          .from('lunch_orders')
-          .select('id')
-          .eq('menu_id', menuId);
-        if (ordersToCancel) {
-          for (const order of ordersToCancel) {
-            await supabase
-              .from('transactions')
-              .update({ payment_status: 'cancelled' })
-              .contains('metadata', { lunch_order_id: order.id });
-          }
-        }
-      } else {
-        if (!window.confirm('¿Estás seguro de eliminar este menú?')) {
-          setLoading(false);
-          return;
-        }
+      // 2. Mostrar advertencia apropiada y pedir confirmación
+      let mensaje = '¿Estás seguro de eliminar este menú?';
+      if (totalOrders && totalOrders > 0) {
+        mensaje =
+          `⚠️ Este menú tiene ${totalOrders} pedido(s) registrado(s).\n\n` +
+          `Los pedidos existentes NO se eliminarán ni modificarán.\n` +
+          `Solo se borrará el menú. Los pedidos pasados quedan intactos.\n\n` +
+          `¿Estás seguro de continuar?`;
       }
 
-      // 2. Eliminar personalizaciones del menú (grupos y opciones)
+      if (!window.confirm(mensaje)) {
+        setLoading(false);
+        return;
+      }
+
+      // 3. Eliminar solo las personalizaciones del menú (grupos y opciones)
       const { data: modifierGroups } = await supabase
         .from('menu_modifier_groups')
         .select('id')
         .eq('menu_id', menuId);
-      
+
       if (modifierGroups && modifierGroups.length > 0) {
         const groupIds = modifierGroups.map(g => g.id);
-        // Eliminar opciones primero (FK constraint)
         await supabase.from('menu_modifier_options').delete().in('group_id', groupIds);
-        // Luego eliminar grupos
         await supabase.from('menu_modifier_groups').delete().eq('menu_id', menuId);
       }
 
-      // 3. Eliminar el menú
+      // 4. Eliminar únicamente el menú — pedidos y transacciones NO se tocan
       const { error } = await supabase.from('lunch_menus').delete().eq('id', menuId);
       if (error) throw error;
 
-      const extra = activeOrders && activeOrders > 0
-        ? ` y se cancelaron ${activeOrders} pedido(s) vinculados`
-        : '';
-      toast({ title: 'Menú eliminado', description: `El menú se eliminó correctamente${extra}` });
+      toast({ title: 'Menú eliminado', description: 'El menú se eliminó. Los pedidos existentes permanecen intactos.' });
       onSuccess();
     } catch {
       toast({ title: 'Error', description: 'No se pudo eliminar el menú', variant: 'destructive' });
