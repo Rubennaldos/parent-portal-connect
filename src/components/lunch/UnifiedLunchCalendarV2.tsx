@@ -27,8 +27,6 @@ import {
   Ban,
   Trash2,
   CreditCard as CreditCardIcon,
-  Trash,
-  Info,
 } from 'lucide-react';
 import { RechargeModal } from '@/components/parent/RechargeModal';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths } from 'date-fns';
@@ -236,9 +234,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   // Cancellation
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
-  // Bulk cancel (anular pedidos del mes)
-  const [showBulkCancelConfirm, setShowBulkCancelConfirm] = useState(false);
-  const [isBulkCancelling, setIsBulkCancelling] = useState(false);
 
   // Payment flow (parents only)
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -1353,86 +1348,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   };
 
   // ==========================================
-  // BULK CANCEL ORDERS
-  // ==========================================
-
-  /**
-   * Calcula qué pedidos se pueden anular (no pagados, dentro del plazo)
-   * y cuáles requieren contactar al admin (ya pagados).
-   */
-  const getBulkCancelStats = () => {
-    const activeOrders = existingOrders.filter(o => !o.is_cancelled && o.status === 'pending');
-    const cancellable: ExistingOrder[] = [];
-    const paidNeedAdmin: ExistingOrder[] = [];
-    const pastDeadline: ExistingOrder[] = [];
-
-    activeOrders.forEach(o => {
-      const isPaid = o.transaction_payment_status === 'paid';
-      const canCancel = canCancelForDate(o.date);
-
-      if (isPaid) {
-        paidNeedAdmin.push(o);
-      } else if (!canCancel) {
-        pastDeadline.push(o);
-      } else {
-        cancellable.push(o);
-      }
-    });
-
-    return { cancellable, paidNeedAdmin, pastDeadline };
-  };
-
-  const handleBulkCancelOrders = async () => {
-    const { cancellable } = getBulkCancelStats();
-    if (cancellable.length === 0) {
-      setShowBulkCancelConfirm(false);
-      return;
-    }
-
-    setIsBulkCancelling(true);
-    try {
-      const orderIds = cancellable.map(o => o.id);
-      const now = new Date().toISOString();
-
-      // 1. Cancelar todos los pedidos elegibles
-      const { error: ordersError } = await supabase
-        .from('lunch_orders')
-        .update({
-          is_cancelled: true,
-          status: 'cancelled',
-          cancelled_by: userId,
-          cancelled_at: now,
-        })
-        .in('id', orderIds);
-
-      if (ordersError) throw ordersError;
-
-      // 2. Cancelar las transacciones vinculadas (deuda pendiente)
-      // Lo hacemos en paralelo para cada orden
-      await Promise.all(
-        orderIds.map(oid =>
-          supabase
-            .from('transactions')
-            .update({ payment_status: 'cancelled' })
-            .contains('metadata', { lunch_order_id: oid })
-        )
-      );
-
-      toast({
-        title: `✅ ${cancellable.length} pedido(s) anulado(s)`,
-        description: 'Los pedidos y sus deudas fueron cancelados correctamente.',
-      });
-
-      setShowBulkCancelConfirm(false);
-      await fetchMonthlyData();
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudieron cancelar los pedidos' });
-    } finally {
-      setIsBulkCancelling(false);
-    }
-  };
-
-  // ==========================================
   // CALENDAR RENDERING
   // ==========================================
 
@@ -2431,17 +2346,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             <CalendarIcon className="h-4 w-4 mr-2" />
             📅 Pedir todo el mes
           </Button>
-          {/* Botón Anular pedidos - solo visible si hay pedidos activos */}
-          {existingOrders.some(o => !o.is_cancelled && o.status === 'pending') && (
-            <Button
-              onClick={() => setShowBulkCancelConfirm(true)}
-              variant="outline"
-              className="border-red-300 text-red-600 hover:bg-red-50 font-semibold flex-1"
-            >
-              <Trash className="h-4 w-4 mr-2" />
-              Anular pedidos
-            </Button>
-          )}
         </div>
       )}
 
@@ -2815,119 +2719,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* BULK CANCEL CONFIRMATION DIALOG */}
-      {showBulkCancelConfirm && (() => {
-        const { cancellable, paidNeedAdmin, pastDeadline } = getBulkCancelStats();
-        return (
-          <Dialog open={showBulkCancelConfirm} onOpenChange={setShowBulkCancelConfirm}>
-            <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
-              <DialogHeader>
-                <DialogTitle className="text-lg font-bold flex items-center gap-2">
-                  <Trash className="h-5 w-5 text-red-500" />
-                  Anular pedidos del mes
-                </DialogTitle>
-                <DialogDescription>
-                  Revisa qué pedidos se pueden anular antes de confirmar.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-3 mt-2">
-                {/* Pedidos que SÍ se pueden anular */}
-                {cancellable.length > 0 && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                    <p className="text-sm font-semibold text-red-800 flex items-center gap-2">
-                      <Trash2 className="h-4 w-4" />
-                      {cancellable.length} pedido(s) se anularán
-                    </p>
-                    <p className="text-xs text-red-600 mt-1">
-                      Sin pagar, dentro del plazo. Su deuda desaparecerá.
-                    </p>
-                    <ul className="mt-2 space-y-1">
-                      {cancellable.map(o => (
-                        <li key={o.id} className="text-xs text-red-700 flex items-center gap-1">
-                          <XCircle className="h-3 w-3 flex-shrink-0" />
-                          {format(getPeruDateOnly(o.date), "EEEE d 'de' MMMM", { locale: es })} — {o.categoryName || 'Sin categoría'}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Pedidos ya PAGADOS — requieren admin */}
-                {paidNeedAdmin.length > 0 && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                    <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
-                      <Info className="h-4 w-4" />
-                      {paidNeedAdmin.length} pedido(s) ya pagado(s) — contacta al administrador
-                    </p>
-                    <p className="text-xs text-amber-700 mt-1">
-                      Estos pedidos tienen pago aprobado. Para reembolsos, comunícate con la administración del colegio.
-                    </p>
-                    <ul className="mt-2 space-y-1">
-                      {paidNeedAdmin.map(o => (
-                        <li key={o.id} className="text-xs text-amber-700 flex items-center gap-1">
-                          <Lock className="h-3 w-3 flex-shrink-0" />
-                          {format(getPeruDateOnly(o.date), "EEEE d 'de' MMMM", { locale: es })} — {o.categoryName || 'Sin categoría'}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Pedidos fuera de plazo */}
-                {pastDeadline.length > 0 && (
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                    <p className="text-sm font-semibold text-gray-600 flex items-center gap-2">
-                      <Lock className="h-4 w-4" />
-                      {pastDeadline.length} pedido(s) fuera del plazo
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Ya venció el plazo para cancelar estos pedidos. Contacta a la administración si necesitas ayuda.
-                    </p>
-                  </div>
-                )}
-
-                {/* Sin nada cancelable */}
-                {cancellable.length === 0 && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                    <Info className="h-6 w-6 text-blue-500 mx-auto mb-1" />
-                    <p className="text-sm text-blue-800 font-semibold">No hay pedidos disponibles para anular</p>
-                    <p className="text-xs text-blue-600 mt-1">
-                      {paidNeedAdmin.length > 0
-                        ? 'Los pedidos ya pagados requieren gestión con el administrador.'
-                        : 'Todos los pedidos ya están vencidos o no hay pedidos activos.'}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <DialogFooter className="gap-2 mt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => setShowBulkCancelConfirm(false)}
-                  disabled={isBulkCancelling}
-                >
-                  Cerrar
-                </Button>
-                {cancellable.length > 0 && (
-                  <Button
-                    onClick={handleBulkCancelOrders}
-                    disabled={isBulkCancelling}
-                    className="bg-red-600 hover:bg-red-700 text-white"
-                  >
-                    {isBulkCancelling ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Anulando...</>
-                    ) : (
-                      <><Trash2 className="h-4 w-4 mr-2" />Anular {cancellable.length} pedido(s)</>
-                    )}
-                  </Button>
-                )}
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
 
       {/* PAYMENT MODAL (parents only) */}
       {userType === 'parent' && selectedStudent && (
