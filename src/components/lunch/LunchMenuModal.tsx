@@ -160,6 +160,13 @@ export const LunchMenuModal = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    // ── SIEMPRE resetear estados de tipo de categoría al abrir ──
+    // Esto evita que el estado "configurable" persista de una apertura anterior
+    setIsKitchenProduct(false);
+    setIsConfigurablePlate(false);
+    setConfigurableGroups([]);
+    setCategoryToppings([]);
+
     if (menuId) {
       loadMenuData();
     } else {
@@ -295,6 +302,11 @@ export const LunchMenuModal = ({
         product_name: data.product_name || '',
         product_price: data.product_price?.toString() || '',
       });
+
+      // ── Determinar tipo de categoría (configurable, cocina, estándar) ──
+      if (data.category_id) {
+        await checkIfKitchenCategory(data.category_id);
+      }
 
       // Cargar configuración de campos si tiene personalización
       if (data.allows_modifiers) {
