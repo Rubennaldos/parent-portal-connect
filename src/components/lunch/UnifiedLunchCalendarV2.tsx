@@ -254,6 +254,14 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const [bulkDaysCount, setBulkDaysCount] = useState(0);
   const [bulkEstimatedTotal, setBulkEstimatedTotal] = useState(0);
   const [bulkDateRange, setBulkDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
+  const [bulkMenuMode, setBulkMenuMode] = useState<'auto' | 'manual'>('auto'); // auto=aleatorio, manual=elegir cada día
+  const [bulkValidDates, setBulkValidDates] = useState<string[]>([]); // cache de días válidos
+
+  // ── Categoría pre-seleccionada del bulk (para auto-seleccionar en el wizard) ──
+  const [bulkPreselectedCategory, setBulkPreselectedCategory] = useState<LunchCategory | null>(null);
+
+  // ── Feedback visual al avanzar entre días ──
+  const [showDayTransition, setShowDayTransition] = useState(false);
 
   // ==========================================
   // COMPUTED
@@ -528,14 +536,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // WIZARD FLOW (MULTI-DAY SEQUENTIAL)
   // ==========================================
 
-  const startWizard = (dates?: string[]) => {
+  const startWizard = (dates?: string[], preselectedCategory?: LunchCategory | null) => {
     const datesToProcess = dates || Array.from(selectedDates).sort();
     if (datesToProcess.length === 0) return;
 
     setWizardDates(datesToProcess);
     setWizardCurrentIndex(0);
-    setWizardStep('category');
-    setSelectedCategory(null);
     setCreatedOrderIds([]);
     setTotalOrderAmount(0);
     setOrderDescriptions([]);
@@ -545,7 +551,59 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setMenuModifierGroups([]);
     setSelectedModifiers([]);
     setModifierFavorites([]);
+    setShowDayTransition(false);
+
+    // Si hay categoría pre-seleccionada (desde "Pedir todo el mes"), guardarla
+    if (preselectedCategory) {
+      setBulkPreselectedCategory(preselectedCategory);
+      setSelectedCategory(null);
+      setWizardStep('category'); // Se auto-seleccionará en el useEffect
+    } else {
+      setBulkPreselectedCategory(null);
+      setSelectedCategory(null);
+      setWizardStep('category');
+    }
   };
+
+  // ── Auto-seleccionar categoría cuando hay bulk pre-seleccionada ──
+  useEffect(() => {
+    if (wizardStep !== 'category' || !bulkPreselectedCategory) return;
+
+    const currentDateStr = wizardDates[wizardCurrentIndex];
+    if (!currentDateStr) return;
+
+    const dayMenus = menus.get(currentDateStr) || [];
+    const hasCategoryMenu = dayMenus.some(m => m.category_id === bulkPreselectedCategory.id);
+
+    if (hasCategoryMenu) {
+      // Auto-seleccionar la categoría del bulk para este día
+      // Pequeño delay para que el render muestre el día antes de avanzar
+      const timer = setTimeout(() => {
+        handleCategorySelect(bulkPreselectedCategory);
+      }, bulkMenuMode === 'auto' ? 100 : 0);
+      return () => clearTimeout(timer);
+    }
+  }, [wizardStep, wizardCurrentIndex, bulkPreselectedCategory]);
+
+  // ── Auto-confirmar menú en modo automático (bulk "aleatorio") ──
+  useEffect(() => {
+    if (bulkMenuMode !== 'auto' || !bulkPreselectedCategory) return;
+    if (wizardStep !== 'select_menu' && wizardStep !== 'confirm') return;
+
+    // En modo auto, si estamos en select_menu, seleccionar el primer menú disponible
+    if (wizardStep === 'select_menu' && categoryMenuOptions.length > 0) {
+      handleMenuSelect(categoryMenuOptions[0]);
+      return;
+    }
+
+    // En modo auto, si estamos en confirm, confirmar automáticamente
+    if (wizardStep === 'confirm' && selectedMenu && !submitting) {
+      const timer = setTimeout(() => {
+        handleConfirmOrder();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [wizardStep, bulkMenuMode, bulkPreselectedCategory, categoryMenuOptions, selectedMenu, submitting]);
 
   // ── Cargar modificadores de un menú ──
   const loadMenuModifiers = async (menuId: string): Promise<boolean> => {
@@ -856,7 +914,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
         // 🔧 Si falla por columna no encontrada (migración no ejecutada), reintentar sin columnas opcionales
         if (orderError.code === 'PGRST204' || orderError.message?.includes('column')) {
-          console.warn('⚠️ Columna opcional no existe, reintentando sin columnas JSONB opcionales...');
           delete orderPayload.selected_modifiers;
           delete orderPayload.selected_garnishes;
           delete orderPayload.configurable_selections;
@@ -899,7 +956,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           ticketCode = ticketNumber;
         }
       } catch (err) {
-        console.warn('⚠️ No se pudo generar ticket_code:', err);
+        // ticket_code generation failed silently
       }
 
       const { error: txError } = await supabase
@@ -943,19 +1000,24 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       // Advance to next day or finish
       const nextIndex = wizardCurrentIndex + 1;
       if (nextIndex < wizardDates.length) {
-        setWizardCurrentIndex(nextIndex);
-        setWizardStep('category');
-        setSelectedCategory(null);
-        setSelectedMenu(null);
-        setCategoryMenuOptions([]);
-        setQuantity(1);
-        setMenuModifierGroups([]);
-        setSelectedModifiers([]);
-        setModifierFavorites([]);
-        setAvailableGarnishes([]);
-        setSelectedGarnishes(new Set());
-        setConfigPlateGroups([]);
-        setConfigSelections([]);
+        // Feedback visual: mostrar transición entre días
+        setShowDayTransition(true);
+        setTimeout(() => {
+          setWizardCurrentIndex(nextIndex);
+          setWizardStep('category');
+          setSelectedCategory(null);
+          setSelectedMenu(null);
+          setCategoryMenuOptions([]);
+          setQuantity(1);
+          setMenuModifierGroups([]);
+          setSelectedModifiers([]);
+          setModifierFavorites([]);
+          setAvailableGarnishes([]);
+          setSelectedGarnishes(new Set());
+          setConfigPlateGroups([]);
+          setConfigSelections([]);
+          setShowDayTransition(false);
+        }, 600); // Breve pausa visual
       } else {
         setWizardStep('done');
       }
@@ -969,7 +1031,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   };
 
-  const closeWizard = (force = false) => {
+  const closeWizard = () => {
     // Limpiar progreso guardado
     if (selectedStudent) {
       sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
@@ -991,6 +1053,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setConfigPlateGroups([]);
     setConfigSelections([]);
     setShowCancelConfirm(false);
+    setBulkPreselectedCategory(null);
+    setShowDayTransition(false);
 
     // Refresh data if any orders were created
     if (ordersCreated > 0) {
@@ -1090,57 +1154,47 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   };
 
-  // ── "Pedir todo el mes" ──
-  const handleBulkOrderMonth = () => {
+  // ── "Pedir todo el mes" — calcula días disponibles una sola vez ──
+  const getAvailableBulkDates = useCallback(() => {
     const peruTodayStr = getPeruTodayStr();
     const start = startOfMonth(currentDate);
     const end = endOfMonth(currentDate);
     const days = eachDayOfInterval({ start, end });
 
-    // Encontrar días disponibles desde hoy en adelante
     const availableDates: string[] = [];
     const categoriesSet = new Map<string, LunchCategory>();
 
     for (const date of days) {
       const dateStr = format(date, 'yyyy-MM-dd');
-      if (dateStr < peruTodayStr) continue; // Solo futuro
-      
+      if (dateStr < peruTodayStr) continue;
       const dayMenus = menus.get(dateStr);
       if (!dayMenus || dayMenus.length === 0) continue;
-      
-      // Verificar que no tenga pedidos existentes
-      const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
-      if (hasOrders) continue;
-
-      // Verificar deadline
-      const validation = canOrderForDate(dateStr);
-      if (!validation.canOrder) continue;
-
-      // Verificar día especial
+      if (existingOrders.some(o => o.date === dateStr && !o.is_cancelled)) continue;
+      if (!canOrderForDate(dateStr).canOrder) continue;
       if (specialDays.has(dateStr)) continue;
 
       availableDates.push(dateStr);
-
-      // Recopilar categorías disponibles
       dayMenus.forEach(m => {
-        if (m.category_id && m.category) {
-          categoriesSet.set(m.category_id, m.category);
-        }
+        if (m.category_id && m.category) categoriesSet.set(m.category_id, m.category);
       });
     }
+    return { availableDates, categories: Array.from(categoriesSet.values()) };
+  }, [currentDate, menus, existingOrders, canOrderForDate, specialDays]);
+
+  const handleBulkOrderMonth = () => {
+    const { availableDates, categories } = getAvailableBulkDates();
 
     if (availableDates.length === 0) {
       toast({ variant: 'destructive', title: 'Sin días disponibles', description: 'No hay días disponibles para pedir este mes.' });
       return;
     }
 
-    setBulkAvailableCategories(Array.from(categoriesSet.values()));
+    setBulkValidDates(availableDates);
+    setBulkAvailableCategories(categories);
     setBulkDaysCount(availableDates.length);
     setBulkCategory(null);
-    setBulkDateRange({
-      from: availableDates[0],
-      to: availableDates[availableDates.length - 1],
-    });
+    setBulkMenuMode('auto');
+    setBulkDateRange({ from: availableDates[0], to: availableDates[availableDates.length - 1] });
     setBulkEstimatedTotal(0);
     setShowBulkOrderModal(true);
   };
@@ -1148,46 +1202,24 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const confirmBulkOrder = () => {
     if (!bulkCategory) return;
 
-    const peruTodayStr = getPeruTodayStr();
-    const start = startOfMonth(currentDate);
-    const end = endOfMonth(currentDate);
-    const days = eachDayOfInterval({ start, end });
-
-    // Filtrar días que tienen la categoría seleccionada
-    const validDates: string[] = [];
-    for (const date of days) {
-      const dateStr = format(date, 'yyyy-MM-dd');
-      if (dateStr < peruTodayStr) continue;
-      
+    // Filtrar solo días con la categoría seleccionada (usando cache)
+    const validDates = bulkValidDates.filter(dateStr => {
       const dayMenus = menus.get(dateStr);
-      if (!dayMenus || dayMenus.length === 0) continue;
-      
-      const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
-      if (hasOrders) continue;
-
-      const validation = canOrderForDate(dateStr);
-      if (!validation.canOrder) continue;
-
-      if (specialDays.has(dateStr)) continue;
-
-      // Verificar que este día tenga un menú de la categoría seleccionada
-      const hasCategoryMenu = dayMenus.some(m => m.category_id === bulkCategory.id);
-      if (!hasCategoryMenu) continue;
-
-      validDates.push(dateStr);
-    }
+      return dayMenus?.some(m => m.category_id === bulkCategory.id);
+    });
 
     if (validDates.length === 0) {
       toast({ variant: 'destructive', title: 'Sin días', description: `No hay días con "${bulkCategory.name}" disponible.` });
       return;
     }
 
-    // Seleccionar todos los días y empezar el wizard
+    // Guardar modo seleccionado (auto/manual) para que el wizard lo use
+    setBulkMenuMode(bulkMenuMode);
     setSelectedDates(new Set(validDates));
     setShowBulkOrderModal(false);
 
-    // Iniciar el wizard directamente con esos días
-    startWizard(validDates);
+    // Iniciar wizard con categoría pre-seleccionada
+    startWizard(validDates, bulkCategory);
   };
 
   // ==========================================
@@ -1430,8 +1462,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             </>
           )}
 
+          {/* Transición visual entre días */}
+          {showDayTransition && (
+            <div className="flex flex-col items-center justify-center py-12 animate-pulse">
+              <CheckCircle2 className="h-12 w-12 text-green-500 mb-3" />
+              <p className="text-lg font-bold text-green-700">✅ ¡Pedido registrado!</p>
+              <p className="text-sm text-gray-500 mt-1">Avanzando al siguiente día...</p>
+            </div>
+          )}
+
           {/* STEPS: CATEGORY / CONFIRM */}
-          {wizardStep !== 'done' && currentDateStr && (
+          {!showDayTransition && wizardStep !== 'done' && currentDateStr && (
             <>
               <DialogHeader>
                 <DialogTitle className="text-lg sm:text-xl font-bold flex items-center gap-2">
@@ -1444,7 +1485,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   </span>
                 </DialogTitle>
                 <DialogDescription>
-                  {wizardStep === 'category' && 'Selecciona la categoría del menú'}
+                  {wizardStep === 'category' && (bulkPreselectedCategory ? `Auto-seleccionando "${bulkPreselectedCategory.name}"...` : 'Selecciona la categoría del menú')}
                   {wizardStep === 'select_menu' && 'Elige el menú que deseas'}
                   {wizardStep === 'configurable_select' && '🍽️ Elige tus opciones'}
                   {wizardStep === 'modifiers' && '✨ Personaliza tu pedido'}
@@ -1459,8 +1500,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div
-                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${((wizardCurrentIndex + 1) / totalDays) * 100}%` }}
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${(ordersCreated / totalDays) * 100}%` }}
                       />
                     </div>
                   </div>
@@ -2412,7 +2453,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             {/* Opción 2: Cancelar todo */}
             <Button
               variant="destructive"
-              onClick={() => { setShowCancelConfirm(false); closeWizard(true); }}
+              onClick={() => { setShowCancelConfirm(false); closeWizard(); }}
               className="w-full"
             >
               🗑️ Cancelar todo el proceso
@@ -2437,7 +2478,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               📅 Pedir todo el mes
             </DialogTitle>
             <DialogDescription>
-              Selecciona la categoría para pedir todos los días disponibles del mes.
+              Selecciona la categoría y el modo de selección para todo el mes.
             </DialogDescription>
           </DialogHeader>
 
@@ -2445,7 +2486,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             {/* Info de días */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-sm text-blue-800">
-                <strong>{bulkDaysCount} días disponibles</strong> del{' '}
+                <strong>{bulkValidDates.length} días disponibles</strong> del{' '}
                 {bulkDateRange.from && format(getPeruDateOnly(bulkDateRange.from), "d 'de' MMMM", { locale: es })} al{' '}
                 {bulkDateRange.to && format(getPeruDateOnly(bulkDateRange.to), "d 'de' MMMM", { locale: es })}
               </p>
@@ -2462,23 +2503,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                 const IconComponent = ICON_MAP[cat.icon || 'utensils'] || UtensilsCrossed;
                 const price = cat.price || config?.lunch_price || 0;
 
-                // Contar días que tienen esta categoría
-                const peruTodayStr = getPeruTodayStr();
-                const start = startOfMonth(currentDate);
-                const end = endOfMonth(currentDate);
-                const allDays = eachDayOfInterval({ start, end });
-                let daysWithCat = 0;
-                for (const date of allDays) {
-                  const dateStr = format(date, 'yyyy-MM-dd');
-                  if (dateStr < peruTodayStr) continue;
+                // Contar días con esta categoría usando la cache
+                const daysWithCat = bulkValidDates.filter(dateStr => {
                   const dayMenus = menus.get(dateStr);
-                  if (!dayMenus) continue;
-                  const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
-                  if (hasOrders) continue;
-                  if (!canOrderForDate(dateStr).canOrder) continue;
-                  if (specialDays.has(dateStr)) continue;
-                  if (dayMenus.some(m => m.category_id === cat.id)) daysWithCat++;
-                }
+                  return dayMenus?.some(m => m.category_id === cat.id);
+                }).length;
 
                 return (
                   <button
@@ -2514,15 +2543,49 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               })}
             </div>
 
-            {/* Advertencia y total */}
+            {/* Modo de selección de menú */}
             {bulkCategory && (
               <>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-gray-700">¿Cómo quieres elegir los platos?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setBulkMenuMode('auto')}
+                      className={cn(
+                        "p-3 rounded-lg border-2 transition-all text-center",
+                        bulkMenuMode === 'auto'
+                          ? "border-green-500 bg-green-50"
+                          : "border-gray-200 hover:border-green-300"
+                      )}
+                    >
+                      <Sparkles className="h-6 w-6 mx-auto mb-1 text-green-600" />
+                      <p className="text-sm font-bold">Automático</p>
+                      <p className="text-[10px] text-gray-500">El sistema elige el menú del día (más rápido)</p>
+                    </button>
+                    <button
+                      onClick={() => setBulkMenuMode('manual')}
+                      className={cn(
+                        "p-3 rounded-lg border-2 transition-all text-center",
+                        bulkMenuMode === 'manual'
+                          ? "border-purple-500 bg-purple-50"
+                          : "border-gray-200 hover:border-purple-300"
+                      )}
+                    >
+                      <UtensilsCrossed className="h-6 w-6 mx-auto mb-1 text-purple-600" />
+                      <p className="text-sm font-bold">Elegir cada día</p>
+                      <p className="text-[10px] text-gray-500">Selecciona el plato para cada día</p>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                   <p className="text-sm text-amber-800 font-semibold">⚠️ Atención</p>
                   <p className="text-xs text-amber-700 mt-1">
-                    Estás seleccionando <strong>{bulkDaysCount} días</strong> de la categoría{' '}
-                    <strong>"{bulkCategory.name}"</strong>. Se te pedirá confirmar cada día 
-                    y elegir el plato específico cuando haya varias opciones.
+                    Estás pidiendo <strong>{bulkDaysCount} días</strong> de la categoría{' '}
+                    <strong>"{bulkCategory.name}"</strong>.{' '}
+                    {bulkMenuMode === 'auto'
+                      ? 'El sistema seleccionará automáticamente el menú disponible para cada día.'
+                      : 'Podrás elegir el plato específico para cada día.'}
                   </p>
                 </div>
                 <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 flex justify-between items-center">
@@ -2542,7 +2605,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               disabled={!bulkCategory}
               className="bg-purple-600 hover:bg-purple-700"
             >
-              Empezar Pedido ({bulkDaysCount} días)
+              {bulkMenuMode === 'auto' ? '🚀 Pedir Rápido' : '📝 Elegir Platos'} ({bulkDaysCount} días)
             </Button>
           </DialogFooter>
         </DialogContent>

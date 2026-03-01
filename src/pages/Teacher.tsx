@@ -44,7 +44,6 @@ export default function Teacher() {
   const [activeTab, setActiveTab] = useState('home');
   const [purchaseHistory, setPurchaseHistory] = useState<any[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
-  const [delayDays, setDelayDays] = useState<number>(0);
   const [currentBalance, setCurrentBalance] = useState<number>(0);
   const [pendingTransactions, setPendingTransactions] = useState<any[]>([]);
   const [paidTransactions, setPaidTransactions] = useState<any[]>([]);
@@ -531,25 +530,7 @@ export default function Teacher() {
     if (!teacherProfile) return;
 
     try {
-      console.log('📊 Cargando historial de compras del profesor');
-
-      // 1. Obtener el delay configurado para la sede del profesor
-      const { data: delayData, error: delayError } = await supabase
-        .from('purchase_visibility_delay')
-        .select('delay_days')
-        .eq('school_id', teacherProfile.school_1_id) // ⬅️ Corregido
-        .maybeSingle();
-
-      if (delayError) {
-        console.error('❌ Error obteniendo delay:', delayError);
-      }
-
-      const configuredDelayDays = delayData?.delay_days ?? 0;
-      setDelayDays(configuredDelayDays);
-      console.log('⏱️ Delay configurado:', configuredDelayDays, 'días');
-
-      // 2. Calcular la fecha de corte (si hay delay)
-      let query = supabase
+      const { data: transactions, error } = await supabase
         .from('transactions')
         .select(`
           id,
@@ -571,31 +552,15 @@ export default function Teacher() {
         .eq('is_deleted', false)
         .order('created_at', { ascending: false });
 
-      // Aplicar filtro de delay solo si es mayor a 0
-      if (configuredDelayDays > 0) {
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - configuredDelayDays);
-        const cutoffDateISO = cutoffDate.toISOString();
-        
-        console.log('📅 Mostrando compras hasta:', cutoffDate.toLocaleDateString());
-        query = query.lte('created_at', cutoffDateISO);
-      } else {
-        console.log('⚡ Modo EN VIVO: Mostrando todas las compras sin delay');
-      }
-
-      const { data: transactions, error } = await query;
-
       if (error) throw error;
 
-      console.log('✅ Transacciones cargadas:', transactions?.length);
       setPurchaseHistory(transactions || []);
 
-      // Calcular total gastado
       const total = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
       setTotalSpent(total);
 
     } catch (error: any) {
-      console.error('❌ Error cargando historial:', error);
+      console.error('Error cargando historial:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
