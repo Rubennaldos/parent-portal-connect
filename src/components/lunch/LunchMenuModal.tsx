@@ -645,7 +645,21 @@ export const LunchMenuModal = ({
         }
       }
 
-      // 2. Eliminar el menú
+      // 2. Eliminar personalizaciones del menú (grupos y opciones)
+      const { data: modifierGroups } = await supabase
+        .from('menu_modifier_groups')
+        .select('id')
+        .eq('menu_id', menuId);
+      
+      if (modifierGroups && modifierGroups.length > 0) {
+        const groupIds = modifierGroups.map(g => g.id);
+        // Eliminar opciones primero (FK constraint)
+        await supabase.from('menu_modifier_options').delete().in('group_id', groupIds);
+        // Luego eliminar grupos
+        await supabase.from('menu_modifier_groups').delete().eq('menu_id', menuId);
+      }
+
+      // 3. Eliminar el menú
       const { error } = await supabase.from('lunch_menus').delete().eq('id', menuId);
       if (error) throw error;
 
