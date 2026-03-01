@@ -267,66 +267,96 @@ export const VoucherApproval = () => {
           voucher_url: req.voucher_url,
         };
 
-        // A) Manejar lunch_order_ids (si hay)
-        if (req.lunch_order_ids && req.lunch_order_ids.length > 0) {
-          // Obtener estado real de las órdenes para no reactivar canceladas
-          const { data: currentOrders } = await supabase
+        // ── VERIFICACIÓN DE PAGO PARCIAL (solo para lunch_payment con lunch_order_ids) ──
+        let fullyPaid = true;
+        let totalDebt = 0;
+        let totalApproved = 0;
+
+        if (isLunchPayment && req.lunch_order_ids && req.lunch_order_ids.length > 0) {
+          // 1. Calcular deuda total de órdenes activas
+          const { data: ordersForDebt } = await supabase
             .from('lunch_orders')
-            .select('id, status, is_cancelled')
-            .in('id', req.lunch_order_ids);
+            .select('id, final_price')
+            .in('id', req.lunch_order_ids)
+            .eq('is_cancelled', false);
 
-          const activeOrderIds = (currentOrders || [])
-            .filter(o => !o.is_cancelled && o.status !== 'cancelled')
-            .map(o => o.id);
+          totalDebt = (ordersForDebt || []).reduce((sum, o) => sum + ((o as any).final_price || 0), 0);
 
-          for (const orderId of req.lunch_order_ids) {
-            const { data: existingTx } = await supabase
-              .from('transactions')
-              .select('id, metadata')
-              .eq('type', 'purchase')
-              .contains('metadata', { lunch_order_id: orderId })
-              .maybeSingle();
+          // 2. Sumar todos los vouchers APROBADOS del mismo alumno que cubran estas órdenes
+          const { data: relatedVouchers } = await supabase
+            .from('recharge_requests')
+            .select('id, amount, lunch_order_ids')
+            .eq('student_id', req.student_id)
+            .eq('request_type', 'lunch_payment')
+            .eq('status', 'approved');
 
-            if (existingTx) {
-              await supabase
-                .from('transactions')
-                .update({
-                  payment_status: 'paid',
-                  payment_method: req.payment_method,
-                  metadata: { ...(existingTx.metadata || {}), ...paymentMeta, last_payment_rejected: false },
-                })
-                .eq('id', existingTx.id);
-            }
-          }
+          const orderIdSet = new Set(req.lunch_order_ids);
+          const relatedApproved = (relatedVouchers || []).filter((v: any) =>
+            (v.lunch_order_ids || []).some((id: string) => orderIdSet.has(id))
+          );
+          totalApproved = relatedApproved.reduce((sum, v: any) => sum + (v.amount || 0), 0);
 
-          // Solo confirmar órdenes que NO están canceladas
-          if (activeOrderIds.length > 0) {
-            await supabase
-              .from('lunch_orders')
-              .update({ status: 'confirmed' })
-              .in('id', activeOrderIds);
-          }
+          // 3. ¿El total acumulado cubre la deuda? (tolerancia de S/0.05 por redondeos)
+          fullyPaid = totalApproved >= totalDebt - 0.05;
         }
 
-        // B) Manejar paid_transaction_ids (transacciones directas sin lunch_order)
-        if (req.paid_transaction_ids && req.paid_transaction_ids.length > 0) {
-          // Filtrar IDs que ya fueron manejados por lunch_order_ids
-          const alreadyHandled = new Set<string>();
-          if (req.lunch_order_ids) {
+        if (fullyPaid) {
+          // ── PAGO COMPLETO: marcar órdenes y transacciones como pagadas ──
+
+          // A) Manejar lunch_order_ids (si hay)
+          if (req.lunch_order_ids && req.lunch_order_ids.length > 0) {
+            const { data: currentOrders } = await supabase
+              .from('lunch_orders')
+              .select('id, status, is_cancelled')
+              .in('id', req.lunch_order_ids);
+
+            const activeOrderIds = (currentOrders || [])
+              .filter(o => !o.is_cancelled && o.status !== 'cancelled')
+              .map(o => o.id);
+
             for (const orderId of req.lunch_order_ids) {
-              const { data: ltx } = await supabase
+              const { data: existingTx } = await supabase
                 .from('transactions')
-                .select('id')
+                .select('id, metadata')
+                .eq('type', 'purchase')
                 .contains('metadata', { lunch_order_id: orderId })
                 .maybeSingle();
-              if (ltx) alreadyHandled.add(ltx.id);
+
+              if (existingTx) {
+                await supabase
+                  .from('transactions')
+                  .update({
+                    payment_status: 'paid',
+                    payment_method: req.payment_method,
+                    metadata: { ...(existingTx.metadata || {}), ...paymentMeta, last_payment_rejected: false },
+                  })
+                  .eq('id', existingTx.id);
+              }
+            }
+
+            if (activeOrderIds.length > 0) {
+              await supabase
+                .from('lunch_orders')
+                .update({ status: 'confirmed' })
+                .in('id', activeOrderIds);
             }
           }
 
-          const remainingTxIds = req.paid_transaction_ids.filter(id => !alreadyHandled.has(id));
+          // B) Manejar paid_transaction_ids (transacciones directas sin lunch_order)
+          if (req.paid_transaction_ids && req.paid_transaction_ids.length > 0) {
+            const alreadyHandled = new Set<string>();
+            if (req.lunch_order_ids) {
+              for (const orderId of req.lunch_order_ids) {
+                const { data: ltx } = await supabase
+                  .from('transactions')
+                  .select('id')
+                  .contains('metadata', { lunch_order_id: orderId })
+                  .maybeSingle();
+                if (ltx) alreadyHandled.add(ltx.id);
+              }
+            }
 
-          if (remainingTxIds.length > 0) {
-            // Obtener metadata existente y actualizar cada transacción
+            const remainingTxIds = req.paid_transaction_ids.filter(id => !alreadyHandled.has(id));
             for (const txId of remainingTxIds) {
               const { data: existingTx } = await supabase
                 .from('transactions')
@@ -346,13 +376,21 @@ export const VoucherApproval = () => {
               }
             }
           }
-        }
 
-        const label = isDebtPayment ? 'Pago de deuda aprobado' : 'Pago de almuerzo aprobado';
-        toast({
-          title: `✅ ${label}`,
-          description: `Se confirmó el pago de S/ ${req.amount.toFixed(2)} de ${req.students?.full_name || 'el alumno'}.`,
-        });
+          const label = isDebtPayment ? 'Pago de deuda aprobado' : 'Pago de almuerzo aprobado ✔';
+          toast({
+            title: `✅ ${label}`,
+            description: `Se confirmó el pago total de S/ ${req.amount.toFixed(2)} de ${req.students?.full_name || 'el alumno'}.`,
+          });
+
+        } else {
+          // ── PAGO PARCIAL: voucher aprobado, órdenes siguen pendientes hasta cubrir el total ──
+          const falta = Math.max(0, totalDebt - totalApproved);
+          toast({
+            title: '✅ Comprobante parcial aprobado',
+            description: `S/ ${totalApproved.toFixed(2)} de S/ ${totalDebt.toFixed(2)} recibidos de ${req.students?.full_name || 'el alumno'}. Falta S/ ${falta.toFixed(2)} para confirmar el almuerzo.`,
+          });
+        }
       } else {
         // ── RECARGA DE SALDO ──
         const { error: txErr } = await supabase.from('transactions').insert({
