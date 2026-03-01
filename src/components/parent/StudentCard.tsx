@@ -13,7 +13,8 @@ import {
   Camera,
   Info,
   TrendingDown,
-  RefreshCw
+  RefreshCw,
+  Pencil
 } from 'lucide-react';
 import {
   Popover,
@@ -47,6 +48,7 @@ interface StudentCardProps {
   onViewMenu: () => void;
   onOpenSettings: () => void;
   onPhotoClick: () => void;
+  onEdit?: () => void;
 }
 
 export function StudentCard({
@@ -58,6 +60,7 @@ export function StudentCard({
   onViewMenu,
   onOpenSettings,
   onPhotoClick,
+  onEdit,
 }: StudentCardProps) {
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
@@ -165,9 +168,20 @@ export function StudentCard({
           </div>
           
           <div className="flex-1 pt-1">
-            <h3 className="text-xl font-normal text-stone-800 leading-tight group-hover:text-emerald-700 transition-colors tracking-wide">
-              {student.full_name}
-            </h3>
+            <div className="flex items-start gap-1.5">
+              <h3 className="text-xl font-normal text-stone-800 leading-tight group-hover:text-emerald-700 transition-colors tracking-wide flex-1">
+                {student.full_name}
+              </h3>
+              {onEdit && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                  title="Editar datos"
+                  className="mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-emerald-50/60 border border-transparent hover:border-emerald-200/50 transition-all active:scale-90 flex-shrink-0"
+                >
+                  <Pencil className="h-3.5 w-3.5 text-stone-400 hover:text-emerald-600 transition-colors" />
+                </button>
+              )}
+            </div>
             {student.school?.name && (
               <p className="text-xs font-semibold text-emerald-700 mt-1.5 tracking-wide">
                 🏫 {student.school.name}

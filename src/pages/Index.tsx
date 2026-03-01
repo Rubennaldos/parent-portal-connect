@@ -48,6 +48,7 @@ import { LunchOrderCalendar } from '@/components/parent/LunchOrderCalendar';
 import { UnifiedLunchCalendarV2 } from '@/components/lunch/UnifiedLunchCalendarV2';
 import { ParentLunchOrders } from '@/components/parent/ParentLunchOrders';
 import { ParentDataForm } from '@/components/parent/ParentDataForm';
+import { EditStudentModal } from '@/components/parent/EditStudentModal';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 
 interface Student {
@@ -63,6 +64,8 @@ interface Student {
   section: string;
   is_active: boolean;
   school_id?: string;
+  level_id?: string | null;
+  classroom_id?: string | null;
   free_account?: boolean;
   school?: { id: string; name: string } | null;
 }
@@ -118,6 +121,8 @@ const Index = () => {
   const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
   const [showPhotoConsent, setShowPhotoConsent] = useState(false);
+  const [showEditStudent, setShowEditStudent] = useState(false);
+  const [studentToEdit, setStudentToEdit] = useState<Student | null>(null);
   const [photoConsentAccepted, setPhotoConsentAccepted] = useState(false);
   const [rechargeSuggestedAmount, setRechargeSuggestedAmount] = useState<number | undefined>(undefined);
   const [photoConsentRefresh, setPhotoConsentRefresh] = useState(0); // Para forzar refresh en MoreMenu
@@ -812,7 +817,7 @@ const Index = () => {
                       onViewMenu={() => openMenuModal(student)}
                       onOpenSettings={() => openSettingsModal(student)}
                       onPhotoClick={() => openPhotoModal(student)}
-                      // onViewCalendar={() => openCalendarModal(student)} // Deshabilitado temporalmente
+                      onEdit={() => { setStudentToEdit(student); setShowEditStudent(true); }}
                     />
                   ))}
                 </div>
@@ -1052,6 +1057,20 @@ const Index = () => {
           onLogout={handleLogout} 
         />
       )}
+
+      {/* Modal Editar Estudiante */}
+      <EditStudentModal
+        isOpen={showEditStudent}
+        onClose={() => { setShowEditStudent(false); setStudentToEdit(null); }}
+        onSuccess={() => { setShowEditStudent(false); setStudentToEdit(null); fetchStudents(); }}
+        student={studentToEdit ? {
+          id: studentToEdit.id,
+          full_name: studentToEdit.full_name,
+          school_id: studentToEdit.school_id || '',
+          level_id: studentToEdit.level_id,
+          classroom_id: studentToEdit.classroom_id,
+        } : null}
+      />
 
       {/* Navegación Inferior Fija - Optimizada para móvil */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-stone-200/50 shadow-lg z-50">
