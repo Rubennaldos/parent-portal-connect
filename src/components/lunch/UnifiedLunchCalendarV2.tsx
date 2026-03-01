@@ -585,22 +585,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   }, [wizardStep, wizardCurrentIndex, bulkPreselectedCategory]);
 
-  // ── Auto-confirmar menú en modo automático (bulk "aleatorio") ──
+  // ── Auto-avanzar en modo automático (bulk "rápido") ──
   useEffect(() => {
     if (bulkMenuMode !== 'auto' || !bulkPreselectedCategory) return;
-    if (wizardStep !== 'select_menu' && wizardStep !== 'confirm') return;
 
-    // En modo auto, si estamos en select_menu, seleccionar el primer menú disponible
+    // 1. select_menu → seleccionar el primer menú disponible
     if (wizardStep === 'select_menu' && categoryMenuOptions.length > 0) {
       handleMenuSelect(categoryMenuOptions[0]);
       return;
     }
 
-    // En modo auto, si estamos en confirm, confirmar automáticamente
+    // 2. modifiers → saltar con las selecciones por defecto ya pre-cargadas
+    if (wizardStep === 'modifiers' && selectedMenu && !submitting) {
+      const timer = setTimeout(() => {
+        setWizardStep('confirm');
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+
+    // 3. configurable_select → saltar con las selecciones por defecto ya pre-cargadas
+    if (wizardStep === 'configurable_select' && selectedMenu && !submitting) {
+      const timer = setTimeout(() => {
+        setWizardStep('confirm');
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+
+    // 4. confirm → confirmar automáticamente
     if (wizardStep === 'confirm' && selectedMenu && !submitting) {
       const timer = setTimeout(() => {
         handleConfirmOrder();
-      }, 200);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [wizardStep, bulkMenuMode, bulkPreselectedCategory, categoryMenuOptions, selectedMenu, submitting]);
@@ -1185,7 +1200,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     const { availableDates, categories } = getAvailableBulkDates();
 
     if (availableDates.length === 0) {
-      toast({ variant: 'destructive', title: 'Sin días disponibles', description: 'No hay días disponibles para pedir este mes.' });
+      toast({
+        title: '📅 Sin días por pedir',
+        description: 'Todos los días disponibles de este mes ya tienen pedido. Puedes avanzar al siguiente mes con las flechas del calendario.',
+      });
       return;
     }
 
@@ -2207,7 +2225,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   return (
     <div className="space-y-4">
       {/* Botón "Pedir todo el mes" + Continuar progreso */}
-      {userType === 'parent' && selectedStudent && menus.size > 0 && (
+      {userType === 'parent' && selectedStudent && (
         <div className="flex flex-col sm:flex-row gap-2">
           {/* Restaurar progreso guardado */}
           {(() => {
