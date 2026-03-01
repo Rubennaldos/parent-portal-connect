@@ -36,6 +36,7 @@ import * as XLSX from 'xlsx';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
+import { LunchDeliveryDashboard } from '@/components/lunch/LunchDeliveryDashboard';
 
 interface LunchOrder {
   id: string;
@@ -148,6 +149,10 @@ export default function LunchOrders() {
   } | null>(null);
   const [lunchConfig, setLunchConfig] = useState<{ cancellation_deadline_time?: string; cancellation_deadline_days?: number } | null>(null);
 
+  // 🍽️ Modo entrega de almuerzos
+  const [showDelivery, setShowDelivery] = useState(false);
+  const [adminSchoolId, setAdminSchoolId] = useState<string | null>(null);
+
   // ── Modal de exportación ──────────────────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
@@ -216,11 +221,11 @@ export default function LunchOrders() {
       const schoolId = profileData?.school_id;
 
       if (schoolId) {
+        setAdminSchoolId(schoolId);
         // Si el usuario tiene una sede asignada y NO puede ver todas las sedes, 
         // configurar automáticamente el filtro a su sede
         if (!canViewAllSchools) {
           setSelectedSchool(schoolId);
-          console.log('🏫 Admin de sede: filtrando automáticamente por su sede:', schoolId);
         }
 
         const { data: config, error: configError } = await supabase
@@ -1749,6 +1754,17 @@ export default function LunchOrders() {
     );
   }
 
+  // 🍽️ Modo entrega
+  if (showDelivery && adminSchoolId && user) {
+    return (
+      <LunchDeliveryDashboard
+        schoolId={adminSchoolId}
+        userId={user.id}
+        onClose={() => { setShowDelivery(false); fetchOrders(); }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1762,6 +1778,15 @@ export default function LunchOrders() {
         </div>
 
         <div className="flex gap-2">
+          {adminSchoolId && (
+            <Button
+              onClick={() => setShowDelivery(true)}
+              className="gap-2 bg-orange-600 hover:bg-orange-700 text-white shadow-lg"
+            >
+              <UtensilsCrossed className="h-4 w-4" />
+              🍽️ Iniciar Entrega
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowExportModal(true)}
