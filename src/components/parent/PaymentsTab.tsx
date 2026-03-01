@@ -77,28 +77,13 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
       const debtsData: StudentDebt[] = [];
 
       for (const student of students) {
-        const { data: delayData } = await supabase
-          .from('purchase_visibility_delay')
-          .select('delay_days')
-          .eq('school_id', student.school_id)
-          .maybeSingle();
-
-        const delayDays = delayData?.delay_days ?? 2;
-
-        let query = supabase
+        // ✅ Sin delay — se muestra en tiempo real
+        const { data: transactions, error: transError } = await supabase
           .from('transactions')
           .select('*')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .eq('payment_status', 'pending');
-
-        if (delayDays > 0) {
-          const cutoffDate = new Date();
-          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-          query = query.lte('created_at', cutoffDate.toISOString());
-        }
-
-        const { data: transactions, error: transError } = await query
+          .eq('payment_status', 'pending')
           .order('created_at', { ascending: false });
 
         if (transError) throw transError;

@@ -244,6 +244,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const [submitting, setSubmitting] = useState(false);
   const isSubmittingRef = useRef(false); // 🔒 Lock sincrónico anti doble-clic
 
+  // ── Confirmación de cancelación ──
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  // ── "Pedir todo el mes" ──
+  const [showBulkOrderModal, setShowBulkOrderModal] = useState(false);
+  const [bulkCategory, setBulkCategory] = useState<LunchCategory | null>(null);
+  const [bulkAvailableCategories, setBulkAvailableCategories] = useState<LunchCategory[]>([]);
+  const [bulkDaysCount, setBulkDaysCount] = useState(0);
+  const [bulkEstimatedTotal, setBulkEstimatedTotal] = useState(0);
+  const [bulkDateRange, setBulkDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
+
   // ==========================================
   // COMPUTED
   // ==========================================
@@ -287,7 +298,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const endStr = format(end, 'yyyy-MM-dd');
 
       // 1. Configuration - FIXED: correct column names from DB
-      console.log(`🏫 [V2-DEBUG] effectiveSchoolId = ${effectiveSchoolId}`);
       const { data: configData, error: configError } = await supabase
         .from('lunch_configuration')
         .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days, cancellation_deadline_time, cancellation_deadline_days')
@@ -295,18 +305,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         .maybeSingle();
 
       if (configError) {
-        console.error('❌ [V2-DEBUG] Error loading config:', configError);
-      }
-      console.log('⚙️ [V2-DEBUG] Config loaded:', JSON.stringify(configData));
-      if (configData) {
-        console.log(`  ⏰ order_deadline_time: ${configData.order_deadline_time}`);
-        console.log(`  📅 order_deadline_days: ${configData.order_deadline_days}`);
-        console.log(`  🟢 orders_enabled: ${configData.orders_enabled}`);
-        const peruNowDebug = getPeruNow();
-        console.log(`  🕐 Peru Now: ${peruNowDebug.toString()}`);
-        console.log(`  🕐 Peru Date: ${getPeruTodayStr()}`);
-      } else {
-        console.warn('⚠️ [V2-DEBUG] NO CONFIG found for school', effectiveSchoolId);
+        console.error('Error loading config:', configError);
       }
       setConfig(configData);
 
@@ -340,7 +339,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         //    los menús y pedidos existentes deben seguir siendo visibles.
 
         if (catError) {
-          console.error('❌ [V2-DEBUG] Error loading categories:', catError);
+          console.error('Error loading categories:', catError);
         }
 
         // Filter out kitchen-sale categories (POS products, not lunch menus)
@@ -348,9 +347,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           (cat: any) => cat.is_kitchen_sale !== true
         );
 
-        console.log(`📦 [V2-DEBUG] Categories: ${categoriesData?.length || 0} total, ${lunchCategories.length} after filtering (removed kitchen_sale). Active filter NOT applied.`);
         lunchCategories.forEach((cat: any) => {
-          console.log(`  📂 Category: ${cat.name} | school_id: ${cat.school_id} | target: ${cat.target_type} | active: ${cat.is_active} | kitchen: ${cat.is_kitchen_sale} | mode: ${cat.menu_mode || 'standard'}`);
           categoriesMap.set(cat.id, { ...cat, menu_mode: cat.menu_mode || 'standard' });
         });
       }
@@ -375,7 +372,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         existing.push(menuWithCat);
         menusMap.set(menu.date, existing);
       });
-      console.log(`🍽️ [V2-DEBUG] Menus: ${menusIncluded} included, ${menusSkipped} skipped (category not in school). Days with menus: ${menusMap.size}`);
       setMenus(menusMap);
 
       // 4. Special days
@@ -437,15 +433,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
    * so the comparison is always correct regardless of the user's actual timezone.
    */
   const canOrderForDate = useCallback((dateStr: string): { canOrder: boolean; reason?: string } => {
-    if (!config) {
-      console.log(`🔓 [V2-DEADLINE] ${dateStr}: No config → allowed`);
-      return { canOrder: true };
-    }
+    if (!config) return { canOrder: true };
     if (!config.orders_enabled) return { canOrder: false, reason: 'Pedidos deshabilitados' };
-    if (!config.order_deadline_time) {
-      console.log(`🔓 [V2-DEADLINE] ${dateStr}: No deadline time → allowed`);
-      return { canOrder: true };
-    }
+    if (!config.order_deadline_time) return { canOrder: true };
 
     const peruNow = getPeruNow();
     const [year, month, day] = dateStr.split('-').map(Number);
@@ -460,7 +450,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     const deadlineDate = new Date(year, month - 1, day - deadlineDays, hours, minutes, 0, 0);
 
     const canOrder = peruNow <= deadlineDate;
-    console.log(`🔍 [V2-DEADLINE] ${dateStr}: peruNow=${format(peruNow, 'dd/MM HH:mm')} | deadline=${format(deadlineDate, 'dd/MM HH:mm')} (days=${deadlineDays}, time=${config.order_deadline_time}) | canOrder=${canOrder}`);
 
     if (!canOrder) {
       // Show user-friendly message with the exact deadline
@@ -812,6 +801,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           description: `Ya tienes un pedido de "${selectedCategory.name}" para este día. Puedes cancelarlo primero si deseas cambiarlo.`,
         });
         setSubmitting(false);
+        isSubmittingRef.current = false;
         return;
       }
 
@@ -860,6 +850,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             description: `Ya existe un pedido para esta categoría en este día.`,
           });
           setSubmitting(false);
+          isSubmittingRef.current = false;
           return;
         }
 
@@ -880,6 +871,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             if (retryError.code === '23505') {
               toast({ variant: 'destructive', title: '⚠️ Pedido duplicado', description: 'Ya existe un pedido para esta categoría en este día.' });
               setSubmitting(false);
+              isSubmittingRef.current = false;
               return;
             }
             throw retryError;
@@ -977,7 +969,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   };
 
-  const closeWizard = () => {
+  const closeWizard = (force = false) => {
+    // Limpiar progreso guardado
+    if (selectedStudent) {
+      sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
+    }
+
     setWizardStep('idle');
     setWizardDates([]);
     setWizardCurrentIndex(0);
@@ -993,12 +990,204 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setSelectedGarnishes(new Set());
     setConfigPlateGroups([]);
     setConfigSelections([]);
+    setShowCancelConfirm(false);
 
     // Refresh data if any orders were created
     if (ordersCreated > 0) {
       fetchMonthlyData();
     }
     setOrdersCreated(0);
+  };
+
+  // ── Guardar progreso para "Continuar después" ──
+  const saveWizardProgress = () => {
+    if (!selectedStudent) return;
+    const remainingDates = wizardDates.slice(wizardCurrentIndex);
+    if (remainingDates.length === 0) return;
+
+    const progress = {
+      dates: remainingDates,
+      studentId: selectedStudent.id,
+      ordersCreatedSoFar: ordersCreated,
+      createdOrderIds,
+      totalOrderAmount,
+      orderDescriptions,
+      savedAt: new Date().toISOString(),
+    };
+    sessionStorage.setItem(`lunch_wizard_${selectedStudent.id}`, JSON.stringify(progress));
+  };
+
+  // ── Restaurar progreso guardado ──
+  const restoreWizardProgress = () => {
+    if (!selectedStudent) return false;
+    const saved = sessionStorage.getItem(`lunch_wizard_${selectedStudent.id}`);
+    if (!saved) return false;
+
+    try {
+      const progress = JSON.parse(saved);
+      // Verificar que no sea muy viejo (max 24h)
+      const savedAt = new Date(progress.savedAt);
+      const hoursDiff = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
+      if (hoursDiff > 24) {
+        sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
+        return false;
+      }
+
+      // Filtrar solo fechas que aún se pueden pedir
+      const validDates = (progress.dates as string[]).filter(d => canOrderForDate(d).canOrder);
+      if (validDates.length === 0) {
+        sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
+        return false;
+      }
+
+      setWizardDates(validDates);
+      setWizardCurrentIndex(0);
+      setWizardStep('category');
+      setSelectedCategory(null);
+      setSelectedMenu(null);
+      setCategoryMenuOptions([]);
+      setQuantity(1);
+      setOrdersCreated(progress.ordersCreatedSoFar || 0);
+      setCreatedOrderIds(progress.createdOrderIds || []);
+      setTotalOrderAmount(progress.totalOrderAmount || 0);
+      setOrderDescriptions(progress.orderDescriptions || []);
+      return true;
+    } catch {
+      sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
+      return false;
+    }
+  };
+
+  // ── Manejar intento de cancelar el wizard ──
+  const handleCancelWizard = () => {
+    // Si ya se crearon pedidos o hay progreso, mostrar confirmación
+    if (ordersCreated > 0 || wizardCurrentIndex > 0) {
+      setShowCancelConfirm(true);
+    } else {
+      closeWizard();
+    }
+  };
+
+  // ── Continuar después: guardar y cerrar ──
+  const handleContinueLater = () => {
+    saveWizardProgress();
+    setShowCancelConfirm(false);
+
+    // Si hay pedidos ya creados, mostrar el modal de pago
+    if (ordersCreated > 0 && userType === 'parent' && totalOrderAmount > 0) {
+      setWizardStep('done');
+    } else {
+      setWizardStep('idle');
+      setWizardDates([]);
+      setWizardCurrentIndex(0);
+      setSelectedDates(new Set());
+      if (ordersCreated > 0) fetchMonthlyData();
+      setOrdersCreated(0);
+      toast({
+        title: '💾 Progreso guardado',
+        description: 'Puedes continuar con tu pedido cuando quieras.',
+      });
+    }
+  };
+
+  // ── "Pedir todo el mes" ──
+  const handleBulkOrderMonth = () => {
+    const peruTodayStr = getPeruTodayStr();
+    const start = startOfMonth(currentDate);
+    const end = endOfMonth(currentDate);
+    const days = eachDayOfInterval({ start, end });
+
+    // Encontrar días disponibles desde hoy en adelante
+    const availableDates: string[] = [];
+    const categoriesSet = new Map<string, LunchCategory>();
+
+    for (const date of days) {
+      const dateStr = format(date, 'yyyy-MM-dd');
+      if (dateStr < peruTodayStr) continue; // Solo futuro
+      
+      const dayMenus = menus.get(dateStr);
+      if (!dayMenus || dayMenus.length === 0) continue;
+      
+      // Verificar que no tenga pedidos existentes
+      const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
+      if (hasOrders) continue;
+
+      // Verificar deadline
+      const validation = canOrderForDate(dateStr);
+      if (!validation.canOrder) continue;
+
+      // Verificar día especial
+      if (specialDays.has(dateStr)) continue;
+
+      availableDates.push(dateStr);
+
+      // Recopilar categorías disponibles
+      dayMenus.forEach(m => {
+        if (m.category_id && m.category) {
+          categoriesSet.set(m.category_id, m.category);
+        }
+      });
+    }
+
+    if (availableDates.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin días disponibles', description: 'No hay días disponibles para pedir este mes.' });
+      return;
+    }
+
+    setBulkAvailableCategories(Array.from(categoriesSet.values()));
+    setBulkDaysCount(availableDates.length);
+    setBulkCategory(null);
+    setBulkDateRange({
+      from: availableDates[0],
+      to: availableDates[availableDates.length - 1],
+    });
+    setBulkEstimatedTotal(0);
+    setShowBulkOrderModal(true);
+  };
+
+  const confirmBulkOrder = () => {
+    if (!bulkCategory) return;
+
+    const peruTodayStr = getPeruTodayStr();
+    const start = startOfMonth(currentDate);
+    const end = endOfMonth(currentDate);
+    const days = eachDayOfInterval({ start, end });
+
+    // Filtrar días que tienen la categoría seleccionada
+    const validDates: string[] = [];
+    for (const date of days) {
+      const dateStr = format(date, 'yyyy-MM-dd');
+      if (dateStr < peruTodayStr) continue;
+      
+      const dayMenus = menus.get(dateStr);
+      if (!dayMenus || dayMenus.length === 0) continue;
+      
+      const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
+      if (hasOrders) continue;
+
+      const validation = canOrderForDate(dateStr);
+      if (!validation.canOrder) continue;
+
+      if (specialDays.has(dateStr)) continue;
+
+      // Verificar que este día tenga un menú de la categoría seleccionada
+      const hasCategoryMenu = dayMenus.some(m => m.category_id === bulkCategory.id);
+      if (!hasCategoryMenu) continue;
+
+      validDates.push(dateStr);
+    }
+
+    if (validDates.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin días', description: `No hay días con "${bulkCategory.name}" disponible.` });
+      return;
+    }
+
+    // Seleccionar todos los días y empezar el wizard
+    setSelectedDates(new Set(validDates));
+    setShowBulkOrderModal(false);
+
+    // Iniciar el wizard directamente con esos días
+    startWizard(validDates);
   };
 
   // ==========================================
@@ -1170,8 +1359,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     const isLastDay = wizardCurrentIndex >= totalDays - 1;
 
     return (
-      <Dialog open={wizardStep !== 'idle'} onOpenChange={(open) => !open && closeWizard()}>
-        <DialogContent className="max-w-lg sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={wizardStep !== 'idle' && !showCancelConfirm} onOpenChange={(open) => { if (!open) handleCancelWizard(); }}>
+        <DialogContent className="max-w-lg sm:max-w-2xl max-h-[90vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => { e.preventDefault(); handleCancelWizard(); }}>
           {/* STEP: DONE */}
           {wizardStep === 'done' && (
             <>
@@ -1261,6 +1450,21 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   {wizardStep === 'modifiers' && '✨ Personaliza tu pedido'}
                   {wizardStep === 'confirm' && 'Selecciona la cantidad y confirma tu pedido'}
                 </DialogDescription>
+                {/* Barra de progreso multi-día */}
+                {totalDays > 1 && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>{ordersCreated} pedido(s) registrado(s)</span>
+                      <span>{wizardCurrentIndex + 1}/{totalDays}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${((wizardCurrentIndex + 1) / totalDays) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </DialogHeader>
 
               <div className="space-y-4 mt-4">
@@ -1795,7 +1999,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     ← {configPlateGroups.length > 0 ? 'Cambiar opciones' : menuModifierGroups.length > 0 ? 'Cambiar personalización' : categoryMenuOptions.length > 1 ? 'Cambiar menú' : 'Cambiar categoría'}
                   </Button>
                 )}
-                <Button variant="ghost" onClick={closeWizard} disabled={submitting}>
+                <Button variant="ghost" onClick={handleCancelWizard} disabled={submitting}>
                   Cancelar
                 </Button>
                 {wizardStep === 'confirm' && (
@@ -1807,7 +2011,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     {submitting ? (
                       <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Procesando...</>
                     ) : isLastDay ? (
-                      <><CheckCircle2 className="h-4 w-4 mr-2" />Siguiente</>
+                      <><CheckCircle2 className="h-4 w-4 mr-2" />Confirmar Pedido</>
                     ) : (
                       <><CheckCircle2 className="h-4 w-4 mr-2" />Siguiente →</>
                     )}
@@ -1961,13 +2165,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   return (
     <div className="space-y-4">
-      {/* DEBUG INFO BANNER - Shows config being used (helps diagnose issues) */}
-      {config && (
-        <div className="text-[10px] text-gray-400 bg-gray-50 rounded px-2 py-1 flex flex-wrap gap-x-3">
-          <span>🏫 Sede: {effectiveSchoolId?.substring(0, 8)}...</span>
-          <span>⏰ Límite: {config.order_deadline_time?.substring(0, 5)} | {config.order_deadline_days ?? '?'}d antes</span>
-          <span>🕐 Perú: {format(getPeruNow(), 'dd/MM HH:mm')}</span>
-          <span>📋 Menús: {menus.size} días</span>
+      {/* Botón "Pedir todo el mes" + Continuar progreso */}
+      {userType === 'parent' && selectedStudent && menus.size > 0 && (
+        <div className="flex flex-col sm:flex-row gap-2">
+          {/* Restaurar progreso guardado */}
+          {(() => {
+            const saved = selectedStudent ? sessionStorage.getItem(`lunch_wizard_${selectedStudent.id}`) : null;
+            if (!saved) return null;
+            try {
+              const progress = JSON.parse(saved);
+              const hoursDiff = (Date.now() - new Date(progress.savedAt).getTime()) / (1000 * 60 * 60);
+              if (hoursDiff > 24) return null;
+              const remainingDays = (progress.dates as string[]).length;
+              return (
+                <Button
+                  onClick={() => restoreWizardProgress()}
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold flex-1"
+                >
+                  <CalendarIcon className="h-4 w-4 mr-2" />
+                  Continuar pedido ({remainingDays} días pendientes)
+                </Button>
+              );
+            } catch { return null; }
+          })()}
+          <Button
+            onClick={handleBulkOrderMonth}
+            variant="outline"
+            className="border-purple-300 text-purple-700 hover:bg-purple-50 font-semibold flex-1"
+          >
+            <CalendarIcon className="h-4 w-4 mr-2" />
+            📅 Pedir todo el mes
+          </Button>
         </div>
       )}
 
@@ -2157,6 +2385,168 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           </div>
         </CardContent>
       </Card>
+
+      {/* CANCEL CONFIRMATION DIALOG */}
+      <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+        <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              ¿Deseas cancelar el proceso?
+            </DialogTitle>
+            <DialogDescription>
+              {ordersCreated > 0
+                ? `Ya registraste ${ordersCreated} pedido(s). Los pedidos ya creados se mantendrán.`
+                : 'Tu progreso de selección se perderá.'
+              }
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 mt-4">
+            {/* Opción 1: Continuar después */}
+            <Button
+              onClick={handleContinueLater}
+              className="bg-amber-500 hover:bg-amber-600 text-white font-bold w-full"
+            >
+              💾 Continuar después
+            </Button>
+            {/* Opción 2: Cancelar todo */}
+            <Button
+              variant="destructive"
+              onClick={() => { setShowCancelConfirm(false); closeWizard(true); }}
+              className="w-full"
+            >
+              🗑️ Cancelar todo el proceso
+            </Button>
+            {/* Opción 3: Volver al wizard */}
+            <Button
+              variant="outline"
+              onClick={() => setShowCancelConfirm(false)}
+              className="w-full"
+            >
+              ← Volver al pedido
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* BULK ORDER MONTH MODAL */}
+      <Dialog open={showBulkOrderModal} onOpenChange={setShowBulkOrderModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              📅 Pedir todo el mes
+            </DialogTitle>
+            <DialogDescription>
+              Selecciona la categoría para pedir todos los días disponibles del mes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            {/* Info de días */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-800">
+                <strong>{bulkDaysCount} días disponibles</strong> del{' '}
+                {bulkDateRange.from && format(getPeruDateOnly(bulkDateRange.from), "d 'de' MMMM", { locale: es })} al{' '}
+                {bulkDateRange.to && format(getPeruDateOnly(bulkDateRange.to), "d 'de' MMMM", { locale: es })}
+              </p>
+              <p className="text-xs text-blue-600 mt-1">
+                Solo incluye días con menú disponible, sin pedidos existentes y dentro del plazo.
+              </p>
+            </div>
+
+            {/* Selector de categoría */}
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-gray-700">Elige la categoría:</p>
+              {bulkAvailableCategories.map(cat => {
+                const isSelected = bulkCategory?.id === cat.id;
+                const IconComponent = ICON_MAP[cat.icon || 'utensils'] || UtensilsCrossed;
+                const price = cat.price || config?.lunch_price || 0;
+
+                // Contar días que tienen esta categoría
+                const peruTodayStr = getPeruTodayStr();
+                const start = startOfMonth(currentDate);
+                const end = endOfMonth(currentDate);
+                const allDays = eachDayOfInterval({ start, end });
+                let daysWithCat = 0;
+                for (const date of allDays) {
+                  const dateStr = format(date, 'yyyy-MM-dd');
+                  if (dateStr < peruTodayStr) continue;
+                  const dayMenus = menus.get(dateStr);
+                  if (!dayMenus) continue;
+                  const hasOrders = existingOrders.some(o => o.date === dateStr && !o.is_cancelled);
+                  if (hasOrders) continue;
+                  if (!canOrderForDate(dateStr).canOrder) continue;
+                  if (specialDays.has(dateStr)) continue;
+                  if (dayMenus.some(m => m.category_id === cat.id)) daysWithCat++;
+                }
+
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      setBulkCategory(cat);
+                      setBulkEstimatedTotal(price * daysWithCat);
+                      setBulkDaysCount(daysWithCat);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left",
+                      isSelected
+                        ? "border-purple-500 bg-purple-50"
+                        : "border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
+                    )}
+                  >
+                    <div
+                      className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ backgroundColor: (cat.color || '#8B5CF6') + '20' }}
+                    >
+                      <IconComponent className="h-5 w-5" style={{ color: cat.color || '#8B5CF6' }} />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-bold">{cat.name}</p>
+                      <p className="text-xs text-gray-500">{daysWithCat} días disponibles</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-gray-900">S/ {price.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500">por día</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Advertencia y total */}
+            {bulkCategory && (
+              <>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-sm text-amber-800 font-semibold">⚠️ Atención</p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Estás seleccionando <strong>{bulkDaysCount} días</strong> de la categoría{' '}
+                    <strong>"{bulkCategory.name}"</strong>. Se te pedirá confirmar cada día 
+                    y elegir el plato específico cuando haya varias opciones.
+                  </p>
+                </div>
+                <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 flex justify-between items-center">
+                  <span className="text-lg font-bold text-gray-900">Total estimado:</span>
+                  <span className="text-2xl font-black text-green-700">S/ {bulkEstimatedTotal.toFixed(2)}</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowBulkOrderModal(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmBulkOrder}
+              disabled={!bulkCategory}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              Empezar Pedido ({bulkDaysCount} días)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* PAYMENT MODAL (parents only) */}
       {userType === 'parent' && selectedStudent && (

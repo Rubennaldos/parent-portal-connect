@@ -308,83 +308,26 @@ const Index = () => {
     }
   };
 
-  // ✅ Calcular deuda de cada estudiante respetando el delay
+  // ✅ Calcular deuda de cada estudiante (sin delay — se muestra en tiempo real)
   const calculateStudentDebts = async (studentsData: Student[]) => {
     const debtsMap: Record<string, number> = {};
     
     for (const student of studentsData) {
-      // Solo calcular deuda para estudiantes con cuenta libre
       if (student.free_account === false) {
         debtsMap[student.id] = 0;
         continue;
       }
 
       try {
-        // Obtener delay configurado para la sede del estudiante
-        console.log('🔍 Buscando delay para:', {
-          studentName: student.full_name,
-          schoolId: student.school_id
-        });
-
-        const { data: delayData, error: delayError } = await supabase
-          .from('purchase_visibility_delay')
-          .select('delay_days')
-          .eq('school_id', student.school_id)
-          .maybeSingle();
-
-        console.log('📦 Resultado de búsqueda de delay:', {
-          studentName: student.full_name,
-          delayData,
-          delayError,
-          valorFinal: delayData?.delay_days ?? 2
-        });
-
-        const delayDays = delayData?.delay_days ?? 2;
-        
-        // ✅ Construir query base
-        let query = supabase
+        const { data: transactions } = await supabase
           .from('transactions')
           .select('amount')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
           .eq('payment_status', 'pending');
 
-        // ✅ Solo aplicar filtro de fecha si delay > 0
-        if (delayDays > 0) {
-          const cutoffDate = new Date();
-          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-          const cutoffDateISO = cutoffDate.toISOString();
-
-          console.log('📅 Filtro de delay aplicado (StudentCard):', {
-            studentName: student.full_name,
-            schoolId: student.school_id,
-            delayDays,
-            hoy: new Date().toLocaleString('es-PE'),
-            cutoffDate: cutoffDate.toLocaleString('es-PE'),
-            cutoffDateISO,
-            message: `Solo deudas HASTA ${cutoffDate.toLocaleDateString('es-PE')}`
-          });
-
-          query = query.lte('created_at', cutoffDateISO);
-        } else {
-          console.log('⚡ Modo EN VIVO (StudentCard) - Sin filtro de delay:', {
-            studentName: student.full_name,
-            schoolId: student.school_id,
-            message: 'Mostrando TODAS las deudas pendientes'
-          });
-        }
-
-        // ✅ Ejecutar query
-        const { data: transactions } = await query;
-
         const totalDebt = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
         debtsMap[student.id] = totalDebt;
-        
-        console.log('💰 Deuda calculada (StudentCard):', {
-          studentName: student.full_name,
-          totalDebt,
-          transaccionesPendientes: transactions?.length || 0
-        });
       } catch (error) {
         console.error(`Error calculating debt for student ${student.id}:`, error);
         debtsMap[student.id] = 0;
@@ -395,14 +338,13 @@ const Index = () => {
   };
 
   // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
-  // ✅ FIX: Ahora respeta el delay de visibilidad por sede, igual que PaymentsTab
+  // ✅ Sin delay — se muestra en tiempo real
   const fetchPendingPaymentsCount = async () => {
     if (!user) return;
     try {
-      // Obtener todos los estudiantes del padre con su school_id
       const { data: studentsList } = await supabase
         .from('students')
-        .select('id, school_id')
+        .select('id')
         .eq('parent_id', user.id)
         .eq('is_active', true);
 
@@ -411,46 +353,18 @@ const Index = () => {
         return;
       }
 
-      // Obtener delays por sede (en un solo query)
-      const schoolIds = [...new Set(studentsList.map(s => s.school_id).filter(Boolean))];
-      const delayMap = new Map<string, number>();
-      
-      if (schoolIds.length > 0) {
-        const { data: delayData } = await supabase
-          .from('purchase_visibility_delay')
-          .select('school_id, delay_days')
-          .in('school_id', schoolIds);
-        
-        delayData?.forEach((d: any) => delayMap.set(d.school_id, d.delay_days));
+      const studentIds = studentsList.map(s => s.id);
+
+      const { count, error } = await supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .in('student_id', studentIds)
+        .eq('type', 'purchase')
+        .eq('payment_status', 'pending');
+
+      if (!error) {
+        setPendingPaymentsCount(count || 0);
       }
-
-      // Contar transacciones pendientes por estudiante respetando el delay
-      let totalCount = 0;
-      
-      for (const student of studentsList) {
-        const delayDays = delayMap.get(student.school_id) ?? 2; // Default: 2 días
-        
-        let query = supabase
-          .from('transactions')
-          .select('id', { count: 'exact', head: true })
-          .eq('student_id', student.id)
-          .eq('type', 'purchase')
-          .eq('payment_status', 'pending');
-
-        // Aplicar filtro de delay si > 0
-        if (delayDays > 0) {
-          const cutoffDate = new Date();
-          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
-          query = query.lte('created_at', cutoffDate.toISOString());
-        }
-
-        const { count, error } = await query;
-        if (!error) {
-          totalCount += (count || 0);
-        }
-      }
-
-      setPendingPaymentsCount(totalCount);
     } catch (err) {
       console.error('Error fetching pending payments count:', err);
     }
