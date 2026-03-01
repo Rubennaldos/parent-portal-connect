@@ -141,10 +141,10 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
       // Obtener config de cancelación del colegio
       if (schoolId && !config) {
         const { data: configData } = await supabase
-          .from('lunch_config')
+          .from('lunch_configuration')
           .select('cancellation_deadline_time, cancellation_deadline_days')
           .eq('school_id', schoolId)
-          .single();
+          .maybeSingle();
         if (configData) setConfig(configData);
       }
 
