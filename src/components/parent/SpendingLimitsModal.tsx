@@ -19,7 +19,9 @@ import {
   ShieldAlert,
   Check,
   Wallet,
-  CreditCard
+  CreditCard,
+  UtensilsCrossed,
+  PowerOff
 } from 'lucide-react';
 
 interface SpendingLimitsModalProps {
@@ -62,6 +64,9 @@ export function SpendingLimitsModal({
   const [accountMode, setAccountMode] = useState<'free' | 'prepaid'>('free'); // Por defecto: Cuenta Libre
   const [showModeChangeWarning, setShowModeChangeWarning] = useState(false);
   const [pendingMode, setPendingMode] = useState<'free' | 'prepaid' | null>(null);
+  // ── Desactivar cuenta del kiosco ──
+  const [kioskDisabled, setKioskDisabled] = useState(false);
+  const [showKioskWarning, setShowKioskWarning] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -75,7 +80,7 @@ export function SpendingLimitsModal({
     try {
       const { data, error } = await supabase
         .from('students')
-        .select('limit_type, daily_limit, weekly_limit, monthly_limit, free_account')
+        .select('limit_type, daily_limit, weekly_limit, monthly_limit, free_account, kiosk_disabled')
         .eq('id', studentId)
         .single();
 
@@ -85,6 +90,7 @@ export function SpendingLimitsModal({
       // Cargar la configuración actual del alumno
       setSelectedType(data.limit_type || 'none');
       setAccountMode(data.free_account ? 'free' : 'prepaid');
+      setKioskDisabled(data.kiosk_disabled ?? false);
       // Cargar el monto del tope actual
       if (data.limit_type === 'daily') setLimitAmount(String(data.daily_limit || 0));
       else if (data.limit_type === 'weekly') setLimitAmount(String(data.weekly_limit || 0));
@@ -162,6 +168,7 @@ export function SpendingLimitsModal({
         weekly_limit: selectedType === 'weekly' ? amount : (currentConfig?.weekly_limit || 0),
         monthly_limit: selectedType === 'monthly' ? amount : (currentConfig?.monthly_limit || 0),
         free_account: accountMode === 'free', // true = Cuenta Libre, false = Con Recargas
+        kiosk_disabled: kioskDisabled,
       };
 
       const { error } = await supabase
@@ -475,6 +482,53 @@ export function SpendingLimitsModal({
             </div>
           )}
 
+          {/* ── Desactivar cuenta del kiosco ── */}
+          <div className={`rounded-xl border-2 p-4 transition-all ${
+            kioskDisabled ? 'border-red-300 bg-red-50' : 'border-stone-200 bg-stone-50/50'
+          }`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 flex-1">
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  kioskDisabled ? 'bg-red-100' : 'bg-stone-100'
+                }`}>
+                  {kioskDisabled
+                    ? <PowerOff className="h-4 w-4 text-red-500" />
+                    : <UtensilsCrossed className="h-4 w-4 text-stone-400" />
+                  }
+                </div>
+                <div>
+                  <p className={`font-semibold text-sm ${kioskDisabled ? 'text-red-700' : 'text-stone-700'}`}>
+                    {kioskDisabled ? '🚫 Cuenta del kiosco DESACTIVADA' : 'Desactivar cuenta del kiosco'}
+                  </p>
+                  <p className="text-[11px] text-stone-500 mt-0.5 leading-relaxed">
+                    {kioskDisabled
+                      ? `${studentName} NO puede comprar en el kiosco. Solo puede pedir almuerzos desde el calendario.`
+                      : `${studentName} tiene acceso al kiosco. Desactiva si solo quieres almuerzos.`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!kioskDisabled) {
+                    setShowKioskWarning(true);
+                  } else {
+                    setKioskDisabled(false);
+                  }
+                }}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  kioskDisabled ? 'bg-red-500' : 'bg-stone-200'
+                }`}
+                role="switch"
+                aria-checked={kioskDisabled}
+              >
+                <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition ease-in-out duration-200 ${
+                  kioskDisabled ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+          </div>
+
           {/* Botones */}
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <Button
@@ -571,6 +625,61 @@ export function SpendingLimitsModal({
                 className="h-9 sm:h-10 text-xs font-normal text-stone-400 hover:text-stone-600 hover:bg-stone-50/30 rounded-xl transition-all"
               >
                 Prefiero cambiar a Con Recargas
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Advertencia - Desactivar cuenta kiosco */}
+      <Dialog open={showKioskWarning} onOpenChange={setShowKioskWarning}>
+        <DialogContent className="sm:max-w-md border border-stone-200/50 bg-white shadow-2xl">
+          <DialogHeader className="pb-3">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-14 h-14 bg-red-50 rounded-xl flex items-center justify-center border border-red-200">
+                <PowerOff className="h-7 w-7 text-red-500" />
+              </div>
+              <DialogTitle className="text-xl font-semibold text-stone-800">
+                ¿Desactivar cuenta del kiosco?
+              </DialogTitle>
+              <DialogDescription className="text-sm text-stone-500 px-2">
+                Esta acción afectará las compras de {studentName}
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <Alert className="bg-amber-50 border-amber-200">
+              <AlertCircle className="h-4 w-4 text-amber-600" />
+              <AlertDescription className="text-sm text-amber-800 leading-relaxed">
+                Si desactivas la cuenta del kiosco, <strong>{studentName}</strong> solo podrá pagar 
+                en <strong>efectivo</strong> para cualquier consumo en el kiosco. 
+                Únicamente podrá pedir almuerzo desde el calendario.
+              </AlertDescription>
+            </Alert>
+            <ul className="space-y-2 text-sm text-stone-600 pl-2">
+              <li className="flex items-center gap-2">
+                <UtensilsCrossed className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                Pedidos de almuerzo: <strong>seguirán funcionando</strong>
+              </li>
+              <li className="flex items-center gap-2">
+                <PowerOff className="h-4 w-4 text-red-400 flex-shrink-0" />
+                Compras en el kiosco (POS): <strong>bloqueadas</strong>
+              </li>
+            </ul>
+            <p className="text-xs text-stone-400 text-center">Puedes reactivar la cuenta cuando quieras.</p>
+            <div className="flex flex-col gap-2">
+              <Button
+                onClick={() => { setKioskDisabled(true); setShowKioskWarning(false); }}
+                className="h-11 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl"
+              >
+                Sí, desactivar cuenta del kiosco
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setShowKioskWarning(false)}
+                className="h-10 text-stone-500 hover:text-stone-700 rounded-xl"
+              >
+                Cancelar
               </Button>
             </div>
           </div>

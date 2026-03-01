@@ -1,11 +1,11 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Check, ShieldCheck, Info } from 'lucide-react';
+import { Check, ShieldCheck, Info, UtensilsCrossed, ShoppingBag, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 
 interface FreeAccountOnboardingModalProps {
   open: boolean;
-  onAccept: () => void;
+  onAccept: (kioskDisabled: boolean) => void;
   parentName: string;
 }
 
@@ -15,11 +15,17 @@ export function FreeAccountOnboardingModal({
   parentName
 }: FreeAccountOnboardingModalProps) {
   const [understood, setUnderstood] = useState(false);
+  // 'kiosk' = solo almuerzo (sin cuenta kiosco), 'full' = cuenta libre completa
+  const [accountChoice, setAccountChoice] = useState<'full' | 'kiosk'>('full');
+  const [confirmDisable, setConfirmDisable] = useState(false);
 
   const handleAccept = () => {
-    if (understood) {
-      onAccept();
+    if (!understood) return;
+    if (accountChoice === 'kiosk' && !confirmDisable) {
+      setConfirmDisable(true);
+      return;
     }
+    onAccept(accountChoice === 'kiosk');
   };
 
   return (
@@ -35,7 +41,7 @@ export function FreeAccountOnboardingModal({
                 ¡Bienvenido, {parentName}!
               </DialogTitle>
               <DialogDescription className="text-sm text-stone-500 mt-2 font-normal">
-                Autorización de Cuenta Libre
+                Configuración de cuenta del kiosco
               </DialogDescription>
             </div>
           </div>
@@ -43,59 +49,140 @@ export function FreeAccountOnboardingModal({
 
         <div className="space-y-6 py-2">
           {/* Explicación */}
-          <div className="bg-stone-50/50 border border-stone-200/50 rounded-xl p-6">
-            <h3 className="font-medium text-stone-800 mb-3 flex items-center gap-2 text-sm">
+          <div className="bg-stone-50/50 border border-stone-200/50 rounded-xl p-5">
+            <h3 className="font-medium text-stone-800 mb-2 flex items-center gap-2 text-sm">
               <Check className="h-5 w-5 text-[#8B7355]" />
-              ¿Qué es una Cuenta Libre?
+              ¿Cómo quieres configurar la cuenta de tus hijos?
             </h3>
             <p className="text-sm text-stone-600 leading-relaxed font-normal">
-              Todos tus hijos están en modo <span className="font-semibold text-stone-800">Cuenta Libre</span> por defecto. 
-              Esto significa que pueden consumir en el kiosco sin necesidad de recargar saldo previamente, 
-              y tú pagarás al final del mes por sus consumos.
+              Todos los alumnos nacen con <strong className="text-stone-800">Cuenta Libre</strong> en el kiosco.
+              Puedes mantenerla o desactivarla si prefieres que solo usen el servicio de almuerzos.
             </p>
           </div>
 
-          {/* Ventajas */}
-          <div>
-            <h4 className="font-medium text-stone-700 mb-4 text-xs uppercase tracking-wider">Ventajas</h4>
-            <ul className="space-y-3">
-              <li className="flex items-start gap-3 text-sm text-stone-600">
-                <div className="w-5 h-5 rounded-lg bg-[#8B7355]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Check className="h-3.5 w-3.5 text-[#8B7355]" />
+          {/* Opciones de cuenta */}
+          <div className="space-y-3">
+            <h4 className="font-medium text-stone-700 text-xs uppercase tracking-wider">Elige una opción</h4>
+
+            {/* Opción 1: Cuenta Libre completa */}
+            <button
+              type="button"
+              onClick={() => setAccountChoice('full')}
+              className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
+                accountChoice === 'full'
+                  ? 'border-[#8B7355] bg-[#8B7355]/5'
+                  : 'border-stone-200 hover:border-stone-300'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  accountChoice === 'full' ? 'bg-[#8B7355]/10' : 'bg-stone-100'
+                }`}>
+                  <ShoppingBag className={`h-5 w-5 ${accountChoice === 'full' ? 'text-[#8B7355]' : 'text-stone-400'}`} />
                 </div>
-                <span className="font-normal"><strong className="font-medium text-stone-800">Sin recargas anticipadas:</strong> No necesitas estar transfiriendo dinero constantemente</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-stone-600">
-                <div className="w-5 h-5 rounded-lg bg-[#8B7355]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Check className="h-3.5 w-3.5 text-[#8B7355]" />
+                <div className="flex-1">
+                  <p className={`font-semibold text-sm ${accountChoice === 'full' ? 'text-[#8B7355]' : 'text-stone-700'}`}>
+                    ✅ Cuenta Libre — Acceso completo al kiosco
+                  </p>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                    Mis hijos pueden comprar en el kiosco y pedir almuerzos. Pago al final del período.
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    <li className="text-xs text-stone-500 flex items-center gap-1.5">
+                      <Check className="h-3 w-3 text-emerald-500 flex-shrink-0" /> Compras en el kiosco
+                    </li>
+                    <li className="text-xs text-stone-500 flex items-center gap-1.5">
+                      <Check className="h-3 w-3 text-emerald-500 flex-shrink-0" /> Pedidos de almuerzo
+                    </li>
+                    <li className="text-xs text-stone-500 flex items-center gap-1.5">
+                      <Check className="h-3 w-3 text-emerald-500 flex-shrink-0" /> Topes de gasto configurables
+                    </li>
+                  </ul>
                 </div>
-                <span className="font-normal"><strong className="font-medium text-stone-800">Acceso inmediato:</strong> Tus hijos pueden comprar lo que necesiten al instante</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-stone-600">
-                <div className="w-5 h-5 rounded-lg bg-[#8B7355]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Check className="h-3.5 w-3.5 text-[#8B7355]" />
+                {accountChoice === 'full' && (
+                  <div className="w-5 h-5 rounded-full bg-[#8B7355] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Check className="h-3 w-3 text-white" />
+                  </div>
+                )}
+              </div>
+            </button>
+
+            {/* Opción 2: Solo almuerzo */}
+            <button
+              type="button"
+              onClick={() => { setAccountChoice('kiosk'); setConfirmDisable(false); }}
+              className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
+                accountChoice === 'kiosk'
+                  ? 'border-orange-400 bg-orange-50'
+                  : 'border-stone-200 hover:border-stone-300'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  accountChoice === 'kiosk' ? 'bg-orange-100' : 'bg-stone-100'
+                }`}>
+                  <UtensilsCrossed className={`h-5 w-5 ${accountChoice === 'kiosk' ? 'text-orange-500' : 'text-stone-400'}`} />
                 </div>
-                <span className="font-normal"><strong className="font-medium text-stone-800">Control total:</strong> Puedes establecer límites diarios, semanales o mensuales</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-stone-600">
-                <div className="w-5 h-5 rounded-lg bg-[#8B7355]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Check className="h-3.5 w-3.5 text-[#8B7355]" />
+                <div className="flex-1">
+                  <p className={`font-semibold text-sm ${accountChoice === 'kiosk' ? 'text-orange-700' : 'text-stone-700'}`}>
+                    🍽️ Solo Almuerzos — Sin cuenta en el kiosco
+                  </p>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                    Mis hijos <strong>no tienen cuenta</strong> en el kiosco. Solo podrán pedir almuerzo desde el calendario. 
+                    Cualquier otra compra será en efectivo.
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    <li className="text-xs text-stone-500 flex items-center gap-1.5">
+                      <Check className="h-3 w-3 text-emerald-500 flex-shrink-0" /> Pedidos de almuerzo habilitados
+                    </li>
+                    <li className="text-xs text-red-400 flex items-center gap-1.5">
+                      <span className="text-red-400 font-bold flex-shrink-0">✕</span> Sin cuenta en el kiosco
+                    </li>
+                    <li className="text-xs text-stone-400 flex items-center gap-1.5">
+                      <Info className="h-3 w-3 text-stone-400 flex-shrink-0" /> Compras solo en efectivo
+                    </li>
+                  </ul>
                 </div>
-                <span className="font-normal"><strong className="font-medium text-stone-800">Historial completo:</strong> Ve todos los consumos con un retraso de 2 días (tiempo de registro manual del kiosco)</span>
-              </li>
-            </ul>
+                {accountChoice === 'kiosk' && (
+                  <div className="w-5 h-5 rounded-full bg-orange-400 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Check className="h-3 w-3 text-white" />
+                  </div>
+                )}
+              </div>
+            </button>
           </div>
 
-          {/* Información importante */}
-          <div className="bg-amber-50/30 border border-amber-200/50 rounded-xl p-4 flex gap-3">
-            <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h4 className="font-medium text-amber-900 text-sm mb-1.5">Importante</h4>
-              <p className="text-xs text-amber-800 leading-relaxed font-normal">
-                Puedes cambiar entre <strong className="font-medium">Cuenta Libre</strong> y <strong className="font-medium">Cuenta Prepago</strong> 
-                cuando lo desees desde la configuración de cada hijo. Los límites de gasto los puedes ajustar en cualquier momento.
+          {/* Advertencia si se elige solo almuerzo */}
+          {accountChoice === 'kiosk' && (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-semibold text-amber-900 text-sm mb-1">⚠️ Importante — Sin cuenta en el kiosco</h4>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Si desactivas la cuenta del kiosco, <strong>tus hijos solo podrán pagar en efectivo</strong> para cualquier compra 
+                  en el kiosco. Podrás reactivarla cuando quieras desde la configuración de cada hijo.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Confirmación de desactivar kiosco */}
+          {accountChoice === 'kiosk' && confirmDisable && (
+            <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
+              <p className="text-sm font-semibold text-red-800 mb-1">¿Confirmas que quieres desactivar la cuenta del kiosco?</p>
+              <p className="text-xs text-red-600">
+                Tus hijos aparecerán en el sistema con cuenta cerrada. Podrás reactivarla luego.
               </p>
             </div>
+          )}
+
+          {/* Información general */}
+          <div className="bg-blue-50/50 border border-blue-200/50 rounded-xl p-4 flex gap-3">
+            <Info className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Puedes cambiar esta configuración en cualquier momento desde la sección 
+              <strong className="font-medium"> Configuración de Topes</strong> de cada hijo.
+            </p>
           </div>
 
           {/* Checkbox de entendimiento */}
@@ -103,11 +190,13 @@ export function FreeAccountOnboardingModal({
             <input
               type="checkbox"
               checked={understood}
-              onChange={(e) => setUnderstood(e.target.checked)}
+              onChange={(e) => { setUnderstood(e.target.checked); setConfirmDisable(false); }}
               className="w-5 h-5 rounded border-2 border-stone-300 text-[#8B7355] focus:ring-[#8B7355] mt-0.5"
             />
             <span className="text-sm font-normal text-stone-700 leading-relaxed group-hover:text-stone-900">
-              Entiendo y acepto que mis hijos están en Cuenta Libre
+              {accountChoice === 'full'
+                ? 'Entiendo y acepto que mis hijos están en Cuenta Libre'
+                : 'Entiendo que mis hijos no tendrán cuenta en el kiosco y solo podrán pedir almuerzos'}
             </span>
           </label>
 
@@ -115,13 +204,21 @@ export function FreeAccountOnboardingModal({
           <Button
             onClick={handleAccept}
             disabled={!understood}
-            className="w-full h-14 text-base font-medium bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed tracking-wide"
+            className={`w-full h-14 text-base font-medium shadow-md rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed tracking-wide text-white ${
+              accountChoice === 'kiosk'
+                ? 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'
+                : 'bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734]'
+            }`}
           >
-            Comenzar a Usar el Portal
+            {accountChoice === 'kiosk' && confirmDisable
+              ? '⚠️ Confirmar — Desactivar cuenta del kiosco'
+              : accountChoice === 'kiosk'
+              ? '🍽️ Continuar — Solo almuerzo'
+              : 'Comenzar a Usar el Portal'}
           </Button>
 
           <p className="text-xs text-center text-stone-400 font-normal pt-2">
-            Esta autorización es solo informativa. Puedes modificar la configuración en cualquier momento.
+            Esta configuración es reversible. Puedes cambiarla cuando lo desees.
           </p>
         </div>
       </DialogContent>

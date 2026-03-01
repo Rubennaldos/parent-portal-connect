@@ -36,6 +36,7 @@ interface Student {
   section: string;
   is_active: boolean;
   free_account?: boolean;
+  kiosk_disabled?: boolean;
   school?: { id: string; name: string } | null;
 }
 
@@ -191,8 +192,12 @@ export function StudentCard({
               {student.grade} <span className="text-stone-300">·</span> {student.section}
             </p>
             
-            <div className="flex gap-2 mt-3">
-              {isFreeAccount ? (
+            <div className="flex flex-wrap gap-2 mt-3">
+              {student.kiosk_disabled ? (
+                <Badge className="bg-orange-50 text-orange-700 border border-orange-300 py-0.5 px-2.5 rounded-lg font-semibold text-[9px] uppercase tracking-wider">
+                  🍽️ Solo Almuerzo
+                </Badge>
+              ) : isFreeAccount ? (
                 <Badge className="bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100/80 border border-emerald-200/30 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider">
                   Cuenta Libre
                 </Badge>
@@ -201,7 +206,7 @@ export function StudentCard({
                   Con Recargas
                 </Badge>
               )}
-              {limitType !== 'none' && (
+              {limitType !== 'none' && !student.kiosk_disabled && (
                 <Badge className="bg-purple-50 text-purple-600 border border-purple-200/30 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider">
                   {getLimitTypeLabel()}
                 </Badge>
@@ -230,10 +235,24 @@ export function StudentCard({
 
       {/* Contenido */}
       <CardContent className="pb-6 px-6 pt-2">
+        {/* ── AVISO: Sin cuenta del kiosco ── */}
+        {student.kiosk_disabled && (
+          <div className="mb-4 flex items-start gap-2.5 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+            <span className="text-lg flex-shrink-0">🍽️</span>
+            <div>
+              <p className="text-xs font-semibold text-orange-800">Sin cuenta en el kiosco</p>
+              <p className="text-[11px] text-orange-600 leading-relaxed mt-0.5">
+                {student.full_name} solo puede pedir almuerzo desde el calendario. 
+                Para habilitar compras en el kiosco, ve a <strong>Configuración de Topes</strong>.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ═══════════════════ SALDO / DEUDA DINÁMICO ═══════════════════ */}
         
         {/* ── CUENTA LIBRE ── */}
-        {isFreeAccount && (
+        {isFreeAccount && !student.kiosk_disabled && (
           <div className={`rounded-2xl p-5 mb-4 border transition-all duration-300 ${
             hasDebt ? 'bg-rose-50/30 border-rose-200/50' : 'bg-gradient-to-br from-stone-50/30 to-emerald-50/20 border-emerald-200/20'
           }`}>
@@ -282,7 +301,7 @@ export function StudentCard({
         )}
 
         {/* ── CON RECARGAS ── */}
-        {isPrepaid && (
+        {isPrepaid && !student.kiosk_disabled && (
           <div className="rounded-2xl p-5 mb-4 border transition-all duration-300 bg-gradient-to-br from-blue-50/20 to-emerald-50/20 border-blue-200/20">
             <div className="flex items-center justify-between mb-3">
               <div className="flex-1">

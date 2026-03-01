@@ -67,6 +67,7 @@ interface Student {
   level_id?: string | null;
   classroom_id?: string | null;
   free_account?: boolean;
+  kiosk_disabled?: boolean;
   school?: { id: string; name: string } | null;
 }
 
@@ -240,13 +241,28 @@ const Index = () => {
     }
   };
 
-  const handleOnboardingComplete = async () => {
+  const handleOnboardingComplete = async (kioskDisabled: boolean = false) => {
     if (!user) return;
     try {
       await supabase
         .from('profiles')
         .update({ free_account_onboarding_completed: true })
         .eq('id', user.id);
+
+      // Si el padre eligió desactivar la cuenta del kiosco, actualizar todos sus hijos
+      if (kioskDisabled) {
+        const { data: myStudents } = await supabase
+          .from('students')
+          .select('id')
+          .eq('parent_id', user.id);
+
+        if (myStudents && myStudents.length > 0) {
+          await supabase
+            .from('students')
+            .update({ kiosk_disabled: true })
+            .in('id', myStudents.map(s => s.id));
+        }
+      }
       
       setShowOnboarding(false);
       
@@ -258,7 +274,6 @@ const Index = () => {
         .limit(1);
       
       if (!studentsData || studentsData.length === 0) {
-        // No tiene hijos, abrir modal para agregar el primero
         toast({
           title: '👨‍👩‍👧‍👦 Agregar tus hijos',
           description: 'Por favor, agrega a tus hijos para comenzar a usar el portal',
@@ -267,8 +282,10 @@ const Index = () => {
         setShowAddStudent(true);
       } else {
         toast({
-          title: '✅ ¡Bienvenido!',
-          description: 'Ya puedes comenzar a usar el portal',
+          title: kioskDisabled ? '🍽️ Configurado — Solo Almuerzos' : '✅ ¡Bienvenido!',
+          description: kioskDisabled
+            ? 'Tus hijos solo podrán pedir almuerzos. Sin cuenta en el kiosco.'
+            : 'Ya puedes comenzar a usar el portal',
         });
       }
     } catch (e) {
@@ -1119,7 +1136,7 @@ const Index = () => {
       {/* Modal de Onboarding - Cuenta Libre (DESPUÉS) */}
       <FreeAccountOnboardingModal
         open={showOnboarding}
-        onAccept={handleOnboardingComplete}
+        onAccept={(kioskDisabled) => handleOnboardingComplete(kioskDisabled)}
         parentName={parentName || 'Padre de Familia'}
       />
     </div>

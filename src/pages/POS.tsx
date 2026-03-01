@@ -83,6 +83,7 @@ interface Student {
   section: string;
   school_id?: string;
   free_account?: boolean;
+  kiosk_disabled?: boolean;
   limit_type?: 'none' | 'daily' | 'weekly' | 'monthly';
   daily_limit?: number;
   weekly_limit?: number;
@@ -634,7 +635,7 @@ const POS = () => {
       // Construir la consulta base
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, school_id')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, school_id')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`);
       
@@ -740,16 +741,15 @@ const POS = () => {
     statusColor: string;
     reason?: string;
   }> => {
-    // NOTA: Removido is_blocked porque la columna no existe en la tabla
-    // Si en el futuro se agrega, descomentar esta sección:
-    // if (student.is_blocked) {
-    //   return {
-    //     canPurchase: false,
-    //     statusText: '🚫 Cuenta Bloqueada',
-    //     statusColor: 'text-red-600',
-    //     reason: 'Cuenta bloqueada por el padre'
-    //   };
-    // }
+    // 0. Cuenta del kiosco desactivada por el padre
+    if (student.kiosk_disabled) {
+      return {
+        canPurchase: false,
+        statusText: '🍽️ Sin cuenta — Solo almuerzo',
+        statusColor: 'text-orange-600',
+        reason: 'El padre desactivó la cuenta del kiosco. Solo puede pedir almuerzo desde el calendario.',
+      };
+    }
 
     // 1. Cuenta Libre (sin topes)
     if (student.free_account) {
@@ -1674,6 +1674,7 @@ const POS = () => {
                   const statusText = accountStatus?.statusText || `💰 Saldo: S/ ${student.balance.toFixed(2)}`;
                   const statusColor = accountStatus?.statusColor || 'text-emerald-600';
                   
+                  const isKioskDisabled = student.kiosk_disabled;
                   return (
                     <button
                       key={student.id}
@@ -1681,20 +1682,29 @@ const POS = () => {
                       disabled={!canPurchase}
                       className={cn(
                         "w-full p-4 border-2 rounded-xl text-left flex items-center gap-4 transition-all",
-                        canPurchase 
+                        canPurchase
                           ? "hover:bg-emerald-50 border-gray-200 hover:border-emerald-500 cursor-pointer"
+                          : isKioskDisabled
+                          ? "bg-orange-50 border-orange-200 cursor-not-allowed"
                           : "bg-gray-50 border-red-200 cursor-not-allowed opacity-70"
                       )}
                     >
                       <div className="flex-1">
-                        <p className={cn("font-bold text-lg", !canPurchase && "text-gray-500")}>
-                          {student.full_name}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className={cn("font-bold text-lg", !canPurchase && "text-gray-600")}>
+                            {student.full_name}
+                          </p>
+                          {isKioskDisabled && (
+                            <span className="text-[10px] bg-orange-100 text-orange-700 border border-orange-300 px-1.5 py-0.5 rounded-full font-semibold">
+                              Sin cuenta kiosco
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm text-gray-500">
                           {student.grade} - {student.section}
                         </p>
                         {!canPurchase && accountStatus?.reason && (
-                          <p className="text-xs text-red-600 mt-1 font-medium">
+                          <p className={cn("text-xs mt-1 font-medium", isKioskDisabled ? "text-orange-600" : "text-red-600")}>
                             {accountStatus.reason}
                           </p>
                         )}
