@@ -27,6 +27,8 @@ import {
   Ban,
   Trash2,
   CreditCard as CreditCardIcon,
+  Trash,
+  Info,
 } from 'lucide-react';
 import { RechargeModal } from '@/components/parent/RechargeModal';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths } from 'date-fns';
@@ -120,6 +122,8 @@ interface ExistingOrder {
   created_by: string | null;
   delivered_by: string | null;
   cancelled_by: string | null;
+  /** payment_status de la transacción vinculada (null si no tiene transacción) */
+  transaction_payment_status?: string | null;
 }
 
 // ==========================================
@@ -232,6 +236,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   // Cancellation
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  // Bulk cancel (anular pedidos del mes)
+  const [showBulkCancelConfirm, setShowBulkCancelConfirm] = useState(false);
+  const [isBulkCancelling, setIsBulkCancelling] = useState(false);
 
   // Payment flow (parents only)
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -418,8 +425,31 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           created_at: o.created_at,
           created_by: o.created_by,
           delivered_by: o.delivered_by,
-          cancelled_by: o.cancelled_by
+          cancelled_by: o.cancelled_by,
+          transaction_payment_status: null
         }));
+
+        // Obtener el payment_status de las transacciones vinculadas (para saber si ya están pagadas)
+        if (orders.length > 0 && userType === 'parent') {
+          const { data: txData } = await supabase
+            .from('transactions')
+            .select('payment_status, metadata')
+            .eq('student_id', personId)
+            .in('payment_status', ['pending', 'paid', 'cancelled', 'partial']);
+
+          if (txData && txData.length > 0) {
+            const txPaymentMap = new Map<string, string>();
+            txData.forEach(tx => {
+              if (tx.metadata?.lunch_order_id) {
+                txPaymentMap.set(tx.metadata.lunch_order_id, tx.payment_status);
+              }
+            });
+            orders.forEach(o => {
+              o.transaction_payment_status = txPaymentMap.get(o.id) ?? null;
+            });
+          }
+        }
+
         setExistingOrders(orders);
       }
 
@@ -1012,6 +1042,26 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         description: `${quantity}x ${selectedCategory.name} - ${dateFormatted}`,
       });
 
+      // ── Auto-guardar progreso al confirmar cada pedido (por si refresca la página) ──
+      if (selectedStudent) {
+        const nextIndex2 = wizardCurrentIndex + 1;
+        const remainingDates = wizardDates.slice(nextIndex2);
+        if (remainingDates.length > 0) {
+          const progress = {
+            dates: remainingDates,
+            studentId: selectedStudent.id,
+            ordersCreatedSoFar: newCount,
+            createdOrderIds: [...createdOrderIds, ...(insertedOrder?.id ? [insertedOrder.id] : [])],
+            totalOrderAmount: totalOrderAmount + (unitPrice * quantity),
+            orderDescriptions: [...orderDescriptions, `${quantity}x ${selectedCategory.name} - ${dateFormatted}`],
+            savedAt: new Date().toISOString(),
+            bulkCategory: bulkPreselectedCategory ?? null,
+            bulkMenuMode: bulkPreselectedCategory ? bulkMenuMode : null,
+          };
+          sessionStorage.setItem(`lunch_wizard_${selectedStudent.id}`, JSON.stringify(progress));
+        }
+      }
+
       // Advance to next day or finish
       const nextIndex = wizardCurrentIndex + 1;
       if (nextIndex < wizardDates.length) {
@@ -1071,11 +1121,15 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setBulkPreselectedCategory(null);
     setShowDayTransition(false);
 
-    // Refresh data if any orders were created
+      // Refresh data if any orders were created
     if (ordersCreated > 0) {
       fetchMonthlyData();
     }
     setOrdersCreated(0);
+    // Limpiar progreso guardado al cerrar correctamente
+    if (selectedStudent) {
+      sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
+    }
   };
 
   // ── Guardar progreso para "Continuar después" ──
@@ -1092,6 +1146,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       totalOrderAmount,
       orderDescriptions,
       savedAt: new Date().toISOString(),
+      // ── Datos del bulk order para restaurar modo automático ──
+      bulkCategory: bulkPreselectedCategory ?? null,
+      bulkMenuMode: bulkPreselectedCategory ? bulkMenuMode : null,
     };
     sessionStorage.setItem(`lunch_wizard_${selectedStudent.id}`, JSON.stringify(progress));
   };
@@ -1130,6 +1187,16 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       setCreatedOrderIds(progress.createdOrderIds || []);
       setTotalOrderAmount(progress.totalOrderAmount || 0);
       setOrderDescriptions(progress.orderDescriptions || []);
+
+      // ── Restaurar modo bulk (automático/manual) si era un pedido de todo el mes ──
+      if (progress.bulkCategory) {
+        setBulkPreselectedCategory(progress.bulkCategory);
+        setBulkMenuMode(progress.bulkMenuMode || 'manual');
+      } else {
+        setBulkPreselectedCategory(null);
+        setBulkMenuMode('auto');
+      }
+
       return true;
     } catch {
       sessionStorage.removeItem(`lunch_wizard_${selectedStudent.id}`);
@@ -1282,6 +1349,86 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudo cancelar el pedido' });
     } finally {
       setCancellingOrderId(null);
+    }
+  };
+
+  // ==========================================
+  // BULK CANCEL ORDERS
+  // ==========================================
+
+  /**
+   * Calcula qué pedidos se pueden anular (no pagados, dentro del plazo)
+   * y cuáles requieren contactar al admin (ya pagados).
+   */
+  const getBulkCancelStats = () => {
+    const activeOrders = existingOrders.filter(o => !o.is_cancelled && o.status === 'pending');
+    const cancellable: ExistingOrder[] = [];
+    const paidNeedAdmin: ExistingOrder[] = [];
+    const pastDeadline: ExistingOrder[] = [];
+
+    activeOrders.forEach(o => {
+      const isPaid = o.transaction_payment_status === 'paid';
+      const canCancel = canCancelForDate(o.date);
+
+      if (isPaid) {
+        paidNeedAdmin.push(o);
+      } else if (!canCancel) {
+        pastDeadline.push(o);
+      } else {
+        cancellable.push(o);
+      }
+    });
+
+    return { cancellable, paidNeedAdmin, pastDeadline };
+  };
+
+  const handleBulkCancelOrders = async () => {
+    const { cancellable } = getBulkCancelStats();
+    if (cancellable.length === 0) {
+      setShowBulkCancelConfirm(false);
+      return;
+    }
+
+    setIsBulkCancelling(true);
+    try {
+      const orderIds = cancellable.map(o => o.id);
+      const now = new Date().toISOString();
+
+      // 1. Cancelar todos los pedidos elegibles
+      const { error: ordersError } = await supabase
+        .from('lunch_orders')
+        .update({
+          is_cancelled: true,
+          status: 'cancelled',
+          cancelled_by: userId,
+          cancelled_at: now,
+        })
+        .in('id', orderIds);
+
+      if (ordersError) throw ordersError;
+
+      // 2. Cancelar las transacciones vinculadas (deuda pendiente)
+      // Lo hacemos en paralelo para cada orden
+      await Promise.all(
+        orderIds.map(oid =>
+          supabase
+            .from('transactions')
+            .update({ payment_status: 'cancelled' })
+            .contains('metadata', { lunch_order_id: oid })
+        )
+      );
+
+      toast({
+        title: `✅ ${cancellable.length} pedido(s) anulado(s)`,
+        description: 'Los pedidos y sus deudas fueron cancelados correctamente.',
+      });
+
+      setShowBulkCancelConfirm(false);
+      await fetchMonthlyData();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudieron cancelar los pedidos' });
+    } finally {
+      setIsBulkCancelling(false);
     }
   };
 
@@ -2145,8 +2292,29 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     Creado: {format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: es })}
                   </p>
 
+                  {/* Badge de pago si aplica */}
+                  {!order.is_cancelled && order.transaction_payment_status && (
+                    <div className="mt-2">
+                      {order.transaction_payment_status === 'paid' && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 border border-green-200 rounded px-2 py-0.5 font-semibold">
+                          <CheckCircle2 className="h-3 w-3" /> Pago aprobado
+                        </span>
+                      )}
+                      {order.transaction_payment_status === 'pending' && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 border border-amber-200 rounded px-2 py-0.5 font-semibold">
+                          <Clock className="h-3 w-3" /> Pago pendiente
+                        </span>
+                      )}
+                      {order.transaction_payment_status === 'cancelled' && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 border border-red-200 rounded px-2 py-0.5">
+                          <XCircle className="h-3 w-3" /> Pago cancelado
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   {/* Cancel button - only for pending orders within cancellation deadline */}
-                  {!order.is_cancelled && order.status === 'pending' && canCancel && (
+                  {!order.is_cancelled && order.status === 'pending' && canCancel && order.transaction_payment_status !== 'paid' && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -2162,7 +2330,15 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     </Button>
                   )}
 
-                  {!order.is_cancelled && order.status === 'pending' && !canCancel && (
+                  {/* Si ya está pagado, no se puede cancelar sin admin */}
+                  {!order.is_cancelled && order.status === 'pending' && order.transaction_payment_status === 'paid' && (
+                    <p className="text-xs text-amber-600 mt-2 flex items-center gap-1 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                      <Lock className="h-3 w-3 flex-shrink-0" />
+                      Este pedido ya fue pagado. Contacta al administrador para anularlo.
+                    </p>
+                  )}
+
+                  {!order.is_cancelled && order.status === 'pending' && !canCancel && order.transaction_payment_status !== 'paid' && (
                     <p className="text-xs text-red-500 mt-2 flex items-center gap-1">
                       <Lock className="h-3 w-3" />
                       Ya pasó el plazo de cancelación
@@ -2255,6 +2431,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             <CalendarIcon className="h-4 w-4 mr-2" />
             📅 Pedir todo el mes
           </Button>
+          {/* Botón Anular pedidos - solo visible si hay pedidos activos */}
+          {existingOrders.some(o => !o.is_cancelled && o.status === 'pending') && (
+            <Button
+              onClick={() => setShowBulkCancelConfirm(true)}
+              variant="outline"
+              className="border-red-300 text-red-600 hover:bg-red-50 font-semibold flex-1"
+            >
+              <Trash className="h-4 w-4 mr-2" />
+              Anular pedidos
+            </Button>
+          )}
         </div>
       )}
 
@@ -2628,6 +2815,119 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* BULK CANCEL CONFIRMATION DIALOG */}
+      {showBulkCancelConfirm && (() => {
+        const { cancellable, paidNeedAdmin, pastDeadline } = getBulkCancelStats();
+        return (
+          <Dialog open={showBulkCancelConfirm} onOpenChange={setShowBulkCancelConfirm}>
+            <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
+              <DialogHeader>
+                <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                  <Trash className="h-5 w-5 text-red-500" />
+                  Anular pedidos del mes
+                </DialogTitle>
+                <DialogDescription>
+                  Revisa qué pedidos se pueden anular antes de confirmar.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 mt-2">
+                {/* Pedidos que SÍ se pueden anular */}
+                {cancellable.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-sm font-semibold text-red-800 flex items-center gap-2">
+                      <Trash2 className="h-4 w-4" />
+                      {cancellable.length} pedido(s) se anularán
+                    </p>
+                    <p className="text-xs text-red-600 mt-1">
+                      Sin pagar, dentro del plazo. Su deuda desaparecerá.
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {cancellable.map(o => (
+                        <li key={o.id} className="text-xs text-red-700 flex items-center gap-1">
+                          <XCircle className="h-3 w-3 flex-shrink-0" />
+                          {format(getPeruDateOnly(o.date), "EEEE d 'de' MMMM", { locale: es })} — {o.categoryName || 'Sin categoría'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Pedidos ya PAGADOS — requieren admin */}
+                {paidNeedAdmin.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                      <Info className="h-4 w-4" />
+                      {paidNeedAdmin.length} pedido(s) ya pagado(s) — contacta al administrador
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Estos pedidos tienen pago aprobado. Para reembolsos, comunícate con la administración del colegio.
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {paidNeedAdmin.map(o => (
+                        <li key={o.id} className="text-xs text-amber-700 flex items-center gap-1">
+                          <Lock className="h-3 w-3 flex-shrink-0" />
+                          {format(getPeruDateOnly(o.date), "EEEE d 'de' MMMM", { locale: es })} — {o.categoryName || 'Sin categoría'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Pedidos fuera de plazo */}
+                {pastDeadline.length > 0 && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-sm font-semibold text-gray-600 flex items-center gap-2">
+                      <Lock className="h-4 w-4" />
+                      {pastDeadline.length} pedido(s) fuera del plazo
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Ya venció el plazo para cancelar estos pedidos. Contacta a la administración si necesitas ayuda.
+                    </p>
+                  </div>
+                )}
+
+                {/* Sin nada cancelable */}
+                {cancellable.length === 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                    <Info className="h-6 w-6 text-blue-500 mx-auto mb-1" />
+                    <p className="text-sm text-blue-800 font-semibold">No hay pedidos disponibles para anular</p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      {paidNeedAdmin.length > 0
+                        ? 'Los pedidos ya pagados requieren gestión con el administrador.'
+                        : 'Todos los pedidos ya están vencidos o no hay pedidos activos.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowBulkCancelConfirm(false)}
+                  disabled={isBulkCancelling}
+                >
+                  Cerrar
+                </Button>
+                {cancellable.length > 0 && (
+                  <Button
+                    onClick={handleBulkCancelOrders}
+                    disabled={isBulkCancelling}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    {isBulkCancelling ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Anulando...</>
+                    ) : (
+                      <><Trash2 className="h-4 w-4 mr-2" />Anular {cancellable.length} pedido(s)</>
+                    )}
+                  </Button>
+                )}
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* PAYMENT MODAL (parents only) */}
       {userType === 'parent' && selectedStudent && (
