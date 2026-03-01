@@ -395,13 +395,14 @@ const Index = () => {
   };
 
   // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
+  // ✅ FIX: Ahora respeta el delay de visibilidad por sede, igual que PaymentsTab
   const fetchPendingPaymentsCount = async () => {
     if (!user) return;
     try {
-      // Obtener todos los estudiantes del padre
+      // Obtener todos los estudiantes del padre con su school_id
       const { data: studentsList } = await supabase
         .from('students')
-        .select('id')
+        .select('id, school_id')
         .eq('parent_id', user.id)
         .eq('is_active', true);
 
@@ -410,19 +411,46 @@ const Index = () => {
         return;
       }
 
-      const studentIds = studentsList.map(s => s.id);
-
-      // Contar transacciones pendientes de pago
-      const { count, error } = await supabase
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .in('student_id', studentIds)
-        .eq('type', 'purchase')
-        .eq('payment_status', 'pending');
-
-      if (!error) {
-        setPendingPaymentsCount(count || 0);
+      // Obtener delays por sede (en un solo query)
+      const schoolIds = [...new Set(studentsList.map(s => s.school_id).filter(Boolean))];
+      const delayMap = new Map<string, number>();
+      
+      if (schoolIds.length > 0) {
+        const { data: delayData } = await supabase
+          .from('purchase_visibility_delay')
+          .select('school_id, delay_days')
+          .in('school_id', schoolIds);
+        
+        delayData?.forEach((d: any) => delayMap.set(d.school_id, d.delay_days));
       }
+
+      // Contar transacciones pendientes por estudiante respetando el delay
+      let totalCount = 0;
+      
+      for (const student of studentsList) {
+        const delayDays = delayMap.get(student.school_id) ?? 2; // Default: 2 días
+        
+        let query = supabase
+          .from('transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('student_id', student.id)
+          .eq('type', 'purchase')
+          .eq('payment_status', 'pending');
+
+        // Aplicar filtro de delay si > 0
+        if (delayDays > 0) {
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - delayDays);
+          query = query.lte('created_at', cutoffDate.toISOString());
+        }
+
+        const { count, error } = await query;
+        if (!error) {
+          totalCount += (count || 0);
+        }
+      }
+
+      setPendingPaymentsCount(totalCount);
     } catch (err) {
       console.error('Error fetching pending payments count:', err);
     }
