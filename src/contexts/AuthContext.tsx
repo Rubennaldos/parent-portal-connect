@@ -27,32 +27,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 1. Escuchar cambios en el estado de autenticación
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      // Solo actualizar si realmente cambió la sesión (evitar re-renders innecesarios)
-      setSession((prevSession) => {
-        // Si no hay cambio en el ID de usuario, no actualizar
-        if (prevSession?.user?.id === session?.user?.id) {
-          return prevSession;
-        }
-        return session;
-      });
-      
-      setUser((prevUser) => {
-        // Si no hay cambio en el ID de usuario, no actualizar
-        if (prevUser?.id === session?.user?.id) {
-          return prevUser;
-        }
-        return session?.user ?? null;
-      });
-      
-      setLoading(false);
-    });
+    let mounted = true;
 
-    // 2. Verificar sesión inicial
+    // 1. Verificar sesión inicial PRIMERO (antes de suscribirse a cambios)
     supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (!mounted) return;
       if (error) {
         console.error('❌ Error recuperando sesión:', error);
       }
@@ -63,7 +42,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    // 2. Escuchar cambios en el estado de autenticación
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+
+      // 🔧 FIX: Ignorar TOKEN_REFRESHED e INITIAL_SESSION para evitar
+      // re-renders y refetch innecesarios al volver a la pestaña
+      if (event === 'TOKEN_REFRESHED') {
+        // Solo actualizamos la sesión silenciosamente sin cambiar el user object
+        console.log('[Auth] 🔄 Token refrescado silenciosamente');
+        setSession((prev) => prev); // no-op, mantiene referencia
+        return;
+      }
+
+      if (event === 'INITIAL_SESSION') {
+        // Ya manejado por getSession() arriba
+        return;
+      }
+
+      if (event === 'SIGNED_IN' && session) {
+        setSession((prevSession) => {
+          if (prevSession?.user?.id === session?.user?.id) return prevSession;
+          return session;
+        });
+        setUser((prevUser) => {
+          if (prevUser?.id === session?.user?.id) return prevUser;
+          return session?.user ?? null;
+        });
+        setLoading(false);
+        return;
+      }
+
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // Otros eventos: actualizar si cambió el usuario
+      setSession((prevSession) => {
+        if (prevSession?.user?.id === session?.user?.id) return prevSession;
+        return session;
+      });
+      setUser((prevUser) => {
+        if (prevUser?.id === session?.user?.id) return prevUser;
+        return session?.user ?? null;
+      });
+      setLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {

@@ -35,7 +35,9 @@ export default defineConfig(({ mode }) => ({
     mode === "development" && mkcert(),
     // ✅ PWA - Permite instalar la app en celulares
     VitePWA({
-      registerType: "autoUpdate",
+      // 🔧 FIX: "prompt" en vez de "autoUpdate" para evitar que la página
+      // se recargue sola al volver a la pestaña cuando hay una actualización
+      registerType: "prompt",
       includeAssets: ["favicon.ico", "icon-192.png", "icon-512.png"],
       manifest: {
         name: "Lima Café 28 - Kiosco Escolar",
