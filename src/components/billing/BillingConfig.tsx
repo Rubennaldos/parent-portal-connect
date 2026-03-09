@@ -29,7 +29,9 @@ import {
   Check,
   Clock,
   AlertTriangle,
-  Zap
+  Zap,
+  UtensilsCrossed,
+  Coffee,
 } from 'lucide-react';
 
 const PERUVIAN_BANKS = [
@@ -101,8 +103,11 @@ export const BillingConfig = () => {
   const [selectedSchool, setSelectedSchool] = useState<string>('');
   const [config, setConfig] = useState<BillingConfig | null>(null);
 
-  // Form data — Mensaje
+  // Form data — Mensaje (3 plantillas)
   const [messageTemplate, setMessageTemplate] = useState('');
+  const [lunchMessageTemplate, setLunchMessageTemplate] = useState('');
+  const [cafeteriaMessageTemplate, setCafeteriaMessageTemplate] = useState('');
+  const [activeTemplateTab, setActiveTemplateTab] = useState<'all' | 'lunch' | 'cafeteria'>('all');
   // Form data — Pago
   const [bankInfo, setBankInfo] = useState('');
   const [bankHolder, setBankHolder] = useState('');
@@ -151,9 +156,23 @@ export const BillingConfig = () => {
     return paymentText;
   };
 
-  // Mensaje completo con información de pago
   const getCompleteMessage = () => {
-    return messageTemplate + getPaymentInfoText();
+    const tpl = activeTemplateTab === 'lunch' ? lunchMessageTemplate
+      : activeTemplateTab === 'cafeteria' ? cafeteriaMessageTemplate
+      : messageTemplate;
+    return tpl + getPaymentInfoText();
+  };
+
+  const getActiveTemplate = () => {
+    if (activeTemplateTab === 'lunch') return lunchMessageTemplate;
+    if (activeTemplateTab === 'cafeteria') return cafeteriaMessageTemplate;
+    return messageTemplate;
+  };
+
+  const setActiveTemplate = (val: string) => {
+    if (activeTemplateTab === 'lunch') setLunchMessageTemplate(val);
+    else if (activeTemplateTab === 'cafeteria') setCafeteriaMessageTemplate(val);
+    else setMessageTemplate(val);
   };
 
   // ✅ Esperar a que el rol esté cargado antes de cargar sedes
@@ -285,6 +304,8 @@ export const BillingConfig = () => {
       if (data) {
         setConfig(data);
         setMessageTemplate(data.message_template);
+        setLunchMessageTemplate(data.lunch_message_template || '');
+        setCafeteriaMessageTemplate(data.cafeteria_message_template || '');
         setBankInfo(data.bank_account_info || '');
         setBankHolder(data.bank_account_holder || '');
         setYapeNumber(data.yape_number || '');
@@ -304,6 +325,8 @@ export const BillingConfig = () => {
 ...
 Para pagar, contacte con administración.
 Gracias.`);
+        setLunchMessageTemplate('');
+        setCafeteriaMessageTemplate('');
         setBankInfo('');
         setBankHolder('');
         setYapeNumber('');
@@ -403,15 +426,15 @@ Gracias.`);
       const payload = {
         school_id: selectedSchool,
         message_template: messageTemplate,
+        lunch_message_template: lunchMessageTemplate || null,
+        cafeteria_message_template: cafeteriaMessageTemplate || null,
         updated_by: user.id,
       };
-      if (config) {
-        const { error } = await supabase.from('billing_config').update(payload).eq('id', config.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('billing_config').insert(payload);
-        if (error) throw error;
-      }
+      // Upsert: crea si no existe, actualiza si ya existe (evita fallo silencioso de RLS)
+      const { error } = await supabase
+        .from('billing_config')
+        .upsert(payload, { onConflict: 'school_id' });
+      if (error) throw error;
       toast({ title: '✅ Plantilla guardada', description: 'Mensaje de WhatsApp actualizado.' });
       fetchConfig();
     } catch (error: any) {
@@ -442,17 +465,11 @@ Gracias.`);
         bank_cci: bankCCI || null,
         updated_by: user.id,
       };
-      if (config) {
-        const { error } = await supabase.from('billing_config').update(payload).eq('id', config.id);
-        if (error) throw error;
-      } else {
-        // Si no hay config aún, crear con mensaje por defecto
-        const { error } = await supabase.from('billing_config').insert({
-          ...payload,
-          message_template: messageTemplate || '🔔 *COBRANZA LIMA CAFÉ 28*\nPara pagar, contacte con administración.',
-        });
-        if (error) throw error;
-      }
+      // Upsert: crea si no existe, actualiza si ya existe (evita fallo silencioso de RLS)
+      const { error } = await supabase
+        .from('billing_config')
+        .upsert(payload, { onConflict: 'school_id' });
+      if (error) throw error;
       toast({ title: '✅ Datos de pago guardados', description: 'Los padres podrán ver esta info al recargar.' });
       fetchConfig();
     } catch (error: any) {
@@ -572,13 +589,12 @@ Gracias.`);
                 <div className="p-2 bg-blue-600 rounded-lg shrink-0">
                   <MessageSquare className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                 </div>
-                Plantilla de Mensaje WhatsApp
+                Plantillas de Mensaje WhatsApp
               </CardTitle>
               <CardDescription className="text-sm sm:text-base mt-2">
-                Personaliza el mensaje que se enviará a los padres. Usa variables: {'{'}nombre_padre{'}'}, {'{'}nombre_estudiante{'}'}, {'{'}periodo{'}'}, {'{'}monto{'}'}
+                Configura mensajes distintos para almuerzos, cafetería o todo junto.
               </CardDescription>
             </div>
-            {/* ── Selector de sede inline ── */}
             {canViewAllSchools && schools.length > 1 && (
               <div className="flex items-center gap-2 shrink-0">
                 <Building2 className="h-4 w-4 text-blue-500 shrink-0" />
@@ -594,31 +610,95 @@ Gracias.`);
           </div>
         </CardHeader>
         <CardContent className="space-y-4 p-3 sm:p-6">
-          <div className="space-y-2">
-            <Label htmlFor="message_template" className="text-base font-semibold">Mensaje</Label>
-            <Textarea
-              id="message_template"
-              value={messageTemplate}
-              onChange={(e) => setMessageTemplate(e.target.value)}
-              rows={12}
-              className="font-mono text-sm border-2"
-            />
-            <p className="text-xs text-gray-500">
-              Variables disponibles: {'{'}nombre_padre{'}'}, {'{'}nombre_estudiante{'}'}, {'{'}periodo{'}'}, {'{'}monto{'}'}
-            </p>
+          {/* Tabs de tipo de plantilla */}
+          <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+            {([
+              { key: 'all' as const, label: 'Todo', icon: MessageSquare, color: 'blue' },
+              { key: 'lunch' as const, label: 'Almuerzos', icon: UtensilsCrossed, color: 'orange' },
+              { key: 'cafeteria' as const, label: 'Cafetería', icon: Coffee, color: 'purple' },
+            ]).map(({ key, label, icon: Icon, color }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveTemplateTab(key)}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
+                  activeTemplateTab === key
+                    ? `bg-white shadow-sm text-${color}-700 ring-1 ring-${color}-200`
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
           </div>
 
-          <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-xl border-2 border-dashed border-gray-300">
-            <p className="text-base font-semibold mb-3 flex items-center gap-2">
-              <MessageSquare className="h-5 w-5 text-blue-600" />
-              Vista Previa del Mensaje Completo:
+          {activeTemplateTab !== 'all' && !getActiveTemplate().trim() && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+              Si esta plantilla está vacía, se usará la plantilla "Todo" como respaldo al copiar el mensaje.
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label className="text-base font-semibold">
+              {activeTemplateTab === 'lunch' ? 'Mensaje de Almuerzos' : activeTemplateTab === 'cafeteria' ? 'Mensaje de Cafetería' : 'Mensaje General (Todo)'}
+            </Label>
+            <Textarea
+              value={getActiveTemplate()}
+              onChange={(e) => setActiveTemplate(e.target.value)}
+              rows={10}
+              className="font-mono text-sm border-2"
+              placeholder={activeTemplateTab === 'all'
+                ? 'Escribe la plantilla para cobranza general...'
+                : `Escribe la plantilla para cobranza de ${activeTemplateTab === 'lunch' ? 'almuerzos' : 'cafetería'}... (dejar vacío para usar plantilla general)`}
+            />
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1">
+              <p className="text-xs font-semibold text-blue-800">Variables disponibles:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { var: '{nombre_padre}', desc: 'Padre' },
+                  { var: '{nombre_estudiante}', desc: 'Alumno' },
+                  { var: '{periodo}', desc: 'Período' },
+                  { var: '{monto}', desc: 'Monto' },
+                  { var: '{monto_almuerzo}', desc: 'Monto almuerzo' },
+                  { var: '{monto_cafeteria}', desc: 'Monto cafetería' },
+                  { var: '{numero_cuenta}', desc: 'Cuenta' },
+                  { var: '{numero_cci}', desc: 'CCI' },
+                  { var: '{numero_yape}', desc: 'Yape' },
+                  { var: '{numero_plin}', desc: 'Plin' },
+                ].map(({ var: v, desc }) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setActiveTemplate(getActiveTemplate() + v)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-blue-300 rounded text-xs font-mono text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
+                    title={`Insertar: ${desc}`}
+                  >
+                    <span>{v}</span>
+                    <span className="text-gray-400 font-sans text-[10px]">{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300">
+            <p className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-blue-600" />
+              Vista Previa:
             </p>
-            <div className="bg-white p-4 rounded-lg border-2 border-gray-200 shadow-inner whitespace-pre-wrap text-sm">
+            <div className="bg-white p-3 rounded-lg border-2 border-gray-200 shadow-inner whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
               {getCompleteMessage()
-                .replace('{nombre_padre}', 'María García')
-                .replace('{nombre_estudiante}', 'Juan Pérez')
-                .replace('{periodo}', 'Semana 1-5 Enero')
-                .replace('{monto}', '45.50')}
+                .replace(/\{nombre_padre\}/g, 'María García')
+                .replace(/\{nombre_estudiante\}/g, 'Juan Pérez')
+                .replace(/\{periodo\}/g, 'Semana 1-5 Enero')
+                .replace(/\{monto\}/g, '45.50')
+                .replace(/\{monto_almuerzo\}/g, '30.00')
+                .replace(/\{monto_cafeteria\}/g, '15.50')
+                .replace(/\{numero_cuenta\}/g, bankAccountNumber || '(sin configurar)')
+                .replace(/\{numero_cci\}/g, bankCCI || '(sin configurar)')
+                .replace(/\{numero_yape\}/g, yapeNumber || '(sin configurar)')
+                .replace(/\{numero_plin\}/g, plinNumber || '(sin configurar)')}
             </div>
             {showPaymentInfo && (
               <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
@@ -628,7 +708,6 @@ Gracias.`);
             )}
           </div>
 
-          {/* ── Botón Guardar Plantilla ── */}
           <div className="flex justify-end pt-2">
             <Button
               onClick={handleSaveMessage}
@@ -639,7 +718,7 @@ Gracias.`);
               {savingMessage ? (
                 <><Loader2 className="h-4 w-4 animate-spin" /> Guardando...</>
               ) : (
-                <><Save className="h-4 w-4" /> Guardar plantilla</>
+                <><Save className="h-4 w-4" /> Guardar las 3 plantillas</>
               )}
             </Button>
           </div>

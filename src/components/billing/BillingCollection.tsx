@@ -15,6 +15,13 @@ import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
 // Select de Radix removido - se usa <select> nativo para evitar error removeChild en algunos navegadores
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -51,6 +58,7 @@ import {
   ChevronsRight,
   UtensilsCrossed,
   Coffee,
+  ChevronDown,
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -137,6 +145,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [loadingSchoolConfig, setLoadingSchoolConfig] = useState(false);
   const [savingSchoolConfig, setSavingSchoolConfig] = useState(false);
   const [configMessageTemplate, setConfigMessageTemplate] = useState('');
+  const [configLunchTemplate, setConfigLunchTemplate] = useState('');
+  const [configCafeteriaTemplate, setConfigCafeteriaTemplate] = useState('');
   const [configYapeEnabled, setConfigYapeEnabled] = useState(true);
   const [configPlinEnabled, setConfigPlinEnabled] = useState(true);
   const [configTransferenciaEnabled, setConfigTransferenciaEnabled] = useState(true);
@@ -1366,46 +1376,60 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     }
   };
 
-  const copyMessage = (debtor: Debtor) => {
+  const copyMessage = (debtor: Debtor, type: 'all' | 'lunch' | 'cafeteria' = 'all') => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const periodText = period ? `del per�odo: ${period.period_name}` : 'pendiente';
-    
-    let clientLine = '';
-    let recipientLine = '';
-    
-    if (debtor.client_type === 'student') {
-      clientLine = `El alumno *${debtor.client_name}* tiene un consumo ${periodText}`;
-      recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
-    } else if (debtor.client_type === 'teacher') {
-      clientLine = `El profesor *${debtor.client_name}* tiene un consumo ${periodText}`;
-      recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
+    const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
+
+    const amount = type === 'lunch' ? debtor.lunch_amount
+      : type === 'cafeteria' ? debtor.cafeteria_amount
+      : debtor.total_amount;
+
+    const lunchTransactions = debtor.transactions.filter((t: any) => isLunchTx(t));
+    const lunchCount = lunchTransactions.length;
+
+    const template = type === 'lunch' ? (configLunchTemplate.trim() || configMessageTemplate)
+      : type === 'cafeteria' ? (configCafeteriaTemplate.trim() || configMessageTemplate)
+      : configMessageTemplate;
+
+    let message: string;
+    if (template && template.trim()) {
+      message = resolveMessageTemplate(template, debtor, amount, lunchCount);
     } else {
-      clientLine = `*${debtor.client_name}* tiene un consumo ${periodText}`;
-      recipientLine = `Estimado(a) ${debtor.client_name}`;
-    }
-    
-    let desglose = '';
-    if (debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0) {
-      desglose = `\n🍽 Almuerzos: S/ ${debtor.lunch_amount.toFixed(2)}\n☕ Cafetería: S/ ${debtor.cafeteria_amount.toFixed(2)}`;
-    }
-    
-    const message = `🔔 *COBRANZA LIMA CAFÉ 28*
+      let clientLine = '';
+      let recipientLine = '';
+
+      if (debtor.client_type === 'student') {
+        clientLine = `El alumno *${debtor.client_name}* tiene un consumo ${periodText}`;
+        recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
+      } else if (debtor.client_type === 'teacher') {
+        clientLine = `El profesor *${debtor.client_name}* tiene un consumo ${periodText}`;
+        recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
+      } else {
+        clientLine = `*${debtor.client_name}* tiene un consumo ${periodText}`;
+        recipientLine = `Estimado(a) ${debtor.client_name}`;
+      }
+
+      const typeLabel = type === 'lunch' ? ' de almuerzos' : type === 'cafeteria' ? ' de cafetería' : '';
+
+      message = `🔔 *COBRANZA${typeLabel ? typeLabel.toUpperCase() : ''} LIMA CAFÉ 28*
 
 ${recipientLine}
 
 ${clientLine}
 
-💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}${desglose}
+💰 Monto${typeLabel}: S/ ${amount.toFixed(2)}
 
 📎 Adjuntamos el detalle completo.
 
-Para pagar, contacte con administraci�n.
+Para pagar, contacte con administración.
 Gracias.`;
+    }
 
+    const typeLabels: Record<string, string> = { all: 'general', lunch: 'almuerzos', cafeteria: 'cafetería' };
     navigator.clipboard.writeText(message);
     toast({
       title: '📋 Mensaje copiado',
-      description: 'El mensaje se copi� al portapapeles',
+      description: `Mensaje de ${typeLabels[type]} copiado al portapapeles`,
     });
   };
 
@@ -1544,10 +1568,11 @@ Gracias.`;
     const lunchAmount = lunchTransactions.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
     const lunchCount = lunchTransactions.length;
 
-    // Usar plantilla personalizada si existe (con las variables reemplazadas)
+    // Usar plantilla de almuerzos si existe, sino la general
     let message: string;
-    if (configMessageTemplate && configMessageTemplate.trim()) {
-      message = resolveMessageTemplate(configMessageTemplate, debtor, lunchAmount, lunchCount);
+    const lunchTemplate = configLunchTemplate.trim() || configMessageTemplate;
+    if (lunchTemplate && lunchTemplate.trim()) {
+      message = resolveMessageTemplate(lunchTemplate, debtor, lunchAmount, lunchCount);
     } else {
       // Mensaje por defecto si no hay plantilla configurada
       const cuentaInfo = schoolConfig?.bank_account_number
@@ -1938,6 +1963,8 @@ Agradecemos su pronta atención. 🙏`;
       if (error) throw error;
       setSchoolConfig(data || null);
       setConfigMessageTemplate(data?.message_template || '');
+      setConfigLunchTemplate(data?.lunch_message_template || '');
+      setConfigCafeteriaTemplate(data?.cafeteria_message_template || '');
       setConfigYapeEnabled(data?.yape_enabled ?? true);
       setConfigPlinEnabled(data?.plin_enabled ?? true);
       setConfigTransferenciaEnabled(data?.transferencia_enabled ?? true);
@@ -1972,6 +1999,8 @@ Agradecemos su pronta atención. 🙏`;
       const payload = {
         school_id: userSchoolId,
         message_template: configMessageTemplate,
+        lunch_message_template: configLunchTemplate || null,
+        cafeteria_message_template: configCafeteriaTemplate || null,
         yape_enabled: configYapeEnabled,
         plin_enabled: configPlinEnabled,
         transferencia_enabled: configTransferenciaEnabled,
@@ -2798,59 +2827,53 @@ Si tienes dudas, comunícate con la administración de tu sede.
                             </details>
                           </div>
 
-                          {/* Botones de acci�n */}
+                          {/* Botones de acción */}
                           <div className="flex flex-wrap gap-2">
-                            {/* Botones de cobro segmentados */}
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="bg-green-600 hover:bg-green-700"
+                              onClick={() => handleOpenPayment(debtor, 'all')}
+                            >
+                              <DollarSign className="h-4 w-4 mr-1" />
+                              Cobrar S/ {debtor.total_amount.toFixed(2)}
+                            </Button>
+
                             {debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0 ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  className="bg-green-600 hover:bg-green-700"
-                                  onClick={() => handleOpenPayment(debtor, 'all')}
-                                >
-                                  <DollarSign className="h-4 w-4 mr-1" />
-                                  Todo S/ {debtor.total_amount.toFixed(2)}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-orange-300 text-orange-700 hover:bg-orange-50"
-                                  onClick={() => handleOpenPayment(debtor, 'lunch')}
-                                >
-                                  <UtensilsCrossed className="h-3.5 w-3.5 mr-1" />
-                                  Almuerzo S/ {debtor.lunch_amount.toFixed(2)}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
-                                  onClick={() => handleOpenPayment(debtor, 'cafeteria')}
-                                >
-                                  <Coffee className="h-3.5 w-3.5 mr-1" />
-                                  Cafetería S/ {debtor.cafeteria_amount.toFixed(2)}
-                                </Button>
-                              </>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="sm" variant="outline">
+                                    <Copy className="h-4 w-4 mr-1" />
+                                    Copiar Mensaje
+                                    <ChevronDown className="h-3 w-3 ml-1" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                  <DropdownMenuItem onClick={() => copyMessage(debtor, 'all')}>
+                                    <MessageSquare className="h-4 w-4 mr-2" />
+                                    Todo — S/ {debtor.total_amount.toFixed(2)}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => copyMessage(debtor, 'lunch')}>
+                                    <UtensilsCrossed className="h-4 w-4 mr-2 text-orange-600" />
+                                    Almuerzos — S/ {debtor.lunch_amount.toFixed(2)}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => copyMessage(debtor, 'cafeteria')}>
+                                    <Coffee className="h-4 w-4 mr-2 text-purple-600" />
+                                    Cafetería — S/ {debtor.cafeteria_amount.toFixed(2)}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             ) : (
                               <Button
                                 size="sm"
-                                variant="default"
-                                className="bg-green-600 hover:bg-green-700"
-                                onClick={() => handleOpenPayment(debtor, 'all')}
+                                variant="outline"
+                                onClick={() => copyMessage(debtor, 'all')}
                               >
-                                <DollarSign className="h-4 w-4 mr-1" />
-                                Cobrar S/ {debtor.total_amount.toFixed(2)}
+                                <Copy className="h-4 w-4 mr-1" />
+                                Copiar Mensaje
                               </Button>
                             )}
-
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => copyMessage(debtor)}
-                            >
-                              <Copy className="h-4 w-4 mr-1" />
-                              Copiar Mensaje
-                            </Button>
 
                             <Button
                               size="sm"
