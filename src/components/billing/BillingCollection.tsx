@@ -93,19 +93,19 @@ interface Debtor {
   has_lunch_debt?: boolean; // Si tiene deuda de almuerzo (para mostrar indicador de voucher y WhatsApp)
 }
 
-function isLunchTx(t: any): boolean {
-  if (t.metadata?.lunch_order_id) return true;
-  if (t.metadata?.source === 'lunch_order' || t.metadata?.source === 'lunch') return true;
-  if (t.id?.toString().startsWith('lunch_')) return true;
-  return false;
-}
-
 
 
 export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 'config' } = {}) => {
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
+
+  const isLunchTx = (t: any): boolean => {
+    if (t.metadata?.lunch_order_id) return true;
+    if (t.metadata?.source === 'lunch_order' || t.metadata?.source === 'lunch') return true;
+    if (t.id?.toString().startsWith('lunch_')) return true;
+    return false;
+  };
 
   const [loading, setLoading] = useState(true);
   const [schools, setSchools] = useState<School[]>([]);
