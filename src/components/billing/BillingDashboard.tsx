@@ -133,12 +133,31 @@ const emptyStats: DashboardStats = {
   collectionBySchool: [],
 };
 
-// Solo usa metadata para clasificar — evita falsos positivos por texto libre
 function isLunchTransaction(t: any): boolean {
   if (t.metadata?.lunch_order_id) return true;
   if (t.metadata?.source === 'lunch_order') return true;
   if (t.metadata?.source === 'lunch') return true;
   return false;
+}
+
+// Paginación por cursor para superar el límite de 1000 filas de Supabase
+async function fetchAllPaginated(
+  buildQuery: (cursor: string | null) => any,
+  cursorField = 'created_at',
+  pageSize = 1000
+): Promise<any[]> {
+  const all: any[] = [];
+  let cursor: string | null = null;
+  while (true) {
+    const query = buildQuery(cursor);
+    const { data, error } = await query.order(cursorField, { ascending: false }).limit(pageSize);
+    if (error) { console.error('Paginated fetch error:', error); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    cursor = data[data.length - 1][cursorField];
+  }
+  return all;
 }
 
 export const BillingDashboard = () => {
@@ -209,36 +228,30 @@ export const BillingDashboard = () => {
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      // ========== 1. TRANSACCIONES PENDIENTES ==========
-      let pendingQuery = supabase
-        .from('transactions')
-        .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
-        .in('payment_status', ['pending', 'partial'])
-        .eq('type', 'purchase')
-        .limit(100000);
+      // ========== 1. TRANSACCIONES PENDIENTES (paginado) ==========
+      const pendingData = await fetchAllPaginated((cursor) => {
+        let q = supabase
+          .from('transactions')
+          .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
+          .in('payment_status', ['pending', 'partial'])
+          .eq('type', 'purchase');
+        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+        if (cursor) q = q.lt('created_at', cursor);
+        return q;
+      });
 
-      if (schoolIdFilter) {
-        pendingQuery = pendingQuery.eq('school_id', schoolIdFilter);
-      }
-
-      const { data: pendingData } = await pendingQuery;
-
-      // ========== 2. LUNCH ORDERS SOLO 'pagar_luego' (deudas virtuales) ==========
-      // Solo traemos pedidos que deben pagarse después para no inflar el total con pagos al contado
-      let lunchQuery = supabase
-        .from('lunch_orders')
-        .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
-        .in('status', ['confirmed', 'delivered'])
-        .eq('is_cancelled', false)
-        .eq('payment_method', 'pagar_luego')
-        .limit(100000);
-
-      if (schoolIdFilter) {
-        lunchQuery = lunchQuery.eq('school_id', schoolIdFilter);
-      }
-
-      const { data: lunchOrdersRaw } = await lunchQuery;
-      const lunchOrders = lunchOrdersRaw || [];
+      // ========== 2. LUNCH ORDERS SOLO 'pagar_luego' (paginado) ==========
+      const lunchOrders = await fetchAllPaginated((cursor) => {
+        let q = supabase
+          .from('lunch_orders')
+          .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
+          .in('status', ['confirmed', 'delivered'])
+          .eq('is_cancelled', false)
+          .eq('payment_method', 'pagar_luego');
+        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+        if (cursor) q = q.lt('created_at', cursor);
+        return q;
+      });
 
       // Obtener IDs de lunch_orders que ya tienen transacción (pending o paid)
       const existingLunchOrderIds = new Set<string>();
@@ -247,22 +260,19 @@ export const BillingDashboard = () => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
       });
 
-      // También verificar transacciones PAID para no duplicar
-      // Usamos ->> (texto) que es más compatible que -> (JSON) en distintas versiones de PostgREST
-      let paidLunchCheck = supabase
-        .from('transactions')
-        .select('metadata')
-        .eq('type', 'purchase')
-        .eq('payment_status', 'paid')
-        .not('metadata->>lunch_order_id', 'is', null)
-        .limit(100000);
-
-      if (schoolIdFilter) {
-        paidLunchCheck = paidLunchCheck.eq('school_id', schoolIdFilter);
-      }
-
-      const { data: paidWithLunch } = await paidLunchCheck;
-      paidWithLunch?.forEach((t: any) => {
+      // También verificar transacciones PAID para no duplicar (paginado)
+      const paidWithLunch = await fetchAllPaginated((cursor) => {
+        let q = supabase
+          .from('transactions')
+          .select('metadata, created_at')
+          .eq('type', 'purchase')
+          .eq('payment_status', 'paid')
+          .not('metadata->>lunch_order_id', 'is', null);
+        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+        if (cursor) q = q.lt('created_at', cursor);
+        return q;
+      });
+      paidWithLunch.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
       });
 
@@ -430,20 +440,18 @@ export const BillingDashboard = () => {
         schoolStatsMap[sName].debtors.add(debtorKey);
       });
 
-      // ========== COBROS (HOY, AYER, SEMANA, MES) ==========
-      let paidQuery = supabase
-        .from('transactions')
-        .select('amount, payment_method, created_at, school_id, schools(name)')
-        .eq('type', 'purchase')
-        .eq('payment_status', 'paid')
-        .gte('created_at', monthStart.toISOString())
-        .limit(100000);
-
-      if (schoolIdFilter) {
-        paidQuery = paidQuery.eq('school_id', schoolIdFilter);
-      }
-
-      const { data: paidData } = await paidQuery;
+      // ========== COBROS (HOY, AYER, SEMANA, MES) — paginado ==========
+      const paidData = await fetchAllPaginated((cursor) => {
+        let q = supabase
+          .from('transactions')
+          .select('amount, payment_method, created_at, school_id, schools(name)')
+          .eq('type', 'purchase')
+          .eq('payment_status', 'paid')
+          .gte('created_at', monthStart.toISOString());
+        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+        if (cursor) q = q.lt('created_at', cursor);
+        return q;
+      });
 
       if (currentRequestId !== requestIdRef.current) return;
 
@@ -520,20 +528,22 @@ export const BillingDashboard = () => {
           category: (d.hasLunch && d.hasCafeteria ? 'mixed' : d.hasLunch ? 'almuerzo' : 'cafeteria') as 'almuerzo' | 'cafeteria' | 'mixed',
         }));
 
-      // ========== REEMBOLSOS PENDIENTES ==========
+      // ========== REEMBOLSOS PENDIENTES (paginado) ==========
       let refundCount = 0;
       let refundAmount = 0;
       try {
-        let refundQuery = supabase
-          .from('transactions')
-          .select('amount, metadata')
-          .eq('payment_status', 'cancelled')
-          .eq('metadata->>requires_refund', 'true')
-          .limit(1000);
-        if (schoolIdFilter) refundQuery = refundQuery.eq('school_id', schoolIdFilter);
-        const { data: refundData } = await refundQuery;
-        refundCount = refundData?.length || 0;
-        refundAmount = refundData?.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0) || 0;
+        const refundData = await fetchAllPaginated((cursor) => {
+          let q = supabase
+            .from('transactions')
+            .select('amount, metadata, created_at')
+            .eq('payment_status', 'cancelled')
+            .eq('metadata->>requires_refund', 'true');
+          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        });
+        refundCount = refundData.length;
+        refundAmount = refundData.reduce((sum: number, t: any) => sum + Math.abs(t.amount || 0), 0);
       } catch { /* ignore */ }
 
       // ========== POR SEDE ==========
