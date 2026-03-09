@@ -49,6 +49,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  UtensilsCrossed,
+  Coffee,
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -83,10 +85,19 @@ interface Debtor {
   school_id: string;
   school_name: string;
   total_amount: number;
+  lunch_amount: number;
+  cafeteria_amount: number;
   transaction_count: number;
   transactions: any[];
   voucher_status?: 'none' | 'pending' | 'rejected'; // Estado del voucher enviado por el padre
   has_lunch_debt?: boolean; // Si tiene deuda de almuerzo (para mostrar indicador de voucher y WhatsApp)
+}
+
+function isLunchTx(t: any): boolean {
+  if (t.metadata?.lunch_order_id) return true;
+  if (t.metadata?.source === 'lunch_order' || t.metadata?.source === 'lunch') return true;
+  if (t.id?.toString().startsWith('lunch_')) return true;
+  return false;
 }
 
 
@@ -866,12 +877,20 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             school_id: transaction.school_id,
             school_name: transaction.schools?.name || '',
             total_amount: 0,
+            lunch_amount: 0,
+            cafeteria_amount: 0,
             transaction_count: 0,
             transactions: [],
           };
         }
 
-        debtorsMap[clientId].total_amount += Math.abs(transaction.amount);
+        const txAmt = Math.abs(transaction.amount);
+        debtorsMap[clientId].total_amount += txAmt;
+        if (isLunchTx(transaction)) {
+          debtorsMap[clientId].lunch_amount += txAmt;
+        } else {
+          debtorsMap[clientId].cafeteria_amount += txAmt;
+        }
         debtorsMap[clientId].transaction_count += 1;
         debtorsMap[clientId].transactions.push(transaction);
 
@@ -1014,9 +1033,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     }
   };
 
-  const handleOpenPayment = (debtor: Debtor) => {
-    // 🆕 Filtrar solo transacciones seleccionadas (si hay alguna seleccionada)
-    // 🔧 FIX: Usar debtor.id que ES el student_id, teacher_id o manual_name
+  const handleOpenPayment = (debtor: Debtor, collectType: 'all' | 'lunch' | 'cafeteria' = 'all') => {
     const debtorKey = debtor.id;
     const selectedTxIds = selectedTransactionsByDebtor.get(debtorKey);
     
@@ -1024,15 +1041,17 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     let transactionsToPay: any[];
     
     if (selectedTxIds && selectedTxIds.size > 0) {
-      // Si hay transacciones seleccionadas, cobrar solo esas
       transactionsToPay = debtor.transactions.filter((t: any) => selectedTxIds.has(t.id));
       transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
-      console.log(`💰 Cobrando ${selectedTxIds.size} transacciones seleccionadas: S/ ${transactionsToPayAmount}`);
+    } else if (collectType === 'lunch') {
+      transactionsToPay = debtor.transactions.filter((t: any) => isLunchTx(t));
+      transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
+    } else if (collectType === 'cafeteria') {
+      transactionsToPay = debtor.transactions.filter((t: any) => !isLunchTx(t));
+      transactionsToPayAmount = transactionsToPay.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
     } else {
-      // Si no hay selecci�n, cobrar todas
       transactionsToPay = debtor.transactions;
       transactionsToPayAmount = debtor.total_amount;
-      console.log(`💰 Cobrando todas las transacciones: S/ ${transactionsToPayAmount}`);
     }
     
     // Guardar el deudor con las transacciones filtradas
@@ -1387,13 +1406,18 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       recipientLine = `Estimado(a) ${debtor.client_name}`;
     }
     
+    let desglose = '';
+    if (debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0) {
+      desglose = `\n🍽 Almuerzos: S/ ${debtor.lunch_amount.toFixed(2)}\n☕ Cafetería: S/ ${debtor.cafeteria_amount.toFixed(2)}`;
+    }
+    
     const message = `🔔 *COBRANZA LIMA CAFÉ 28*
 
 ${recipientLine}
 
 ${clientLine}
 
-💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}
+💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}${desglose}
 
 📎 Adjuntamos el detalle completo.
 
@@ -1509,6 +1533,8 @@ Gracias.`;
         };
       }),
       total_amount: debtor.total_amount,
+      lunch_amount: debtor.lunch_amount,
+      cafeteria_amount: debtor.cafeteria_amount,
       pending_amount: debtor.total_amount,
       logo_base64: logoBase64
     });
@@ -1610,8 +1636,10 @@ Agradecemos su pronta atención. 🙏`;
         parent_name: debtor.parent_name,
         student_name: debtor.client_name,
         amount: debtor.total_amount.toFixed(2),
+        lunch_amount: debtor.lunch_amount.toFixed(2),
+        cafeteria_amount: debtor.cafeteria_amount.toFixed(2),
         period: period?.period_name || 'Cuenta Pendiente',
-        message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.student_name}* tiene un consumo pendiente${period ? ` del per�odo: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraci�n.\nGracias.`,
+        message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.client_name}* tiene un consumo pendiente${period ? ` del per\u00edodo: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}${debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0 ? `\n🍽 Almuerzos: S/ ${debtor.lunch_amount.toFixed(2)}\n☕ Cafetería: S/ ${debtor.cafeteria_amount.toFixed(2)}` : ''}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraci\u00f3n.\nGracias.`,
         delay_seconds: delay,
         pdf_url: '', // Se generar� despu�s
       };
@@ -1707,6 +1735,8 @@ Agradecemos su pronta atención. 🙏`;
           amount: t.amount,
         })),
         total_amount: debtor.total_amount,
+        lunch_amount: debtor.lunch_amount,
+        cafeteria_amount: debtor.cafeteria_amount,
         pending_amount: debtor.total_amount,
         logo_base64: logoBase64
       });
@@ -1946,6 +1976,9 @@ Agradecemos su pronta atención. 🙏`;
       .replace(/\{nombre_padre\}/g, debtor.parent_name || 'Padre de familia')
       .replace(/\{nombre_estudiante\}/g, debtor.client_name || '')
       .replace(/\{monto\}/g, amount.toFixed(2))
+      .replace(/\{monto_total\}/g, (debtor.total_amount || amount).toFixed(2))
+      .replace(/\{monto_almuerzo\}/g, (debtor.lunch_amount || 0).toFixed(2))
+      .replace(/\{monto_cafeteria\}/g, (debtor.cafeteria_amount || 0).toFixed(2))
       .replace(/\{periodo\}/g, selectedPeriod !== 'all' ? (periods.find(p => p.id === selectedPeriod)?.name || '') : '')
       .replace(/\{numero_cuenta\}/g, schoolConfig?.bank_account_number || '')
       .replace(/\{numero_cci\}/g, schoolConfig?.bank_cci || '')
@@ -2651,6 +2684,12 @@ Si tienes dudas, comunícate con la administración de tu sede.
                               <Badge variant="destructive" className="mt-1">
                                 {debtor.transaction_count} consumo(s)
                               </Badge>
+                              {debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0 && (
+                                <div className="mt-1.5 text-xs space-y-0.5">
+                                  <div className="text-orange-600 font-medium">🍽 Almuerzo: S/ {debtor.lunch_amount.toFixed(2)}</div>
+                                  <div className="text-purple-600 font-medium">☕ Cafetería: S/ {debtor.cafeteria_amount.toFixed(2)}</div>
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -2783,15 +2822,48 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
                           {/* Botones de acci�n */}
                           <div className="flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="bg-green-600 hover:bg-green-700"
-                              onClick={() => handleOpenPayment(debtor)}
-                            >
-                              <DollarSign className="h-4 w-4 mr-1" />
-                              Cobrar
-                            </Button>
+                            {/* Botones de cobro segmentados */}
+                            {debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0 ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="bg-green-600 hover:bg-green-700"
+                                  onClick={() => handleOpenPayment(debtor, 'all')}
+                                >
+                                  <DollarSign className="h-4 w-4 mr-1" />
+                                  Todo S/ {debtor.total_amount.toFixed(2)}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                                  onClick={() => handleOpenPayment(debtor, 'lunch')}
+                                >
+                                  <UtensilsCrossed className="h-3.5 w-3.5 mr-1" />
+                                  Almuerzo S/ {debtor.lunch_amount.toFixed(2)}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                                  onClick={() => handleOpenPayment(debtor, 'cafeteria')}
+                                >
+                                  <Coffee className="h-3.5 w-3.5 mr-1" />
+                                  Cafetería S/ {debtor.cafeteria_amount.toFixed(2)}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={() => handleOpenPayment(debtor, 'all')}
+                              >
+                                <DollarSign className="h-4 w-4 mr-1" />
+                                Cobrar S/ {debtor.total_amount.toFixed(2)}
+                              </Button>
+                            )}
 
                             <Button
                               size="sm"

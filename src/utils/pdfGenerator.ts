@@ -27,6 +27,8 @@ interface PDFData {
   end_date: string;
   transactions: Transaction[];
   total_amount: number;
+  lunch_amount?: number;
+  cafeteria_amount?: number;
   paid_amount?: number;
   pending_amount?: number;
   logo_base64?: string;
@@ -212,7 +214,9 @@ export const generateBillingPDF = (data: PDFData) => {
 
   // Fondo del resumen
   doc.setFillColor(254, 242, 242); // red-50
-  doc.roundedRect(summaryX - 5, summaryY - 5, 70, data.paid_amount !== undefined ? 35 : 25, 3, 3, 'F');
+  const hasBreakdown = (data.lunch_amount || 0) > 0 && (data.cafeteria_amount || 0) > 0;
+  const breakdownExtraHeight = hasBreakdown ? 14 : 0;
+  doc.roundedRect(summaryX - 5, summaryY - 5, 70, (data.paid_amount !== undefined ? 35 : 25) + breakdownExtraHeight, 3, 3, 'F');
 
   // Total
   doc.setFontSize(11);
@@ -222,13 +226,29 @@ export const generateBillingPDF = (data: PDFData) => {
   doc.setTextColor(...primaryColor);
   doc.text(`S/ ${data.total_amount.toFixed(2)}`, pageWidth - 20, summaryY, { align: 'right' });
 
+  let summaryOffset = 0;
+
+  // Desglose almuerzo/cafetería
+  if (hasBreakdown) {
+    summaryOffset = 14;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(194, 65, 12); // orange-700
+    doc.text('Almuerzos:', summaryX, summaryY + 7);
+    doc.text(`S/ ${(data.lunch_amount || 0).toFixed(2)}`, pageWidth - 20, summaryY + 7, { align: 'right' });
+    doc.setTextColor(126, 34, 206); // purple-700
+    doc.text('Cafetería:', summaryX, summaryY + 14);
+    doc.text(`S/ ${(data.cafeteria_amount || 0).toFixed(2)}`, pageWidth - 20, summaryY + 14, { align: 'right' });
+  }
+
   // Si hay pago parcial
   if (data.paid_amount !== undefined && data.paid_amount > 0) {
+    doc.setFontSize(11);
     doc.setTextColor(0, 0, 0);
     doc.setFont('helvetica', 'normal');
-    doc.text('Pagado:', summaryX, summaryY + 7);
+    doc.text('Pagado:', summaryX, summaryY + 7 + summaryOffset);
     doc.setTextColor(34, 197, 94); // green-500
-    doc.text(`S/ ${data.paid_amount.toFixed(2)}`, pageWidth - 20, summaryY + 7, { align: 'right' });
+    doc.text(`S/ ${data.paid_amount.toFixed(2)}`, pageWidth - 20, summaryY + 7 + summaryOffset, { align: 'right' });
   }
 
   // Saldo pendiente
@@ -236,12 +256,12 @@ export const generateBillingPDF = (data: PDFData) => {
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...primaryColor);
-    doc.text('SALDO PENDIENTE:', summaryX, summaryY + 15);
-    doc.text(`S/ ${data.pending_amount.toFixed(2)}`, pageWidth - 20, summaryY + 15, { align: 'right' });
+    doc.text('SALDO PENDIENTE:', summaryX, summaryY + 15 + summaryOffset);
+    doc.text(`S/ ${data.pending_amount.toFixed(2)}`, pageWidth - 20, summaryY + 15 + summaryOffset, { align: 'right' });
   }
 
   // Nota al pie
-  const noteY = Math.max(summaryY + 35, pageHeight - 45);
+  const noteY = Math.max(summaryY + 35 + summaryOffset, pageHeight - 45);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'italic');
   doc.setTextColor(...secondaryColor);
