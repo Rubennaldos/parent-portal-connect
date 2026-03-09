@@ -273,11 +273,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   // Cargar schoolConfig en cuanto tengamos el userSchoolId (no solo en tab config)
   useEffect(() => {
-    if (userSchoolId && !canViewAllSchools) {
+    if (canViewAllSchools && selectedSchool && selectedSchool !== 'all') {
+      fetchSchoolConfig(selectedSchool);
+    } else if (userSchoolId && !canViewAllSchools) {
       fetchSchoolConfig();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userSchoolId]);
+  }, [userSchoolId, canViewAllSchools, selectedSchool]);
 
   useEffect(() => {
     // Cargar per�odos
@@ -1951,14 +1953,15 @@ Agradecemos su pronta atención. 🙏`;
   }, [activeTab, selectedSchool, untilDate, canViewAllSchools, userSchoolId, paidPage]);
 
   // Cargar configuración de sede (se llama al montar y al entrar al tab config)
-  const fetchSchoolConfig = async () => {
-    if (!userSchoolId) return;
+  const fetchSchoolConfig = async (schoolId?: string) => {
+    const targetSchoolId = schoolId || userSchoolId;
+    if (!targetSchoolId) return;
     setLoadingSchoolConfig(true);
     try {
       const { data, error } = await supabase
         .from('billing_config')
         .select('*')
-        .eq('school_id', userSchoolId)
+        .eq('school_id', targetSchoolId)
         .maybeSingle();
       if (error) throw error;
       setSchoolConfig(data || null);
