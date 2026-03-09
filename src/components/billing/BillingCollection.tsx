@@ -1980,14 +1980,20 @@ Agradecemos su pronta atención. 🙏`;
 
   // Reemplazar variables en un mensaje de plantilla con datos reales
   const resolveMessageTemplate = (template: string, debtor: any, amount: number, count: number): string => {
+    const destinatario = debtor.client_type === 'student'
+      ? (debtor.parent_name || 'Padre de familia')
+      : debtor.client_name || '';
+
     return template
-      .replace(/\{nombre_padre\}/g, debtor.parent_name || 'Padre de familia')
+      .replace(/\{nombre_padre\}/g, debtor.parent_name || destinatario)
       .replace(/\{nombre_estudiante\}/g, debtor.client_name || '')
+      .replace(/\{nombre\}/g, debtor.client_name || '')
+      .replace(/\{destinatario\}/g, destinatario)
       .replace(/\{monto\}/g, amount.toFixed(2))
       .replace(/\{monto_total\}/g, (debtor.total_amount || amount).toFixed(2))
       .replace(/\{monto_almuerzo\}/g, (debtor.lunch_amount || 0).toFixed(2))
       .replace(/\{monto_cafeteria\}/g, (debtor.cafeteria_amount || 0).toFixed(2))
-      .replace(/\{periodo\}/g, selectedPeriod !== 'all' ? (periods.find(p => p.id === selectedPeriod)?.name || '') : '')
+      .replace(/\{periodo\}/g, selectedPeriod !== 'all' ? (periods.find(p => p.id === selectedPeriod)?.period_name || '') : '')
       .replace(/\{numero_cuenta\}/g, schoolConfig?.bank_account_number || '')
       .replace(/\{numero_cci\}/g, schoolConfig?.bank_cci || '')
       .replace(/\{numero_yape\}/g, schoolConfig?.yape_number || '')

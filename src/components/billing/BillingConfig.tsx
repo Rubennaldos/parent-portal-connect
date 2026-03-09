@@ -656,7 +656,9 @@ Gracias.`);
               <p className="text-xs font-semibold text-blue-800">Variables disponibles:</p>
               <div className="flex flex-wrap gap-1.5">
                 {[
-                  { var: '{nombre_padre}', desc: 'Padre' },
+                  { var: '{destinatario}', desc: 'A quién va dirigido' },
+                  { var: '{nombre}', desc: 'Nombre del deudor' },
+                  { var: '{nombre_padre}', desc: 'Padre (solo alumnos)' },
                   { var: '{nombre_estudiante}', desc: 'Alumno' },
                   { var: '{periodo}', desc: 'Período' },
                   { var: '{monto}', desc: 'Monto' },
@@ -689,6 +691,8 @@ Gracias.`);
             </p>
             <div className="bg-white p-3 rounded-lg border-2 border-gray-200 shadow-inner whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
               {getCompleteMessage()
+                .replace(/\{destinatario\}/g, 'María García')
+                .replace(/\{nombre\}/g, 'Juan Pérez')
                 .replace(/\{nombre_padre\}/g, 'María García')
                 .replace(/\{nombre_estudiante\}/g, 'Juan Pérez')
                 .replace(/\{periodo\}/g, 'Semana 1-5 Enero')
