@@ -867,7 +867,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
         const txAmt = Math.abs(transaction.amount);
         debtorsMap[clientId].total_amount += txAmt;
-        if (isLunchTx(transaction)) {
+        const isLunch = isLunchTx(transaction);
+        if (isLunch) {
           debtorsMap[clientId].lunch_amount += txAmt;
         } else {
           debtorsMap[clientId].cafeteria_amount += txAmt;
@@ -875,11 +876,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         debtorsMap[clientId].transaction_count += 1;
         debtorsMap[clientId].transactions.push(transaction);
 
-        // Detectar si tiene deuda de almuerzo
-        const isLunchTx = transaction.metadata?.lunch_order_id || 
-                          transaction.metadata?.source?.includes('lunch') ||
-                          transaction.description?.toLowerCase().includes('almuerzo');
-        if (isLunchTx) {
+        if (isLunch) {
           debtorsMap[clientId].has_lunch_debt = true;
         }
       });
