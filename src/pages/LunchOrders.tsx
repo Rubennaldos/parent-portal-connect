@@ -57,6 +57,7 @@ interface LunchOrder {
   manual_name: string | null;
   payment_method: string | null;
   payment_details: any;
+  parent_notes: string | null;
   menu_id: string | null;
   quantity: number | null;
   base_price: number | null;
@@ -73,6 +74,8 @@ interface LunchOrder {
     temporary_classroom_name: string | null;
     school_id: string;
     free_account: boolean | null;
+    grade: string | null;
+    section: string | null;
   };
   teacher?: {
     full_name: string;
@@ -156,6 +159,9 @@ export default function LunchOrders() {
   // ── Modal de exportación ──────────────────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
+  // true = exportar TODOS los pedidos cargados (ignora filtros activos)
+  // false = exportar solo lo que se ve en pantalla (respeta filtros)
+  const [exportIgnoreFilters, setExportIgnoreFilters] = useState(true);
   const [exportColumns, setExportColumns] = useState({
     nombre:        true,
     sede:          true,
@@ -339,7 +345,9 @@ export default function LunchOrders() {
               is_temporary,
               temporary_classroom_name,
               school_id,
-              free_account
+              free_account,
+              grade,
+              section
             ),
             teacher:teacher_profiles (
               full_name,
@@ -462,24 +470,13 @@ export default function LunchOrders() {
           }
         }
         
-        // 🔒 Filtrar pedidos de padres con pago pendiente (no mostrar hasta que paguen)
-        const filteredData = (data || []).filter((order: any) => {
-          // Si es pedido de estudiante (padre) y tiene payment_status='pending', ocultarlo
-          if (order.student_id && order._tx_payment_status === 'pending') {
-            return false;
-          }
-          return true;
-        });
-        
-        setOrders(filteredData);
+        // ✅ Mostrar TODOS los pedidos (pagados y sin pagar) — el admin necesita verlos todos
+        setOrders(data || []);
         setLoading(false);
         return;
       }
       
       // Modo normal: una sola fecha
-      console.log('📅 Cargando pedidos de almuerzo para:', selectedDate);
-      console.log('👤 Usuario:', user?.id);
-      console.log('🎭 Rol:', role);
 
       let query = supabase
         .from('lunch_orders')
@@ -495,7 +492,9 @@ export default function LunchOrders() {
             is_temporary,
             temporary_classroom_name,
             school_id,
-            free_account
+            free_account,
+            grade,
+            section
           ),
           teacher:teacher_profiles (
             full_name,
@@ -527,26 +526,6 @@ export default function LunchOrders() {
         throw error;
       }
       
-      console.log('✅ Pedidos cargados:', data?.length || 0);
-      console.log('🔍 [DEBUG] Pedidos con is_cancelled:', data?.map(o => ({
-        nombre: o.student?.full_name || o.teacher?.full_name || o.manual_name,
-        is_cancelled: o.is_cancelled,
-        status: o.status
-      })));
-      
-      // DEBUG: Ver qué pedidos tienen menú
-      data?.forEach((order, index) => {
-        console.log(`Pedido ${index + 1}:`, {
-          id: order.id,
-          student: order.student?.full_name,
-          teacher: order.teacher?.full_name,
-          manual_name: order.manual_name,
-          menu_id: order.menu_id,
-          tiene_menu: !!order.lunch_menus,
-          menu: order.lunch_menus
-        });
-      });
-      
       // Cargar categorías para los menús que tengan category_id
       if (data && data.length > 0) {
         const categoryIds = data
@@ -577,14 +556,21 @@ export default function LunchOrders() {
       if (data && data.length > 0) {
         try {
           const orderIds = data.map(o => o.id);
-          const { data: txData } = await supabase
+          // Filtrar por school_id para performance (no buscar transacciones de otras sedes)
+          let txQuery = supabase
             .from('transactions')
             .select('metadata, ticket_code, payment_status, payment_method, amount')
             .eq('type', 'purchase')
             .neq('payment_status', 'cancelled')
-            .not('metadata', 'is', null)
+            .not('metadata', 'is', null);
+          
+          if (adminSchoolId) {
+            txQuery = txQuery.eq('school_id', adminSchoolId);
+          }
+
+          const { data: txData } = await txQuery
             .order('created_at', { ascending: false })
-            .limit(5000); // 🔧 Evitar límite por defecto de 1000 que ocultaba tickets
+            .limit(5000);
           
           if (txData) {
             const ticketMap = new Map<string, string>();
@@ -597,19 +583,17 @@ export default function LunchOrders() {
                 if (tx.ticket_code) {
                   ticketMap.set(lunchOrderId, tx.ticket_code);
                 }
-                // Priorizar 'paid' sobre 'pending'
-                const existing = paymentStatusMap.get(lunchOrderId);
-                if (!existing || tx.payment_status === 'paid') {
+                // Usar la transacción más reciente (ya viene ordenado por created_at DESC)
+                // Solo guardar la primera que encontremos para cada order
+                if (!paymentStatusMap.has(lunchOrderId)) {
                   paymentStatusMap.set(lunchOrderId, { 
                     status: tx.payment_status, 
                     method: tx.payment_method 
                   });
                 }
-                // Guardar el monto de la transacción (valor absoluto)
                 if (tx.amount) {
                   amountMap.set(lunchOrderId, Math.abs(tx.amount));
                 }
-                // Guardar el source de la transacción
                 if (tx.metadata?.source) {
                   sourceMap.set(lunchOrderId, tx.metadata.source);
                 }
@@ -638,16 +622,8 @@ export default function LunchOrders() {
         }
       }
 
-      // 🔒 Filtrar pedidos de padres con pago pendiente (no mostrar hasta que paguen)
-      const filteredData = (data || []).filter((order: any) => {
-        // Si es pedido de estudiante (padre) y tiene payment_status='pending', ocultarlo
-        if (order.student_id && order._tx_payment_status === 'pending') {
-          return false;
-        }
-        return true;
-      });
-
-      setOrders(filteredData);
+      // ✅ Mostrar TODOS los pedidos (pagados y sin pagar) — el admin necesita verlos todos
+      setOrders(data || []);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
       toast({
@@ -981,7 +957,7 @@ export default function LunchOrders() {
 
           const price = category?.price || config?.lunch_price || 7.50;
           transactionData.amount = -Math.abs(price);
-          transactionData.description = `Almuerzo - ${format(new Date(order.order_date), "d 'de' MMMM", { locale: es })}`;
+          transactionData.description = `Almuerzo - ${format(new Date(order.order_date + 'T12:00:00'), "d 'de' MMMM", { locale: es })}`;
         }
       } else if (order.teacher_id) {
         // Es profesor - siempre crear transacción
@@ -1013,7 +989,7 @@ export default function LunchOrders() {
 
         const price = category?.price || config?.lunch_price || 7.50;
         transactionData.amount = -Math.abs(price);
-        transactionData.description = `Almuerzo - ${format(new Date(order.order_date), "d 'de' MMMM", { locale: es })}`;
+        transactionData.description = `Almuerzo - ${format(new Date(order.order_date + 'T12:00:00'), "d 'de' MMMM", { locale: es })}`;
       } else if (order.manual_name) {
         // Cliente manual - verificar si es "pagar luego" o ya pagó
         needsTransaction = true;
@@ -1027,7 +1003,7 @@ export default function LunchOrders() {
 
         const price = category?.price || 7.50;
         transactionData.amount = -Math.abs(price);
-        transactionData.description = `Almuerzo - ${format(new Date(order.order_date), "d 'de' MMMM", { locale: es })} - ${order.manual_name}`;
+        transactionData.description = `Almuerzo - ${format(new Date(order.order_date + 'T12:00:00'), "d 'de' MMMM", { locale: es })} - ${order.manual_name}`;
         
         // 🔑 Si el pedido YA fue pagado (método != pagar_luego), marcar transacción como paid
         if (order.payment_method && order.payment_method !== 'pagar_luego') {
@@ -1135,7 +1111,12 @@ export default function LunchOrders() {
       if (order.student.free_account === true) {
         return { label: '💳 Crédito (Pendiente)', color: 'bg-blue-50 text-blue-700 border-blue-300' };
       } else {
-        return { label: '✅ Pagado', color: 'bg-green-50 text-green-700 border-green-300' };
+        // Estudiante con saldo: si no encontramos transacción, verificar si fue debitado
+        // Si el pedido fue registrado por el padre desde el calendario, puede ser saldo pendiente
+        if (order.payment_method === 'saldo' || order.payment_method === 'balance') {
+          return { label: '✅ Pagado', color: 'bg-green-50 text-green-700 border-green-300' };
+        }
+        return { label: '⏳ Sin verificar', color: 'bg-gray-50 text-gray-600 border-gray-300' };
       }
     }
     
@@ -1154,7 +1135,6 @@ export default function LunchOrders() {
     setSelectedOrderTicketCode(preloadedTicket || null);
     setShowMenuDetails(true);
     
-    // 🎫💰 Siempre buscar ticket_code, payment_status, amount y metadata actualizado al abrir detalle
     try {
       const { data: txData } = await supabase
         .from('transactions')
@@ -1162,6 +1142,7 @@ export default function LunchOrders() {
         .eq('type', 'purchase')
         .neq('payment_status', 'cancelled')
         .contains('metadata', { lunch_order_id: order.id })
+        .order('created_at', { ascending: false })
         .limit(1);
       
       if (txData && txData.length > 0) {
@@ -1499,7 +1480,11 @@ export default function LunchOrders() {
     const clientName   = order.student?.full_name || order.teacher?.full_name || order.manual_name || 'N/A';
     const schoolName   = order.school?.name || (order.student?.school_id ? schools.find(s => s.id === order.student?.school_id)?.name : null) || 'N/A';
     const grade        = order.student ? `${order.student.grade || ''} ${order.student.section || ''}`.trim() || '-' : '-';
-    const orderDate    = format(new Date(order.order_date), 'dd/MM/yyyy', { locale: es });
+    // ⚠️ FIX TIMEZONE: Supabase DATE viene como "2026-03-06" (UTC midnight).
+    // new Date("2026-03-06") = 01-Mar-05 19:00 Lima (UTC-5) → día incorrecto.
+    // Solución: forzar mediodía local añadiendo T12:00:00 para evitar el desfase.
+    const deliveryDate = format(new Date(order.order_date + 'T12:00:00'), 'dd/MM/yyyy', { locale: es });
+    const orderDate    = new Date(order.created_at).toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' });
     const orderTime    = new Date(order.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Lima' });
     const categoria    = order.lunch_menus?.lunch_categories?.name || (order.lunch_menus as any)?.category_name || 'Menú del día';
     const quantity     = order.quantity || 1;
@@ -1516,11 +1501,30 @@ export default function LunchOrders() {
       plato = parts.length > 0 ? parts.join(' | ') : '-';
     }
 
-    // Opciones configurables (si existen)
+    // Opciones configurables y selecciones del padre
     const addons = (order as any).lunch_order_addons;
     let configurableText = '';
     if (addons && addons.length > 0) {
       configurableText = addons.map((a: any) => `${a.addon_name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`).join(', ');
+    }
+
+    // Selecciones de plato armado (modifiers, garnishes, configurable_selections)
+    const selMods = (order as any).selected_modifiers;
+    if (selMods && Array.isArray(selMods) && selMods.length > 0) {
+      const modsText = selMods.map((m: any) => `${m.group_name || ''}: ${m.selected_name || ''}`).join(', ');
+      configurableText = configurableText ? `${configurableText} | ${modsText}` : modsText;
+    }
+
+    const selGarnishes = (order as any).selected_garnishes;
+    if (selGarnishes && Array.isArray(selGarnishes) && selGarnishes.length > 0) {
+      const garText = `Guarniciones: ${selGarnishes.join(', ')}`;
+      configurableText = configurableText ? `${configurableText} | ${garText}` : garText;
+    }
+
+    const configSels = (order as any).configurable_selections;
+    if (configSels && Array.isArray(configSels) && configSels.length > 0) {
+      const csText = configSels.map((c: any) => `${c.group_name || ''}: ${c.selected ?? c.selected_name ?? ''}`).join(', ');
+      configurableText = configurableText ? `${configurableText} | ${csText}` : csText;
     }
 
     const statusLabels: Record<string, string> = {
@@ -1535,10 +1539,17 @@ export default function LunchOrders() {
     else if (order.student_id)  origen = order.student?.is_temporary ? 'Cocina (temporal)' : 'App Padre';
     else if (order.manual_name) origen = 'Registro Manual';
 
-    const notes = order.lunch_menus?.notes || order.cancellation_reason || order.postponement_reason || '-';
-    const observaciones = [notes, configurableText ? `Opciones: ${configurableText}` : ''].filter(Boolean).join(' | ') || '-';
+    const menuNotes = order.lunch_menus?.notes || '';
+    const parentNotes = order.parent_notes || '';
+    const cancelNotes = order.cancellation_reason || order.postponement_reason || '';
+    const observacionesParts: string[] = [];
+    if (parentNotes) observacionesParts.push(`Obs. Padre: ${parentNotes}`);
+    if (menuNotes) observacionesParts.push(menuNotes);
+    if (cancelNotes) observacionesParts.push(cancelNotes);
+    if (configurableText) observacionesParts.push(`Opciones: ${configurableText}`);
+    const observaciones = observacionesParts.length > 0 ? observacionesParts.join(' | ') : '-';
 
-    return { clientName, schoolName, grade, orderDate, orderTime, categoria: `${quantityText}${categoria}`, plato, observaciones, estado, pago, total, origen, configurableText };
+    return { clientName, schoolName, grade, orderDate, deliveryDate, orderTime, categoria: `${quantityText}${categoria}`, plato, observaciones, estado, pago, total, origen, configurableText };
   };
 
   // ========================================
@@ -1547,13 +1558,16 @@ export default function LunchOrders() {
 
   const exportToExcel = () => {
     try {
+      // ✅ FIX: usar todos los pedidos cargados si "exportIgnoreFilters" está activo
+      const exportData = exportIgnoreFilters ? orders : filteredOrders;
+
       // Cabeceras activas
       const headers: string[] = [];
       if (exportColumns.nombre)        headers.push('Nombre');
       if (exportColumns.sede)          headers.push('Sede');
       if (exportColumns.grado)         headers.push('Grado / Sección');
-      if (exportColumns.fecha)         headers.push('Fecha');
-      if (exportColumns.hora)          headers.push('Hora');
+      if (exportColumns.fecha)         headers.push('Fecha del Pedido');
+      if (exportColumns.hora)          headers.push('Hora del Pedido');
       if (exportColumns.categoria)     headers.push('Categoría');
       if (exportColumns.plato)         headers.push('Detalle del Plato');
       if (exportColumns.observaciones) headers.push('Observaciones');
@@ -1562,7 +1576,7 @@ export default function LunchOrders() {
       if (exportColumns.total)         headers.push('Total');
       if (exportColumns.origen)        headers.push('Origen');
 
-      const rows = filteredOrders.map(order => {
+      const rows = exportData.map(order => {
         const r = buildOrderRow(order);
         const row: (string)[] = [];
         if (exportColumns.nombre)        row.push(r.clientName);
@@ -1577,11 +1591,20 @@ export default function LunchOrders() {
         if (exportColumns.pago)          row.push(r.pago);
         if (exportColumns.total)         row.push(r.total);
         if (exportColumns.origen)        row.push(r.origen);
-        return row;
       });
 
-      const wsData = [headers, ...rows];
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      const deliveryLabel = isDateRangeMode
+        ? `Pedidos del ${format(new Date(startDate + 'T12:00:00'), "dd/MM/yyyy")} al ${format(new Date(endDate + 'T12:00:00'), "dd/MM/yyyy")}`
+        : `Pedidos para el ${format(new Date(selectedDate + 'T12:00:00'), "EEEE dd 'de' MMMM yyyy", { locale: es })}`;
+
+      // Insertar título + línea en blanco + cabeceras + datos
+      const wsDataFull: any[][] = [
+        [deliveryLabel],
+        [],
+        headers,
+        ...rows,
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsDataFull);
 
       // Estilo de encabezados (ancho de columnas automático)
       const colWidths = headers.map((_, i) => ({
@@ -1589,9 +1612,9 @@ export default function LunchOrders() {
       }));
       ws['!cols'] = colWidths;
 
-      // Aplicar negrita a la primera fila (encabezados)
+      // Aplicar negrita a la fila de encabezados (ahora en row index 2)
       headers.forEach((_, i) => {
-        const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+        const cellRef = XLSX.utils.encode_cell({ r: 2, c: i });
         if (ws[cellRef]) {
           ws[cellRef].s = { font: { bold: true }, fill: { fgColor: { rgb: '3B82F6' } }, font2: { color: { rgb: 'FFFFFF' } } };
         }
@@ -1603,10 +1626,10 @@ export default function LunchOrders() {
       // Hoja resumen
       const resumenData = [
         ['RESUMEN', ''],
-        ['Total pedidos', filteredOrders.length],
-        ['Confirmados', filteredOrders.filter(o => o.status === 'confirmed').length],
-        ['Entregados', filteredOrders.filter(o => o.status === 'delivered').length],
-        ['Anulados', filteredOrders.filter(o => o.status === 'cancelled').length],
+        ['Total pedidos', exportData.length],
+        ['Confirmados', exportData.filter(o => o.status === 'confirmed').length],
+        ['Entregados', exportData.filter(o => o.status === 'delivered').length],
+        ['Anulados', exportData.filter(o => o.status === 'cancelled').length],
         ['', ''],
         ['Generado el', new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })],
       ];
@@ -1614,9 +1637,10 @@ export default function LunchOrders() {
       wsResumen['!cols'] = [{ wch: 20 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
 
+      // ⚠️ FIX TIMEZONE: misma corrección para el nombre del archivo
       const fileName = isDateRangeMode
-        ? `Pedidos_Almuerzo_${format(new Date(startDate), 'ddMMyyyy')}_${format(new Date(endDate), 'ddMMyyyy')}.xlsx`
-        : `Pedidos_Almuerzo_${format(new Date(selectedDate), 'ddMMyyyy')}.xlsx`;
+        ? `Pedidos_para_${format(new Date(startDate + 'T12:00:00'), 'ddMMyyyy')}_al_${format(new Date(endDate + 'T12:00:00'), 'ddMMyyyy')}.xlsx`
+        : `Pedidos_para_${format(new Date(selectedDate + 'T12:00:00'), 'dd-MMM-yyyy', { locale: es })}.xlsx`;
 
       XLSX.writeFile(wb, fileName);
       setShowExportModal(false);
@@ -1632,6 +1656,9 @@ export default function LunchOrders() {
   
   const exportToPDF = () => {
     try {
+      // ✅ FIX: usar todos los pedidos cargados si "exportIgnoreFilters" está activo
+      const exportData = exportIgnoreFilters ? orders : filteredOrders;
+
       const doc = new jsPDF('l', 'mm', 'a4');
       const pageW = doc.internal.pageSize.width;
 
@@ -1647,9 +1674,9 @@ export default function LunchOrders() {
 
       let filterText = '';
       if (isDateRangeMode && startDate && endDate) {
-        filterText = `Período: ${format(new Date(startDate), 'dd/MM/yyyy', { locale: es })} – ${format(new Date(endDate), 'dd/MM/yyyy', { locale: es })}`;
+        filterText = `Período de entrega: ${format(new Date(startDate + 'T12:00:00'), 'dd/MM/yyyy', { locale: es })} – ${format(new Date(endDate + 'T12:00:00'), 'dd/MM/yyyy', { locale: es })}`;
       } else {
-        filterText = `Fecha: ${format(new Date(selectedDate), "EEEE d 'de' MMMM yyyy", { locale: es })}`;
+        filterText = `Pedidos para el ${format(new Date(selectedDate + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}`;
       }
       if (selectedSchool !== 'all') {
         const school = schools.find(s => s.id === selectedSchool);
@@ -1664,15 +1691,15 @@ export default function LunchOrders() {
       // Fila de metadatos
       doc.setTextColor(80, 80, 80);
       doc.setFontSize(7);
-      doc.text(`Total pedidos: ${filteredOrders.length}   |   Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}`, 15, 27);
+      doc.text(`Total pedidos: ${exportData.length}   |   Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}`, 15, 27);
 
       // ── Construir columnas activas ──────────────────────────
       const heads: string[] = [];
       if (exportColumns.nombre)        heads.push('Nombre');
       if (exportColumns.sede)          heads.push('Sede');
       if (exportColumns.grado)         heads.push('Grado');
-      if (exportColumns.fecha)         heads.push('Fecha');
-      if (exportColumns.hora)          heads.push('Hora');
+      if (exportColumns.fecha)         heads.push('Fecha del Pedido');
+      if (exportColumns.hora)          heads.push('Hora del Pedido');
       if (exportColumns.categoria)     heads.push('Categoría');
       if (exportColumns.plato)         heads.push('Plato / Menú');
       if (exportColumns.observaciones) heads.push('Observaciones');
@@ -1682,7 +1709,7 @@ export default function LunchOrders() {
       if (exportColumns.origen)        heads.push('Origen');
 
       // ── Filas con soporte de negrita para configurables ─────
-      const tableBody: any[][] = filteredOrders.map(order => {
+      const tableBody: any[][] = exportData.map(order => {
         const r = buildOrderRow(order);
         const row: any[] = [];
         if (exportColumns.nombre)        row.push(r.clientName);
@@ -1732,9 +1759,10 @@ export default function LunchOrders() {
         doc.text(`Pág. ${i} / ${pageCount}`, pageW - 15, doc.internal.pageSize.height - 6, { align: 'right' });
       }
 
+      // ⚠️ FIX TIMEZONE: misma corrección para nombre del PDF
       const fileName = isDateRangeMode
-        ? `Pedidos_Almuerzo_${format(new Date(startDate), 'ddMMyyyy')}_${format(new Date(endDate), 'ddMMyyyy')}.pdf`
-        : `Pedidos_Almuerzo_${format(new Date(selectedDate), 'ddMMyyyy')}.pdf`;
+        ? `Pedidos_Almuerzo_${format(new Date(startDate + 'T12:00:00'), 'ddMMyyyy')}_${format(new Date(endDate + 'T12:00:00'), 'ddMMyyyy')}.pdf`
+        : `Pedidos_Almuerzo_${format(new Date(selectedDate + 'T12:00:00'), 'ddMMyyyy')}.pdf`;
       doc.save(fileName);
       setShowExportModal(false);
       toast({ title: '✅ PDF generado', description: 'El reporte ha sido descargado.' });
@@ -1760,6 +1788,8 @@ export default function LunchOrders() {
       <LunchDeliveryDashboard
         schoolId={adminSchoolId}
         userId={user.id}
+        userName={user.email?.split('@')[0] || 'Admin'}
+        selectedDate={selectedDate || undefined}
         onClose={() => { setShowDelivery(false); fetchOrders(); }}
       />
     );
@@ -2059,6 +2089,32 @@ export default function LunchOrders() {
                                 {idx < order.lunch_order_addons.length - 1 ? ', ' : ''}
                               </span>
                             ))}
+                          </p>
+                        </div>
+                      )}
+                      {/* Selecciones del plato armado */}
+                      {(() => {
+                        const mods = (order as any).selected_modifiers;
+                        const garns = (order as any).selected_garnishes;
+                        const cfgs = (order as any).configurable_selections;
+                        const parts: string[] = [];
+                        if (mods && Array.isArray(mods) && mods.length > 0) parts.push(mods.map((m: any) => `${m.group_name}: ${m.selected_name}`).join(', '));
+                        if (cfgs && Array.isArray(cfgs) && cfgs.length > 0) parts.push(cfgs.map((c: any) => `${c.group_name}: ${c.selected ?? c.selected_name ?? ''}`).join(', '));
+                        if (garns && Array.isArray(garns) && garns.length > 0) parts.push(`Guarniciones: ${garns.join(', ')}`);
+                        if (parts.length === 0) return null;
+                        return (
+                          <div className="mt-1 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
+                            <p className="text-xs text-indigo-800">
+                              <span className="font-semibold">🍽️ Selecciones:</span> {parts.join(' | ')}
+                            </p>
+                          </div>
+                        );
+                      })()}
+                      {/* Observaciones del padre */}
+                      {order.parent_notes && (
+                        <div className="mt-1 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                          <p className="text-xs text-amber-800">
+                            <span className="font-semibold">📝 Obs. Padre:</span> {order.parent_notes}
                           </p>
                         </div>
                       )}
@@ -2447,10 +2503,60 @@ export default function LunchOrders() {
                   </div>
                   {selectedMenuOrder.lunch_menus.notes && (
                     <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                      <p className="text-xs font-semibold text-yellow-700 uppercase mb-1">📝 Notas</p>
+                      <p className="text-xs font-semibold text-yellow-700 uppercase mb-1">📝 Notas del Menú</p>
                       <p className="text-sm text-gray-700">{selectedMenuOrder.lunch_menus.notes}</p>
                     </div>
                   )}
+                  {selectedMenuOrder.parent_notes && (
+                    <div className="mt-3 bg-amber-50 border border-amber-300 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-amber-700 uppercase mb-1">📝 Observación del Padre</p>
+                      <p className="text-sm text-gray-700">{selectedMenuOrder.parent_notes}</p>
+                    </div>
+                  )}
+
+                  {/* Selecciones del plato armado */}
+                  {(() => {
+                    const mods = (selectedMenuOrder as any).selected_modifiers;
+                    const garns = (selectedMenuOrder as any).selected_garnishes;
+                    const configs = (selectedMenuOrder as any).configurable_selections;
+                    const hasMods = mods && Array.isArray(mods) && mods.length > 0;
+                    const hasGarns = garns && Array.isArray(garns) && garns.length > 0;
+                    const hasConfigs = configs && Array.isArray(configs) && configs.length > 0;
+                    if (!hasMods && !hasGarns && !hasConfigs) return null;
+
+                    return (
+                      <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+                        <p className="text-xs font-semibold text-indigo-700 uppercase mb-1">🍽️ Selecciones del Padre</p>
+                        {hasMods && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {mods.map((m: any, i: number) => (
+                              <Badge key={i} variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                                {m.group_name}: <strong className="ml-1">{m.selected_name}</strong>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {hasConfigs && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {configs.map((c: any, i: number) => (
+                              <Badge key={i} variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 text-xs">
+                                {c.group_name}: <strong className="ml-1">{c.selected ?? c.selected_name ?? ''}</strong>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {hasGarns && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {garns.map((g: string, i: number) => (
+                              <Badge key={i} variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
+                                🥗 {g}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
 
@@ -2744,11 +2850,57 @@ export default function LunchOrders() {
             </DialogTitle>
             <DialogDescription>
               Elige el formato y las columnas que deseas exportar.
-              <span className="font-semibold text-blue-700 ml-1">({filteredOrders.length} pedidos)</span>
+              <span className="font-semibold text-blue-700 ml-1">
+                ({exportIgnoreFilters ? orders.length : filteredOrders.length} pedidos)
+              </span>
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-5 py-2">
+
+            {/* ── Alcance del reporte ──────────────────── */}
+            <div className="rounded-lg border-2 border-blue-200 bg-blue-50 p-3 space-y-2">
+              <p className="text-sm font-semibold text-blue-800">📋 ¿Qué pedidos exportar?</p>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    checked={exportIgnoreFilters}
+                    onChange={() => setExportIgnoreFilters(true)}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-gray-800">
+                      Todos los pedidos del día
+                      <span className="ml-2 text-blue-700 font-bold">({orders.length})</span>
+                    </span>
+                    <p className="text-xs text-gray-500">Ignora los filtros activos en pantalla. Recomendado para cocina.</p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    checked={!exportIgnoreFilters}
+                    onChange={() => setExportIgnoreFilters(false)}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-gray-800">
+                      Solo vista actual (con filtros)
+                      <span className="ml-2 text-gray-600 font-bold">({filteredOrders.length})</span>
+                    </span>
+                    <p className="text-xs text-gray-500">
+                      Exporta solo lo que se ve en pantalla
+                      {(searchTerm || selectedStatus !== 'all' || selectedSchool !== 'all') && (
+                        <span className="ml-1 text-amber-700 font-semibold">⚠️ Tienes filtros activos</span>
+                      )}
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
 
             {/* ── Formato ─────────────────────────────── */}
             <div>

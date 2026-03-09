@@ -681,6 +681,11 @@ Gracias.`);
                   </button>
                 ))}
               </div>
+              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-800 space-y-0.5">
+                <p className="font-semibold">💡 Usa estas variables universales para no cambiar la plantilla:</p>
+                <p><span className="font-mono">{'{destinatario}'}</span> → papá/mamá si es alumno, el profe/cliente si no lo es</p>
+                <p><span className="font-mono">{'{nombre}'}</span> → siempre el nombre del deudor (alumno, profe o manual)</p>
+              </div>
             </div>
           </div>
 
