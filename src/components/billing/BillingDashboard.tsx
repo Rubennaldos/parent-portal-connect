@@ -228,49 +228,63 @@ export const BillingDashboard = () => {
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      // ========== 1. TRANSACCIONES PENDIENTES (paginado) ==========
-      const pendingData = await fetchAllPaginated((cursor) => {
-        let q = supabase
-          .from('transactions')
-          .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
-          .in('payment_status', ['pending', 'partial'])
-          .eq('type', 'purchase');
-        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-        if (cursor) q = q.lt('created_at', cursor);
-        return q;
-      });
+      // ========== FETCH EN PARALELO: 4 queries independientes ==========
+      const [pendingData, lunchOrders, paidWithLunch, paidData] = await Promise.all([
+        // 1. Transacciones pendientes
+        fetchAllPaginated((cursor) => {
+          let q = supabase
+            .from('transactions')
+            .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
+            .in('payment_status', ['pending', 'partial'])
+            .eq('type', 'purchase');
+          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        }),
+        // 2. Lunch orders pagar_luego
+        fetchAllPaginated((cursor) => {
+          let q = supabase
+            .from('lunch_orders')
+            .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
+            .in('status', ['confirmed', 'delivered'])
+            .eq('is_cancelled', false)
+            .eq('payment_method', 'pagar_luego');
+          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        }),
+        // 3. Transacciones pagadas con lunch_order_id (para deduplicar)
+        fetchAllPaginated((cursor) => {
+          let q = supabase
+            .from('transactions')
+            .select('metadata, created_at')
+            .eq('type', 'purchase')
+            .eq('payment_status', 'paid')
+            .not('metadata->>lunch_order_id', 'is', null);
+          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        }),
+        // 4. Cobros del mes (paid)
+        fetchAllPaginated((cursor) => {
+          let q = supabase
+            .from('transactions')
+            .select('amount, payment_method, created_at, school_id, schools(name)')
+            .eq('type', 'purchase')
+            .eq('payment_status', 'paid')
+            .gte('created_at', monthStart.toISOString());
+          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        }),
+      ]);
 
-      // ========== 2. LUNCH ORDERS SOLO 'pagar_luego' (paginado) ==========
-      const lunchOrders = await fetchAllPaginated((cursor) => {
-        let q = supabase
-          .from('lunch_orders')
-          .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
-          .in('status', ['confirmed', 'delivered'])
-          .eq('is_cancelled', false)
-          .eq('payment_method', 'pagar_luego');
-        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-        if (cursor) q = q.lt('created_at', cursor);
-        return q;
-      });
+      if (currentRequestId !== requestIdRef.current) return;
 
-      // Obtener IDs de lunch_orders que ya tienen transacción (pending o paid)
+      // Deduplicar: IDs de lunch_orders que ya tienen transacción
       const existingLunchOrderIds = new Set<string>();
-
-      pendingData?.forEach((t: any) => {
+      pendingData.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
-      });
-
-      // También verificar transacciones PAID para no duplicar (paginado)
-      const paidWithLunch = await fetchAllPaginated((cursor) => {
-        let q = supabase
-          .from('transactions')
-          .select('metadata, created_at')
-          .eq('type', 'purchase')
-          .eq('payment_status', 'paid')
-          .not('metadata->>lunch_order_id', 'is', null);
-        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-        if (cursor) q = q.lt('created_at', cursor);
-        return q;
       });
       paidWithLunch.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
@@ -440,21 +454,7 @@ export const BillingDashboard = () => {
         schoolStatsMap[sName].debtors.add(debtorKey);
       });
 
-      // ========== COBROS (HOY, AYER, SEMANA, MES) — paginado ==========
-      const paidData = await fetchAllPaginated((cursor) => {
-        let q = supabase
-          .from('transactions')
-          .select('amount, payment_method, created_at, school_id, schools(name)')
-          .eq('type', 'purchase')
-          .eq('payment_status', 'paid')
-          .gte('created_at', monthStart.toISOString());
-        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-        if (cursor) q = q.lt('created_at', cursor);
-        return q;
-      });
-
-      if (currentRequestId !== requestIdRef.current) return;
-
+      // ========== COBROS (HOY, AYER, SEMANA, MES) ==========
       let totalCollectedToday = 0;
       let collectedYesterday = 0;
       let totalCollectedWeek = 0;
