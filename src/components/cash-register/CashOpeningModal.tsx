@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { AlertTriangle, Lock, ArrowRight, Banknote } from 'lucide-react';
+import { AlertTriangle, Lock, ArrowRight, Banknote, KeyRound, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
@@ -26,17 +26,51 @@ export function CashOpeningModal({
   onOpened,
 }: Props) {
   const { user } = useAuth();
-  const [step, setStep] = useState<'unclosed_warning' | 'declaration'>(
+  const [step, setStep] = useState<'unclosed_warning' | 'admin_password' | 'declaration'>(
     hasUnclosedPrevious ? 'unclosed_warning' : 'declaration'
   );
   const [amount, setAmount] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [closingPrevious, setClosingPrevious] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [validatingPassword, setValidatingPassword] = useState(false);
   const isSubmittingRef = useRef(false);
 
-  // Forzar cierre de la caja anterior sin datos (cierre de emergencia)
-  const forceClosePrevious = async () => {
+  const handleRequestForceClose = () => {
+    setAdminPassword('');
+    setPasswordError('');
+    setStep('admin_password');
+  };
+
+  const [authorizedAdminId, setAuthorizedAdminId] = useState<string | null>(null);
+
+  const handleValidateAdminPassword = async () => {
+    if (!adminPassword.trim()) {
+      setPasswordError('Ingresa la contraseña del administrador');
+      return;
+    }
+    setValidatingPassword(true);
+    setPasswordError('');
+    try {
+      const { data: adminUser, error } = await supabase.rpc('validate_admin_password', {
+        p_password: adminPassword
+      });
+      if (error || !adminUser) {
+        setPasswordError('Contraseña incorrecta. Usa la contraseña del administrador general o de sede.');
+        return;
+      }
+      setAuthorizedAdminId(typeof adminUser === 'string' ? adminUser : adminUser?.id || null);
+      await forceClosePrevious(typeof adminUser === 'string' ? adminUser : adminUser?.id || null);
+    } catch {
+      setPasswordError('Error al validar la contraseña');
+    } finally {
+      setValidatingPassword(false);
+    }
+  };
+
+  const forceClosePrevious = async (adminId?: string | null) => {
     if (!previousUnclosed || !user?.id) return;
     setClosingPrevious(true);
     try {
@@ -71,7 +105,8 @@ export function CashOpeningModal({
           status: 'closed',
           closed_at: new Date().toISOString(),
           closed_by: user.id,
-          notes: 'Cierre forzado por apertura de nueva caja (caja anterior sin cerrar)',
+          admin_password_validated: true,
+          notes: `Cierre forzado autorizado por admin (${adminId || 'unknown'}) — ${new Date().toISOString()}`,
         })
         .eq('id', previousUnclosed.id);
 
@@ -166,11 +201,74 @@ export function CashOpeningModal({
               </Button>
               <Button
                 variant="outline"
-                onClick={forceClosePrevious}
-                disabled={closingPrevious}
+                onClick={handleRequestForceClose}
                 className="w-full border-red-300 text-red-700 hover:bg-red-50"
               >
-                {closingPrevious ? 'Cerrando...' : '⚠️ Forzar cierre y continuar'}
+                ⚠️ Forzar cierre y continuar (requiere contraseña admin)
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── PANTALLA: CONTRASEÑA ADMIN PARA FORZAR CIERRE ────────────────
+  if (step === 'admin_password') {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-amber-600 text-white p-6 text-center">
+            <KeyRound className="h-14 w-14 mx-auto mb-3" />
+            <h2 className="text-2xl font-black uppercase tracking-wide">
+              Autorización Requerida
+            </h2>
+            <p className="text-amber-100 text-sm mt-1">
+              Ingresa la contraseña del administrador general o de sede
+            </p>
+          </div>
+
+          <div className="p-6 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              <p className="font-bold">Esta acción queda registrada</p>
+              <p className="text-xs mt-1">
+                El cierre forzado de la caja anterior será registrado con la fecha, hora y usuario que lo autorizó.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold text-gray-700 block mb-1">
+                Contraseña del Administrador *
+              </label>
+              <Input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => { setAdminPassword(e.target.value); setPasswordError(''); }}
+                placeholder="Ingresa la contraseña"
+                className="h-12 text-center border-2 border-amber-300 focus:border-amber-500"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && handleValidateAdminPassword()}
+              />
+              {passwordError && (
+                <p className="text-red-600 text-xs mt-1 font-semibold">{passwordError}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Button
+                onClick={handleValidateAdminPassword}
+                disabled={validatingPassword || !adminPassword.trim()}
+                className="w-full bg-amber-600 hover:bg-amber-700 h-12 font-bold"
+              >
+                {validatingPassword ? 'Validando...' : '🔓 Autorizar y Forzar Cierre'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setStep('unclosed_warning')}
+                className="w-full"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Volver
               </Button>
             </div>
           </div>

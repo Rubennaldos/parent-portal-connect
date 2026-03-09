@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -41,7 +41,14 @@ import {
   History,
   Eye,
   User,
-  Phone
+  Phone,
+  Plus,
+  Trash2,
+  SplitSquareVertical,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -82,6 +89,8 @@ interface Debtor {
   has_lunch_debt?: boolean; // Si tiene deuda de almuerzo (para mostrar indicador de voucher y WhatsApp)
 }
 
+
+
 export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 'config' } = {}) => {
   const { user } = useAuth();
   const { role } = useRole();
@@ -93,6 +102,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [paidTransactions, setPaidTransactions] = useState<any[]>([]);
   const [loadingPaid, setLoadingPaid] = useState(false);
+
+  const fetchDebtorsRequestId = useRef(0);
+  const fetchPaidRequestId = useRef(0);
   const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>('cobrar');
 
   // Sincronizar con la sección controlada desde el padre (Cobranzas.tsx)
@@ -141,12 +153,31 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     notes: '',
   });
   const [saving, setSaving] = useState(false);
+  
+  // 🆕 Pago dividido / mixto: múltiples líneas de pago
+  interface PaymentLine {
+    id: string;
+    amount: number;
+    payment_method: string;
+    operation_number: string;
+  }
+  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
+  const [useSplitPayment, setUseSplitPayment] = useState(false);
 
   // Modal de env�o masivo
   const [showMassiveModal, setShowMassiveModal] = useState(false);
   const [generatingExport, setGeneratingExport] = useState(false);
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
   const [canCollect, setCanCollect] = useState(false);
+
+  // Paginación - tab Cobrar (deudores)
+  const DEBTORS_PER_PAGE = 20;
+  const [debtorsPage, setDebtorsPage] = useState(1);
+
+  // Paginación - tab Pagos Realizados (server-side)
+  const PAID_PER_PAGE = 30;
+  const [paidPage, setPaidPage] = useState(1);
+  const [paidTotalCount, setPaidTotalCount] = useState(0);
 
   // Verificar permisos al cargar
   useEffect(() => {
@@ -218,6 +249,14 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     fetchSchools();
     fetchUserSchool();
   }, []);
+
+  // Cargar schoolConfig en cuanto tengamos el userSchoolId (no solo en tab config)
+  useEffect(() => {
+    if (userSchoolId && !canViewAllSchools) {
+      fetchSchoolConfig();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSchoolId]);
 
   useEffect(() => {
     // Cargar per�odos
@@ -302,90 +341,95 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     }
   };
 
+
   const fetchDebtors = async () => {
+    const currentRequestId = ++fetchDebtorsRequestId.current;
     try {
       setLoading(true);
 
-      // Determinar el school_id a filtrar
       const schoolIdFilter = !canViewAllSchools || selectedSchool !== 'all' 
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
 
-      // CONSULTA MEJORADA: Incluir estudiantes, profesores y clientes manuales
-      // Solo transacciones PENDIENTES o PARCIALES (NO pagadas)
-      let query = supabase
-        .from('transactions')
-        .select(`
-          *,
-          students(id, full_name, parent_id),
-          teacher_profiles(id, full_name),
-          schools(id, name)
-        `)
-        .eq('type', 'purchase')
-        .in('payment_status', ['pending', 'partial']) // Excluir 'paid'
-        .order('created_at', { ascending: false }); // ✅ M�s reciente primero
+      // --- Paginación inline para transactions (cursor por created_at) ---
+      const transactions: any[] = [];
+      {
+        let txCursor: string | null = null;
+        while (true) {
+          let tq = supabase
+            .from('transactions')
+            .select(`*, students(id, full_name, parent_id), teacher_profiles(id, full_name), schools(id, name)`)
+            .eq('type', 'purchase')
+            .in('payment_status', ['pending', 'partial'])
+            .order('created_at', { ascending: false })
+            .limit(1000);
+          if (txCursor) tq = tq.lt('created_at', txCursor);
+          if (untilDate) {
+            const ld = new Date(untilDate);
+            ld.setHours(23, 59, 59, 999);
+            tq = tq.lte('created_at', ld.toISOString());
+          }
+          if (schoolIdFilter) tq = tq.eq('school_id', schoolIdFilter);
+          const { data: txBatch, error: txErr } = await tq;
+          if (txErr) { console.error('❌ transactions page error:', txErr); break; }
+          if (!txBatch || txBatch.length === 0) break;
+          transactions.push(...txBatch);
+          if (txBatch.length < 1000) break;
+          txCursor = txBatch[txBatch.length - 1].created_at;
+        }
+      }
+      console.warn('🔍 [DEBUG] total transactions fetched:', transactions.length);
 
-      // Filtrar por fecha l�mite si est� definida
-      if (untilDate) {
-        const localDate = new Date(untilDate);
-        localDate.setHours(23, 59, 59, 999);
-        const isoDate = localDate.toISOString();
-        query = query.lte('created_at', isoDate);
+      // --- Paginación inline para lunch_orders (cursor por created_at) ---
+      let lunchOrders: any[] = [];
+      try {
+        let loCursor: string | null = null;
+        while (true) {
+          let lq = supabase
+            .from('lunch_orders')
+            .select(`id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)`)
+            .in('status', ['confirmed', 'delivered'])
+            .eq('is_cancelled', false)
+            .order('created_at', { ascending: false })
+            .limit(1000);
+          if (loCursor) lq = lq.lt('created_at', loCursor);
+          if (untilDate) {
+            const ld2 = new Date(untilDate);
+            ld2.setHours(23, 59, 59, 999);
+            lq = lq.lte('order_date', ld2.toISOString().split('T')[0]);
+          }
+          if (schoolIdFilter) lq = lq.eq('school_id', schoolIdFilter);
+          const { data: loBatch, error: loErr } = await lq;
+          if (loErr) { console.error('❌ lunch_orders page error:', loErr); break; }
+          if (!loBatch || loBatch.length === 0) break;
+          lunchOrders.push(...loBatch);
+          if (loBatch.length < 1000) break;
+          loCursor = loBatch[loBatch.length - 1].created_at;
+        }
+      } catch (e) {
+        console.error('❌ [BillingCollection] Error fetching lunch orders:', e);
+      }
+      console.warn('🔍 [DEBUG] total lunchOrders fetched:', lunchOrders.length);
+
+      // 🔧 FIX: lunch_categories no tiene FK en lunch_orders → lookup separado
+      let lunchCategoriesMap = new Map<string, { id: string; name: string; price: number | null }>();
+      if (lunchOrders && lunchOrders.length > 0) {
+        const catIds = [...new Set((lunchOrders as any[]).map((o: any) => o.category_id).filter(Boolean))] as string[];
+        if (catIds.length > 0) {
+          const { data: catsData } = await supabase
+            .from('lunch_categories')
+            .select('id, name, price')
+            .in('id', catIds);
+          catsData?.forEach((c: any) => lunchCategoriesMap.set(c.id, c));
+        }
       }
 
-      if (schoolIdFilter) {
-        query = query.eq('school_id', schoolIdFilter);
-      }
-
-      const { data: transactions, error } = await query;
-
-      if (error) {
-        console.error('❌ [BillingCollection] Error:', error);
-        throw error;
-      }
-
-      // 🆕 BUSCAR PEDIDOS DE ALMUERZO CONFIRMADOS SIN TRANSACCIONES
-      
-      let lunchOrdersQuery = supabase
-        .from('lunch_orders')
-        .select(`
-          id,
-          order_date,
-          created_at,
-          student_id,
-          teacher_id,
-          manual_name,
-          payment_method,
-          school_id,
-          category_id,
-          quantity,
-          final_price,
-          base_price,
-          students(id, full_name, parent_id, school_id),
-          teacher_profiles(id, full_name, school_id_1),
-          schools(id, name),
-          lunch_categories(id, name, price)
-        `)
-        .in('status', ['confirmed', 'delivered']) // Pedidos confirmados Y entregados aparecen en cobranzas (si no est�n pagados)
-        .eq('is_cancelled', false);
-
-      // Filtrar por fecha l�mite si est� definida
-      if (untilDate) {
-        const localDate = new Date(untilDate);
-        localDate.setHours(23, 59, 59, 999);
-        const dateStr = localDate.toISOString().split('T')[0];
-        lunchOrdersQuery = lunchOrdersQuery.lte('order_date', dateStr);
-      }
-
-      // NO filtrar por school_id aqu� porque los pedidos pueden no tenerlo
-      // El filtro se har� despu�s de obtener los datos
-      const { data: lunchOrders, error: lunchOrdersError } = await lunchOrdersQuery;
-
-      if (lunchOrdersError) {
-        console.error('❌ [BillingCollection] Error fetching lunch orders:', lunchOrdersError);
-      } else {
-      }
+      // Enriquecer cada pedido con su categoría
+      const lunchOrdersWithCategory = (lunchOrders as any[] || []).map((o: any) => ({
+        ...o,
+        lunch_categories: o.category_id ? lunchCategoriesMap.get(o.category_id) || null : null,
+      }));
 
       // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
       
@@ -396,50 +440,68 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       
       // Si hay transacciones con lunch_order_id, verificar cuáles están cancelados O fueron borrados
       let cancelledOrderIds = new Set<string>();
-      let existingLunchOrderIds = new Set<string>(); // IDs que AÚN existen en la BD
+      let existingLunchOrderIds = new Set<string>();
       if (lunchOrderIds.length > 0) {
-        const { data: existingOrders } = await supabase
-          .from('lunch_orders')
-          .select('id, is_cancelled')
-          .in('id', lunchOrderIds);
-        
-        // IDs que existen y están cancelados
+        const uniqueIds = [...new Set(lunchOrderIds)];
+        const allExisting: any[] = [];
+        const CHUNK = 200;
+        for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+          const batch = uniqueIds.slice(i, i + CHUNK);
+          const { data: batchData } = await supabase
+            .from('lunch_orders')
+            .select('id, is_cancelled')
+            .in('id', batch);
+          if (batchData) allExisting.push(...batchData);
+        }
         cancelledOrderIds = new Set(
-          existingOrders?.filter((o: any) => o.is_cancelled).map((o: any) => o.id) || []
+          allExisting.filter((o: any) => o.is_cancelled).map((o: any) => o.id)
         );
-        // IDs que existen (cancelados o no)
-        existingLunchOrderIds = new Set(existingOrders?.map((o: any) => o.id) || []);
+        existingLunchOrderIds = new Set(allExisting.map((o: any) => o.id));
       }
       
       // Filtrar transacciones: excluir las de pedidos cancelados O BORRADOS (huérfanas)
       const validTransactions = transactions?.filter((t: any) => {
         if (t.metadata?.lunch_order_id) {
-          // Si el pedido fue cancelado → excluir
           if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
-          // Si el pedido ya no existe en la BD (fue borrado) → excluir
           if (!existingLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
         }
         return true;
       }) || [];
-      
-      
+
       // 🔥 BUSCAR TAMBIÉN TRANSACCIONES PAID PARA EVITAR DUPLICADOS
       
-      // 🔧 FIX CR�TICO: Buscar TODAS las transacciones PAID (con Y sin metadata)
-      // Las transacciones viejas sin metadata tambi�n deben detectarse por descripci�n
-      // ⚠️� FIX: Supabase tiene l�mite default de 1000 rows → forzar .limit() alto
-      let paidQuery = supabase
-        .from('transactions')
-        .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
-        .eq('type', 'purchase')
-        .eq('payment_status', 'paid')
-        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso de Supabase (default: 1000)
-      
-      if (schoolIdFilter) {
-        paidQuery = paidQuery.eq('school_id', schoolIdFilter);
+      let paidLunchTransactions: any[] = [];
+      try {
+        let paidCursor: string | null = null;
+        while (true) {
+          let pq = supabase
+            .from('transactions')
+            .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
+            .eq('type', 'purchase')
+            .eq('payment_status', 'paid')
+            .order('created_at', { ascending: false })
+            .limit(1000);
+          if (paidCursor) pq = pq.lt('created_at', paidCursor);
+          if (schoolIdFilter) pq = pq.eq('school_id', schoolIdFilter);
+          const { data: pBatch, error: pErr } = await pq;
+          if (pErr) { console.error('❌ paid transactions page error:', pErr); break; }
+          if (!pBatch || pBatch.length === 0) break;
+          paidLunchTransactions.push(...pBatch);
+          if (pBatch.length < 1000) break;
+          paidCursor = pBatch[pBatch.length - 1].created_at;
+        }
+      } catch (e) {
+        console.error('❌ [BillingCollection] Error fetching paid transactions:', e);
       }
-      
-      const { data: paidLunchTransactions } = await paidQuery;
+
+      // === DEBUG TEMPORAL ===
+      const CALEB_ID = '627cdc1d-65fd-401c-b3bd-eccffe03bc6f';
+      console.warn('🔍 [DEBUG] total transactions:', transactions.length, '| lunchOrders:', lunchOrders.length, '| paid:', paidLunchTransactions.length);
+      const calebRaw = transactions.filter((t: any) => t.student_id === CALEB_ID);
+      const calebValid = validTransactions.filter((t: any) => t.student_id === CALEB_ID);
+      console.warn('🔍 [DEBUG CALEB] raw:', calebRaw.length, calebRaw.map((t: any) => ({ id: t.id.substring(0,8), desc: t.description?.substring(0,40), created: t.created_at?.substring(0,10) })));
+      console.warn('🔍 [DEBUG CALEB] valid:', calebValid.length);
+      // === FIN DEBUG ===
       
       
       // Obtener IDs de pedidos que ya tienen transacciones asociadas (PENDING O PAID)
@@ -472,38 +534,46 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         ...(paidLunchTransactions || [])
       ];
       
-      lunchOrders?.forEach((order: any) => {
-        // Si ya est� en existingOrderKeys (por metadata), no buscar m�s
+      lunchOrdersWithCategory?.forEach((order: any) => {
         if (existingOrderKeys.has(order.id)) return;
         
         const orderDate = order.order_date; // Formato: "2026-02-09"
         
-        // Formatear la fecha del pedido para buscarla en la descripci�n
         const orderDateFormatted = new Date(orderDate + 'T12:00:00').toLocaleDateString('es-PE', { 
           day: 'numeric', 
           month: 'long' 
-        }); // "9 de febrero", "11 de febrero", etc.
+        });
+        
+        // Incluir el año para evitar falsos positivos con mismo día/mes de otro año
+        const orderYear = orderDate.substring(0, 4);
         
         const hasMatchingTransaction = allTransactionsForMatching.some((t: any) => {
           const descMatches = t.description?.includes('Almuerzo') || t.description?.includes('almuerzo');
           if (!descMatches) return false;
           
-          // Verificar que la transacci�n es del mismo cliente
           const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
           const sameStudent = order.student_id && t.student_id === order.student_id;
-          // 🔧 FIX: Tambi�n verificar clientes manuales (sin teacher_id ni student_id)
           const sameManual = order.manual_name && t.manual_client_name && 
             order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
           
           if (!sameTeacher && !sameStudent && !sameManual) return false;
           
-          // 🔧 Verificar si la descripci�n contiene la fecha del pedido
-          // Esto funciona con descripciones como "Almuerzo - Men� Light - 11 de febrero"
+          // Verificar que la transacción fue creada en un rango razonable (mismo mes)
+          const transYear = t.created_at?.substring(0, 4);
+          const transMonth = t.created_at?.substring(5, 7);
+          const orderMonth = orderDate.substring(5, 7);
+          if (transYear !== orderYear) return false;
+          
           if (t.description?.includes(orderDateFormatted)) {
-            return true;
+            // Verificar que la transacción es del mismo periodo (±30 días)
+            const txDate = new Date(t.created_at);
+            const ordDate = new Date(orderDate + 'T12:00:00');
+            const diffDays = Math.abs((txDate.getTime() - ordDate.getTime()) / 86400000);
+            if (diffDays <= 35) return true;
+            return false;
           }
           
-          // Fallback: comparar created_at con order_date (solo para mismo d�a exacto)
+          // Fallback: created_at mismo día exacto que order_date
           const transDate = t.created_at.split('T')[0];
           if (transDate === orderDate) {
             return true;
@@ -521,10 +591,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       // Crear transacciones virtuales para pedidos sin transacciones
       const virtualTransactions: any[] = [];
       
-      if (lunchOrders && lunchOrders.length > 0) {
+      if (lunchOrdersWithCategory && lunchOrdersWithCategory.length > 0) {
         // Obtener todos los school_ids posibles (del pedido, estudiante o profesor)
         const allSchoolIds = new Set<string>();
-        lunchOrders.forEach((o: any) => {
+        lunchOrdersWithCategory.forEach((o: any) => {
           if (o.school_id) allSchoolIds.add(o.school_id);
           if (o.students?.school_id) allSchoolIds.add(o.students.school_id);
           if (o.teacher_profiles?.school_id_1) allSchoolIds.add(o.teacher_profiles.school_id_1);
@@ -540,7 +610,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           configMap.set(c.school_id, c.lunch_price);
         });
 
-        lunchOrders.forEach((order: any) => {
+        lunchOrdersWithCategory.forEach((order: any) => {
           // Verificar si este pedido ya tiene una transacci�n
           if (existingOrderKeys.has(order.id)) {
             return; // Saltar este pedido
@@ -581,20 +651,25 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             return; // No crear transacci�n virtual - el cliente ya pag�
           }
 
-          // Crear transacci�n virtual solo si el pedido tiene un cliente identificado
           if (order.student_id || order.teacher_id || order.manual_name) {
-            // Mejorar la descripci�n para incluir el tipo de men�
-            const menuName = order.lunch_categories?.name || order.menu_item || 'Men�';
+            const menuName = order.lunch_categories?.name || order.menu_item || 'Menú';
             const dateFormatted = new Date(order.order_date + 'T12:00:00').toLocaleDateString('es-PE', { 
               day: 'numeric', 
               month: 'long',
               year: 'numeric'
             });
+
+            // Si el pedido tiene student_id pero falta el join de students, 
+            // crear un objeto mínimo para que no se pierda en el agrupamiento
+            let studentsData = order.students || null;
+            if (order.student_id && !studentsData) {
+              studentsData = { id: order.student_id, full_name: order.manual_name || 'Alumno', parent_id: null };
+            }
             
             virtualTransactions.push({
-              id: `lunch_${order.id}`, // ID virtual
+              id: `lunch_${order.id}`,
               type: 'purchase',
-              amount: -Math.abs(unitPrice), // Negativo = deuda (ya incluye quantity)
+              amount: -Math.abs(unitPrice),
               payment_status: 'pending',
               description: `Almuerzo - ${menuName}${orderQuantity > 1 ? ` (${orderQuantity}x)` : ''} - ${dateFormatted}`,
               student_id: order.student_id || null,
@@ -602,7 +677,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
               manual_client_name: order.manual_name || null,
               school_id: schoolId,
               created_at: order.created_at || (order.order_date ? order.order_date + 'T12:00:00-05:00' : new Date().toISOString()),
-              students: order.students || null,
+              students: studentsData,
               teacher_profiles: order.teacher_profiles || null,
               schools: order.schools || null,
               metadata: { 
@@ -619,6 +694,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
+
+      // === DEBUG TEMPORAL ===
+      const calebAll = allTransactions.filter((t: any) => t.student_id === CALEB_ID);
+      const calebVirtual = virtualTransactions.filter((t: any) => t.student_id === CALEB_ID);
+      console.warn('🔍 [DEBUG CALEB] virtualTransactions:', calebVirtual.length, calebVirtual.map((t: any) => ({ id: t.id?.toString().substring(0,15), desc: t.description?.substring(0,30) })));
+      console.warn('🔍 [DEBUG CALEB] allTransactions total:', calebAll.length);
+      // === FIN DEBUG ===
 
       // 🆕 Obtener informaci�n del creador (created_by) para transacciones del tab "�Cobrar!"
       const creatorIds = [...new Set(allTransactions.map((t: any) => t.created_by).filter(Boolean))];
@@ -686,19 +768,23 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         .filter(Boolean);
       
       if (lunchOrderIdsForDates.length > 0) {
-        const { data: orderDates } = await supabase
-          .from('lunch_orders')
-          .select('id, created_at')
-          .in('id', lunchOrderIdsForDates);
-        
-        if (orderDates) {
-          const orderDatesMap = new Map(orderDates.map((o: any) => [o.id, o.created_at]));
-          allTransactions.forEach((t: any) => {
-            if (t.metadata?.lunch_order_id && orderDatesMap.has(t.metadata.lunch_order_id)) {
-              t.metadata.order_created_at = orderDatesMap.get(t.metadata.lunch_order_id);
-            }
-          });
+        const uniqueDateIds = [...new Set(lunchOrderIdsForDates)];
+        const allOrderDates: any[] = [];
+        const CHUNK2 = 200;
+        for (let i = 0; i < uniqueDateIds.length; i += CHUNK2) {
+          const batch = uniqueDateIds.slice(i, i + CHUNK2);
+          const { data: batchDates } = await supabase
+            .from('lunch_orders')
+            .select('id, created_at')
+            .in('id', batch);
+          if (batchDates) allOrderDates.push(...batchDates);
         }
+        const orderDatesMap = new Map(allOrderDates.map((o: any) => [o.id, o.created_at]));
+        allTransactions.forEach((t: any) => {
+          if (t.metadata?.lunch_order_id && orderDatesMap.has(t.metadata.lunch_order_id)) {
+            t.metadata.order_created_at = orderDatesMap.get(t.metadata.lunch_order_id);
+          }
+        });
       }
       
       // Para transacciones virtuales, la fecha de creaci�n ya est� en created_at (viene del lunch_order)
@@ -850,8 +936,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         debtorsArray.forEach(d => { d.voucher_status = 'none'; });
       }
       
+      if (currentRequestId !== fetchDebtorsRequestId.current) return;
       setDebtors(debtorsArray);
     } catch (error) {
+      if (currentRequestId !== fetchDebtorsRequestId.current) return;
       console.error('Error fetching debtors:', error);
       toast({
         variant: 'destructive',
@@ -859,7 +947,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         description: 'No se pudieron cargar los deudores',
       });
     } finally {
-      setLoading(false);
+      if (currentRequestId === fetchDebtorsRequestId.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -872,6 +962,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       debtor.parent_email?.toLowerCase().includes(search)
     );
   });
+
+  const debtorsTotalPages = Math.max(1, Math.ceil(filteredDebtors.length / DEBTORS_PER_PAGE));
+  const safeDebtorsPage = Math.min(debtorsPage, debtorsTotalPages);
+  const paginatedDebtors = filteredDebtors.slice(
+    (safeDebtorsPage - 1) * DEBTORS_PER_PAGE,
+    safeDebtorsPage * DEBTORS_PER_PAGE
+  );
 
   // ✅ Filtrar pagos realizados por término de búsqueda dedicado (pestaña Pagos)
   const filteredPaidTransactions = paidTransactions.filter(transaction => {
@@ -906,10 +1003,14 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   };
 
   const selectAll = () => {
-    if (selectedDebtors.size === filteredDebtors.length) {
-      setSelectedDebtors(new Set());
+    const pageIds = paginatedDebtors.map(d => d.id);
+    const allPageSelected = pageIds.every(id => selectedDebtors.has(id));
+    if (allPageSelected) {
+      const newSet = new Set(selectedDebtors);
+      pageIds.forEach(id => newSet.delete(id));
+      setSelectedDebtors(newSet);
     } else {
-      setSelectedDebtors(new Set(filteredDebtors.map(d => d.id)));
+      setSelectedDebtors(new Set([...selectedDebtors, ...pageIds]));
     }
   };
 
@@ -948,29 +1049,108 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       document_type: 'ticket',
       notes: '',
     });
+    // Reset split payment
+    setUseSplitPayment(false);
+    setPaymentLines([{
+      id: crypto.randomUUID(),
+      amount: transactionsToPayAmount,
+      payment_method: 'efectivo',
+      operation_number: '',
+    }]);
     setShowPaymentModal(true);
   };
 
   const handleRegisterPayment = async () => {
     if (!currentDebtor || !user) return;
 
-    if (paymentData.paid_amount <= 0 || paymentData.paid_amount > currentDebtor.total_amount) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'El monto debe ser mayor a 0 y menor o igual al total',
-      });
-      return;
-    }
+    // Determinar método y monto según modo (simple vs dividido)
+    let finalPaymentMethod: string;
+    let finalOperationNumber: string;
+    let finalPaidAmount: number;
+    let paymentBreakdown: { method: string; amount: number; operation_number: string }[] = [];
 
-    // ✅ VALIDACIÓN: N�mero de operaci�n obligatorio (excepto efectivo)
-    if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && !paymentData.operation_number) {
-      toast({
-        variant: 'destructive',
-        title: 'N�mero de Operaci�n Obligatorio',
-        description: 'Debe ingresar el n�mero de operaci�n para este m�todo de pago',
-      });
-      return;
+    if (useSplitPayment) {
+      // ✅ MODO DIVIDIDO/MIXTO
+      const totalLines = paymentLines.reduce((sum, l) => sum + (l.amount || 0), 0);
+      const roundedTotal = Math.round(totalLines * 100) / 100;
+      const roundedDebtorTotal = Math.round(currentDebtor.total_amount * 100) / 100;
+      
+      if (roundedTotal !== roundedDebtorTotal) {
+        toast({
+          variant: 'destructive',
+          title: 'El total no coincide',
+          description: `La suma de pagos (S/ ${totalLines.toFixed(2)}) debe ser igual al total a cobrar (S/ ${currentDebtor.total_amount.toFixed(2)})`,
+        });
+        return;
+      }
+
+      // Validar que cada línea tenga monto > 0
+      for (const line of paymentLines) {
+        if (!line.amount || line.amount <= 0) {
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: 'Cada línea de pago debe tener un monto mayor a 0',
+          });
+          return;
+        }
+        // Validar número de operación si no es efectivo
+        if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(line.payment_method) && !line.operation_number) {
+          toast({
+            variant: 'destructive',
+            title: 'Número de Operación Obligatorio',
+            description: `Falta el número de operación para el pago de S/ ${line.amount.toFixed(2)} con ${line.payment_method}`,
+          });
+          return;
+        }
+      }
+
+      finalPaidAmount = totalLines;
+      
+      // Determinar si es mixto o dividido
+      const uniqueMethods = new Set(paymentLines.map(l => l.payment_method));
+      if (uniqueMethods.size > 1) {
+        finalPaymentMethod = 'mixto';
+      } else {
+        finalPaymentMethod = paymentLines[0].payment_method;
+      }
+      
+      // Concatenar números de operación
+      const operationNumbers = paymentLines
+        .map(l => l.operation_number)
+        .filter(Boolean);
+      finalOperationNumber = operationNumbers.join(' / ');
+      
+      // Guardar breakdown para metadata
+      paymentBreakdown = paymentLines.map(l => ({
+        method: l.payment_method,
+        amount: l.amount,
+        operation_number: l.operation_number,
+      }));
+
+    } else {
+      // ✅ MODO SIMPLE (como antes)
+      finalPaidAmount = paymentData.paid_amount;
+      finalPaymentMethod = paymentData.payment_method;
+      finalOperationNumber = paymentData.operation_number;
+
+      if (finalPaidAmount <= 0 || finalPaidAmount > currentDebtor.total_amount) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'El monto debe ser mayor a 0 y menor o igual al total',
+        });
+        return;
+      }
+
+      if (['yape', 'plin', 'transferencia', 'tarjeta'].includes(finalPaymentMethod) && !finalOperationNumber) {
+        toast({
+          variant: 'destructive',
+          title: 'Número de Operación Obligatorio',
+          description: 'Debe ingresar el número de operación para este método de pago',
+        });
+        return;
+      }
     }
 
     setSaving(true);
@@ -985,8 +1165,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         t.id?.toString().startsWith('lunch_')
       );
       
+      // Construir metadata extra para pago dividido/mixto
+      const extraMetadata = paymentBreakdown.length > 1 ? { payment_breakdown: paymentBreakdown } : {};
 
-      // 1. ACTUALIZAR transacciones reales existentes (que ya est�n en la BD)
+      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
       if (realTransactions.length > 0) {
         const realIds = realTransactions.map((t: any) => t.id);
 
@@ -994,9 +1176,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           .from('transactions')
           .update({
             payment_status: 'paid',
-            payment_method: paymentData.payment_method,
-            operation_number: paymentData.operation_number || null,
-            created_by: user.id, // 🔧 FIX: Registrar qui�n cobr�
+            payment_method: finalPaymentMethod,
+            operation_number: finalOperationNumber || null,
+            created_by: user.id,
           })
           .in('id', realIds);
 
@@ -1074,23 +1256,22 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
               type: 'purchase',
               amount: vt.amount,
               payment_status: 'paid',
-              payment_method: paymentData.payment_method,
-              operation_number: paymentData.operation_number || null,
+              payment_method: finalPaymentMethod,
+              operation_number: finalOperationNumber || null,
               description: vt.description,
               student_id: vt.student_id || null,
               teacher_id: vt.teacher_id || null,
               manual_client_name: vt.manual_client_name || null,
               school_id: vt.school_id,
-              // ✅ FIX: NO establecer created_at manualmente → DB auto-asigna NOW()
-              // Esto corrige el bug donde todos los pagos mostraban 19:00
-              // La fecha del pedido se mantiene en metadata.order_date
               created_by: user.id,
-              ticket_code: ticketCode, // 🎫 Siempre con ticket
+              ticket_code: ticketCode,
             };
             
-            // Agregar metadata con lunch_order_id
+            // Agregar metadata con lunch_order_id + payment breakdown si aplica
             if (vt.metadata) {
-              transaction.metadata = vt.metadata;
+              transaction.metadata = { ...vt.metadata, ...extraMetadata };
+            } else if (Object.keys(extraMetadata).length > 0) {
+              transaction.metadata = extraMetadata;
             }
             
             return transaction;
@@ -1155,9 +1336,12 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         }
       }
 
+      const methodLabel = useSplitPayment && paymentBreakdown.length > 1
+        ? paymentBreakdown.map(p => `${p.method} S/${p.amount.toFixed(2)}`).join(' + ')
+        : finalPaymentMethod;
       toast({
         title: '✅ Pago registrado',
-        description: `Se registr� el pago de S/ ${paymentData.paid_amount.toFixed(2)} con ${paymentData.payment_method}`,
+        description: `Se registró el pago de S/ ${finalPaidAmount.toFixed(2)} con ${methodLabel}`,
       });
 
       // Cerrar modal y limpiar
@@ -1341,8 +1525,8 @@ Gracias.`;
     if (!phone) {
       toast({
         variant: 'destructive',
-        title: 'Sin n�mero de tel�fono',
-        description: 'Este deudor no tiene un n�mero de tel�fono registrado.',
+        title: 'Sin número de teléfono',
+        description: 'Este deudor no tiene un número de teléfono registrado.',
       });
       return;
     }
@@ -1356,7 +1540,16 @@ Gracias.`;
     const lunchAmount = lunchTransactions.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
     const lunchCount = lunchTransactions.length;
 
-    const message = `�� *AVISO DE PAGO DE ALMUERZO PENDIENTE*
+    // Usar plantilla personalizada si existe (con las variables reemplazadas)
+    let message: string;
+    if (configMessageTemplate && configMessageTemplate.trim()) {
+      message = resolveMessageTemplate(configMessageTemplate, debtor, lunchAmount, lunchCount);
+    } else {
+      // Mensaje por defecto si no hay plantilla configurada
+      const cuentaInfo = schoolConfig?.bank_account_number
+        ? `\n\n🏦 *N° Cuenta:* ${schoolConfig.bank_account_number}${schoolConfig?.bank_cci ? `\n💳 *CCI:* ${schoolConfig.bank_cci}` : ''}${schoolConfig?.yape_number ? `\n💜 *Yape:* ${schoolConfig.yape_number}` : ''}${schoolConfig?.plin_number ? `\n🟢 *Plin:* ${schoolConfig.plin_number}` : ''}`
+        : '';
+      message = `🔔 *AVISO DE PAGO DE ALMUERZO PENDIENTE*
 
 Estimado(a) padre de familia,
 
@@ -1364,17 +1557,18 @@ Le informamos que su hijo(a) *${debtor.client_name}* tiene *${lunchCount} almuer
 
 ⚠️ Es necesario que cancele su almuerzo para que pueda ser procesado y reflejado en el sistema.
 
-�� *�C�mo pagar?*
-1. Ingrese a la aplicaci�n
-2. Vaya a la secci�n "Pagos"
+📱 *¿Cómo pagar?*
+1. Ingrese a la aplicación
+2. Vaya a la sección "Pagos"
 3. Seleccione los almuerzos pendientes
-4. Suba su comprobante de pago (voucher)
+4. Suba su comprobante de pago (voucher)${cuentaInfo}
 
-Si ya realiz� el pago, por favor env�e su comprobante lo antes posible para que podamos procesarlo.
+Si ya realizó el pago, por favor envíe su comprobante lo antes posible para que podamos procesarlo.
 
-Agradecemos su pronta atenci�n. ��`;
+Agradecemos su pronta atención. 🙏`;
+    }
 
-    // Limpiar n�mero de tel�fono
+    // Limpiar número de teléfono
     let cleanPhone = phone.replace(/[^0-9+]/g, '');
     // Si empieza con 9 y tiene 9 d�gitos, agregar c�digo de pa�s Per�
     if (/^9\d{8}$/.test(cleanPhone)) {
@@ -1575,13 +1769,36 @@ Agradecemos su pronta atenci�n. ��`;
   };
 
   // Funci�n para obtener pagos realizados
-  const fetchPaidTransactions = async () => {
+  const fetchPaidTransactions = async (page = paidPage) => {
+    const currentPaidRequestId = ++fetchPaidRequestId.current;
     try {
       setLoadingPaid(true);
       
       const schoolIdFilter = !canViewAllSchools || selectedSchool !== 'all' 
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
+
+      // Primero contar el total (query liviana)
+      let countQuery = supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('type', 'purchase')
+        .eq('payment_status', 'paid');
+
+      if (schoolIdFilter) countQuery = countQuery.eq('school_id', schoolIdFilter);
+      if (untilDate) {
+        const localDate = new Date(untilDate);
+        localDate.setHours(23, 59, 59, 999);
+        countQuery = countQuery.lte('created_at', localDate.toISOString());
+      }
+
+      const { count } = await countQuery;
+      if (currentPaidRequestId !== fetchPaidRequestId.current) return;
+      setPaidTotalCount(count || 0);
+
+      // Luego cargar solo la página actual
+      const from = (page - 1) * PAID_PER_PAGE;
+      const to = from + PAID_PER_PAGE - 1;
 
       let query = supabase
         .from('transactions')
@@ -1594,25 +1811,19 @@ Agradecemos su pronta atenci�n. ��`;
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .order('created_at', { ascending: false })
-        .limit(100000); // 🔧 FIX: Evitar truncamiento silencioso (default: 1000)
+        .range(from, to);
 
-      if (schoolIdFilter) {
-        query = query.eq('school_id', schoolIdFilter);
-      }
-
-      // Filtrar por fecha si est� definida
+      if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
       if (untilDate) {
         const localDate = new Date(untilDate);
         localDate.setHours(23, 59, 59, 999);
-        const isoDate = localDate.toISOString();
-        query = query.lte('created_at', isoDate);
+        query = query.lte('created_at', localDate.toISOString());
       }
 
       const { data, error } = await query;
-
       if (error) throw error;
 
-      // 🔥 FILTRAR TRANSACCIONES DE PEDIDOS CANCELADOS (OPTIMIZADO)
+      // Filtrar transacciones de pedidos cancelados
       const lunchOrderIds = data
         ?.map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean) || [];
@@ -1620,15 +1831,21 @@ Agradecemos su pronta atenci�n. ��`;
       let cancelledOrderIds = new Set<string>();
       let existingLunchOrderIds2 = new Set<string>();
       if (lunchOrderIds.length > 0) {
-        const { data: existingOrders2 } = await supabase
-          .from('lunch_orders')
-          .select('id, is_cancelled')
-          .in('id', lunchOrderIds);
-        
+        const uniqueIds2 = [...new Set(lunchOrderIds)];
+        const allExisting2: any[] = [];
+        const CH = 200;
+        for (let i = 0; i < uniqueIds2.length; i += CH) {
+          const b = uniqueIds2.slice(i, i + CH);
+          const { data: bd } = await supabase
+            .from('lunch_orders')
+            .select('id, is_cancelled')
+            .in('id', b);
+          if (bd) allExisting2.push(...bd);
+        }
         cancelledOrderIds = new Set(
-          existingOrders2?.filter((o: any) => o.is_cancelled).map((o: any) => o.id) || []
+          allExisting2.filter((o: any) => o.is_cancelled).map((o: any) => o.id)
         );
-        existingLunchOrderIds2 = new Set(existingOrders2?.map((o: any) => o.id) || []);
+        existingLunchOrderIds2 = new Set(allExisting2.map((o: any) => o.id));
       }
       
       const validTransactions = data?.filter((t: any) => {
@@ -1639,72 +1856,44 @@ Agradecemos su pronta atenci�n. ��`;
         return true;
       }) || [];
 
-      // 🆕 Obtener informaci�n del creador (created_by) manualmente
+      // Obtener información del creador (created_by)
       const userIds = [...new Set(validTransactions.map((t: any) => t.created_by).filter(Boolean))];
       let createdByMap = new Map();
       
       if (userIds.length > 0) {
-        // Buscar en profiles con school_id
         const { data: profiles } = await supabase
           .from('profiles')
-          .select(`
-            id, 
-            full_name, 
-            email, 
-            role, 
-            school_id,
-            schools:school_id(id, name)
-          `)
+          .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
           .in('id', userIds);
         
-        if (profiles) {
-          profiles.forEach((p: any) => {
-            createdByMap.set(p.id, {
-              ...p,
-              school_name: p.schools?.name || null
-            });
-          });
-        }
+        profiles?.forEach((p: any) => {
+          createdByMap.set(p.id, { ...p, school_name: p.schools?.name || null });
+        });
 
-        // Tambi�n buscar en teacher_profiles por si el created_by es un profesor
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
           .in('id', userIds);
         
-        if (teacherProfiles) {
-          teacherProfiles.forEach((tp: any) => {
-            // Si ya existe en profiles, enriquecer con datos de teacher
-            if (createdByMap.has(tp.id)) {
-              const existing = createdByMap.get(tp.id);
-              createdByMap.set(tp.id, {
-                ...existing,
-                teacher_school_name: tp.schools?.name || null,
-                teacher_school_id: tp.school_id_1
-              });
-            } else {
-              // Si no existe en profiles, agregarlo como teacher
-              createdByMap.set(tp.id, {
-                id: tp.id,
-                full_name: tp.full_name,
-                role: 'teacher',
-                school_id: tp.school_id_1,
-                school_name: tp.schools?.name || null
-              });
-            }
-          });
-        }
+        teacherProfiles?.forEach((tp: any) => {
+          if (createdByMap.has(tp.id)) {
+            const existing = createdByMap.get(tp.id);
+            createdByMap.set(tp.id, { ...existing, teacher_school_name: tp.schools?.name || null, teacher_school_id: tp.school_id_1 });
+          } else {
+            createdByMap.set(tp.id, { id: tp.id, full_name: tp.full_name, role: 'teacher', school_id: tp.school_id_1, school_name: tp.schools?.name || null });
+          }
+        });
       }
 
-      // Agregar la informaci�n del creador a cada transacci�n
       const transactionsWithCreator = validTransactions.map((t: any) => ({
         ...t,
         created_by_profile: createdByMap.get(t.created_by) || null
       }));
 
-
+      if (currentPaidRequestId !== fetchPaidRequestId.current) return;
       setPaidTransactions(transactionsWithCreator);
     } catch (error) {
+      if (currentPaidRequestId !== fetchPaidRequestId.current) return;
       console.error('Error fetching paid transactions:', error);
       toast({
         title: 'Error',
@@ -1712,21 +1901,23 @@ Agradecemos su pronta atenci�n. ��`;
         variant: 'destructive',
       });
     } finally {
-      setLoadingPaid(false);
+      if (currentPaidRequestId === fetchPaidRequestId.current) {
+        setLoadingPaid(false);
+      }
     }
   };
 
-  // Cargar pagos realizados cuando cambia la pestaña
+  // Cargar pagos realizados cuando cambia la pestaña o la página
   useEffect(() => {
     if (activeTab === 'pagos' && (canViewAllSchools || userSchoolId)) {
-      fetchPaidTransactions();
+      fetchPaidTransactions(paidPage);
     }
     if (activeTab === 'config' && userSchoolId) {
       fetchSchoolConfig();
     }
-  }, [activeTab, selectedSchool, untilDate, canViewAllSchools, userSchoolId]);
+  }, [activeTab, selectedSchool, untilDate, canViewAllSchools, userSchoolId, paidPage]);
 
-  // Cargar configuración de sede para el panel de config de sede
+  // Cargar configuración de sede (se llama al montar y al entrar al tab config)
   const fetchSchoolConfig = async () => {
     if (!userSchoolId) return;
     setLoadingSchoolConfig(true);
@@ -1749,6 +1940,19 @@ Agradecemos su pronta atenci�n. ��`;
     }
   };
 
+  // Reemplazar variables en un mensaje de plantilla con datos reales
+  const resolveMessageTemplate = (template: string, debtor: any, amount: number, count: number): string => {
+    return template
+      .replace(/\{nombre_padre\}/g, debtor.parent_name || 'Padre de familia')
+      .replace(/\{nombre_estudiante\}/g, debtor.client_name || '')
+      .replace(/\{monto\}/g, amount.toFixed(2))
+      .replace(/\{periodo\}/g, selectedPeriod !== 'all' ? (periods.find(p => p.id === selectedPeriod)?.name || '') : '')
+      .replace(/\{numero_cuenta\}/g, schoolConfig?.bank_account_number || '')
+      .replace(/\{numero_cci\}/g, schoolConfig?.bank_cci || '')
+      .replace(/\{numero_yape\}/g, schoolConfig?.yape_number || '')
+      .replace(/\{numero_plin\}/g, schoolConfig?.plin_number || '');
+  };
+
   // Guardar solo mensaje + habilitaciones (sin editar números)
   const saveSchoolConfig = async () => {
     if (!userSchoolId || !user) return;
@@ -1762,13 +1966,11 @@ Agradecemos su pronta atenci�n. ��`;
         transferencia_enabled: configTransferenciaEnabled,
         updated_by: user.id,
       };
-      if (schoolConfig) {
-        const { error } = await supabase.from('billing_config').update(payload).eq('id', schoolConfig.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('billing_config').insert(payload);
-        if (error) throw error;
-      }
+      // Upsert: crea si no existe, actualiza si ya existe (evita fallo silencioso de RLS)
+      const { error } = await supabase
+        .from('billing_config')
+        .upsert(payload, { onConflict: 'school_id' });
+      if (error) throw error;
       toast({ title: '✅ Configuración guardada', description: 'Los cambios se aplicaron correctamente.' });
       fetchSchoolConfig();
     } catch (e: any) {
@@ -1933,17 +2135,35 @@ Si tienes dudas, comunícate con la administración de tu sede.
         }
       }
 
-      // M�todo de pago
+      // Método de pago
       doc.setFont('helvetica', 'bold');
       doc.text('MÉTODO DE PAGO:', 15, yPos);
       doc.setFont('helvetica', 'normal');
       const methodText = transaction.payment_method 
-        ? transaction.payment_method === 'teacher_account' ? 'CUENTA PROFESOR' : transaction.payment_method
+        ? transaction.payment_method === 'teacher_account' ? 'CUENTA PROFESOR' 
+          : transaction.payment_method === 'mixto' ? 'PAGO MIXTO/DIVIDIDO'
+          : transaction.payment_method
         : transaction.ticket_code ? 'PAGO DIRECTO EN CAJA' : 'NO REGISTRADO';
       doc.text(methodText.toUpperCase(), 70, yPos);
       yPos += 7;
 
-      // N�mero de ticket (si existe)
+      // 🆕 Desglose de pago dividido/mixto en PDF
+      if (transaction.metadata?.payment_breakdown && Array.isArray(transaction.metadata.payment_breakdown)) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.text('DESGLOSE DE PAGOS:', 15, yPos);
+        yPos += 6;
+        doc.setFont('helvetica', 'normal');
+        transaction.metadata.payment_breakdown.forEach((entry: any, idx: number) => {
+          const lineText = `  Pago ${idx + 1}: ${String(entry.method).toUpperCase()} - S/ ${Number(entry.amount).toFixed(2)}${entry.operation_number ? ` (Nº ${entry.operation_number})` : ''}`;
+          doc.text(lineText, 15, yPos);
+          yPos += 5;
+        });
+        doc.setFontSize(10);
+        yPos += 2;
+      }
+
+      // Número de ticket (si existe)
       if (transaction.ticket_code) {
         doc.setFont('helvetica', 'bold');
         doc.text('Nº TICKET:', 15, yPos);
@@ -1952,7 +2172,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
         yPos += 7;
       }
 
-      // N�mero de operaci�n (si existe)
+      // Número de operación (si existe)
       if (transaction.operation_number) {
         doc.setFont('helvetica', 'bold');
         doc.text('Nº OPERACIÓN:', 15, yPos);
@@ -2068,7 +2288,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 <Label>Sede</Label>
                 <select
                   value={selectedSchool}
-                  onChange={(e) => setSelectedSchool(e.target.value)}
+                  onChange={(e) => { setSelectedSchool(e.target.value); setDebtorsPage(1); setPaidPage(1); }}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
                   <option value="all">Todas las Sedes</option>
@@ -2108,7 +2328,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 <Input
                   type="date"
                   value={untilDate}
-                  onChange={(e) => setUntilDate(e.target.value)}
+                  onChange={(e) => { setUntilDate(e.target.value); setDebtorsPage(1); setPaidPage(1); }}
                   className="flex-1"
                   placeholder="Seleccionar fecha l�mite"
                 />
@@ -2119,6 +2339,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     const today = new Date();
                     const localDate = today.toISOString().split('T')[0];
                     setUntilDate(localDate);
+                    setDebtorsPage(1);
+                    setPaidPage(1);
                   }}
                 >
                   📅 Hasta Hoy
@@ -2147,7 +2369,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 <Input
                   placeholder="Nombre, profesor, sede..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => { setSearchTerm(e.target.value); setDebtorsPage(1); }}
                   className="pl-10"
                 />
               </div>
@@ -2170,7 +2392,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <Checkbox
-                      checked={selectedDebtors.size === filteredDebtors.length && filteredDebtors.length > 0}
+                      checked={paginatedDebtors.length > 0 && paginatedDebtors.every(d => selectedDebtors.has(d.id))}
                       onCheckedChange={selectAll}
                     />
                     <span className="font-semibold text-gray-900">
@@ -2321,8 +2543,33 @@ Si tienes dudas, comunícate con la administración de tu sede.
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-4">
-              {filteredDebtors.map((debtor) => {
-                // Calcular fechas m�n y m�x de las transacciones
+              {/* Info de paginación */}
+              {filteredDebtors.length > DEBTORS_PER_PAGE && (
+                <div className="flex items-center justify-between px-1 text-sm text-gray-500">
+                  <span>
+                    Mostrando {((safeDebtorsPage - 1) * DEBTORS_PER_PAGE) + 1}–{Math.min(safeDebtorsPage * DEBTORS_PER_PAGE, filteredDebtors.length)} de {filteredDebtors.length} deudores
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safeDebtorsPage <= 1} onClick={() => setDebtorsPage(1)}>
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safeDebtorsPage <= 1} onClick={() => setDebtorsPage(p => Math.max(1, p - 1))}>
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="px-3 font-medium text-gray-700">
+                      {safeDebtorsPage} / {debtorsTotalPages}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safeDebtorsPage >= debtorsTotalPages} onClick={() => setDebtorsPage(p => Math.min(debtorsTotalPages, p + 1))}>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safeDebtorsPage >= debtorsTotalPages} onClick={() => setDebtorsPage(debtorsTotalPages)}>
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {paginatedDebtors.map((debtor) => {
                 const dates = debtor.transactions.map(t => new Date(t.created_at));
                 const minDate = dates.length > 0 ? new Date(Math.min(...dates.map(d => d.getTime()))) : null;
                 const maxDate = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
@@ -2367,7 +2614,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                 </>
                               )}
                               {/* SIEMPRE mostrar la sede */}
-                              <div className="flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md inline-flex">
+                              <div className="inline-flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md">
                                 <Building2 className="h-4 w-4" />
                                 {debtor.school_name}
                               </div>
@@ -2583,6 +2830,31 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   </Card>
                 );
               })}
+
+              {/* Paginación inferior */}
+              {filteredDebtors.length > DEBTORS_PER_PAGE && (
+                <div className="flex items-center justify-between px-1 pt-4 text-sm text-gray-500">
+                  <span>
+                    Página {safeDebtorsPage} de {debtorsTotalPages}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" disabled={safeDebtorsPage <= 1} onClick={() => { setDebtorsPage(1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={safeDebtorsPage <= 1} onClick={() => { setDebtorsPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Anterior
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={safeDebtorsPage >= debtorsTotalPages} onClick={() => { setDebtorsPage(p => Math.min(debtorsTotalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      Siguiente
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={safeDebtorsPage >= debtorsTotalPages} onClick={() => { setDebtorsPage(debtorsTotalPages); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
             </div>
@@ -2677,7 +2949,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                 </Badge>
                               </div>
                               
-                              <div className="flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md inline-flex mb-3">
+                              <div className="inline-flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md mb-3">
                                 <Building2 className="h-4 w-4" />
                                 {schoolName}
                               </div>
@@ -2710,20 +2982,37 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                       {transaction.payment_method 
                                         ? transaction.payment_method === 'teacher_account' 
                                           ? 'Cuenta Profesor' 
-                                          : transaction.payment_method
+                                          : transaction.payment_method === 'mixto'
+                                            ? '🔀 Pago Mixto'
+                                            : transaction.payment_method
                                         : transaction.ticket_code 
                                           ? 'Pago directo en caja' 
-                                          : 'M�todo no registrado'}
+                                          : 'Método no registrado'}
                                     </p>
                                     {!transaction.payment_method && (
                                       <p className="text-xs text-amber-600 mt-0.5">
-                                        ⚠️� Transacci�n anterior al sistema de cobros
+                                        ⚠️ Transacción anterior al sistema de cobros
                                       </p>
+                                    )}
+                                    {/* 🆕 Desglose de pago dividido/mixto */}
+                                    {transaction.metadata?.payment_breakdown && Array.isArray(transaction.metadata.payment_breakdown) && (
+                                      <div className="mt-2 space-y-1 bg-indigo-50 rounded p-2 border border-indigo-200">
+                                        <p className="text-xs font-semibold text-indigo-700">📋 Desglose:</p>
+                                        {transaction.metadata.payment_breakdown.map((entry: any, i: number) => (
+                                          <div key={i} className="flex items-center justify-between text-sm">
+                                            <span className="capitalize text-gray-700">
+                                              {entry.method}
+                                              {entry.operation_number && <span className="text-gray-500 ml-1">(#{entry.operation_number})</span>}
+                                            </span>
+                                            <span className="font-bold text-gray-900">S/ {Number(entry.amount).toFixed(2)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
                                     )}
                                   </div>
                                   {transaction.operation_number && (
                                     <div>
-                                      <p className="text-gray-500">🔢 N° de operaci�n:</p>
+                                      <p className="text-gray-500">🔢 N° de operación:</p>
                                       <p className="font-semibold text-gray-900">
                                         {transaction.operation_number}
                                       </p>
@@ -2799,6 +3088,34 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   })}
                 </div>
               )}
+
+              {/* Paginación de pagos realizados */}
+              {paidTotalCount > PAID_PER_PAGE && (
+                <div className="flex items-center justify-between px-1 pt-4 text-sm text-gray-500">
+                  <span>
+                    Mostrando {((paidPage - 1) * PAID_PER_PAGE) + 1}–{Math.min(paidPage * PAID_PER_PAGE, paidTotalCount)} de {paidTotalCount} pagos
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={paidPage <= 1} onClick={() => setPaidPage(1)}>
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={paidPage <= 1} onClick={() => { setPaidPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Anterior
+                    </Button>
+                    <span className="px-3 font-medium text-gray-700">
+                      {paidPage} / {Math.ceil(paidTotalCount / PAID_PER_PAGE)}
+                    </span>
+                    <Button variant="outline" size="sm" disabled={paidPage >= Math.ceil(paidTotalCount / PAID_PER_PAGE)} onClick={() => { setPaidPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                      Siguiente
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled={paidPage >= Math.ceil(paidTotalCount / PAID_PER_PAGE)} onClick={() => setPaidPage(Math.ceil(paidTotalCount / PAID_PER_PAGE))}>
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
             )}
 
@@ -2835,9 +3152,31 @@ Si tienes dudas, comunícate con la administración de tu sede.
                           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
                           placeholder="Escribe aquí el mensaje que recibirán los padres de familia..."
                         />
-                        <p className="text-xs text-gray-400 mt-1">
-                          Puedes usar *texto* para negrita en WhatsApp. El mensaje se enviará con los datos del alumno y monto pendiente.
-                        </p>
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2 space-y-1">
+                          <p className="text-xs font-semibold text-blue-800">📌 Variables disponibles — haz clic para insertar:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { var: '{nombre_padre}', desc: 'Padre' },
+                              { var: '{nombre_estudiante}', desc: 'Alumno' },
+                              { var: '{monto}', desc: 'Monto' },
+                              { var: '{numero_cuenta}', desc: 'N° Cuenta' },
+                              { var: '{numero_cci}', desc: 'CCI' },
+                              { var: '{numero_yape}', desc: 'Yape' },
+                              { var: '{numero_plin}', desc: 'Plin' },
+                            ].map(({ var: v, desc }) => (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => setConfigMessageTemplate(prev => prev + v)}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-300 rounded text-xs font-mono text-blue-700 hover:bg-blue-100 transition-colors"
+                                title={`Insertar: ${desc}`}
+                              >
+                                {v} <span className="text-gray-400 font-sans">→ {desc}</span>
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">💡 Los valores reales ({schoolConfig?.bank_account_number ? `cuenta: ${schoolConfig.bank_account_number}` : 'configura el número de cuenta en la sede'}) se insertan al enviar.</p>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -2979,7 +3318,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
               Copia este mensaje y envíalo por WhatsApp a los padres para guiarlos a registrar su pago en la app.
             </DialogDescription>
           </DialogHeader>
-          <div className="mt-2 bg-gray-50 rounded-lg p-4 border text-sm whitespace-pre-wrap font-mono text-gray-800 text-xs leading-relaxed">
+          <div className="mt-2 bg-gray-50 rounded-lg p-4 border text-xs whitespace-pre-wrap font-mono text-gray-800 leading-relaxed">
             {getPaymentGuideMessage()}
           </div>
           <div className="flex justify-end gap-2 mt-4">
@@ -3000,7 +3339,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
         </DialogContent>
       </Dialog>
 
-      {/* Modal de Registro de Pago - REDISEÑADO */}
+      {/* Modal de Registro de Pago - REDISEÑADO con soporte dividido/mixto */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -3028,121 +3367,294 @@ Si tienes dudas, comunícate con la administración de tu sede.
           </DialogHeader>
 
           <div className="space-y-6 mt-4">
-            {/* Monto a Pagar - MUY GRANDE Y VISIBLE */}
-            <Card className="bg-green-50 border-green-200">
-              <CardContent className="p-6">
-                <Label className="text-xl font-bold mb-4 block">💰 Monto a Pagar *</Label>
-                <div className="relative">
-                  <span className="absolute left-6 top-1/2 -translate-y-1/2 text-7xl font-black text-green-700">S/</span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={currentDebtor?.total_amount || 0}
-                    value={paymentData.paid_amount || ''}
-                    onChange={(e) => setPaymentData(prev => ({ ...prev, paid_amount: parseFloat(e.target.value) || 0 }))}
-                    style={{ fontSize: '5rem', paddingLeft: '140px' }}
-                    className="font-black h-32 text-center border-4 border-green-500 focus:border-green-600 focus:ring-4 focus:ring-green-200"
-                    placeholder="0.00"
-                    autoFocus
-                  />
-                </div>
-                {currentDebtor && paymentData.paid_amount < currentDebtor.total_amount && paymentData.paid_amount > 0 && (
-                  <Alert className="mt-3 bg-orange-50 border-orange-200">
-                    <AlertTriangle className="h-4 w-4 text-orange-600" />
-                    <AlertDescription className="text-orange-900">
-                      <strong>Pago Parcial</strong> - Restante: S/ {(currentDebtor.total_amount - paymentData.paid_amount).toFixed(2)}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
 
-            {/* M�todo de Pago - BOTONES GRANDES */}
-            <div className="space-y-3">
-              <Label className="text-lg font-semibold">💳 M�todo de Pago *</Label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <Button
-                  type="button"
-                  variant={paymentData.payment_method === 'efectivo' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'efectivo' ? 'bg-green-600 hover:bg-green-700' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'efectivo' }))}
-                >
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">💵</span>
-                    <span>Efectivo</span>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.payment_method === 'yape' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'yape' ? 'bg-[#6C1C8C] hover:bg-[#5A1773]' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'yape' }))}
-                >
-                  <div className="flex flex-col items-center gap-1">
-                    <YapeLogo className="w-10 h-10" />
-                    <span>Yape</span>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.payment_method === 'plin' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'plin' ? 'bg-[#00D4D8] hover:bg-[#00B8BC] text-gray-900' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'plin' }))}
-                >
-                  <div className="flex flex-col items-center gap-1">
-                    <PlinLogo className="w-10 h-10" />
-                    <span>Plin</span>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.payment_method === 'transferencia' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'transferencia' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'transferencia' }))}
-                >
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">🏦</span>
-                    <span>Transferencia</span>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentData.payment_method === 'tarjeta' ? 'default' : 'outline'}
-                  className={`h-20 text-lg ${paymentData.payment_method === 'tarjeta' ? 'bg-gray-700 hover:bg-gray-800' : ''}`}
-                  onClick={() => setPaymentData(prev => ({ ...prev, payment_method: 'tarjeta' }))}
-                >
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">💳</span>
-                    <span>Tarjeta</span>
-                  </div>
-                </Button>
-              </div>
+            {/* 🆕 Toggle: Pago Simple vs Dividido */}
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border">
+              <Button
+                type="button"
+                variant={!useSplitPayment ? 'default' : 'outline'}
+                className={`flex-1 h-12 text-base ${!useSplitPayment ? 'bg-green-600 hover:bg-green-700' : ''}`}
+                onClick={() => {
+                  setUseSplitPayment(false);
+                  setPaymentData(prev => ({ ...prev, paid_amount: currentDebtor?.total_amount || 0 }));
+                }}
+              >
+                💵 Pago Simple
+              </Button>
+              <Button
+                type="button"
+                variant={useSplitPayment ? 'default' : 'outline'}
+                className={`flex-1 h-12 text-base ${useSplitPayment ? 'bg-indigo-600 hover:bg-indigo-700' : ''}`}
+                onClick={() => {
+                  setUseSplitPayment(true);
+                  // Inicializar con una línea con el monto total
+                  if (paymentLines.length === 0 || (paymentLines.length === 1 && paymentLines[0].amount === 0)) {
+                    setPaymentLines([{
+                      id: crypto.randomUUID(),
+                      amount: currentDebtor?.total_amount || 0,
+                      payment_method: 'efectivo',
+                      operation_number: '',
+                    }]);
+                  }
+                }}
+              >
+                <SplitSquareVertical className="h-5 w-5 mr-2" />
+                Pago Dividido / Mixto
+              </Button>
             </div>
 
-            {/* N�mero de Operaci�n - OBLIGATORIO */}
-            {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
-              <div className="space-y-2">
-                <Label className="text-base font-semibold">
-                  🔢 N�mero de Operaci�n *
-                  <span className="text-red-600 ml-1">(OBLIGATORIO)</span>
-                </Label>
-                <Input
-                  placeholder="Ej: 123456789"
-                  value={paymentData.operation_number}
-                  onChange={(e) => setPaymentData(prev => ({ ...prev, operation_number: e.target.value }))}
-                  className="h-12 text-lg border-2"
-                  required
-                />
-                {!paymentData.operation_number && (
-                  <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
-                    ⚠️� El n�mero de operaci�n es obligatorio para este m�todo de pago
-                  </p>
+            {!useSplitPayment ? (
+              <>
+                {/* ===== MODO SIMPLE ===== */}
+                {/* Monto a Pagar */}
+                <Card className="bg-green-50 border-green-200">
+                  <CardContent className="p-6">
+                    <Label className="text-xl font-bold mb-4 block">💰 Monto a Pagar *</Label>
+                    <div className="relative">
+                      <span className="absolute left-6 top-1/2 -translate-y-1/2 text-7xl font-black text-green-700">S/</span>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max={currentDebtor?.total_amount || 0}
+                        value={paymentData.paid_amount || ''}
+                        onChange={(e) => setPaymentData(prev => ({ ...prev, paid_amount: parseFloat(e.target.value) || 0 }))}
+                        style={{ fontSize: '5rem', paddingLeft: '140px' }}
+                        className="font-black h-32 text-center border-4 border-green-500 focus:border-green-600 focus:ring-4 focus:ring-green-200"
+                        placeholder="0.00"
+                        autoFocus
+                      />
+                    </div>
+                    {currentDebtor && paymentData.paid_amount < currentDebtor.total_amount && paymentData.paid_amount > 0 && (
+                      <Alert className="mt-3 bg-orange-50 border-orange-200">
+                        <AlertTriangle className="h-4 w-4 text-orange-600" />
+                        <AlertDescription className="text-orange-900">
+                          <strong>Pago Parcial</strong> - Restante: S/ {(currentDebtor.total_amount - paymentData.paid_amount).toFixed(2)}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Método de Pago */}
+                <div className="space-y-3">
+                  <Label className="text-lg font-semibold">💳 Método de Pago *</Label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {[
+                      { key: 'efectivo', label: 'Efectivo', icon: '💵', color: 'bg-green-600 hover:bg-green-700' },
+                      { key: 'yape', label: 'Yape', icon: 'yape', color: 'bg-[#6C1C8C] hover:bg-[#5A1773]' },
+                      { key: 'plin', label: 'Plin', icon: 'plin', color: 'bg-[#00D4D8] hover:bg-[#00B8BC] text-gray-900' },
+                      { key: 'transferencia', label: 'Transferencia', icon: '🏦', color: 'bg-indigo-600 hover:bg-indigo-700' },
+                      { key: 'tarjeta', label: 'Tarjeta', icon: '💳', color: 'bg-gray-700 hover:bg-gray-800' },
+                    ].map(m => (
+                      <Button
+                        key={m.key}
+                        type="button"
+                        variant={paymentData.payment_method === m.key ? 'default' : 'outline'}
+                        className={`h-20 text-lg ${paymentData.payment_method === m.key ? m.color : ''}`}
+                        onClick={() => setPaymentData(prev => ({ ...prev, payment_method: m.key }))}
+                      >
+                        <div className="flex flex-col items-center gap-1">
+                          {m.icon === 'yape' ? <YapeLogo className="w-10 h-10" /> :
+                           m.icon === 'plin' ? <PlinLogo className="w-10 h-10" /> :
+                           <span className="text-2xl">{m.icon}</span>}
+                          <span>{m.label}</span>
+                        </div>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Número de Operación */}
+                {['yape', 'plin', 'transferencia', 'tarjeta'].includes(paymentData.payment_method) && (
+                  <div className="space-y-2">
+                    <Label className="text-base font-semibold">
+                      🔢 Número de Operación *
+                      <span className="text-red-600 ml-1">(OBLIGATORIO)</span>
+                    </Label>
+                    <Input
+                      placeholder="Ej: 123456789"
+                      value={paymentData.operation_number}
+                      onChange={(e) => setPaymentData(prev => ({ ...prev, operation_number: e.target.value }))}
+                      className="h-12 text-lg border-2"
+                      required
+                    />
+                    {!paymentData.operation_number && (
+                      <p className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                        ⚠️ El número de operación es obligatorio para este método de pago
+                      </p>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
+            ) : (
+              <>
+                {/* ===== MODO DIVIDIDO / MIXTO ===== */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-lg font-semibold">📋 Líneas de Pago</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                      onClick={() => {
+                        setPaymentLines(prev => [...prev, {
+                          id: crypto.randomUUID(),
+                          amount: 0,
+                          payment_method: 'efectivo',
+                          operation_number: '',
+                        }]);
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Agregar Pago
+                    </Button>
+                  </div>
+
+                  <p className="text-sm text-gray-500 bg-gray-50 p-2 rounded">
+                    💡 Agrega múltiples líneas de pago. Ej: Persona A paga S/25 con tarjeta, Persona B paga S/25 con Yape.
+                    La suma debe ser igual al total a cobrar.
+                  </p>
+
+                  {paymentLines.map((line, idx) => (
+                    <Card key={line.id} className="border-2 border-indigo-200">
+                      <CardContent className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-indigo-700">Pago #{idx + 1}</span>
+                          {paymentLines.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => setPaymentLines(prev => prev.filter(l => l.id !== line.id))}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Monto */}
+                        <div className="flex items-center gap-3">
+                          <Label className="text-base font-semibold w-20">Monto:</Label>
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xl font-bold text-green-700">S/</span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={line.amount || ''}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPaymentLines(prev => prev.map(l => l.id === line.id ? { ...l, amount: val } : l));
+                              }}
+                              className="pl-12 h-14 text-2xl font-bold border-2 border-green-300 focus:border-green-500"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          {/* Botón mitad rápida */}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="text-xs whitespace-nowrap"
+                            onClick={() => {
+                              const half = Math.round((currentDebtor?.total_amount || 0) / paymentLines.length * 100) / 100;
+                              setPaymentLines(prev => prev.map(l => l.id === line.id ? { ...l, amount: half } : l));
+                            }}
+                          >
+                            ÷{paymentLines.length}
+                          </Button>
+                        </div>
+
+                        {/* Método de Pago */}
+                        <div className="grid grid-cols-5 gap-2">
+                          {[
+                            { key: 'efectivo', label: '💵', title: 'Efectivo' },
+                            { key: 'yape', label: 'Y', title: 'Yape' },
+                            { key: 'plin', label: 'P', title: 'Plin' },
+                            { key: 'transferencia', label: '🏦', title: 'Transferencia' },
+                            { key: 'tarjeta', label: '💳', title: 'Tarjeta' },
+                          ].map(m => (
+                            <Button
+                              key={m.key}
+                              type="button"
+                              variant={line.payment_method === m.key ? 'default' : 'outline'}
+                              size="sm"
+                              className={`h-10 text-xs ${
+                                line.payment_method === m.key 
+                                  ? m.key === 'yape' ? 'bg-[#6C1C8C] hover:bg-[#5A1773]' 
+                                    : m.key === 'plin' ? 'bg-[#00D4D8] hover:bg-[#00B8BC] text-gray-900'
+                                    : m.key === 'efectivo' ? 'bg-green-600 hover:bg-green-700'
+                                    : m.key === 'transferencia' ? 'bg-indigo-600 hover:bg-indigo-700'
+                                    : 'bg-gray-700 hover:bg-gray-800'
+                                  : ''
+                              }`}
+                              title={m.title}
+                              onClick={() => setPaymentLines(prev => prev.map(l => l.id === line.id ? { ...l, payment_method: m.key } : l))}
+                            >
+                              {m.label === 'Y' ? <YapeLogo className="w-5 h-5" /> :
+                               m.label === 'P' ? <PlinLogo className="w-5 h-5" /> :
+                               m.label}
+                              <span className="ml-1 hidden sm:inline">{m.title}</span>
+                            </Button>
+                          ))}
+                        </div>
+
+                        {/* Número de Operación (solo si no es efectivo) */}
+                        {['yape', 'plin', 'transferencia', 'tarjeta'].includes(line.payment_method) && (
+                          <Input
+                            placeholder={`Nº Operación ${line.payment_method} *`}
+                            value={line.operation_number}
+                            onChange={(e) => setPaymentLines(prev => prev.map(l => l.id === line.id ? { ...l, operation_number: e.target.value } : l))}
+                            className="h-10 border-2"
+                          />
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+
+                  {/* Resumen de totales */}
+                  {(() => {
+                    const totalLines = paymentLines.reduce((sum, l) => sum + (l.amount || 0), 0);
+                    const debtTotal = currentDebtor?.total_amount || 0;
+                    const diff = Math.round((debtTotal - totalLines) * 100) / 100;
+                    const isExact = diff === 0;
+                    return (
+                      <Card className={`border-2 ${isExact ? 'border-green-400 bg-green-50' : 'border-red-400 bg-red-50'}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="text-sm font-medium text-gray-600">Suma de pagos:</span>
+                              <span className={`text-2xl font-black ml-2 ${isExact ? 'text-green-700' : 'text-red-700'}`}>
+                                S/ {totalLines.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-sm font-medium text-gray-600">Total a cobrar:</span>
+                              <span className="text-2xl font-black ml-2 text-gray-900">
+                                S/ {debtTotal.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                          {!isExact && (
+                            <p className="text-sm text-red-700 mt-2 font-semibold">
+                              {diff > 0 ? `⚠️ Faltan S/ ${diff.toFixed(2)}` : `⚠️ Exceso de S/ ${Math.abs(diff).toFixed(2)}`}
+                            </p>
+                          )}
+                          {isExact && (
+                            <p className="text-sm text-green-700 mt-2 font-semibold">✅ Los montos coinciden perfectamente</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
+                </div>
+              </>
             )}
 
-            {/* Tipo de Documento - BOTONES */}
+            {/* Tipo de Documento */}
             <div className="space-y-3">
               <Label className="text-lg font-semibold">📄 Tipo de Documento</Label>
               <div className="grid grid-cols-3 gap-3">
@@ -3155,12 +3667,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   🎫 Ticket
                 </Button>
                 <div className="relative">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-16 text-base opacity-50 cursor-not-allowed w-full"
-                    disabled
-                  >
+                  <Button type="button" variant="outline" className="h-16 text-base opacity-50 cursor-not-allowed w-full" disabled>
                     📄 Boleta
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -3168,12 +3675,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   </div>
                 </div>
                 <div className="relative">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-16 text-base opacity-50 cursor-not-allowed w-full"
-                    disabled
-                  >
+                  <Button type="button" variant="outline" className="h-16 text-base opacity-50 cursor-not-allowed w-full" disabled>
                     📋 Factura
                   </Button>
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -3182,8 +3684,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 </div>
               </div>
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                ⚠️� <strong>Boleta</strong> y <strong>Factura</strong> requieren conexi�n con la API de SUNAT. 
-                Por ahora solo est� disponible <strong>Ticket</strong> (comprobante interno).
+                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
+                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
               </p>
             </div>
 
@@ -3209,7 +3711,11 @@ Si tienes dudas, comunícate con la administración de tu sede.
             </Button>
             <Button 
               onClick={handleRegisterPayment} 
-              disabled={saving || paymentData.paid_amount <= 0} 
+              disabled={saving || (
+                useSplitPayment 
+                  ? paymentLines.reduce((s, l) => s + (l.amount || 0), 0) <= 0
+                  : paymentData.paid_amount <= 0
+              )} 
               className="bg-green-600 hover:bg-green-700 h-12 text-base px-8"
             >
               {saving ? (
@@ -3220,7 +3726,10 @@ Si tienes dudas, comunícate con la administración de tu sede.
               ) : (
                 <>
                   <CheckCircle2 className="h-5 w-5 mr-2" />
-                  Registrar Pago (S/ {paymentData.paid_amount.toFixed(2)})
+                  Registrar Pago (S/ {(useSplitPayment 
+                    ? paymentLines.reduce((s, l) => s + (l.amount || 0), 0) 
+                    : paymentData.paid_amount
+                  ).toFixed(2)})
                 </>
               )}
             </Button>
@@ -3439,17 +3948,36 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         )}
                       </div>
                       {isPaid && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">M�todo de pago:</span>
-                          <span className="font-semibold text-gray-900 capitalize">
-                            {selectedTransaction.payment_method 
-                              ? selectedTransaction.payment_method === 'teacher_account' 
-                                ? 'Cuenta Profesor' 
-                                : selectedTransaction.payment_method
-                              : selectedTransaction.ticket_code 
-                                ? 'Pago directo en caja' 
-                                : 'M�todo no registrado'}
-                          </span>
+                        <div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Método de pago:</span>
+                            <span className="font-semibold text-gray-900 capitalize">
+                              {selectedTransaction.payment_method 
+                                ? selectedTransaction.payment_method === 'teacher_account' 
+                                  ? 'Cuenta Profesor' 
+                                  : selectedTransaction.payment_method === 'mixto'
+                                    ? '🔀 Pago Mixto'
+                                    : selectedTransaction.payment_method
+                                : selectedTransaction.ticket_code 
+                                  ? 'Pago directo en caja' 
+                                  : 'Método no registrado'}
+                            </span>
+                          </div>
+                          {/* Desglose pago dividido/mixto */}
+                          {selectedTransaction.metadata?.payment_breakdown && Array.isArray(selectedTransaction.metadata.payment_breakdown) && (
+                            <div className="mt-2 space-y-1 bg-indigo-50 rounded p-3 border border-indigo-200">
+                              <p className="text-xs font-semibold text-indigo-700 mb-1">📋 Desglose del pago:</p>
+                              {selectedTransaction.metadata.payment_breakdown.map((entry: any, i: number) => (
+                                <div key={i} className="flex items-center justify-between text-sm border-b border-indigo-100 pb-1 last:border-0">
+                                  <span className="capitalize text-gray-700">
+                                    {entry.method}
+                                    {entry.operation_number && <span className="text-gray-500 ml-1">(Nº {entry.operation_number})</span>}
+                                  </span>
+                                  <span className="font-bold text-gray-900">S/ {Number(entry.amount).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                       {isPaid && (

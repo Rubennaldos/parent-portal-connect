@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -20,11 +20,11 @@ import {
   Clock,
   CreditCard,
   RefreshCw,
-  ChevronRight,
   Zap,
   ShieldAlert,
   UserCheck,
-  Banknote
+  UtensilsCrossed,
+  Coffee,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,22 +34,39 @@ interface School {
   code: string;
 }
 
+type DebtCategory = 'all' | 'almuerzo' | 'cafeteria';
+
+interface UnifiedDebt {
+  id: string;
+  amount: number;
+  school_id: string;
+  school_name: string;
+  student_id?: string;
+  teacher_id?: string;
+  manual_client_name?: string;
+  student_name?: string;
+  teacher_name?: string;
+  created_at: string;
+  category: 'almuerzo' | 'cafeteria';
+}
+
 interface DashboardStats {
-  // Resumen ejecutivo
   totalPending: number;
+  lunchPending: number;
+  cafeteriaPending: number;
   totalCollectedToday: number;
   totalCollectedWeek: number;
   totalCollectedMonth: number;
   totalDebtors: number;
+  lunchDebtors: number;
+  cafeteriaDebtors: number;
   totalTeacherDebt: number;
   totalStudentDebt: number;
   totalManualDebt: number;
   teacherDebtors: number;
   studentDebtors: number;
   manualDebtors: number;
-  // Comparación
   collectedYesterday: number;
-  // Antigüedad de deudas
   debtByAge: {
     today: number;
     days1to3: number;
@@ -62,7 +79,6 @@ interface DashboardStats {
     count8to15: number;
     countOver15: number;
   };
-  // Métodos de pago (cobros recientes)
   paymentMethods: {
     efectivo: number;
     tarjeta: number;
@@ -71,7 +87,6 @@ interface DashboardStats {
     plin: number;
     otro: number;
   };
-  // Top deudores (todos los tipos)
   topDebtors: Array<{
     name: string;
     type: 'student' | 'teacher' | 'manual';
@@ -79,17 +94,50 @@ interface DashboardStats {
     school_name: string;
     days_overdue: number;
     count: number;
+    category: 'almuerzo' | 'cafeteria' | 'mixed';
   }>;
-  // Reembolsos pendientes
   pendingRefunds: number;
   pendingRefundAmount: number;
-  // Por sede
   collectionBySchool: Array<{
     school_name: string;
     pending: number;
+    lunchPending: number;
+    cafeteriaPending: number;
     collected: number;
     debtors: number;
   }>;
+}
+
+const emptyStats: DashboardStats = {
+  totalPending: 0,
+  lunchPending: 0,
+  cafeteriaPending: 0,
+  totalCollectedToday: 0,
+  totalCollectedWeek: 0,
+  totalCollectedMonth: 0,
+  totalDebtors: 0,
+  lunchDebtors: 0,
+  cafeteriaDebtors: 0,
+  totalTeacherDebt: 0,
+  totalStudentDebt: 0,
+  totalManualDebt: 0,
+  teacherDebtors: 0,
+  studentDebtors: 0,
+  manualDebtors: 0,
+  collectedYesterday: 0,
+  debtByAge: { today: 0, days1to3: 0, days4to7: 0, days8to15: 0, daysOver15: 0, countToday: 0, count1to3: 0, count4to7: 0, count8to15: 0, countOver15: 0 },
+  paymentMethods: { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 },
+  topDebtors: [],
+  pendingRefunds: 0,
+  pendingRefundAmount: 0,
+  collectionBySchool: [],
+};
+
+function isLunchTransaction(t: any): boolean {
+  if (t.metadata?.lunch_order_id) return true;
+  if (t.metadata?.source === 'lunch_order') return true;
+  const desc = (t.description || '').toLowerCase();
+  return desc.includes('almuerzo') || desc.includes('lunch');
 }
 
 export const BillingDashboard = () => {
@@ -98,28 +146,11 @@ export const BillingDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
+  const [debtCategory, setDebtCategory] = useState<DebtCategory>('all');
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  const [stats, setStats] = useState<DashboardStats>({
-    totalPending: 0,
-    totalCollectedToday: 0,
-    totalCollectedWeek: 0,
-    totalCollectedMonth: 0,
-    totalDebtors: 0,
-    totalTeacherDebt: 0,
-    totalStudentDebt: 0,
-    totalManualDebt: 0,
-    teacherDebtors: 0,
-    studentDebtors: 0,
-    manualDebtors: 0,
-    collectedYesterday: 0,
-    debtByAge: { today: 0, days1to3: 0, days4to7: 0, days8to15: 0, daysOver15: 0, countToday: 0, count1to3: 0, count4to7: 0, count8to15: 0, countOver15: 0 },
-    paymentMethods: { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 },
-    topDebtors: [],
-    pendingRefunds: 0,
-    pendingRefundAmount: 0,
-    collectionBySchool: [],
-  });
+  const [stats, setStats] = useState<DashboardStats>(emptyStats);
+  const requestIdRef = useRef(0);
 
   const canViewAllSchools = role === 'admin_general';
 
@@ -163,27 +194,26 @@ export const BillingDashboard = () => {
   };
 
   const fetchDashboardStats = async () => {
+    const currentRequestId = ++requestIdRef.current;
     try {
       setLoading(true);
       const schoolIdFilter = (!canViewAllSchools || selectedSchool !== 'all')
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
-      // ========== FECHAS ==========
       const now = new Date();
       const today = now.toISOString().split('T')[0];
       const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
       const weekStart = new Date(now);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Domingo
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      // ========== 1. TODAS LAS DEUDAS PENDIENTES ==========
+      // ========== 1. TRANSACCIONES PENDIENTES ==========
       let pendingQuery = supabase
         .from('transactions')
-        .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
+        .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
         .in('payment_status', ['pending', 'partial'])
         .eq('type', 'purchase')
-        .neq('payment_status', 'cancelled')
         .limit(100000);
 
       if (schoolIdFilter) {
@@ -192,45 +222,210 @@ export const BillingDashboard = () => {
 
       const { data: pendingData } = await pendingQuery;
 
-      // Calcular totales por tipo
-      let totalPending = 0;
-      let totalTeacherDebt = 0;
-      let totalStudentDebt = 0;
-      let totalManualDebt = 0;
+      // ========== 2. LUNCH ORDERS SIN TRANSACCIÓN (deudas virtuales) ==========
+      let lunchQuery = supabase
+        .from('lunch_orders')
+        .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
+        .in('status', ['confirmed', 'delivered'])
+        .eq('is_cancelled', false)
+        .limit(100000);
+
+      if (schoolIdFilter) {
+        lunchQuery = lunchQuery.eq('school_id', schoolIdFilter);
+      }
+
+      const { data: lunchOrdersRaw } = await lunchQuery;
+      const lunchOrders = lunchOrdersRaw || [];
+
+      // Obtener IDs de lunch_orders que ya tienen transacción (pending o paid)
+      const existingLunchOrderIds = new Set<string>();
+
+      pendingData?.forEach((t: any) => {
+        if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
+      });
+
+      // También verificar transacciones PAID para no duplicar
+      let paidLunchCheck = supabase
+        .from('transactions')
+        .select('metadata')
+        .eq('type', 'purchase')
+        .eq('payment_status', 'paid')
+        .not('metadata->lunch_order_id', 'is', null)
+        .limit(100000);
+
+      if (schoolIdFilter) {
+        paidLunchCheck = paidLunchCheck.eq('school_id', schoolIdFilter);
+      }
+
+      const { data: paidWithLunch } = await paidLunchCheck;
+      paidWithLunch?.forEach((t: any) => {
+        if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
+      });
+
+      // Verificar pedidos cancelados entre las transacciones pendientes
+      const txLunchOrderIds = (pendingData || [])
+        .map((t: any) => t.metadata?.lunch_order_id)
+        .filter(Boolean);
+
+      let cancelledOrderIds = new Set<string>();
+      if (txLunchOrderIds.length > 0) {
+        const uniqueIds = [...new Set(txLunchOrderIds)];
+        const CHUNK = 200;
+        for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+          const batch = uniqueIds.slice(i, i + CHUNK);
+          const { data: batchData } = await supabase
+            .from('lunch_orders')
+            .select('id, is_cancelled')
+            .in('id', batch);
+          batchData?.filter((o: any) => o.is_cancelled).forEach((o: any) => cancelledOrderIds.add(o.id));
+        }
+      }
+
+      // Filtrar transacciones de pedidos cancelados
+      const validPending = (pendingData || []).filter((t: any) => {
+        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+        return true;
+      });
+
+      // Obtener precios de categorías de almuerzo
+      const catIds = [...new Set(lunchOrders.map((o: any) => o.category_id).filter(Boolean))];
+      let lunchCategoriesMap = new Map<string, number>();
+      if (catIds.length > 0) {
+        const { data: catsData } = await supabase
+          .from('lunch_categories')
+          .select('id, price')
+          .in('id', catIds);
+        catsData?.forEach((c: any) => lunchCategoriesMap.set(c.id, c.price || 0));
+      }
+
+      // Obtener configuración de precios por sede
+      const allSchoolIds = new Set<string>();
+      lunchOrders.forEach((o: any) => {
+        if (o.school_id) allSchoolIds.add(o.school_id);
+      });
+      let configMap = new Map<string, number>();
+      if (allSchoolIds.size > 0) {
+        const { data: configs } = await supabase
+          .from('lunch_configuration')
+          .select('school_id, lunch_price')
+          .in('school_id', Array.from(allSchoolIds));
+        configs?.forEach((c: any) => configMap.set(c.school_id, c.lunch_price));
+      }
+
+      // Crear deudas virtuales de lunch_orders sin transacción
+      const virtualDebts: UnifiedDebt[] = [];
+
+      lunchOrders.forEach((order: any) => {
+        if (existingLunchOrderIds.has(order.id)) return;
+
+        // Omitir clientes manuales que ya pagaron en el momento
+        if (order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') return;
+
+        // Solo procesar pedidos con algún cliente identificado
+        if (!order.student_id && !order.teacher_id && !order.manual_name) return;
+
+        let amount = 0;
+        const qty = order.quantity || 1;
+        if (order.final_price && order.final_price > 0) {
+          amount = order.final_price;
+        } else if (order.category_id && lunchCategoriesMap.has(order.category_id)) {
+          amount = (lunchCategoriesMap.get(order.category_id) || 0) * qty;
+        } else if (order.school_id && configMap.has(order.school_id)) {
+          amount = (configMap.get(order.school_id) || 0) * qty;
+        } else {
+          amount = 7.50 * qty;
+        }
+
+        let schoolId = order.school_id || order.students?.school_id || order.teacher_profiles?.school_id_1 || '';
+
+        if (schoolIdFilter && schoolId !== schoolIdFilter) return;
+
+        virtualDebts.push({
+          id: `lunch_${order.id}`,
+          amount,
+          school_id: schoolId,
+          school_name: order.schools?.name || '',
+          student_id: order.student_id || undefined,
+          teacher_id: order.teacher_id || undefined,
+          manual_client_name: order.manual_name || undefined,
+          student_name: order.students?.full_name || order.manual_name || undefined,
+          teacher_name: order.teacher_profiles?.full_name || undefined,
+          created_at: order.created_at || (order.order_date + 'T12:00:00'),
+          category: 'almuerzo',
+        });
+      });
+
+      // Unificar transacciones reales + virtuales
+      const allDebts: UnifiedDebt[] = [
+        ...validPending.map((t: any) => ({
+          id: t.id,
+          amount: Math.abs(t.amount || 0),
+          school_id: t.school_id || '',
+          school_name: t.schools?.name || '',
+          student_id: t.student_id || undefined,
+          teacher_id: t.teacher_id || undefined,
+          manual_client_name: t.manual_client_name || undefined,
+          student_name: t.students?.full_name || undefined,
+          teacher_name: t.teacher_profiles?.full_name || undefined,
+          created_at: t.created_at,
+          category: isLunchTransaction(t) ? 'almuerzo' as const : 'cafeteria' as const,
+        })),
+        ...virtualDebts,
+      ];
+
+      if (currentRequestId !== requestIdRef.current) return;
+
+      // ========== CALCULAR STATS ==========
+      let totalPending = 0, lunchPending = 0, cafeteriaPending = 0;
+      let totalTeacherDebt = 0, totalStudentDebt = 0, totalManualDebt = 0;
       const teacherIds = new Set<string>();
       const studentIds = new Set<string>();
       const manualNames = new Set<string>();
-
-      // Antigüedad
+      const lunchDebtorKeys = new Set<string>();
+      const cafeteriaDebtorKeys = new Set<string>();
       const debtByAge = { today: 0, days1to3: 0, days4to7: 0, days8to15: 0, daysOver15: 0, countToday: 0, count1to3: 0, count4to7: 0, count8to15: 0, countOver15: 0 };
+      const schoolStatsMap: Record<string, { pending: number; lunchPending: number; cafeteriaPending: number; collected: number; debtors: Set<string> }> = {};
 
-      pendingData?.forEach((t: any) => {
-        const amt = Math.abs(t.amount || 0);
+      allDebts.forEach((d) => {
+        const amt = d.amount;
         totalPending += amt;
 
-        // Por tipo
-        if (t.teacher_id) {
+        if (d.category === 'almuerzo') lunchPending += amt;
+        else cafeteriaPending += amt;
+
+        const debtorKey = d.teacher_id || d.student_id || d.manual_client_name || 'unknown';
+
+        if (d.category === 'almuerzo') lunchDebtorKeys.add(debtorKey);
+        else cafeteriaDebtorKeys.add(debtorKey);
+
+        if (d.teacher_id) {
           totalTeacherDebt += amt;
-          teacherIds.add(t.teacher_id);
-        } else if (t.student_id) {
+          teacherIds.add(d.teacher_id);
+        } else if (d.student_id) {
           totalStudentDebt += amt;
-          studentIds.add(t.student_id);
-        } else if (t.manual_client_name) {
+          studentIds.add(d.student_id);
+        } else if (d.manual_client_name) {
           totalManualDebt += amt;
-          manualNames.add(t.manual_client_name.toLowerCase().trim());
+          manualNames.add(d.manual_client_name.toLowerCase().trim());
         }
 
-        // Antigüedad
-        const createdAt = new Date(t.created_at);
+        const createdAt = new Date(d.created_at);
         const daysOld = Math.floor((now.getTime() - createdAt.getTime()) / 86400000);
-        if (daysOld === 0) { debtByAge.today += amt; debtByAge.countToday++; }
+        if (daysOld <= 0) { debtByAge.today += amt; debtByAge.countToday++; }
         else if (daysOld <= 3) { debtByAge.days1to3 += amt; debtByAge.count1to3++; }
         else if (daysOld <= 7) { debtByAge.days4to7 += amt; debtByAge.count4to7++; }
         else if (daysOld <= 15) { debtByAge.days8to15 += amt; debtByAge.count8to15++; }
         else { debtByAge.daysOver15 += amt; debtByAge.countOver15++; }
+
+        const sName = d.school_name || 'Sin sede';
+        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, lunchPending: 0, cafeteriaPending: 0, collected: 0, debtors: new Set() };
+        schoolStatsMap[sName].pending += amt;
+        if (d.category === 'almuerzo') schoolStatsMap[sName].lunchPending += amt;
+        else schoolStatsMap[sName].cafeteriaPending += amt;
+        schoolStatsMap[sName].debtors.add(debtorKey);
       });
 
-      // ========== 2. COBROS (HOY, AYER, SEMANA, MES) ==========
+      // ========== COBROS (HOY, AYER, SEMANA, MES) ==========
       let paidQuery = supabase
         .from('transactions')
         .select('amount, payment_method, created_at, school_id, schools(name)')
@@ -245,34 +440,22 @@ export const BillingDashboard = () => {
 
       const { data: paidData } = await paidQuery;
 
+      if (currentRequestId !== requestIdRef.current) return;
+
       let totalCollectedToday = 0;
       let collectedYesterday = 0;
       let totalCollectedWeek = 0;
       let totalCollectedMonth = 0;
       const paymentMethods = { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 };
 
-      // Para sede
-      const schoolStatsMap: Record<string, { pending: number; collected: number; debtors: Set<string> }> = {};
-
-      // Inicializar sedes desde pendingData
-      pendingData?.forEach((t: any) => {
-        const sName = t.schools?.name || 'Sin sede';
-        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, collected: 0, debtors: new Set() };
-        schoolStatsMap[sName].pending += Math.abs(t.amount || 0);
-        const debtorKey = t.teacher_id || t.student_id || t.manual_client_name || 'unknown';
-        schoolStatsMap[sName].debtors.add(debtorKey);
-      });
-
       paidData?.forEach((t: any) => {
         const amt = Math.abs(t.amount || 0);
         const txDate = t.created_at.split('T')[0];
         totalCollectedMonth += amt;
-
         if (txDate === today) totalCollectedToday += amt;
         if (txDate === yesterday) collectedYesterday += amt;
         if (new Date(t.created_at) >= weekStart) totalCollectedWeek += amt;
 
-        // Métodos de pago
         const method = (t.payment_method || 'efectivo').toLowerCase();
         if (method.includes('yape')) paymentMethods.yape += amt;
         else if (method.includes('plin')) paymentMethods.plin += amt;
@@ -281,40 +464,41 @@ export const BillingDashboard = () => {
         else if (method.includes('efectivo') || method.includes('cash')) paymentMethods.efectivo += amt;
         else paymentMethods.otro += amt;
 
-        // Sede
         const sName = t.schools?.name || 'Sin sede';
-        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, collected: 0, debtors: new Set() };
+        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, lunchPending: 0, cafeteriaPending: 0, collected: 0, debtors: new Set() };
         schoolStatsMap[sName].collected += amt;
       });
 
-      // ========== 3. TOP DEUDORES (todos los tipos) ==========
-      const debtorMap: Record<string, { name: string; type: 'student' | 'teacher' | 'manual'; amount: number; school_name: string; oldest: Date; count: number }> = {};
+      // ========== TOP DEUDORES ==========
+      const debtorMap: Record<string, { name: string; type: 'student' | 'teacher' | 'manual'; amount: number; school_name: string; oldest: Date; count: number; hasLunch: boolean; hasCafeteria: boolean }> = {};
 
-      pendingData?.forEach((t: any) => {
+      allDebts.forEach((d) => {
         let key = '';
         let name = '';
         let type: 'student' | 'teacher' | 'manual' = 'manual';
 
-        if (t.teacher_id) {
-          key = `teacher_${t.teacher_id}`;
-          name = t.teacher_profiles?.full_name || 'Profesor sin nombre';
+        if (d.teacher_id) {
+          key = `teacher_${d.teacher_id}`;
+          name = d.teacher_name || 'Profesor sin nombre';
           type = 'teacher';
-        } else if (t.student_id) {
-          key = `student_${t.student_id}`;
-          name = t.students?.full_name || 'Estudiante sin nombre';
+        } else if (d.student_id) {
+          key = `student_${d.student_id}`;
+          name = d.student_name || 'Estudiante sin nombre';
           type = 'student';
-        } else if (t.manual_client_name) {
-          key = `manual_${t.manual_client_name.toLowerCase().trim()}`;
-          name = t.manual_client_name;
+        } else if (d.manual_client_name) {
+          key = `manual_${d.manual_client_name.toLowerCase().trim()}`;
+          name = d.manual_client_name;
           type = 'manual';
         } else return;
 
         if (!debtorMap[key]) {
-          debtorMap[key] = { name, type, amount: 0, school_name: t.schools?.name || 'Sin sede', oldest: new Date(t.created_at), count: 0 };
+          debtorMap[key] = { name, type, amount: 0, school_name: d.school_name || 'Sin sede', oldest: new Date(d.created_at), count: 0, hasLunch: false, hasCafeteria: false };
         }
-        debtorMap[key].amount += Math.abs(t.amount || 0);
+        debtorMap[key].amount += d.amount;
         debtorMap[key].count++;
-        const txDate = new Date(t.created_at);
+        if (d.category === 'almuerzo') debtorMap[key].hasLunch = true;
+        else debtorMap[key].hasCafeteria = true;
+        const txDate = new Date(d.created_at);
         if (txDate < debtorMap[key].oldest) debtorMap[key].oldest = txDate;
       });
 
@@ -322,44 +506,55 @@ export const BillingDashboard = () => {
         .sort((a, b) => b.amount - a.amount)
         .slice(0, 15)
         .map(d => ({
-          ...d,
+          name: d.name,
+          type: d.type,
+          amount: d.amount,
+          school_name: d.school_name,
           days_overdue: Math.floor((now.getTime() - d.oldest.getTime()) / 86400000),
+          count: d.count,
+          category: (d.hasLunch && d.hasCafeteria ? 'mixed' : d.hasLunch ? 'almuerzo' : 'cafeteria') as 'almuerzo' | 'cafeteria' | 'mixed',
         }));
 
-      // ========== 4. REEMBOLSOS PENDIENTES ==========
+      // ========== REEMBOLSOS PENDIENTES ==========
       let refundCount = 0;
       let refundAmount = 0;
       try {
-        const { data: refundData } = await supabase
+        let refundQuery = supabase
           .from('transactions')
           .select('amount, metadata')
           .eq('payment_status', 'cancelled')
           .eq('metadata->>requires_refund', 'true')
           .limit(1000);
-
+        if (schoolIdFilter) refundQuery = refundQuery.eq('school_id', schoolIdFilter);
+        const { data: refundData } = await refundQuery;
         refundCount = refundData?.length || 0;
         refundAmount = refundData?.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0) || 0;
-      } catch {
-        // Silently ignore
-      }
+      } catch { /* ignore */ }
 
-      // ========== 5. POR SEDE ==========
+      // ========== POR SEDE ==========
       const collectionBySchool = Object.entries(schoolStatsMap)
         .map(([name, data]) => ({
           school_name: name,
           pending: data.pending,
+          lunchPending: data.lunchPending,
+          cafeteriaPending: data.cafeteriaPending,
           collected: data.collected,
           debtors: data.debtors.size,
         }))
         .sort((a, b) => b.pending - a.pending);
 
-      // ========== SETEAR STATS ==========
+      if (currentRequestId !== requestIdRef.current) return;
+
       setStats({
         totalPending,
+        lunchPending,
+        cafeteriaPending,
         totalCollectedToday,
         totalCollectedWeek,
         totalCollectedMonth,
         totalDebtors: teacherIds.size + studentIds.size + manualNames.size,
+        lunchDebtors: lunchDebtorKeys.size,
+        cafeteriaDebtors: cafeteriaDebtorKeys.size,
         totalTeacherDebt,
         totalStudentDebt,
         totalManualDebt,
@@ -377,101 +572,76 @@ export const BillingDashboard = () => {
       setLastRefresh(new Date());
 
     } catch (error) {
+      if (currentRequestId !== requestIdRef.current) return;
       console.error('Error fetching dashboard stats:', error);
     } finally {
-      setLoading(false);
+      if (currentRequestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  // ========== GENERAR RECOMENDACIONES ==========
   const getRecommendations = () => {
     const recs: Array<{ icon: any; color: string; bgColor: string; borderColor: string; title: string; description: string; priority: 'urgent' | 'warning' | 'info' | 'success' }> = [];
 
-    // 🔴 URGENTE: Deudas mayores a 15 días
     if (stats.debtByAge.daysOver15 > 0) {
       recs.push({
-        icon: ShieldAlert,
-        color: 'text-red-700',
-        bgColor: 'bg-red-50',
-        borderColor: 'border-red-300',
+        icon: ShieldAlert, color: 'text-red-700', bgColor: 'bg-red-50', borderColor: 'border-red-300',
         title: `${stats.debtByAge.countOver15} deuda(s) con más de 15 días sin pagar`,
         description: `Total: S/ ${stats.debtByAge.daysOver15.toFixed(2)}. Contacta urgentemente a estos deudores para evitar acumulación.`,
         priority: 'urgent',
       });
     }
 
-    // 🔴 URGENTE: Deudas de 8-15 días
     if (stats.debtByAge.days8to15 > 0) {
       recs.push({
-        icon: AlertTriangle,
-        color: 'text-orange-700',
-        bgColor: 'bg-orange-50',
-        borderColor: 'border-orange-300',
+        icon: AlertTriangle, color: 'text-orange-700', bgColor: 'bg-orange-50', borderColor: 'border-orange-300',
         title: `${stats.debtByAge.count8to15} deuda(s) de 8 a 15 días pendientes`,
         description: `Total: S/ ${stats.debtByAge.days8to15.toFixed(2)}. Envía recordatorios antes de que se vuelvan críticas.`,
         priority: 'warning',
       });
     }
 
-    // 🟡 Profesores con deuda
     if (stats.teacherDebtors > 0) {
       recs.push({
-        icon: UserCheck,
-        color: 'text-purple-700',
-        bgColor: 'bg-purple-50',
-        borderColor: 'border-purple-300',
+        icon: UserCheck, color: 'text-purple-700', bgColor: 'bg-purple-50', borderColor: 'border-purple-300',
         title: `${stats.teacherDebtors} profesor(es) con deuda pendiente`,
         description: `Total: S/ ${stats.totalTeacherDebt.toFixed(2)}. Los profesores suelen pagar rápido si les envías un recordatorio.`,
         priority: 'warning',
       });
     }
 
-    // 🟡 Clientes manuales con deuda
     if (stats.manualDebtors > 0) {
       recs.push({
-        icon: Users,
-        color: 'text-amber-700',
-        bgColor: 'bg-amber-50',
-        borderColor: 'border-amber-300',
+        icon: Users, color: 'text-amber-700', bgColor: 'bg-amber-50', borderColor: 'border-amber-300',
         title: `${stats.manualDebtors} cliente(s) manual(es) con deuda`,
         description: `Total: S/ ${stats.totalManualDebt.toFixed(2)}. Verifica que los datos de contacto estén actualizados.`,
         priority: 'warning',
       });
     }
 
-    // ⚠️ Reembolsos pendientes
     if (stats.pendingRefunds > 0) {
       recs.push({
-        icon: RefreshCw,
-        color: 'text-red-700',
-        bgColor: 'bg-red-50',
-        borderColor: 'border-red-300',
+        icon: RefreshCw, color: 'text-red-700', bgColor: 'bg-red-50', borderColor: 'border-red-300',
         title: `${stats.pendingRefunds} reembolso(s) pendiente(s) de devolución`,
-        description: `Total: S/ ${stats.pendingRefundAmount.toFixed(2)}. Pedidos anulados que ya habían sido pagados. Devuelve el dinero al cliente.`,
+        description: `Total: S/ ${stats.pendingRefundAmount.toFixed(2)}. Pedidos anulados que ya habían sido pagados.`,
         priority: 'urgent',
       });
     }
 
-    // 🟢 Comparación con ayer
     if (stats.collectedYesterday > 0) {
       const diff = stats.totalCollectedToday - stats.collectedYesterday;
       const pct = ((diff / stats.collectedYesterday) * 100).toFixed(0);
       if (diff > 0) {
         recs.push({
-          icon: TrendingUp,
-          color: 'text-green-700',
-          bgColor: 'bg-green-50',
-          borderColor: 'border-green-300',
+          icon: TrendingUp, color: 'text-green-700', bgColor: 'bg-green-50', borderColor: 'border-green-300',
           title: `Has cobrado ${pct}% más que ayer`,
           description: `Hoy: S/ ${stats.totalCollectedToday.toFixed(2)} vs Ayer: S/ ${stats.collectedYesterday.toFixed(2)}. ¡Buen ritmo!`,
           priority: 'success',
         });
       } else if (diff < 0) {
         recs.push({
-          icon: TrendingDown,
-          color: 'text-orange-700',
-          bgColor: 'bg-orange-50',
-          borderColor: 'border-orange-300',
+          icon: TrendingDown, color: 'text-orange-700', bgColor: 'bg-orange-50', borderColor: 'border-orange-300',
           title: `Hoy llevas ${Math.abs(Number(pct))}% menos que ayer`,
           description: `Hoy: S/ ${stats.totalCollectedToday.toFixed(2)} vs Ayer: S/ ${stats.collectedYesterday.toFixed(2)}. Revisa la pestaña "¡Cobrar!" para gestionar pagos.`,
           priority: 'info',
@@ -479,44 +649,42 @@ export const BillingDashboard = () => {
       }
     }
 
-    // 💡 Sin deudas
     if (stats.totalPending === 0 && stats.totalDebtors === 0) {
       recs.push({
-        icon: CheckCircle2,
-        color: 'text-green-700',
-        bgColor: 'bg-green-50',
-        borderColor: 'border-green-300',
+        icon: CheckCircle2, color: 'text-green-700', bgColor: 'bg-green-50', borderColor: 'border-green-300',
         title: '¡Todas las cuentas están al día!',
         description: 'No hay deudas pendientes. Excelente gestión de cobranza.',
         priority: 'success',
       });
     }
 
-    // 💡 Consejo general
     if (stats.totalDebtors > 5) {
       recs.push({
-        icon: Lightbulb,
-        color: 'text-blue-700',
-        bgColor: 'bg-blue-50',
-        borderColor: 'border-blue-300',
+        icon: Lightbulb, color: 'text-blue-700', bgColor: 'bg-blue-50', borderColor: 'border-blue-300',
         title: 'Consejo: Prioriza los montos grandes',
         description: `Tienes ${stats.totalDebtors} deudores. Enfócate primero en los 5 mayores deudores que representan la mayor parte del monto pendiente.`,
         priority: 'info',
       });
     }
 
-    // Ordenar por prioridad
     const priorityOrder = { urgent: 0, warning: 1, info: 2, success: 3 };
     recs.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
-
     return recs;
   };
 
   const getDebtorTypeBadge = (type: 'student' | 'teacher' | 'manual') => {
     switch (type) {
-      case 'teacher': return <Badge className="bg-green-600 text-xs">👨‍🏫 Profesor</Badge>;
-      case 'student': return <Badge className="bg-blue-600 text-xs">👨‍🎓 Alumno</Badge>;
-      case 'manual': return <Badge className="bg-orange-600 text-xs">👤 Manual</Badge>;
+      case 'teacher': return <Badge className="bg-green-600 text-xs">Profesor</Badge>;
+      case 'student': return <Badge className="bg-blue-600 text-xs">Alumno</Badge>;
+      case 'manual': return <Badge className="bg-orange-600 text-xs">Manual</Badge>;
+    }
+  };
+
+  const getCategoryBadge = (cat: 'almuerzo' | 'cafeteria' | 'mixed') => {
+    switch (cat) {
+      case 'almuerzo': return <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50">Almuerzo</Badge>;
+      case 'cafeteria': return <Badge variant="outline" className="text-[10px] border-sky-400 text-sky-700 bg-sky-50">Cafetería</Badge>;
+      case 'mixed': return <Badge variant="outline" className="text-[10px] border-purple-400 text-purple-700 bg-purple-50">Mixto</Badge>;
     }
   };
 
@@ -525,7 +693,7 @@ export const BillingDashboard = () => {
       <div className="flex flex-col items-center justify-center py-16 gap-3">
         <Loader2 className="h-10 w-10 animate-spin text-red-600" />
         <p className="text-gray-600 font-medium">Analizando datos de cobranza...</p>
-        <p className="text-xs text-gray-400">Generando recomendaciones inteligentes</p>
+        <p className="text-xs text-gray-400">Incluyendo deudas de almuerzos y cafetería</p>
       </div>
     );
   }
@@ -533,27 +701,41 @@ export const BillingDashboard = () => {
   const recommendations = getRecommendations();
   const totalPayments = Object.values(stats.paymentMethods).reduce((a, b) => a + b, 0);
 
+  // Valores filtrados por categoría seleccionada
+  const displayPending = debtCategory === 'all' ? stats.totalPending
+    : debtCategory === 'almuerzo' ? stats.lunchPending
+    : stats.cafeteriaPending;
+
+  const displayDebtors = debtCategory === 'all' ? stats.totalDebtors
+    : debtCategory === 'almuerzo' ? stats.lunchDebtors
+    : stats.cafeteriaDebtors;
+
+  const filteredTopDebtors = debtCategory === 'all' ? stats.topDebtors
+    : stats.topDebtors.filter(d => d.category === debtCategory || d.category === 'mixed');
+
   return (
     <div className="space-y-6">
-      {/* ===== HEADER CON FILTRO Y REFRESH ===== */}
+      {/* ===== HEADER CON FILTROS ===== */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {canViewAllSchools && schools.length > 1 && (
-          <div className="flex items-center gap-3">
-            <Building2 className="h-5 w-5 text-red-600" />
-            <select
-              value={selectedSchool}
-              onChange={(e) => setSelectedSchool(e.target.value)}
-              className="bg-white flex h-10 rounded-md border border-input px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <option value="all">Todas las Sedes</option>
-              {schools.map((school) => (
-                <option key={school.id} value={school.id}>
-                  {school.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {canViewAllSchools && schools.length > 1 && (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-red-600" />
+              <select
+                value={selectedSchool}
+                onChange={(e) => setSelectedSchool(e.target.value)}
+                className="bg-white flex h-10 rounded-md border border-input px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="all">Todas las Sedes</option>
+                {schools.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
         <Button 
           variant="outline" 
           size="sm" 
@@ -568,21 +750,54 @@ export const BillingDashboard = () => {
         </Button>
       </div>
 
+      {/* ===== FILTRO CATEGORÍA: ALMUERZO / CAFETERÍA / TOTAL ===== */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide mr-1">Filtrar deuda:</span>
+        {([
+          { key: 'all' as DebtCategory, label: 'Total', icon: DollarSign, amount: stats.totalPending, color: 'red' },
+          { key: 'almuerzo' as DebtCategory, label: 'Almuerzos', icon: UtensilsCrossed, amount: stats.lunchPending, color: 'amber' },
+          { key: 'cafeteria' as DebtCategory, label: 'Cafetería', icon: Coffee, amount: stats.cafeteriaPending, color: 'sky' },
+        ]).map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setDebtCategory(opt.key)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all border",
+              debtCategory === opt.key
+                ? opt.color === 'red' ? "bg-red-100 border-red-400 text-red-800 shadow-sm"
+                  : opt.color === 'amber' ? "bg-amber-100 border-amber-400 text-amber-800 shadow-sm"
+                  : "bg-sky-100 border-sky-400 text-sky-800 shadow-sm"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            )}
+          >
+            <opt.icon className="h-4 w-4" />
+            {opt.label}
+            <span className="font-black ml-1">S/ {opt.amount.toFixed(2)}</span>
+          </button>
+        ))}
+      </div>
+
       {/* ===== SECCIÓN 1: RESUMEN EJECUTIVO ===== */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Por Cobrar */}
+        {/* Total Por Cobrar (filtrado por categoría) */}
         <Card className="border-l-4 border-red-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
               <AlertCircle className="h-3.5 w-3.5 text-red-500" />
-              Total Por Cobrar
+              {debtCategory === 'all' ? 'Total Por Cobrar' : debtCategory === 'almuerzo' ? 'Deuda Almuerzos' : 'Deuda Cafetería'}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-red-600">
-              S/ {stats.totalPending.toFixed(2)}
+              S/ {displayPending.toFixed(2)}
             </div>
-            <p className="text-xs text-gray-500 mt-1">{stats.totalDebtors} deudor(es) activo(s)</p>
+            <p className="text-xs text-gray-500 mt-1">{displayDebtors} deudor(es) activo(s)</p>
+            {debtCategory === 'all' && (stats.lunchPending > 0 || stats.cafeteriaPending > 0) && (
+              <div className="flex gap-3 mt-2 text-[10px]">
+                <span className="text-amber-700 font-semibold">Almuerzos: S/ {stats.lunchPending.toFixed(2)}</span>
+                <span className="text-sky-700 font-semibold">Cafetería: S/ {stats.cafeteriaPending.toFixed(2)}</span>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -608,7 +823,7 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Cobrado Esta Semana */}
+        {/* Esta Semana */}
         <Card className="border-l-4 border-blue-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
@@ -624,7 +839,7 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Tasa de Cobro */}
+        {/* Eficiencia */}
         <Card className="border-l-4 border-purple-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
@@ -643,7 +858,7 @@ export const BillingDashboard = () => {
         </Card>
       </div>
 
-      {/* ===== SECCIÓN 2: RECOMENDACIONES INTELIGENTES ===== */}
+      {/* ===== SECCIÓN 2: RECOMENDACIONES ===== */}
       {recommendations.length > 0 && (
         <Card className="overflow-hidden">
           <CardHeader className="bg-gradient-to-r from-indigo-50 to-blue-50 border-b pb-3">
@@ -673,7 +888,7 @@ export const BillingDashboard = () => {
         </Card>
       )}
 
-      {/* ===== SECCIÓN 3: DESGLOSE DE DEUDA + ANTIGÜEDAD ===== */}
+      {/* ===== SECCIÓN 3: DESGLOSE + ANTIGÜEDAD ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Deuda por tipo */}
         <Card>
@@ -684,7 +899,6 @@ export const BillingDashboard = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {/* Alumnos */}
             <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
               <div className="flex items-center gap-2">
                 <span className="text-lg">👨‍🎓</span>
@@ -695,7 +909,6 @@ export const BillingDashboard = () => {
               </div>
               <p className="font-bold text-blue-800">S/ {stats.totalStudentDebt.toFixed(2)}</p>
             </div>
-            {/* Profesores */}
             <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
               <div className="flex items-center gap-2">
                 <span className="text-lg">👨‍🏫</span>
@@ -706,7 +919,6 @@ export const BillingDashboard = () => {
               </div>
               <p className="font-bold text-green-800">S/ {stats.totalTeacherDebt.toFixed(2)}</p>
             </div>
-            {/* Clientes Manuales */}
             <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg">
               <div className="flex items-center gap-2">
                 <span className="text-lg">👤</span>
@@ -720,7 +932,7 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Antigüedad de deudas */}
+        {/* Antigüedad */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
@@ -748,7 +960,7 @@ export const BillingDashboard = () => {
         </Card>
       </div>
 
-      {/* ===== SECCIÓN 4: MÉTODOS DE PAGO (este mes) ===== */}
+      {/* ===== SECCIÓN 4: MÉTODOS DE PAGO ===== */}
       {totalPayments > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -785,11 +997,16 @@ export const BillingDashboard = () => {
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wide">
             <TrendingUp className="h-4 w-4 text-red-600" />
-            Top 15 Deudores (Todos los Tipos)
+            Top 15 Deudores
+            {debtCategory !== 'all' && (
+              <Badge variant="outline" className="ml-2 text-xs">
+                {debtCategory === 'almuerzo' ? 'Solo Almuerzos' : 'Solo Cafetería'}
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {stats.topDebtors.length === 0 ? (
+          {filteredTopDebtors.length === 0 ? (
             <div className="text-center py-8">
               <CheckCircle2 className="h-12 w-12 text-green-400 mx-auto mb-3" />
               <p className="text-gray-500 font-medium">¡Excelente! No hay deudas pendientes.</p>
@@ -797,7 +1014,7 @@ export const BillingDashboard = () => {
             </div>
           ) : (
             <div className="space-y-2">
-              {stats.topDebtors.map((debtor, index) => (
+              {filteredTopDebtors.map((debtor, index) => (
                 <div
                   key={index}
                   className={cn(
@@ -820,10 +1037,11 @@ export const BillingDashboard = () => {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-sm text-gray-900">{debtor.name}</p>
                         {getDebtorTypeBadge(debtor.type)}
+                        {getCategoryBadge(debtor.category)}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         {canViewAllSchools && (
-                          <p className="text-xs text-gray-500">🏫 {debtor.school_name}</p>
+                          <p className="text-xs text-gray-500">{debtor.school_name}</p>
                         )}
                         <p className="text-xs text-gray-400">•</p>
                         <p className={cn("text-xs font-medium",
@@ -851,7 +1069,7 @@ export const BillingDashboard = () => {
         </CardContent>
       </Card>
 
-      {/* ===== SECCIÓN 6: COBRANZA POR SEDE (admin_general) ===== */}
+      {/* ===== SECCIÓN 6: POR SEDE ===== */}
       {canViewAllSchools && selectedSchool === 'all' && stats.collectionBySchool.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -879,6 +1097,17 @@ export const BillingDashboard = () => {
                         Cobrado: S/ {school.collected.toFixed(2)}
                       </span>
                     </div>
+                  </div>
+                  {/* Desglose almuerzo/cafetería por sede */}
+                  <div className="flex gap-3 text-[10px]">
+                    <span className="text-amber-700 font-semibold">
+                      <UtensilsCrossed className="h-3 w-3 inline mr-0.5" />
+                      Almuerzos: S/ {school.lunchPending.toFixed(2)}
+                    </span>
+                    <span className="text-sky-700 font-semibold">
+                      <Coffee className="h-3 w-3 inline mr-0.5" />
+                      Cafetería: S/ {school.cafeteriaPending.toFixed(2)}
+                    </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <div
