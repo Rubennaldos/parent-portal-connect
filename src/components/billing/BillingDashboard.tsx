@@ -253,13 +253,14 @@ export const BillingDashboard = () => {
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 3. Transacciones pagadas con lunch_order_id o descripción almuerzo (para deduplicar)
+        // 3. Transacciones pagadas con lunch_order_id (para deduplicar por metadata)
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
             .select('metadata, created_at, description, student_id, teacher_id, manual_client_name')
             .eq('type', 'purchase')
-            .eq('payment_status', 'paid');
+            .eq('payment_status', 'paid')
+            .not('metadata->>lunch_order_id', 'is', null);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -435,33 +436,6 @@ export const BillingDashboard = () => {
         })),
         ...virtualDebts,
       ];
-
-      // === DIAGNÓSTICO: comparar Dashboard vs Cobrar ===
-      const orphanTx = pendingData.filter((t: any) => {
-        if (!t.metadata?.lunch_order_id) return false;
-        return cancelledOrderIds.has(t.metadata.lunch_order_id) || !knownLunchOrderIds.has(t.metadata.lunch_order_id);
-      });
-      const descMatchedIds = new Set<string>();
-      lunchOrders.forEach((order: any) => {
-        const byMeta = pendingData.some((t: any) => t.metadata?.lunch_order_id === order.id) ||
-                        paidWithLunch.some((t: any) => t.metadata?.lunch_order_id === order.id);
-        if (!byMeta && existingLunchOrderIds.has(order.id)) descMatchedIds.add(order.id);
-      });
-      const totalVirtualAmt = virtualDebts.reduce((s, d) => s + d.amount, 0);
-      const totalValidPendingAmt = validPending.reduce((s: number, t: any) => s + Math.abs(t.amount || 0), 0);
-      const totalOrphanAmt = orphanTx.reduce((s: number, t: any) => s + Math.abs(t.amount || 0), 0);
-      console.warn(`📊 [DASH DIAG] Sede: ${schoolIdFilter || 'TODAS'}`,
-        `\n  pendingData: ${pendingData.length} → validPending: ${validPending.length} (filtradas: ${pendingData.length - validPending.length})`,
-        `\n  huérfanas/canceladas: ${orphanTx.length} por S/ ${totalOrphanAmt.toFixed(2)}`,
-        `\n  lunchOrders (pagar_luego): ${lunchOrders.length}`,
-        `\n  dedup por metadata: ${existingLunchOrderIds.size - descMatchedIds.size}`,
-        `\n  dedup por descripción: ${descMatchedIds.size}`,
-        descMatchedIds.size > 0 ? `\n  IDs dedup descripción: ${[...descMatchedIds].join(', ')}` : '',
-        `\n  virtualDebts: ${virtualDebts.length} por S/ ${totalVirtualAmt.toFixed(2)}`,
-        `\n  TOTAL DASHBOARD: S/ ${(totalValidPendingAmt + totalVirtualAmt).toFixed(2)}`,
-        `\n  (validPending S/ ${totalValidPendingAmt.toFixed(2)} + virtual S/ ${totalVirtualAmt.toFixed(2)})`
-      );
-      // === FIN DIAGNÓSTICO ===
 
       if (currentRequestId !== requestIdRef.current) return;
 

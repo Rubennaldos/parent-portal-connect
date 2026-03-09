@@ -390,8 +390,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           txCursor = txBatch[txBatch.length - 1].created_at;
         }
       }
-      console.warn('🔍 [DEBUG] total transactions fetched:', transactions.length);
-
+      
       // --- Paginación inline para lunch_orders (cursor por created_at) ---
       let lunchOrders: any[] = [];
       try {
@@ -421,7 +420,6 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       } catch (e) {
         console.error('❌ [BillingCollection] Error fetching lunch orders:', e);
       }
-      console.warn('🔍 [DEBUG] total lunchOrders fetched:', lunchOrders.length);
 
       // 🔧 FIX: lunch_categories no tiene FK en lunch_orders → lookup separado
       let lunchCategoriesMap = new Map<string, { id: string; name: string; price: number | null }>();
@@ -504,16 +502,6 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       } catch (e) {
         console.error('❌ [BillingCollection] Error fetching paid transactions:', e);
       }
-
-      // === DEBUG TEMPORAL ===
-      const CALEB_ID = '627cdc1d-65fd-401c-b3bd-eccffe03bc6f';
-      console.warn('🔍 [DEBUG] total transactions:', transactions.length, '| lunchOrders:', lunchOrders.length, '| paid:', paidLunchTransactions.length);
-      const calebRaw = transactions.filter((t: any) => t.student_id === CALEB_ID);
-      const calebValid = validTransactions.filter((t: any) => t.student_id === CALEB_ID);
-      console.warn('🔍 [DEBUG CALEB] raw:', calebRaw.length, calebRaw.map((t: any) => ({ id: t.id.substring(0,8), desc: t.description?.substring(0,40), created: t.created_at?.substring(0,10) })));
-      console.warn('🔍 [DEBUG CALEB] valid:', calebValid.length);
-      // === FIN DEBUG ===
-      
       
       // Obtener IDs de pedidos que ya tienen transacciones asociadas (PENDING O PAID)
       const existingOrderKeys = new Set<string>();
@@ -705,13 +693,6 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       // Combinar transacciones reales (ya filtradas arriba) con virtuales
       const allTransactions = [...validTransactions, ...virtualTransactions];
-
-      // === DEBUG TEMPORAL ===
-      const calebAll = allTransactions.filter((t: any) => t.student_id === CALEB_ID);
-      const calebVirtual = virtualTransactions.filter((t: any) => t.student_id === CALEB_ID);
-      console.warn('🔍 [DEBUG CALEB] virtualTransactions:', calebVirtual.length, calebVirtual.map((t: any) => ({ id: t.id?.toString().substring(0,15), desc: t.description?.substring(0,30) })));
-      console.warn('🔍 [DEBUG CALEB] allTransactions total:', calebAll.length);
-      // === FIN DEBUG ===
 
       // 🆕 Obtener informaci�n del creador (created_by) para transacciones del tab "�Cobrar!"
       const creatorIds = [...new Set(allTransactions.map((t: any) => t.created_by).filter(Boolean))];
