@@ -253,14 +253,13 @@ export const BillingDashboard = () => {
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 3. Transacciones pagadas con lunch_order_id (para deduplicar)
+        // 3. Transacciones pagadas con lunch_order_id o descripción almuerzo (para deduplicar)
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
-            .select('metadata, created_at')
+            .select('metadata, created_at, description, student_id, teacher_id, manual_client_name')
             .eq('type', 'purchase')
-            .eq('payment_status', 'paid')
-            .not('metadata->>lunch_order_id', 'is', null);
+            .eq('payment_status', 'paid');
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -281,13 +280,41 @@ export const BillingDashboard = () => {
 
       if (currentRequestId !== requestIdRef.current) return;
 
-      // Deduplicar: IDs de lunch_orders que ya tienen transacción
+      // Deduplicar: IDs de lunch_orders que ya tienen transacción (por metadata)
       const existingLunchOrderIds = new Set<string>();
       pendingData.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
       });
       paidWithLunch.forEach((t: any) => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
+      });
+
+      // Deduplicar también por descripción + persona + fecha (mismo método que tab Cobrar)
+      const allTxForMatching = [...pendingData, ...paidWithLunch];
+      lunchOrders.forEach((order: any) => {
+        if (existingLunchOrderIds.has(order.id)) return;
+        const orderDate = order.order_date;
+        if (!orderDate) return;
+        const orderDateFormatted = new Date(orderDate + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' });
+        const orderYear = orderDate.substring(0, 4);
+
+        const hasMatch = allTxForMatching.some((t: any) => {
+          const desc = t.description || '';
+          if (!desc.toLowerCase().includes('almuerzo')) return false;
+          const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
+          const sameStudent = order.student_id && t.student_id === order.student_id;
+          const sameManual = order.manual_name && t.manual_client_name &&
+            order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
+          if (!sameTeacher && !sameStudent && !sameManual) return false;
+          const transYear = t.created_at?.substring(0, 4);
+          if (transYear !== orderYear) return false;
+          if (desc.includes(orderDateFormatted)) {
+            const diffDays = Math.abs((new Date(t.created_at).getTime() - new Date(orderDate + 'T12:00:00').getTime()) / 86400000);
+            return diffDays <= 35;
+          }
+          return t.created_at?.split('T')[0] === orderDate;
+        });
+        if (hasMatch) existingLunchOrderIds.add(order.id);
       });
 
       // Verificar pedidos cancelados o eliminados entre las transacciones pendientes
