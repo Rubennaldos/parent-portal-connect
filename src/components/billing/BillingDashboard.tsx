@@ -133,11 +133,12 @@ const emptyStats: DashboardStats = {
   collectionBySchool: [],
 };
 
+// Solo usa metadata para clasificar — evita falsos positivos por texto libre
 function isLunchTransaction(t: any): boolean {
   if (t.metadata?.lunch_order_id) return true;
   if (t.metadata?.source === 'lunch_order') return true;
-  const desc = (t.description || '').toLowerCase();
-  return desc.includes('almuerzo') || desc.includes('lunch');
+  if (t.metadata?.source === 'lunch') return true;
+  return false;
 }
 
 export const BillingDashboard = () => {
@@ -222,12 +223,14 @@ export const BillingDashboard = () => {
 
       const { data: pendingData } = await pendingQuery;
 
-      // ========== 2. LUNCH ORDERS SIN TRANSACCIÓN (deudas virtuales) ==========
+      // ========== 2. LUNCH ORDERS SOLO 'pagar_luego' (deudas virtuales) ==========
+      // Solo traemos pedidos que deben pagarse después para no inflar el total con pagos al contado
       let lunchQuery = supabase
         .from('lunch_orders')
         .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
         .in('status', ['confirmed', 'delivered'])
         .eq('is_cancelled', false)
+        .eq('payment_method', 'pagar_luego')
         .limit(100000);
 
       if (schoolIdFilter) {
@@ -245,12 +248,13 @@ export const BillingDashboard = () => {
       });
 
       // También verificar transacciones PAID para no duplicar
+      // Usamos ->> (texto) que es más compatible que -> (JSON) en distintas versiones de PostgREST
       let paidLunchCheck = supabase
         .from('transactions')
         .select('metadata')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
-        .not('metadata->lunch_order_id', 'is', null)
+        .not('metadata->>lunch_order_id', 'is', null)
         .limit(100000);
 
       if (schoolIdFilter) {
@@ -313,13 +317,11 @@ export const BillingDashboard = () => {
       }
 
       // Crear deudas virtuales de lunch_orders sin transacción
+      // Solo llegamos aquí con pedidos payment_method='pagar_luego' (filtrado en BD)
       const virtualDebts: UnifiedDebt[] = [];
 
       lunchOrders.forEach((order: any) => {
         if (existingLunchOrderIds.has(order.id)) return;
-
-        // Omitir clientes manuales que ya pagaron en el momento
-        if (order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') return;
 
         // Solo procesar pedidos con algún cliente identificado
         if (!order.student_id && !order.teacher_id && !order.manual_name) return;
@@ -335,6 +337,9 @@ export const BillingDashboard = () => {
         } else {
           amount = 7.50 * qty;
         }
+
+        // Asegurar que amount sea siempre positivo
+        amount = Math.abs(amount);
 
         let schoolId = order.school_id || order.students?.school_id || order.teacher_profiles?.school_id_1 || '';
 
