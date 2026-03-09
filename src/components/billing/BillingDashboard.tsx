@@ -290,12 +290,13 @@ export const BillingDashboard = () => {
         if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
       });
 
-      // Verificar pedidos cancelados entre las transacciones pendientes
-      const txLunchOrderIds = (pendingData || [])
+      // Verificar pedidos cancelados o eliminados entre las transacciones pendientes
+      const txLunchOrderIds = pendingData
         .map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean);
 
       let cancelledOrderIds = new Set<string>();
+      let knownLunchOrderIds = new Set<string>();
       if (txLunchOrderIds.length > 0) {
         const uniqueIds = [...new Set(txLunchOrderIds)];
         const CHUNK = 200;
@@ -305,13 +306,19 @@ export const BillingDashboard = () => {
             .from('lunch_orders')
             .select('id, is_cancelled')
             .in('id', batch);
-          batchData?.filter((o: any) => o.is_cancelled).forEach((o: any) => cancelledOrderIds.add(o.id));
+          batchData?.forEach((o: any) => {
+            knownLunchOrderIds.add(o.id);
+            if (o.is_cancelled) cancelledOrderIds.add(o.id);
+          });
         }
       }
 
-      // Filtrar transacciones de pedidos cancelados
-      const validPending = (pendingData || []).filter((t: any) => {
-        if (t.metadata?.lunch_order_id && cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+      // Filtrar transacciones de pedidos cancelados O eliminados (huérfanas)
+      const validPending = pendingData.filter((t: any) => {
+        if (t.metadata?.lunch_order_id) {
+          if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+          if (!knownLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
+        }
         return true;
       });
 
