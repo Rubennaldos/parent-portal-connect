@@ -12,6 +12,7 @@ import SplashScreen from '@/components/SplashScreen';
 import LibroReclamaciones from '@/components/LibroReclamaciones';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { APP_CONFIG } from '@/config/app.config';
+import { supabase } from '@/lib/supabase';
 
 export default function Auth() {
   const navigate = useNavigate();
