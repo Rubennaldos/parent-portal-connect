@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -39,9 +39,10 @@ interface StudentDebt {
 
 interface PaymentsTabProps {
   userId: string;
+  isActive?: boolean; // 🔄 Para refrescar cuando la pestaña se activa
 }
 
-export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
+export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [debts, setDebts] = useState<StudentDebt[]>([]);
@@ -50,6 +51,9 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
   // ── Estado para el modal de pago ──
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<StudentDebt | null>(null);
+
+  // ── Modo pago combinado (todos los hijos juntos) ──
+  const [combinedMode, setCombinedMode] = useState(false);
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
@@ -91,6 +95,13 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
   useEffect(() => {
     fetchDebts();
   }, [userId]);
+
+  // 🔄 Refrescar deudas cada vez que la pestaña se activa
+  useEffect(() => {
+    if (isActive) {
+      fetchDebts();
+    }
+  }, [isActive]);
 
   const fetchDebts = async () => {
     try {
@@ -210,6 +221,16 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
             }
           });
 
+          // ── También marcar estudiantes cuyas transacciones YA están cubiertas por un voucher pendiente ──
+          debtsData.forEach(debt => {
+            if (debt.pending_transactions.length > 0) {
+              const allCovered = debt.pending_transactions.every(
+                tx => statusMap.get(tx.id)?.status === 'pending'
+              );
+              if (allCovered) pendingDebtStudents.add(debt.student_id);
+            }
+          });
+
           setVoucherStatuses(statusMap);
           setPendingDebtVoucherStudents(pendingDebtStudents);
         }
@@ -227,6 +248,55 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
   };
 
   const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
+
+  // ── Datos para pago combinado ──
+  const hasCombinedPendingVoucher = debts.some(d =>
+    pendingDebtVoucherStudents.has(d.student_id) ||
+    d.pending_transactions.some(tx => voucherStatuses.get(tx.id)?.status === 'pending')
+  );
+
+  const buildCombinedPaymentData = () => {
+    const allTransactionIds: string[] = [];
+    const allLunchOrderIds: string[] = [];
+    const allBreakdownItems: { description: string; amount: number }[] = [];
+    const allStudentIds: string[] = [];
+    const allStudentNames: string[] = [];
+
+    for (const debt of debts) {
+      allStudentIds.push(debt.student_id);
+      allStudentNames.push(debt.student_name);
+
+      for (const tx of debt.pending_transactions) {
+        allTransactionIds.push(tx.id);
+        if (tx.metadata?.lunch_order_id) {
+          allLunchOrderIds.push(tx.metadata.lunch_order_id);
+        }
+        allBreakdownItems.push({
+          description: `${debt.student_name}: ${tx.description}`,
+          amount: tx.amount,
+        });
+      }
+    }
+
+    const combinedNames = allStudentNames.length <= 2
+      ? allStudentNames.join(' y ')
+      : allStudentNames.slice(0, -1).join(', ') + ' y ' + allStudentNames[allStudentNames.length - 1];
+
+    return {
+      allTransactionIds,
+      allLunchOrderIds,
+      allBreakdownItems,
+      allStudentIds,
+      combinedNames,
+      totalAmount: totalDebt,
+    };
+  };
+
+  const handleCombinedPay = () => {
+    setCombinedMode(true);
+    setSelectedDebt(null);
+    setShowPaymentModal(true);
+  };
 
   /**
    * Abre el modal de pago para un estudiante (con las transacciones seleccionadas)
@@ -361,11 +431,49 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
               <p className="text-4xl font-black text-amber-900">S/ {(totalDebt || 0).toFixed(2)}</p>
               <p className="text-xs text-amber-600 mt-1">
                 {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} compra(s) pendientes
+                {debts.length >= 2 && ` de ${debts.length} alumnos`}
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* 🧾 Pagar Todo Junto (solo si hay 2+ hijos con deuda) */}
+      {debts.length >= 2 && (
+        <Card className="border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-green-50">
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="p-2.5 bg-emerald-100 rounded-full flex-shrink-0">
+                <Users className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-emerald-800">🧾 Pagar todo junto</p>
+                <p className="text-xs text-emerald-600 mt-0.5">
+                  Envía <strong>un solo comprobante</strong> que cubra las deudas de todos tus hijos.
+                  El administrador verá un único voucher.
+                </p>
+              </div>
+            </div>
+            {hasCombinedPendingVoucher ? (
+              <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
+                <Send className="h-4 w-4 text-blue-600" />
+                <div>
+                  <p className="text-xs font-semibold text-blue-800">Comprobante en revisión</p>
+                  <p className="text-[10px] text-blue-600">Ya tienes un pago pendiente de aprobación.</p>
+                </div>
+              </div>
+            ) : (
+              <Button
+                onClick={handleCombinedPay}
+                className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 font-bold gap-2 text-base shadow-md"
+              >
+                <Receipt className="h-5 w-5" />
+                Pagar Todo Junto — S/ {(totalDebt || 0).toFixed(2)}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Deudas por Estudiante */}
       {debts.map((debt) => {
@@ -512,8 +620,8 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
         );
       })}
 
-      {/* ── Modal de Pago ── */}
-      {selectedDebt && (() => {
+      {/* ── Modal de Pago (individual) ── */}
+      {!combinedMode && selectedDebt && (() => {
         const payData = getPaymentData(selectedDebt);
         return (
           <RechargeModal
@@ -541,6 +649,37 @@ export const PaymentsTab = ({ userId }: PaymentsTabProps) => {
               description: tx.description,
               amount: tx.amount,
             }))}
+          />
+        );
+      })()}
+
+      {/* ── Modal de Pago (combinado — todos los hijos juntos) ── */}
+      {combinedMode && (() => {
+        const combined = buildCombinedPaymentData();
+        return (
+          <RechargeModal
+            isOpen={showPaymentModal}
+            onClose={() => {
+              setShowPaymentModal(false);
+              setCombinedMode(false);
+              fetchDebts();
+            }}
+            onCancel={() => {
+              setShowPaymentModal(false);
+              setCombinedMode(false);
+            }}
+            studentName={combined.combinedNames}
+            studentId={debts[0]?.student_id || ''}
+            currentBalance={0}
+            accountType="free_account"
+            onRecharge={async () => {}}
+            suggestedAmount={combined.totalAmount}
+            requestType="debt_payment"
+            requestDescription={`Pago combinado: ${combined.combinedNames} — ${combined.allTransactionIds.length} compra(s)`}
+            lunchOrderIds={combined.allLunchOrderIds.length > 0 ? combined.allLunchOrderIds : undefined}
+            paidTransactionIds={combined.allTransactionIds}
+            breakdownItems={combined.allBreakdownItems}
+            combinedStudentIds={combined.allStudentIds}
           />
         );
       })()}

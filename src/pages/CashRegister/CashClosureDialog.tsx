@@ -29,7 +29,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 
-type WizardStep = 'summary' | 'close';
+type WizardStep = 'summary' | 'confirm_egresos' | 'close';
 
 interface Props {
   cashRegister: CashRegister;
@@ -46,10 +46,13 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
   const [dailyTotals, setDailyTotals] = useState<DailyTotals | null>(null);
   const [actualAmount, setActualAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [egresosConfirmed, setEgresosConfirmed] = useState(false);
+  const [dayAnnulments, setDayAnnulments] = useState<any[]>([]);
   const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     loadDailyTotals();
+    loadDayAnnulments();
   }, []);
 
   const loadDailyTotals = async () => {
@@ -66,6 +69,26 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
       toast.error('Error al cargar totales');
     }
   };
+
+  const loadDayAnnulments = async () => {
+    try {
+      const dayStr = format(new Date(cashRegister.opened_at), 'yyyy-MM-dd');
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('id, ticket_code, amount, payment_method, metadata, created_at')
+        .eq('school_id', cashRegister.school_id)
+        .eq('payment_status', 'cancelled')
+        .eq('type', 'purchase')
+        .gte('created_at', `${dayStr}T00:00:00-05:00`)
+        .lte('created_at', `${dayStr}T23:59:59-05:00`);
+      if (!error && data) setDayAnnulments(data);
+    } catch (err) {
+      console.error('Error cargando anulaciones:', err);
+    }
+  };
+
+  const egresos = movements.filter(m => m.type === 'egreso');
+  const hasEgresos = egresos.length > 0;
 
   if (!dailyTotals) {
     return (
@@ -190,14 +213,16 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
           </DialogTitle>
         </DialogHeader>
 
-        {/* Barra de progreso simple: 2 pasos */}
+        {/* Barra de progreso: 3 pasos */}
         <div className="flex items-center gap-2 mb-2">
-          <div className={`flex-1 h-2 rounded-full ${step === 'summary' || step === 'close' ? 'bg-emerald-500' : 'bg-gray-200'}`} />
+          <div className={`flex-1 h-2 rounded-full ${['summary', 'confirm_egresos', 'close'].includes(step) ? 'bg-emerald-500' : 'bg-gray-200'}`} />
+          <div className={`flex-1 h-2 rounded-full ${['confirm_egresos', 'close'].includes(step) ? 'bg-emerald-500' : 'bg-gray-200'}`} />
           <div className={`flex-1 h-2 rounded-full ${step === 'close' ? 'bg-emerald-500' : 'bg-gray-200'}`} />
         </div>
         <div className="flex justify-between text-xs text-gray-400 mb-3 -mt-1">
-          <span className={step === 'summary' ? 'text-emerald-600 font-semibold' : ''}>1. Resumen del día</span>
-          <span className={step === 'close' ? 'text-emerald-600 font-semibold' : ''}>2. Cerrar caja</span>
+          <span className={step === 'summary' ? 'text-emerald-600 font-semibold' : ''}>1. Resumen</span>
+          <span className={step === 'confirm_egresos' ? 'text-emerald-600 font-semibold' : ''}>2. Verificar</span>
+          <span className={step === 'close' ? 'text-emerald-600 font-semibold' : ''}>3. Cerrar</span>
         </div>
 
         {/* ─── PASO 1: RESUMEN DEL DÍA ─────────────────────────── */}
@@ -266,13 +291,104 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
               )}
             </div>
 
-            <Button onClick={() => setStep('close')} className="w-full bg-emerald-600 hover:bg-emerald-700 h-12 text-base font-bold">
-              Continuar — Cerrar Caja <ChevronRight className="ml-2 h-5 w-5" />
+            <Button onClick={() => setStep('confirm_egresos')} className="w-full bg-emerald-600 hover:bg-emerald-700 h-12 text-base font-bold">
+              Continuar — Verificar Egresos <ChevronRight className="ml-2 h-5 w-5" />
             </Button>
           </div>
         )}
 
-        {/* ─── PASO 2: CONTAR Y CERRAR ─────────────────────────── */}
+        {/* ─── PASO 2: CONFIRMAR EGRESOS + ANULACIONES ─────────── */}
+        {step === 'confirm_egresos' && (
+          <div className="space-y-4">
+            {/* Egresos del día */}
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+              <h3 className="font-bold text-sm text-orange-800 flex items-center gap-2 mb-2">
+                <Banknote className="h-4 w-4" />
+                Egresos del día ({egresos.length})
+              </h3>
+              {egresos.length === 0 ? (
+                <p className="text-sm text-orange-600 italic">No hubo egresos registrados hoy.</p>
+              ) : (
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {egresos.map((eg, i) => (
+                    <div key={eg.id || i} className="flex justify-between text-sm bg-white rounded-lg p-2 border">
+                      <div>
+                        <p className="font-medium text-gray-800">{eg.reason || '(sin descripción)'}</p>
+                        <p className="text-[10px] text-gray-400">{eg.responsible_name || 'Sin responsable'}</p>
+                      </div>
+                      <span className="font-bold text-red-600 whitespace-nowrap">-S/ {eg.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold text-sm pt-1 border-t">
+                    <span>Total Egresos:</span>
+                    <span className="text-red-700">S/ {totalEgresos.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Anulaciones del día (Mejora 6) */}
+            {dayAnnulments.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <h3 className="font-bold text-sm text-red-800 flex items-center gap-2 mb-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Ventas anuladas hoy ({dayAnnulments.length})
+                </h3>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {dayAnnulments.map((ann) => (
+                    <div key={ann.id} className="flex justify-between text-sm bg-white rounded-lg p-2 border">
+                      <div>
+                        <p className="font-medium text-gray-800">{ann.ticket_code}</p>
+                        <p className="text-[10px] text-gray-500">
+                          {ann.metadata?.cancellation_reason || '(sin motivo)'}
+                          {ann.metadata?.refund_method && ` | Dev: ${ann.metadata.refund_method}`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-red-600">S/ {Math.abs(ann.amount).toFixed(2)}</span>
+                        <p className="text-[10px] text-gray-400">{ann.payment_method}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold text-sm pt-1 border-t">
+                    <span>Total Anulado:</span>
+                    <span className="text-red-700">S/ {dayAnnulments.reduce((s, a) => s + Math.abs(a.amount), 0).toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Checkbox de confirmación */}
+            {hasEgresos && (
+              <label className="flex items-start gap-3 cursor-pointer bg-amber-50 border-2 border-amber-300 rounded-xl p-4">
+                <input
+                  type="checkbox"
+                  checked={egresosConfirmed}
+                  onChange={(e) => setEgresosConfirmed(e.target.checked)}
+                  className="mt-1 h-5 w-5 accent-amber-600"
+                />
+                <span className="text-sm text-amber-900">
+                  Confirmo que <strong>todos los egresos</strong> (S/ {totalEgresos.toFixed(2)}) fueron realizados correctamente y cuento con los comprobantes correspondientes.
+                </span>
+              </label>
+            )}
+
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep('summary')} className="flex-1">
+                <ArrowLeft className="h-4 w-4 mr-1" /> Atrás
+              </Button>
+              <Button
+                onClick={() => setStep('close')}
+                disabled={hasEgresos && !egresosConfirmed}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 h-12 font-bold"
+              >
+                Continuar — Contar Caja <ChevronRight className="ml-2 h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── PASO 3: CONTAR Y CERRAR ─────────────────────────── */}
         {step === 'close' && (
           <div className="space-y-4">
             {/* Recordatorio de caja esperada */}
@@ -359,7 +475,7 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
 
             {/* Botones */}
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep('summary')} className="flex-1">
+              <Button variant="outline" onClick={() => setStep('confirm_egresos')} className="flex-1">
                 <ArrowLeft className="h-4 w-4 mr-1" /> Atrás
               </Button>
               <Button

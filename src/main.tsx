@@ -51,3 +51,51 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </AppErrorBoundary>
 );
+
+/**
+ * 🔄 REGISTRO DEL SERVICE WORKER CON AUTO-ACTUALIZACIÓN
+ * 
+ * Cuando hay un nuevo deploy en Vercel:
+ * 1. El navegador detecta que sw.js cambió
+ * 2. Descarga el nuevo SW automáticamente
+ * 3. skipWaiting + clientsClaim = el SW nuevo toma control de inmediato
+ * 4. El VersionChecker detecta el cambio y recarga la página
+ * 
+ * Esto garantiza que los padres SIEMPRE tengan la última versión
+ * sin necesidad de hacer Ctrl+Shift+R.
+ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .then((registration) => {
+        // Verificar actualizaciones cada 60 segundos
+        setInterval(() => {
+          registration.update().catch(() => {
+            // Silenciar errores de red
+          });
+        }, 60 * 1000);
+
+        // Cuando un nuevo SW está listo, recargar
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated') {
+                // El VersionChecker se encargará de recargar
+                console.log('[SW] Nuevo Service Worker activado');
+              }
+            });
+          }
+        });
+      })
+      .catch((error) => {
+        console.log('[SW] Error al registrar:', error);
+      });
+
+    // Si el SW toma control mientras la página está abierta
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      console.log('[SW] Nuevo controller detectado');
+    });
+  });
+}

@@ -1,26 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { 
   Wallet, 
   CreditCard, 
-  Smartphone, 
   History,
   Settings2,
-  UtensilsCrossed,
-  ChevronRight,
   Camera,
-  Info,
   TrendingDown,
   RefreshCw,
-  Pencil
+  Pencil,
+  Clock,
+  ShieldCheck,
+  ArrowRight
 } from 'lucide-react';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { supabase } from '@/lib/supabase';
 
 interface Student {
@@ -43,9 +37,9 @@ interface Student {
 interface StudentCardProps {
   student: Student;
   totalDebt?: number;
+  pendingRechargeAmount?: number;
   onRecharge: () => void;
   onViewHistory: () => void;
-  onLunchFast: () => void;
   onViewMenu: () => void;
   onOpenSettings: () => void;
   onPhotoClick: () => void;
@@ -55,9 +49,9 @@ interface StudentCardProps {
 export function StudentCard({
   student,
   totalDebt = 0,
+  pendingRechargeAmount = 0,
   onRecharge,
   onViewHistory,
-  onLunchFast,
   onViewMenu,
   onOpenSettings,
   onPhotoClick,
@@ -65,15 +59,12 @@ export function StudentCard({
 }: StudentCardProps) {
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
-  
-  // Para Cuenta Libre: deuda
-  const hasDebt = isFreeAccount ? totalDebt > 0 : false;
-  // Para Con Recargas: saldo
   const prepaidBalance = isPrepaid ? student.balance : 0;
+  const displayBalance = Math.max(0, prepaidBalance);
+  const isActivePrepaid = isPrepaid && displayBalance > 0;
+  const hasDebt = !isActivePrepaid ? totalDebt > 0 : false;
 
-  // Spending stats for limit remaining
   const [spentPeriod, setSpentPeriod] = useState(0);
-  const [loadingSpent, setLoadingSpent] = useState(false);
 
   const limitType = student.limit_type || 'none';
   const currentLimit = limitType === 'daily' ? student.daily_limit
@@ -89,7 +80,6 @@ export function StudentCard({
   }, [student.id, limitType, isPrepaid]);
 
   const fetchSpentInPeriod = async () => {
-    setLoadingSpent(true);
     try {
       let startDate: string;
       const now = new Date();
@@ -102,358 +92,217 @@ export function StudentCard({
         start.setHours(0, 0, 0, 0);
         startDate = start.toISOString();
       } else {
-        // monthly o sin tope (para Con Recargas mostramos consumo del mes)
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
         startDate = start.toISOString();
       }
 
       const { data } = await supabase
         .from('transactions')
-        .select('amount')
+        .select('amount, metadata')
         .eq('student_id', student.id)
         .eq('type', 'purchase')
         .neq('payment_status', 'cancelled')
         .gte('created_at', startDate);
 
-      const total = data?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+      const kioscoOnly = data?.filter(t => !(t.metadata as any)?.lunch_order_id) || [];
+      const total = kioscoOnly.reduce((sum, t) => sum + Math.abs(t.amount), 0);
       setSpentPeriod(total);
     } catch (err) {
       console.error('Error fetching spent:', err);
-    } finally {
-      setLoadingSpent(false);
     }
   };
 
   const getLimitLabel = () => {
-    if (limitType === 'daily') return 'hoy';
-    if (limitType === 'weekly') return 'esta semana';
-    if (limitType === 'monthly') return 'este mes';
-    return '';
-  };
-
-  const getLimitTypeLabel = () => {
-    if (limitType === 'daily') return 'Tope Diario';
-    if (limitType === 'weekly') return 'Tope Semanal';
-    if (limitType === 'monthly') return 'Tope Mensual';
+    if (limitType === 'daily') return 'Diario';
+    if (limitType === 'weekly') return 'Semanal';
+    if (limitType === 'monthly') return 'Mensual';
     return '';
   };
 
   return (
-    <Card className="overflow-hidden hover:shadow-lg transition-all duration-300 border border-stone-200/50 bg-white group">
-      {/* Header bar */}
-      <div className={`h-1.5 relative transition-colors duration-500 ${
-        hasDebt ? 'bg-rose-400' 
-        : 'bg-gradient-to-r from-emerald-500/70 via-[#8B7355] to-[#6B5744]'
-      }`} />
+    <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
+      {/* Top accent */}
+      <div className={`h-1 ${hasDebt ? 'bg-red-400' : 'bg-gray-200'}`} />
 
-      {/* Perfil */}
-      <div className="px-6 pt-8 pb-4 relative">
-        <div className="flex items-start gap-4">
+      {/* Profile header */}
+      <div className="p-4 pb-3">
+        <div className="flex items-center gap-3">
+          {/* Photo */}
           <div 
-            className="w-20 h-20 rounded-2xl border border-stone-200/50 bg-gradient-to-br from-stone-50/50 to-emerald-50/20 overflow-hidden cursor-pointer hover:scale-105 transition-transform duration-300 shadow-sm flex-shrink-0"
+            className="w-14 h-14 rounded-full border border-gray-200 bg-gray-50 overflow-hidden cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 relative"
             onClick={onPhotoClick}
           >
             {student.photo_url ? (
-              <img 
-                src={student.photo_url} 
-                alt={student.full_name}
-                className="w-full h-full object-cover"
-              />
+              <img src={student.photo_url} alt={student.full_name} className="w-full h-full object-cover" />
             ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-stone-100/50 to-emerald-50/30">
-                <span className="text-2xl font-light text-stone-400">
-                  {student.full_name.charAt(0).toUpperCase()}
-                </span>
+              <div className="w-full h-full flex items-center justify-center">
+                <span className="text-xl font-medium text-gray-400">{student.full_name.charAt(0).toUpperCase()}</span>
               </div>
             )}
+            <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 bg-white rounded-full border border-gray-200 flex items-center justify-center">
+              <Camera className="h-2.5 w-2.5 text-gray-400" />
+            </div>
           </div>
-          
-          <div className="flex-1 pt-1">
-            <div className="flex items-start gap-1.5">
-              <h3 className="text-xl font-normal text-stone-800 leading-tight group-hover:text-emerald-700 transition-colors tracking-wide flex-1">
-                {student.full_name}
-              </h3>
+
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1">
+              <h3 className="text-base font-semibold text-gray-900 truncate">{student.full_name}</h3>
               {onEdit && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                  title="Editar datos"
-                  className="mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-emerald-50/60 border border-transparent hover:border-emerald-200/50 transition-all active:scale-90 flex-shrink-0"
-                >
-                  <Pencil className="h-3.5 w-3.5 text-stone-400 hover:text-emerald-600 transition-colors" />
+                <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition-colors">
+                  <Pencil className="h-3 w-3 text-gray-400" />
                 </button>
               )}
             </div>
             {student.school?.name && (
-              <p className="text-xs font-semibold text-emerald-700 mt-1.5 tracking-wide">
-                🏫 {student.school.name}
-              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{student.school.name}</p>
             )}
-            <p className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.2em] mt-1">
-              {student.grade} <span className="text-stone-300">·</span> {student.section}
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">
+              {student.grade} · {student.section}
             </p>
-            
-            <div className="flex flex-wrap gap-2 mt-3">
-              {student.kiosk_disabled ? (
-                <Badge className="bg-orange-50 text-orange-700 border border-orange-300 py-0.5 px-2.5 rounded-lg font-semibold text-[9px] uppercase tracking-wider">
-                  🍽️ Solo Almuerzo
-                </Badge>
-              ) : isFreeAccount ? (
-                <Badge className="bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100/80 border border-emerald-200/30 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider">
-                  Cuenta Libre
-                </Badge>
-              ) : (
-                <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/30 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider">
-                  Con Recargas
-                </Badge>
-              )}
-              {limitType !== 'none' && !student.kiosk_disabled && (
-                <Badge className="bg-purple-50 text-purple-600 border border-purple-200/30 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider">
-                  {getLimitTypeLabel()}
-                </Badge>
-              )}
-              {hasDebt && (
-                <Badge className="bg-rose-50 text-rose-600 border-0 py-0.5 px-2.5 rounded-lg font-medium text-[9px] uppercase tracking-wider animate-pulse">
-                  Deuda
-                </Badge>
-              )}
-              {/* Badge de saldo bajo eliminado - la barra de progreso ya lo muestra */}
-            </div>
           </div>
         </div>
-
-        {/* Icono de cámara */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onPhotoClick();
-          }}
-          className="absolute top-20 left-20 w-8 h-8 bg-white rounded-xl shadow-sm border border-emerald-200/20 flex items-center justify-center hover:bg-emerald-50/30 transition-all active:scale-90"
-        >
-          <Camera className="h-4 w-4 text-stone-400 hover:text-emerald-600" />
-        </button>
       </div>
 
-      {/* Contenido */}
-      <CardContent className="pb-6 px-6 pt-2">
-        {/* ── AVISO: Sin cuenta del kiosco ── */}
-        {student.kiosk_disabled && (
-          <div className="mb-4 flex items-start gap-2.5 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
-            <span className="text-lg flex-shrink-0">🍽️</span>
-            <div>
-              <p className="text-xs font-semibold text-orange-800">Sin cuenta en el kiosco</p>
-              <p className="text-[11px] text-orange-600 leading-relaxed mt-0.5">
-                {student.full_name} solo puede pedir almuerzo desde el calendario. 
-                Para habilitar compras en el kiosco, ve a <strong>Configuración de Topes</strong>.
-              </p>
-            </div>
+      <CardContent className="px-4 pb-4 pt-0 space-y-3">
+
+        {/* Pending recharge notice (compact) */}
+        {pendingRechargeAmount > 0 && (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <Clock className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+            <p className="text-[11px] text-amber-700">
+              Recarga en revisión: <strong>S/ {pendingRechargeAmount.toFixed(2)}</strong>
+            </p>
           </div>
         )}
 
-        {/* ═══════════════════ SALDO / DEUDA DINÁMICO ═══════════════════ */}
-        
-        {/* ── CUENTA LIBRE ── */}
-        {isFreeAccount && !student.kiosk_disabled && (
-          <div className={`rounded-2xl p-5 mb-4 border transition-all duration-300 ${
-            hasDebt ? 'bg-rose-50/30 border-rose-200/50' : 'bg-gradient-to-br from-stone-50/30 to-emerald-50/20 border-emerald-200/20'
+        {/* Financial info */}
+        {!student.kiosk_disabled && (
+          <div className={`rounded-lg p-3 border ${
+            hasDebt ? 'bg-red-50 border-red-200' : isActivePrepaid ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
           }`}>
             <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className={`text-[9px] font-medium uppercase tracking-[0.2em] ${
-                    hasDebt ? 'text-rose-500' : 'text-stone-400'
-                  }`}>
-                    {hasDebt ? 'Monto Adeudado' : 'Sin Deudas'}
-                  </span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button className="text-stone-300 hover:text-emerald-500 transition-colors">
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-80 shadow-lg border border-stone-200/50 rounded-2xl p-4" side="top" align="start">
-                      <div className="space-y-2">
-                        <h4 className="font-medium text-sm text-stone-800">
-                          {hasDebt ? '💳 Cuenta Libre - Deuda' : '✅ Cuenta Libre'}
-                        </h4>
-                        <p className="text-xs text-stone-500 leading-relaxed">
-                          {hasDebt 
-                            ? `Consumos pendientes de pago. ${student.full_name} puede seguir consumiendo y pagas al final del mes.`
-                            : `${student.full_name} no tiene consumos pendientes. Puede comprar libremente en la cafetería.`
-                          }
-                        </p>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <p className={`text-3xl font-light tracking-tight ${
-                  hasDebt ? 'text-rose-600' : 'text-emerald-600'
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
+                  {hasDebt ? 'Deuda' : isActivePrepaid ? 'Saldo' : 'Estado'}
+                </p>
+                <p className={`text-2xl font-bold mt-0.5 ${
+                  hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
                 }`}>
-                  {hasDebt ? `S/ ${totalDebt.toFixed(2)}` : '✓ Al día'}
+                  {hasDebt ? `S/ ${totalDebt.toFixed(2)}` : isActivePrepaid ? `S/ ${displayBalance.toFixed(2)}` : 'Al día'}
                 </p>
               </div>
-              <div className={`p-3 rounded-xl ${
-                hasDebt ? 'bg-rose-100/50 text-rose-500' : 'bg-emerald-100/60 text-emerald-600'
+              <div className={`p-2 rounded-lg ${
+                hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
               }`}>
-                <Wallet className="h-6 w-6" />
+                {isActivePrepaid ? <CreditCard className="h-5 w-5 text-blue-500" /> : <Wallet className="h-5 w-5 text-gray-500" />}
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ── CON RECARGAS ── */}
-        {isPrepaid && !student.kiosk_disabled && (
-          <div className="rounded-2xl p-5 mb-4 border transition-all duration-300 bg-gradient-to-br from-blue-50/20 to-emerald-50/20 border-blue-200/20">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-blue-500">
-                    Saldo Disponible
-                  </span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button className="text-stone-300 hover:text-blue-500 transition-colors">
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-80 shadow-lg border border-stone-200/50 rounded-2xl p-4" side="top" align="start">
-                      <div className="space-y-2">
-                        <h4 className="font-medium text-sm text-stone-800">💰 Saldo Recargado</h4>
-                        <p className="text-xs text-stone-500 leading-relaxed">
-                          Este es el saldo disponible de {student.full_name}. Se descuenta con cada compra. Cuando se agote, deberás recargar para que pueda seguir consumiendo.
-                        </p>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+            {/* Balance bar for prepaid */}
+            {isActivePrepaid && (
+              <div className="mt-2">
+                <div className="h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${displayBalance < 10 ? 'bg-amber-400' : 'bg-blue-500'}`}
+                    style={{ width: `${Math.min(100, (displayBalance / Math.max(displayBalance, spentPeriod + displayBalance)) * 100)}%` }}
+                  />
                 </div>
-                <p className={`text-3xl font-light tracking-tight ${
-                  prepaidBalance > 0 ? 'text-blue-600' : 'text-stone-400'
-                }`}>
-                  S/ {prepaidBalance.toFixed(2)}
-                </p>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] text-gray-500">Consumido: S/ {spentPeriod.toFixed(2)}</span>
+                  <span className="text-[10px] text-blue-600 font-medium">Queda: S/ {displayBalance.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="p-3 rounded-xl bg-blue-100/50 text-blue-500">
-                <CreditCard className="h-6 w-6" />
-              </div>
-            </div>
-
-            {/* Barra de consumo del saldo */}
-            <div>
-              <div className="h-2.5 bg-blue-100 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all ${
-                    prepaidBalance <= 0 ? 'bg-stone-300' : 
-                    prepaidBalance < 10 ? 'bg-blue-400' : 'bg-blue-500'
-                  }`}
-                  style={{ width: `${prepaidBalance > 0 ? Math.min(100, (prepaidBalance / Math.max(prepaidBalance, spentPeriod + prepaidBalance)) * 100) : 0}%` }}
-                />
-              </div>
-              <div className="flex justify-between mt-1.5">
-                <span className="text-[10px] text-stone-500">
-                  Consumido: <span className="font-semibold text-stone-700">S/ {spentPeriod.toFixed(2)}</span>
-                </span>
-                <span className={`text-[10px] font-semibold ${
-                  prepaidBalance <= 0 ? 'text-stone-400' : 'text-blue-700'
-                }`}>
-                  Disponible: S/ {prepaidBalance.toFixed(2)}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* ── INFO DE TOPE (solo en Cuenta Libre, en Recargas el saldo ya limita) ── */}
-        {isFreeAccount && limitType !== 'none' && (
-          <div className="rounded-xl p-3 mb-4 border border-purple-100 bg-purple-50/30">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingDown className="h-3.5 w-3.5 text-purple-500" />
-                <span className="text-[10px] font-medium text-purple-700 uppercase tracking-wider">
-                  {getLimitTypeLabel()}
-                </span>
+        {/* Kiosk disabled */}
+        {student.kiosk_disabled && (
+          <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+            <ShieldCheck className="h-3.5 w-3.5 text-orange-500 flex-shrink-0" />
+            <p className="text-[11px] text-orange-700">Solo almuerzo — kiosco desactivado</p>
+          </div>
+        )}
+
+        {/* Limit info (compact) */}
+        {!isActivePrepaid && limitType !== 'none' && (
+          <div className="rounded-lg p-3 border border-gray-200 bg-gray-50">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5">
+                <TrendingDown className="h-3 w-3 text-purple-500" />
+                <span className="text-[10px] font-semibold text-gray-700">Tope {getLimitLabel()}</span>
               </div>
-              <span className="text-xs font-bold text-purple-700">
-                S/ {currentLimit.toFixed(2)}
+              <span className="text-xs font-bold text-purple-600">S/ {currentLimit.toFixed(2)}</span>
+            </div>
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full ${
+                  limitRemaining <= 0 ? 'bg-red-500' : limitRemaining < currentLimit * 0.3 ? 'bg-amber-500' : 'bg-purple-500'
+                }`}
+                style={{ width: `${currentLimit > 0 ? Math.min(100, (spentPeriod / currentLimit) * 100) : 0}%` }}
+              />
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className="text-[10px] text-gray-500">Usado: S/ {spentPeriod.toFixed(2)}</span>
+              <span className={`text-[10px] font-medium ${limitRemaining <= 0 ? 'text-red-600' : 'text-purple-600'}`}>
+                {limitRemaining <= 0 ? 'Agotado' : `Queda: S/ ${limitRemaining.toFixed(2)}`}
               </span>
             </div>
-            <div className="mt-2">
-              {/* Barra de progreso */}
-              <div className="h-2 bg-purple-100 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all ${
-                    limitRemaining <= 0 ? 'bg-red-500' : 
-                    limitRemaining < currentLimit * 0.3 ? 'bg-amber-500' : 'bg-purple-500'
-                  }`}
-                  style={{ width: `${currentLimit > 0 ? Math.min(100, (spentPeriod / currentLimit) * 100) : 0}%` }}
-                />
-              </div>
-              <div className="flex justify-between mt-1.5">
-                <span className="text-[10px] text-stone-500">
-                  Usado {getLimitLabel()}: <span className="font-semibold text-stone-700">S/ {spentPeriod.toFixed(2)}</span>
-                </span>
-                <span className={`text-[10px] font-semibold ${
-                  limitRemaining <= 0 ? 'text-red-600' : 'text-purple-700'
-                }`}>
-                  {limitRemaining <= 0 ? 'Tope alcanzado' : `Queda: S/ ${limitRemaining.toFixed(2)}`}
-                </span>
-              </div>
-            </div>
           </div>
         )}
 
-        {/* Botones */}
-        <div className="space-y-3">
-          <Button
-            onClick={onLunchFast}
-            className="w-full h-14 text-base font-medium bg-gradient-to-r from-emerald-600/90 via-[#8B7355] to-[#6B5744] hover:from-emerald-700/90 hover:via-[#6B5744] hover:to-[#5B4734] text-white shadow-md rounded-xl transition-all active:scale-95 tracking-wide"
-          >
-            <UtensilsCrossed className="h-5 w-5 mr-2" />
-            LUNCH FAST!
-          </Button>
+        {/* Status badges (compact row) */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {isActivePrepaid ? (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-blue-200 text-blue-600 bg-blue-50">Con Recargas</Badge>
+          ) : (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-green-200 text-green-600 bg-green-50">Cuenta Libre</Badge>
+          )}
+          {limitType !== 'none' && !student.kiosk_disabled && (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-purple-200 text-purple-600 bg-purple-50">Tope {getLimitLabel()}</Badge>
+          )}
+          {student.kiosk_disabled && (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-orange-200 text-orange-600 bg-orange-50">Solo Almuerzo</Badge>
+          )}
+        </div>
 
-          {/* Botón de Recargar / Pagar Deudas */}
-          {(isPrepaid || hasDebt) && (
+        {/* Action buttons */}
+        <div className="space-y-2 pt-1">
+          {/* Recharge button (only for prepaid mode) */}
+          {isPrepaid && !student.kiosk_disabled && (
             <Button
               onClick={onRecharge}
               variant="outline"
-              className={`w-full h-12 rounded-xl font-medium text-sm tracking-wide transition-all active:scale-95 ${
-                hasDebt
-                  ? 'border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300'
-                  : 'border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300'
-              }`}
+              size="sm"
+              className="w-full h-9 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
             >
-              {hasDebt ? (
-                <>
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  Pagar Deudas
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Recargar Saldo
-                </>
-              )}
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              {displayBalance === 0 ? 'Cargar Saldo' : 'Recargar'}
             </Button>
           )}
 
-          <div className="grid grid-cols-1 gap-3">
+          {/* Bottom row: History + Settings */}
+          <div className="grid grid-cols-2 gap-2">
             <Button
               onClick={onViewHistory}
               variant="ghost"
-              className="h-11 rounded-xl text-stone-500 font-normal hover:bg-emerald-50/30 hover:text-emerald-700 transition-all text-xs tracking-wide"
+              size="sm"
+              className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
             >
-              <History className="h-4 w-4 mr-1.5" />
+              <History className="h-3.5 w-3.5 mr-1" />
               Historial
             </Button>
+            <Button
+              onClick={onOpenSettings}
+              variant="ghost"
+              size="sm"
+              className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            >
+              <Settings2 className="h-3.5 w-3.5 mr-1" />
+              Configurar
+            </Button>
           </div>
-
-          {/* ⚙️ Configuración de Topes */}
-          <button
-            onClick={onOpenSettings}
-            className="w-full pt-2 flex items-center justify-center gap-2 text-stone-400 hover:text-emerald-600 transition-colors cursor-pointer group/btn"
-          >
-            <Settings2 className="h-5 w-5 group-hover/btn:rotate-90 transition-transform duration-300" />
-            <span className="text-xs font-medium">Configuración de Topes</span>
-          </button>
         </div>
       </CardContent>
     </Card>

@@ -338,9 +338,9 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
           const menusWithCategories = filteredMenus
             .filter(menu => !menu.category_id || categoriesMap.has(menu.category_id))
             .map(menu => ({
-              ...menu,
-              category: menu.category_id ? categoriesMap.get(menu.category_id) : null
-            }));
+            ...menu,
+            category: menu.category_id ? categoriesMap.get(menu.category_id) : null
+          }));
 
           console.log('🍽️ Menús con categorías:', menusWithCategories);
 

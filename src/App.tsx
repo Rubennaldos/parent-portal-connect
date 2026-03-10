@@ -7,6 +7,15 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PermissionProtectedRoute } from "@/components/PermissionProtectedRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { VersionChecker } from "@/components/VersionChecker";
+import { lazy, Suspense } from "react";
+import { installConsoleErrorCapture } from "@/lib/consoleErrorCapture";
+
+// 🛡️ Instalar captura de errores de consola (una sola vez)
+installConsoleErrorCapture();
+
+// 🤖 Widget de soporte IA (lazy para no afectar bundle inicial)
+const SupportChatWidget = lazy(() => import("@/components/support/SupportChatWidget"));
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Teacher from "./pages/Teacher";
@@ -28,6 +37,7 @@ import SchoolAdmin from "./pages/SchoolAdmin";
 import AccessControl from "./pages/AccessControl";
 import CombosPromotions from "./pages/CombosPromotions";
 import CashRegisterPage from "./pages/CashRegister";
+import Facturacion from "./pages/Facturacion";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -46,6 +56,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <ErrorBoundary>
+        <VersionChecker />
         <Toaster />
         <Sonner />
         <BrowserRouter>
@@ -254,9 +265,29 @@ const App = () => (
               }
             />
             
+            {/* Módulo de Facturación Electrónica — contadora, admin_general, superadmin */}
+            <Route
+              path="/facturacion"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'superadmin', 'contadora']}>
+                  <Facturacion />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Reclamaciones → redirigir a Control de Acceso */}
+            <Route
+              path="/reclamaciones"
+              element={<Navigate to="/access-control" replace />}
+            />
+
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          {/* 🤖 Widget flotante de Soporte IA — Para personal de sedes (admin_general, gestor_unidad, operador_caja) */}
+          <Suspense fallback={null}>
+            <SupportChatWidget />
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

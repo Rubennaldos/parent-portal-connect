@@ -279,7 +279,8 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
         .insert({
           teacher_id: teacherId,
           order_date: selectedDate,
-          status: 'confirmed'
+          status: 'confirmed',
+          school_id: schoolId,
         })
         .select('id')
         .single();

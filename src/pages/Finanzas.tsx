@@ -12,7 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useToast } from '@/hooks/use-toast';
 import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
-import {
+import   {
   DollarSign,
   TrendingUp,
   TrendingDown,
@@ -35,14 +35,17 @@ import {
   PiggyBank,
   LineChart,
   ArrowLeft,
-  Home
+  Home,
+  FileText,
 } from 'lucide-react';
 import { format, startOfDay, endOfDay, subDays } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { InvoicesList } from '@/components/billing/InvoicesList';
 
 interface Sale {
   id: string;
-  transaction_id: string;
+  transaction_id: string;  // UUID FK a transactions.id
+  ticket_code: string;     // Correlativo legible (T-XX-000001) — viene del join
   total: number;
   payment_method: string;
   cashier_name: string;
@@ -155,7 +158,8 @@ export default function Finanzas() {
         *,
         profiles!sales_cashier_id_fkey(full_name),
         schools(name),
-        students(full_name)
+        students(full_name),
+        transactions(ticket_code)
       `)
       .gte('created_at', startDateTime.toISOString())
       .lte('created_at', endDateTime.toISOString());
@@ -295,6 +299,7 @@ export default function Finanzas() {
     const formattedSales: Sale[] = data?.map(sale => ({
       id: sale.id,
       transaction_id: sale.transaction_id,
+      ticket_code: (sale as any).transactions?.ticket_code || sale.transaction_id || '—',
       total: sale.total,
       payment_method: sale.payment_method,
       cashier_name: sale.profiles?.full_name || 'Desconocido',
@@ -510,7 +515,7 @@ export default function Finanzas() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4 mb-4 sm:mb-6 h-auto">
+        <TabsList className="grid w-full grid-cols-5 mb-4 sm:mb-6 h-auto">
           <TabsTrigger value="dashboard" className="gap-1 sm:gap-2 text-xs sm:text-sm py-2">
             <LineChart className="h-3 w-3 sm:h-4 sm:w-4" />
             <span className="hidden sm:inline">Dashboard</span>
@@ -530,6 +535,11 @@ export default function Finanzas() {
             <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />
             <span className="hidden sm:inline">Ventas/Día</span>
             <span className="sm:hidden">Días</span>
+          </TabsTrigger>
+          <TabsTrigger value="facturacion" className="gap-1 sm:gap-2 text-xs sm:text-sm py-2">
+            <FileText className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Facturación</span>
+            <span className="sm:hidden">Fact.</span>
           </TabsTrigger>
         </TabsList>
 
@@ -804,7 +814,7 @@ export default function Finanzas() {
                                     {format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}
                                   </div>
                                   <Badge variant="outline" className="text-xs">
-                                    {sale.transaction_id}
+                                    {sale.ticket_code}
                                   </Badge>
                                   <div className="text-sm">
                                     {sale.student_name} • {sale.school_name}
@@ -883,7 +893,7 @@ export default function Finanzas() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1 mb-0.5">
                             <Badge variant="outline" className="text-[8px] sm:text-[9px] px-1 py-0">
-                              {sale.transaction_id}
+                              {sale.ticket_code}
                             </Badge>
                             <Badge className={`text-[8px] sm:text-[9px] px-1 py-0 ${
                               sale.payment_method === 'cash' ? 'bg-green-600' :
@@ -990,7 +1000,7 @@ export default function Finanzas() {
                                 {format(new Date(sale.created_at), 'HH:mm')}
                               </div>
                               <Badge variant="outline" className="text-xs">
-                                {sale.transaction_id}
+                                {sale.ticket_code}
                               </Badge>
                               <Badge className={
                                 sale.payment_method === 'cash' ? 'bg-green-600' :
@@ -1016,6 +1026,32 @@ export default function Finanzas() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* FACTURACIÓN ELECTRÓNICA TAB */}
+        <TabsContent value="facturacion">
+          <div className="space-y-4">
+            <div className="bg-gradient-to-r from-indigo-600 to-purple-700 rounded-xl p-4 text-white">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Facturación Electrónica SUNAT
+                  </h3>
+                  <p className="text-indigo-200 text-sm mt-0.5">
+                    Vista ejecutiva — boletas, facturas y notas de crédito emitidas por todas las sedes
+                  </p>
+                </div>
+                <button
+                  onClick={() => window.location.href = '/#/facturacion'}
+                  className="bg-white/20 hover:bg-white/30 text-white text-xs font-medium px-3 py-2 rounded-lg transition-all whitespace-nowrap"
+                >
+                  Módulo completo →
+                </button>
+              </div>
+            </div>
+            <InvoicesList />
+          </div>
+        </TabsContent>
       </Tabs>
 
       {/* MODAL DE DETALLES DE VENTA */}
@@ -1028,7 +1064,7 @@ export default function Finanzas() {
                   <h2 className="text-2xl font-black mb-2">Detalles de Venta</h2>
                   <div className="flex items-center gap-2 text-sm text-white/90">
                     <Badge variant="secondary" className="bg-white/20">
-                      {selectedSaleDetails.transaction_id}
+                      {selectedSaleDetails.ticket_code}
                     </Badge>
                     <span>•</span>
                     <span>{format(new Date(selectedSaleDetails.created_at), "dd/MM/yyyy HH:mm", { locale: es })}</span>

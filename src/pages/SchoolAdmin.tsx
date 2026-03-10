@@ -4,12 +4,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft, GraduationCap } from 'lucide-react';
+import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft, GraduationCap, Wrench } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { CreateSupplyRequestModal } from '@/components/school-admin/CreateSupplyRequestModal';
 import { GradesManagement } from '@/components/school-admin/GradesManagement';
+import { NFCCardsManager } from '@/components/admin/NFCCardsManager';
+import { MaintenanceConfig } from '@/components/school-admin/MaintenanceConfig';
 
 interface SupplyRequest {
   id: string;
@@ -140,22 +142,26 @@ const SchoolAdmin = () => {
 
         {/* Tabs Principales */}
         <Tabs defaultValue="requests" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 bg-white border rounded-xl p-1">
-            <TabsTrigger value="requests" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <ShoppingCart className="h-4 w-4 mr-2" />
-              Pedidos
+          <TabsList className="grid w-full grid-cols-5 bg-white border rounded-xl p-1">
+            <TabsTrigger value="requests" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white text-xs sm:text-sm px-1 sm:px-3">
+              <ShoppingCart className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Pedidos</span>
             </TabsTrigger>
-            <TabsTrigger value="grades" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <GraduationCap className="h-4 w-4 mr-2" />
-              Grados y Salones
+            <TabsTrigger value="grades" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white text-xs sm:text-sm px-1 sm:px-3">
+              <GraduationCap className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Grados</span>
             </TabsTrigger>
-            <TabsTrigger value="calendar" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <Calendar className="h-4 w-4 mr-2" />
-              Calendario
+            <TabsTrigger value="calendar" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white text-xs sm:text-sm px-1 sm:px-3">
+              <Calendar className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Calendario</span>
             </TabsTrigger>
-            <TabsTrigger value="cards" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <CreditCard className="h-4 w-4 mr-2" />
-              Tarjetas ID
+            <TabsTrigger value="cards" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white text-xs sm:text-sm px-1 sm:px-3">
+              <CreditCard className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Tarjetas</span>
+            </TabsTrigger>
+            <TabsTrigger value="maintenance" className="data-[state=active]:bg-amber-600 data-[state=active]:text-white text-xs sm:text-sm px-1 sm:px-3">
+              <Wrench className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Mant.</span>
             </TabsTrigger>
           </TabsList>
 
@@ -333,20 +339,12 @@ const SchoolAdmin = () => {
 
           {/* Pestaña de Tarjetas ID */}
           <TabsContent value="cards" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard className="h-6 w-6 text-[#8B4513]" />
-                  Tarjetas de Identificación
-                </CardTitle>
-                <CardDescription>
-                  Activar y vincular tarjetas a estudiantes y padres
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-slate-400 text-center py-12">Próximamente: Sistema de activación de tarjetas</p>
-              </CardContent>
-            </Card>
+            <NFCCardsManager schoolId={userSchoolId} />
+          </TabsContent>
+
+          {/* Pestaña de Modo Mantenimiento */}
+          <TabsContent value="maintenance" className="mt-6">
+            <MaintenanceConfig schoolId={userSchoolId} />
           </TabsContent>
         </Tabs>
 

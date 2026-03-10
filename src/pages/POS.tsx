@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useUserProfile } from '@/hooks/useUserProfile';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -65,14 +66,34 @@ import {
   Package,
   PackageOpen,
   Box,
-  FileText
+  FileText,
+  Wifi,
+  WifiOff,
+  CloudOff,
+  RefreshCw,
+  Upload,
 } from 'lucide-react';
+import { InvoiceClientModal, type InvoiceClientData, type InvoiceType } from '@/components/billing/InvoiceClientModal';
+import { generarComprobante } from '@/lib/nubefact';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { getProductsForSchool } from '@/lib/productPricing';
 import { printPOSSale } from '@/lib/posPrinterService';
 import { CashOpeningModal } from '@/components/cash-register/CashOpeningModal';
+import {
+  preloadPOSData,
+  cacheStudents,
+  cacheProducts,
+  searchCachedStudents,
+  getCachedProducts,
+  findNFCCardByUID,
+  getCachedStudents,
+  addToOfflineQueue,
+  getPendingOfflineTransactions,
+  syncOfflineTransactions,
+  type OfflineTransaction,
+} from '@/lib/offlineStorage';
 
 interface Student {
   id: string;
@@ -99,6 +120,16 @@ interface Product {
   category: string;
   image_url?: string | null;
   active?: boolean;
+}
+
+interface LimitDetail {
+  type: 'daily' | 'weekly' | 'monthly';
+  label: string;
+  limit: number;
+  spent: number;
+  remaining: number;
+  renewalText: string;
+  isActive: boolean; // true if this is the enforced limit_type
 }
 
 interface CartItem {
@@ -155,13 +186,27 @@ const POS = () => {
   const { signOut, user } = useAuth();
   const { role } = useRole();
   const { full_name } = useUserProfile();
+  const { isOnline, checkConnection } = useOnlineStatus();
   const { toast } = useToast();
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const nfcPosInputRef = useRef<HTMLInputElement>(null);
+  // Estado NFC en el POS
+  const [nfcScanning, setNfcScanning] = useState(false);
+  const [nfcError, setNfcError] = useState<string | null>(null);
+  const nfcPosBuffer = useRef('');
+  const nfcPosTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nfcPosLastKeyTime = useRef<number>(0);
 
   console.log('🏪 POS - Componente montado');
   console.log('👤 POS - Usuario:', user?.email);
   console.log('🎭 POS - Rol:', role);
+
+  // ── Estado OFFLINE ─────────────────────────────────────────────
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [offlineDataReady, setOfflineDataReady] = useState(false);
+  const [offlinePreloadMsg, setOfflinePreloadMsg] = useState<string | null>(null);
 
   // Estado para la sede del usuario (cajero)
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
@@ -187,6 +232,8 @@ const POS = () => {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [showTeacherResults, setShowTeacherResults] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false); // Para ampliar foto del estudiante
+  const [studentLimitsDetail, setStudentLimitsDetail] = useState<LimitDetail[]>([]);
+  const [loadingLimits, setLoadingLimits] = useState(false);
 
   // Estados de productos
   const [productSearch, setProductSearch] = useState('');
@@ -226,9 +273,19 @@ const POS = () => {
   const [currentSplitOperationCode, setCurrentSplitOperationCode] = useState('');
   const [currentSplitPhoneNumber, setCurrentSplitPhoneNumber] = useState('');
 
-  // NUEVO: Modal para seleccionar tipo de comprobante
+  // Modal para seleccionar tipo de comprobante
   const [showDocumentTypeDialog, setShowDocumentTypeDialog] = useState(false);
   const [selectedDocumentType, setSelectedDocumentType] = useState('');
+
+  // Modal de datos del cliente para boleta/factura electrónica
+  const [showInvoiceClientModal, setShowInvoiceClientModal] = useState(false);
+  const [pendingInvoiceType, setPendingInvoiceType] = useState<InvoiceType>('boleta');
+  /** true = el tipo ya fue elegido en el dialog anterior → no mostrar selector en el modal */
+  const [invoiceTypeLocked, setInvoiceTypeLocked] = useState(false);
+  const [invoiceClientData, setInvoiceClientData] = useState<InvoiceClientData | null>(null);
+  const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
+  /** URL del PDF del último comprobante emitido (para compartir por WhatsApp) */
+  const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState<string | null>(null);
 
   // Estado de ticket generado
   const [showTicketPrint, setShowTicketPrint] = useState(false);
@@ -317,6 +374,98 @@ const POS = () => {
     fetchProducts();
     fetchCombos();
   }, []);
+
+  // ── OFFLINE: Precarga y Sincronización ──────────────────────────
+  // Precargar datos para uso offline cuando hay conexión
+  useEffect(() => {
+    if (!userSchoolId || !isOnline) return;
+
+    const preload = async () => {
+      try {
+        setOfflinePreloadMsg('Precargando datos offline...');
+        const result = await preloadPOSData(userSchoolId);
+        setOfflineDataReady(true);
+        setOfflinePreloadMsg(null);
+        console.log(`✅ Datos offline listos: ${result.students} alumnos, ${result.products} productos, ${result.nfcCards} NFC`);
+      } catch (err) {
+        console.warn('⚠️ Error precargando datos offline:', err);
+        setOfflinePreloadMsg(null);
+      }
+    };
+
+    preload();
+  }, [userSchoolId, isOnline]);
+
+  // Verificar ventas pendientes de sincronizar
+  useEffect(() => {
+    const checkPending = async () => {
+      const pending = await getPendingOfflineTransactions();
+      setOfflinePendingCount(pending.length);
+    };
+    checkPending();
+  }, []);
+
+  // Sincronizar automáticamente al recuperar conexión
+  useEffect(() => {
+    if (!isOnline || offlinePendingCount === 0) return;
+
+    const autoSync = async () => {
+      setIsSyncing(true);
+      try {
+        const result = await syncOfflineTransactions();
+        if (result.synced > 0) {
+          toast({
+            title: `✅ ${result.synced} venta(s) sincronizada(s)`,
+            description: result.failed > 0 ? `${result.failed} fallaron — revisa el historial` : 'Todas las ventas offline se subieron correctamente',
+            duration: 5000,
+          });
+        }
+        if (result.failed > 0) {
+          toast({
+            variant: 'destructive',
+            title: `❌ ${result.failed} venta(s) no se pudieron sincronizar`,
+            description: result.errors.join(', '),
+            duration: 8000,
+          });
+        }
+        const remaining = await getPendingOfflineTransactions();
+        setOfflinePendingCount(remaining.length);
+      } catch (err) {
+        console.error('Error en sincronización automática:', err);
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+
+    // Esperar 3 segundos para que la conexión se estabilice
+    const timer = setTimeout(autoSync, 3000);
+    return () => clearTimeout(timer);
+  }, [isOnline, offlinePendingCount]);
+
+  // Sincronización manual
+  const handleManualSync = useCallback(async () => {
+    const reallyOnline = await checkConnection();
+    if (!reallyOnline) {
+      toast({
+        variant: 'destructive',
+        title: 'Sin conexión',
+        description: 'Aún no hay internet. Las ventas se sincronizarán automáticamente cuando vuelva.',
+      });
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const result = await syncOfflineTransactions();
+      toast({
+        title: result.synced > 0 ? `✅ ${result.synced} sincronizada(s)` : 'No hay ventas pendientes',
+        description: result.failed > 0 ? `${result.failed} con error` : undefined,
+      });
+      const remaining = await getPendingOfflineTransactions();
+      setOfflinePendingCount(remaining.length);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [checkConnection, toast]);
 
   // Filtrar productos
   useEffect(() => {
@@ -447,6 +596,12 @@ const POS = () => {
   useEffect(() => {
     const checkCash = async () => {
       if (!userSchoolId) return;
+      // Si estamos offline, no bloquear con el guard de caja
+      if (!navigator.onLine) {
+        setCashGuardLoading(false);
+        setPosOpenRegister({ id: 'offline-mode', status: 'open' }); // simular caja abierta
+        return;
+      }
       setCashGuardLoading(true);
       try {
         const todayStart = new Date();
@@ -527,6 +682,8 @@ const POS = () => {
       
       // Guardar el school_id del usuario para filtrar estudiantes
       setUserSchoolId(schoolId);
+      // Persistir para uso offline
+      if (schoolId) localStorage.setItem('pos_user_school_id', schoolId);
 
       // Usar la función de pricing inteligente
       const productsData = await getProductsForSchool(schoolId);
@@ -536,9 +693,31 @@ const POS = () => {
       
       setProducts(productsData);
       setFilteredProducts(productsData);
+      // Cachear para uso offline
+      if (schoolId) {
+        cacheProducts(productsData, schoolId).catch(() => {});
+      }
       console.log('✅ POS - Productos cargados correctamente con precios de sede');
     } catch (error: any) {
-      console.error('💥 POS - Error crítico cargando productos:', error);
+      console.error('💥 POS - Error cargando productos, intentando caché offline...');
+      // ── FALLBACK OFFLINE: cargar desde caché ──
+      const offlineSchoolId = userSchoolId || localStorage.getItem('pos_user_school_id');
+      if (offlineSchoolId) {
+        if (!userSchoolId) setUserSchoolId(offlineSchoolId); // restaurar school_id desde localStorage
+        try {
+          const cached = await getCachedProducts(offlineSchoolId);
+          if (cached.length > 0) {
+            setProducts(cached);
+            setFilteredProducts(cached);
+            toast({
+              title: '📦 Productos cargados desde caché',
+              description: `${cached.length} productos disponibles (modo offline)`,
+              duration: 4000,
+            });
+            return;
+          }
+        } catch {}
+      }
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -656,6 +835,10 @@ const POS = () => {
 
       console.log('✅ Estudiantes encontrados:', data?.length || 0);
       setStudents(data || []);
+      // Cachear resultados para offline
+      if (data && data.length > 0 && userSchoolId) {
+        cacheStudents(data, userSchoolId).catch(() => {});
+      }
 
       // Calcular estado de cuenta para cada estudiante (con manejo robusto de errores)
       if (data && data.length > 0) {
@@ -681,17 +864,33 @@ const POS = () => {
         setStudentAccountStatuses(statusMap);
       }
     } catch (error: any) {
-      console.error('❌ Error crítico buscando estudiantes:', error);
-      console.error('Detalles del error:', {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
-      });
+      console.error('❌ Error buscando estudiantes, intentando caché offline...');
+      // ── FALLBACK OFFLINE: buscar en caché local ──
+      const offlineSchoolId = userSchoolId || localStorage.getItem('pos_user_school_id');
+      if (offlineSchoolId) {
+        try {
+          const cachedResults = await searchCachedStudents(query, offlineSchoolId);
+          if (cachedResults.length > 0) {
+            setStudents(cachedResults);
+            // Calcular estados básicos sin consulta a BD
+            const statusMap = new Map();
+            for (const s of cachedResults) {
+              statusMap.set(s.id, {
+                canPurchase: !s.kiosk_disabled,
+                statusText: s.kiosk_disabled ? '🚫 Kiosco desactivado' : `💰 S/ ${(s.balance || 0).toFixed(2)} (offline)`,
+                statusColor: s.kiosk_disabled ? 'text-red-500' : 'text-emerald-600',
+              });
+            }
+            setStudentAccountStatuses(statusMap);
+            console.log(`📱 ${cachedResults.length} alumnos encontrados en caché offline`);
+            return;
+          }
+        } catch {}
+      }
       toast({
         variant: 'destructive',
         title: 'Error al buscar estudiantes',
-        description: error.message || 'No se pudo realizar la búsqueda'
+        description: !isOnline ? 'Sin conexión y no hay datos en caché' : (error.message || 'No se pudo realizar la búsqueda'),
       });
     }
   };
@@ -751,22 +950,101 @@ const POS = () => {
       };
     }
 
-    // 1. Cuenta Libre (sin topes)
+    // 1. Cuenta Libre
     if (student.free_account) {
+      const balance = student.balance || 0;
       const limitText = student.daily_limit && student.daily_limit > 0 
-        ? `Tope Diario: S/ ${student.daily_limit.toFixed(2)}`
+        ? `Tope: S/ ${student.daily_limit.toFixed(2)}`
         : 'Sin tope';
+      
+      // Si tiene saldo de recarga, mostrarlo para que el cajero sepa
+      const balanceText = balance > 0 
+        ? ` | 💰 Saldo: S/ ${balance.toFixed(2)}`
+        : '';
       
       return {
         canPurchase: true,
-        statusText: `✨ Cuenta Libre - ${limitText}`,
+        statusText: `✨ Libre - ${limitText}${balanceText}`,
         statusColor: 'text-emerald-600'
       };
     }
 
     // 2. Con Recargas (sin cuenta libre)
     const balance = student.balance || 0;
-    
+
+    // 3. Con Topes activos — verificar TODOS los topes con valor > 0
+    // ⚠️ IMPORTANTE: Verificar topes ANTES de bloquear por saldo,
+    //    porque un alumno con tope puede comprar a crédito aunque tenga saldo 0
+    const hasAnyLimit = (student.daily_limit || 0) > 0 || (student.weekly_limit || 0) > 0 || (student.monthly_limit || 0) > 0;
+    if (hasAnyLimit) {
+      try {
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+        startOfWeek.setHours(0, 0, 0, 0);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        startOfMonth.setHours(0, 0, 0, 0);
+
+        // Una sola consulta para todo el mes (incluye día y semana)
+        const { data: monthTx } = await supabase
+          .from('transactions')
+          .select('amount, metadata, created_at')
+          .eq('student_id', student.id)
+          .eq('type', 'purchase')
+          .gte('created_at', startOfMonth.toISOString());
+
+        const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
+
+        const spentToday = kioscoTx.filter(t => t.created_at >= todayStr).reduce((s, t) => s + Math.abs(t.amount), 0);
+        const spentWeek = kioscoTx.filter(t => t.created_at >= startOfWeek.toISOString()).reduce((s, t) => s + Math.abs(t.amount), 0);
+        const spentMonth = kioscoTx.reduce((s, t) => s + Math.abs(t.amount), 0);
+
+        // Construir resumen de topes
+        const parts: string[] = [];
+        let anyExceeded = false;
+        let lowestRemaining = Infinity;
+        let lowestPeriod = '';
+
+        if ((student.daily_limit || 0) > 0) {
+          const rem = student.daily_limit! - spentToday;
+          if (rem <= 0) { anyExceeded = true; lowestPeriod = 'Diario'; }
+          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Diario'; }
+          parts.push(`D: S/${Math.max(0, rem).toFixed(0)}/${student.daily_limit!.toFixed(0)}`);
+        }
+        if ((student.weekly_limit || 0) > 0) {
+          const rem = student.weekly_limit! - spentWeek;
+          if (rem <= 0 && !anyExceeded) { anyExceeded = true; lowestPeriod = 'Semanal'; }
+          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Semanal'; }
+          parts.push(`S: S/${Math.max(0, rem).toFixed(0)}/${student.weekly_limit!.toFixed(0)}`);
+        }
+        if ((student.monthly_limit || 0) > 0) {
+          const rem = student.monthly_limit! - spentMonth;
+          if (rem <= 0 && !anyExceeded) { anyExceeded = true; lowestPeriod = 'Mensual'; }
+          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Mensual'; }
+          parts.push(`M: S/${Math.max(0, rem).toFixed(0)}/${student.monthly_limit!.toFixed(0)}`);
+        }
+
+        if (anyExceeded) {
+          return {
+            canPurchase: false,
+            statusText: `🚫 Tope ${lowestPeriod} Alcanzado`,
+            statusColor: 'text-red-600',
+            reason: `Topes: ${parts.join(' · ')}`
+          };
+        }
+
+        return {
+          canPurchase: true,
+          statusText: `📊 ${parts.join(' · ')}`,
+          statusColor: lowestRemaining < (student.daily_limit || student.weekly_limit || student.monthly_limit || 0) * 0.3 ? 'text-orange-600' : 'text-blue-600'
+        };
+      } catch (error) {
+        console.error('Error calculating limits:', error);
+      }
+    }
+
+    // 4. Sin topes y sin saldo → bloquear
     if (balance <= 0) {
       return {
         canPurchase: false,
@@ -776,79 +1054,7 @@ const POS = () => {
       };
     }
 
-    // 3. Con Topes activos
-    if (student.limit_type && student.limit_type !== 'none') {
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        const startOfWeek = new Date();
-        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-
-        let limitAmount = 0;
-        let spentAmount = 0;
-        let periodText = '';
-
-        switch (student.limit_type) {
-          case 'daily':
-            limitAmount = student.daily_limit || 0;
-            const { data: todayData } = await supabase
-              .from('transactions')
-              .select('amount')
-              .eq('student_id', student.id)
-              .eq('type', 'purchase')
-              .gte('created_at', today);
-            spentAmount = todayData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-            periodText = 'Diario';
-            break;
-
-          case 'weekly':
-            limitAmount = student.weekly_limit || 0;
-            const { data: weekData } = await supabase
-              .from('transactions')
-              .select('amount')
-              .eq('student_id', student.id)
-              .eq('type', 'purchase')
-              .gte('created_at', startOfWeek.toISOString());
-            spentAmount = weekData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-            periodText = 'Semanal';
-            break;
-
-          case 'monthly':
-            limitAmount = student.monthly_limit || 0;
-            const { data: monthData } = await supabase
-              .from('transactions')
-              .select('amount')
-              .eq('student_id', student.id)
-              .eq('type', 'purchase')
-              .gte('created_at', startOfMonth.toISOString());
-            spentAmount = monthData?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-            periodText = 'Mensual';
-            break;
-        }
-
-        const remaining = limitAmount - spentAmount;
-
-        if (remaining <= 0) {
-          return {
-            canPurchase: false,
-            statusText: `🚫 Tope ${periodText} Alcanzado`,
-            statusColor: 'text-red-600',
-            reason: `Ya alcanzó su límite de S/ ${limitAmount.toFixed(2)}`
-          };
-        }
-
-        return {
-          canPurchase: true,
-          statusText: `📊 Tope ${periodText}: S/ ${remaining.toFixed(2)} de S/ ${limitAmount.toFixed(2)}`,
-          statusColor: remaining < limitAmount * 0.3 ? 'text-orange-600' : 'text-blue-600'
-        };
-      } catch (error) {
-        console.error('Error calculating limits:', error);
-      }
-    }
-
-    // 4. Sin límites pero con saldo (default)
+    // 5. Sin límites pero con saldo (default)
     return {
       canPurchase: true,
       statusText: `💰 Saldo: S/ ${balance.toFixed(2)}`,
@@ -856,10 +1062,111 @@ const POS = () => {
     };
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // 📊 Obtener TODOS los topes del alumno (diario, semanal, mensual)
+  // ═══════════════════════════════════════════════════════════════════
+  const fetchStudentLimits = async (student: Student) => {
+    setLoadingLimits(true);
+    try {
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      // Traer TODAS las transacciones del mes (incluye diarias y semanales)
+      const { data: monthTx } = await supabase
+        .from('transactions')
+        .select('amount, metadata, created_at')
+        .eq('student_id', student.id)
+        .eq('type', 'purchase')
+        .gte('created_at', startOfMonth.toISOString());
+
+      const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
+
+      const spentToday = kioscoTx
+        .filter(t => t.created_at >= todayStr)
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      const spentWeek = kioscoTx
+        .filter(t => t.created_at >= startOfWeek.toISOString())
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      const spentMonth = kioscoTx
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      // Calcular fechas de renovación
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = `Mañana ${tomorrow.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' })} a las 00:00`;
+
+      const nextMonday = new Date(now);
+      nextMonday.setDate(nextMonday.getDate() + (7 - nextMonday.getDay()) % 7 || 7);
+      const nextMondayStr = `Lunes ${nextMonday.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })}`;
+
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const nextMonthStr = `1 de ${nextMonth.toLocaleDateString('es-PE', { month: 'long' })}`;
+
+      const limits: LimitDetail[] = [];
+      const activeType = student.limit_type || 'none';
+
+      // Agregar cada tope que tenga valor > 0
+      if ((student.daily_limit || 0) > 0) {
+        const lim = student.daily_limit!;
+        limits.push({
+          type: 'daily',
+          label: 'Diario',
+          limit: lim,
+          spent: spentToday,
+          remaining: Math.max(0, lim - spentToday),
+          renewalText: tomorrowStr,
+          isActive: activeType === 'daily',
+        });
+      }
+      if ((student.weekly_limit || 0) > 0) {
+        const lim = student.weekly_limit!;
+        limits.push({
+          type: 'weekly',
+          label: 'Semanal',
+          limit: lim,
+          spent: spentWeek,
+          remaining: Math.max(0, lim - spentWeek),
+          renewalText: nextMondayStr,
+          isActive: activeType === 'weekly',
+        });
+      }
+      if ((student.monthly_limit || 0) > 0) {
+        const lim = student.monthly_limit!;
+        limits.push({
+          type: 'monthly',
+          label: 'Mensual',
+          limit: lim,
+          spent: spentMonth,
+          remaining: Math.max(0, lim - spentMonth),
+          renewalText: nextMonthStr,
+          isActive: activeType === 'monthly',
+        });
+      }
+
+      setStudentLimitsDetail(limits);
+    } catch (err) {
+      console.error('Error fetching student limits:', err);
+      setStudentLimitsDetail([]);
+    } finally {
+      setLoadingLimits(false);
+    }
+  };
+
   const selectStudent = (student: Student) => {
     setSelectedStudent(student);
     setStudentSearch(student.full_name);
     setShowStudentResults(false);
+    // Cargar topes detallados
+    fetchStudentLimits(student);
   };
 
   const selectTeacher = (teacher: any) => {
@@ -908,7 +1215,153 @@ const POS = () => {
     setPlinNumber('');
     setTransactionCode('');
     setRequiresInvoice(false);
+    setStudentLimitsDetail([]);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
+  };
+
+  // ══════════════════════════════════════════════════════════
+  // 📡 NFC: listener global en la pantalla de selección
+  // Activo solo cuando no hay clientMode (modal de selección)
+  // ══════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (clientMode) return; // Solo activo en la pantalla de selección
+
+    const handleNFCKey = (e: KeyboardEvent) => {
+      const now = Date.now();
+      const timeSinceLast = now - nfcPosLastKeyTime.current;
+      nfcPosLastKeyTime.current = now;
+
+      if (e.key === 'Enter') {
+        const uid = nfcPosBuffer.current.trim();
+        nfcPosBuffer.current = '';
+        if (nfcPosTimer.current) clearTimeout(nfcPosTimer.current);
+        // Procesar solo si vino rápido (era el lector, no tecla Enter manual)
+        if (uid.length >= 4 && timeSinceLast < 200) {
+          handleNFCScanPOS(uid);
+        }
+        return;
+      }
+      // Acumular solo chars que lleguen rápido (< 80ms = lector HID)
+      if (e.key.length === 1 && (timeSinceLast < 80 || nfcPosBuffer.current.length === 0)) {
+        nfcPosBuffer.current += e.key;
+        if (nfcPosTimer.current) clearTimeout(nfcPosTimer.current);
+        nfcPosTimer.current = setTimeout(() => { nfcPosBuffer.current = ''; }, 200);
+      }
+    };
+
+    window.addEventListener('keydown', handleNFCKey, true); // capture=true
+    return () => {
+      window.removeEventListener('keydown', handleNFCKey, true);
+      if (nfcPosTimer.current) clearTimeout(nfcPosTimer.current);
+    };
+  }, [clientMode]);
+
+  // ══════════════════════════════════════════════════════════
+  // 📡 NFC: procesar UID escaneado por el lector USB
+  // ══════════════════════════════════════════════════════════
+  const handleNFCScanPOS = async (uid: string) => {
+    if (!uid.trim()) return;
+    setNfcScanning(true);
+    setNfcError(null);
+    const normalizedUID = uid.trim().toUpperCase();
+
+    try {
+      let holder: any = null;
+
+      if (isOnline) {
+        // ── Online: consultar RPC en Supabase ──
+        const { data, error } = await supabase
+          .rpc('get_nfc_holder', { p_card_uid: normalizedUID });
+        if (error) throw error;
+        if (data && data.length > 0) holder = data[0];
+      } else {
+        // ── Offline: buscar en caché local de NFC + alumnos ──
+        const cachedCard = await findNFCCardByUID(normalizedUID);
+        if (cachedCard && cachedCard.is_active) {
+          if (cachedCard.holder_type === 'student' && cachedCard.student_id && userSchoolId) {
+            const cachedStudents = await getCachedStudents(userSchoolId);
+            const student = cachedStudents.find((s: any) => s.id === cachedCard.student_id);
+            if (student) {
+              holder = {
+                holder_type: 'student',
+                student_id: student.id,
+                student_name: student.full_name,
+                student_grade: student.grade,
+                student_section: student.section,
+                student_balance: student.balance,
+                student_free_account: student.free_account,
+                student_kiosk_disabled: student.kiosk_disabled,
+                student_limit_type: student.limit_type,
+                student_daily_limit: student.daily_limit,
+                student_weekly_limit: student.weekly_limit,
+                student_monthly_limit: student.monthly_limit,
+                student_school_id: student.school_id,
+                card_number: cachedCard.card_number,
+                is_active: true,
+              };
+            }
+          } else if (cachedCard.holder_type === 'teacher') {
+            holder = {
+              holder_type: 'teacher',
+              teacher_id: cachedCard.teacher_id,
+              teacher_name: `Profesor (tarjeta ${cachedCard.card_number || normalizedUID})`,
+              is_active: true,
+            };
+          }
+        }
+      }
+
+      if (!holder) {
+        setNfcError('Tarjeta no registrada en el sistema');
+        toast({ variant: 'destructive', title: '❌ Tarjeta no encontrada', description: 'Esta tarjeta no está asignada a ningún alumno ni profesor.' });
+        return;
+      }
+
+      if (!holder.is_active) {
+        setNfcError('Esta tarjeta está desactivada');
+        toast({ variant: 'destructive', title: '🔴 Tarjeta inactiva', description: 'Contacta al administrador de sede.' });
+        return;
+      }
+
+      if (holder.holder_type === 'student') {
+        const student: Student = {
+          id: holder.student_id,
+          full_name: holder.student_name,
+          photo_url: null,
+          balance: holder.student_balance ?? 0,
+          grade: holder.student_grade,
+          section: holder.student_section,
+          school_id: holder.student_school_id,
+          free_account: holder.student_free_account,
+          kiosk_disabled: holder.student_kiosk_disabled,
+          limit_type: holder.student_limit_type as any,
+          daily_limit: holder.student_daily_limit,
+          weekly_limit: holder.student_weekly_limit,
+          monthly_limit: holder.student_monthly_limit,
+        };
+        setClientMode('student');
+        selectStudent(student);
+        const hasLim = (student.daily_limit && student.daily_limit > 0) || (student.weekly_limit && student.weekly_limit > 0) || (student.monthly_limit && student.monthly_limit > 0);
+        const nfcInfo = hasLim 
+          ? `${student.grade} - ${student.section} · Tope diario: S/ ${(student.daily_limit || student.weekly_limit || student.monthly_limit || 0).toFixed(2)}`
+          : `${student.grade} - ${student.section} · Saldo: S/ ${student.balance.toFixed(2)}`;
+        const offlineTag = !isOnline ? ' (offline)' : '';
+        toast({ title: `👋 ¡Hola, ${student.full_name}!${offlineTag}`, description: nfcInfo });
+      } else if (holder.holder_type === 'teacher') {
+        setClientMode('teacher');
+        setSelectedTeacher({ id: holder.teacher_id, full_name: holder.teacher_name });
+        setTeacherSearch(holder.teacher_name);
+        setShowTeacherResults(false);
+        const offlineTag = !isOnline ? ' (offline)' : '';
+        toast({ title: `👨‍🏫 Profesor identificado${offlineTag}`, description: holder.teacher_name });
+      }
+    } catch (err: any) {
+      setNfcError('Error al leer la tarjeta');
+      toast({ variant: 'destructive', title: 'Error NFC', description: err.message });
+    } finally {
+      setNfcScanning(false);
+      if (nfcPosInputRef.current) nfcPosInputRef.current.value = '';
+    }
   };
 
   const addToCart = (product: Product) => {
@@ -976,12 +1429,31 @@ const POS = () => {
     
     // Si es estudiante
     if (clientMode === 'student' && selectedStudent) {
-      // Si tiene cuenta libre, siempre puede comprar
-      if (selectedStudent.free_account) {
+      // Cuenta libre (free_account = true o null) → siempre puede comprar
+      if (selectedStudent.free_account !== false) {
         return true;
       }
-      // Si no tiene cuenta libre, verificar saldo suficiente
-      return selectedStudent.balance >= getTotal();
+      // Tiene saldo suficiente → puede comprar
+      if (selectedStudent.balance >= getTotal()) {
+        return true;
+      }
+      // ✅ Tiene tope configurado → puede comprar aunque no tenga saldo
+      // El tope actúa como crédito autorizado
+      const hasConfiguredLimit =
+        (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
+        (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
+        (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
+      if (hasConfiguredLimit) {
+        // Si ya tenemos los datos de topes cargados, verificar que la compra no exceda el restante
+        if (studentLimitsDetail.length > 0) {
+          const wouldExceedAnyLimit = studentLimitsDetail.some(
+            lim => lim.limit > 0 && lim.remaining < getTotal()
+          );
+          if (wouldExceedAnyLimit) return false; // bloquear: supera el tope disponible
+        }
+        return true;
+      }
+      return false;
     }
     
     // Si es profesor (siempre cuenta libre, sin límites)
@@ -1023,11 +1495,186 @@ const POS = () => {
     resetClient();
   };
 
+  /** Genera comprobante electrónico (boleta/factura) después de procesar la venta */
+  const handleGenerateInvoice = async (clientData: InvoiceClientData) => {
+    setInvoiceClientData(clientData);
+    setShowInvoiceClientModal(false);
+    setIsGeneratingInvoice(true);
+
+    try {
+      // Procesar la venta primero
+      await processCheckout();
+
+      // Luego generar el comprobante electrónico
+      const result = await generarComprobante({
+        school_id: userSchoolId || '',
+        tipo: clientData.tipo === 'factura' ? 1 : 2,
+        cliente: {
+          nombre:     clientData.razon_social,
+          tipo_doc:   clientData.doc_type === 'ruc' ? 6 : clientData.doc_type === 'dni' ? 1 : 0,
+          numero_doc: clientData.doc_number !== '-' ? clientData.doc_number : undefined,
+          email:      clientData.email,
+        },
+        monto_total: getTotal(),
+      });
+
+      if (result.success) {
+        const pdfUrl = result.nubefact?.enlace_del_pdf as string | undefined;
+        if (pdfUrl) setLastInvoicePdfUrl(pdfUrl);
+
+        const serie = result.documento
+          ? `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`
+          : null;
+        const waMsg = pdfUrl
+          ? `https://wa.me/?text=${encodeURIComponent(
+              `Hola, aquí tienes tu comprobante electrónico 🧾\n` +
+              (serie ? `N° ${serie}\n` : '') +
+              `PDF: ${pdfUrl}`
+            )}`
+          : null;
+
+        toast({
+          title: `✅ ${clientData.tipo === 'factura' ? 'Factura' : 'Boleta'} generada`,
+          description: serie
+            ? `${serie} — ${result.nubefact?.aceptada_por_sunat ? 'Aceptada por SUNAT ✔' : 'Generada'}`
+            : 'Comprobante generado correctamente.',
+        });
+
+        // Abrir PDF en nueva pestaña
+        if (pdfUrl) {
+          window.open(pdfUrl, '_blank');
+        }
+
+        // Mostrar toast con enlace de WhatsApp
+        if (waMsg) {
+          setTimeout(() => {
+            toast({
+              title: '📲 Compartir comprobante',
+              description: '¿Deseas enviar el PDF por WhatsApp al cliente?',
+              action: (
+                <a
+                  href={waMsg}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-green-500 hover:bg-green-600 text-white"
+                >
+                  📱 WhatsApp
+                </a>
+              ) as any,
+            });
+          }, 800);
+        }
+      } else {
+        toast({
+          title: '⚠️ Venta procesada, error en comprobante',
+          description: result.error || 'La venta se realizó pero no se pudo generar el comprobante electrónico.',
+          variant: 'destructive',
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.message || 'Error al procesar la venta.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsGeneratingInvoice(false);
+      setShowConfirmDialog(false);
+      setShowCreditConfirmDialog(false);
+      setShowDocumentTypeDialog(false);
+      resetClient();
+    }
+  };
+
+  // ── Checkout OFFLINE: guardar en cola local ────────────────────
+  const processOfflineCheckout = async () => {
+    const total = getTotal();
+    const tempTicket = `OFF-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+    const offlineTx: OfflineTransaction = {
+      offline_id: crypto.randomUUID(),
+      created_at: new Date().toISOString(),
+      status: 'pending',
+      client_mode: clientMode || 'generic',
+      student_id: selectedStudent?.id,
+      student_name: selectedStudent?.full_name,
+      teacher_id: selectedTeacher?.id,
+      teacher_name: selectedTeacher?.full_name,
+      school_id: userSchoolId || undefined,
+      cashier_id: user?.id || '',
+      cashier_email: user?.email || '',
+      total,
+      cart: cart.map(item => ({
+        product_id: item.product.id,
+        product_name: item.product.name,
+        quantity: item.quantity,
+        unit_price: item.product.price,
+        subtotal: item.product.price * item.quantity,
+        barcode: item.product.barcode,
+      })),
+      payment_method: paymentMethod || undefined,
+      payment_details: { source: 'pos', offline: true },
+      balance_before: selectedStudent?.balance,
+      should_use_balance: selectedStudent ? (selectedStudent.balance >= total) : false,
+      is_free_account: selectedStudent?.free_account,
+      has_configured_limit: !!(selectedStudent?.daily_limit || selectedStudent?.weekly_limit || selectedStudent?.monthly_limit),
+      temp_ticket_code: tempTicket,
+    };
+
+    await addToOfflineQueue(offlineTx);
+    const pending = await getPendingOfflineTransactions();
+    setOfflinePendingCount(pending.length);
+
+    toast({
+      title: '📤 Venta guardada offline',
+      description: `Ticket temporal: ${tempTicket}. Se sincronizará al volver internet.`,
+      duration: 5000,
+    });
+
+    // Imprimir ticket aunque estemos offline
+    const schoolIdForPrint = selectedStudent?.school_id || userSchoolId;
+    if (schoolIdForPrint) {
+      printPOSSale({
+        ticketCode: tempTicket,
+        clientName: selectedStudent?.full_name || selectedTeacher?.full_name || 'CLIENTE GENÉRICO',
+        cart,
+        total,
+        paymentMethod: clientMode === 'student' ? 'credit' : clientMode === 'teacher' ? 'teacher' : 'cash',
+        saleType: clientMode === 'teacher' ? 'teacher' : clientMode === 'student' ? 'credit' : 'general',
+        schoolId: schoolIdForPrint,
+      }).catch(err => console.error('Error en impresión offline:', err));
+    }
+
+    // Limpiar carrito
+    setCart([]);
+    setClientMode(null);
+    setSelectedStudent(null);
+    setSelectedTeacher(null);
+    setStudentSearch('');
+    setTeacherSearch('');
+    setPaymentMethod(null);
+  };
+
   const processCheckout = async () => {
+    if (!user?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'Error de sesión',
+        description: 'No se puede procesar la venta sin un usuario autenticado. Cierra sesión y vuelve a iniciar.',
+      });
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
       const total = getTotal();
+
+      if (!isOnline) {
+        await processOfflineCheckout();
+        return;
+      }
+
       let ticketCode = '';
 
       console.log('🔵 INICIANDO CHECKOUT', {
@@ -1082,9 +1729,27 @@ const POS = () => {
 
       // Si es estudiante
       if (clientMode === 'student' && selectedStudent) {
-        const isFreeAccount = selectedStudent.free_account !== false; // Por defecto true
-        
-        // **VERIFICAR LÍMITES DE GASTO**
+        // ══════════════════════════════════════════════════════════
+        // 🔒 PASO 1: Leer datos FRESCOS del estudiante desde la BD
+        //    (evita usar datos viejos si el admin aprobó una recarga)
+        // ══════════════════════════════════════════════════════════
+        const { data: freshStudent, error: freshErr } = await supabase
+          .from('students')
+          .select('balance, free_account')
+          .eq('id', selectedStudent.id)
+          .single();
+
+        if (freshErr) {
+          console.error('Error leyendo saldo fresco:', freshErr);
+          throw new Error('No se pudo verificar el saldo del estudiante. Intenta de nuevo.');
+        }
+
+        const currentBalance = freshStudent?.balance ?? selectedStudent.balance;
+        const isFreeAccount = freshStudent?.free_account !== false; // true o null = cuenta libre
+
+        // ══════════════════════════════════════════════════════════
+        // 🔒 PASO 2: Verificar topes de consumo
+        // ══════════════════════════════════════════════════════════
         const { data: limitCheck, error: limitError } = await supabase
           .rpc('check_student_spending_limit', {
             p_student_id: selectedStudent.id,
@@ -1093,49 +1758,129 @@ const POS = () => {
 
         if (limitError) {
           console.error('Error checking spending limit:', limitError);
-          // Si hay error verificando, continuamos (no bloqueamos la venta)
+          // 🔴 CRÍTICO: Si la función RPC falla, BLOQUEAR la venta
+          // Antes se ignoraba y la venta pasaba sin verificar topes
+          throw new Error(
+            '⚠️ No se pudo verificar el tope de gasto.\n' +
+            'Intente de nuevo. Si el problema persiste, contacte al administrador.'
+          );
         } else if (limitCheck && limitCheck.length > 0 && !limitCheck[0].can_purchase) {
-          // Límite excedido - BLOQUEAR VENTA
           const limitInfo = limitCheck[0];
           const limitTypeText = limitInfo.limit_type === 'daily' ? 'diario' : 
                                limitInfo.limit_type === 'weekly' ? 'semanal' : 'mensual';
-          
           throw new Error(
             `⚠️ Límite ${limitTypeText} excedido.\n` +
-            `Gastado: S/ ${limitInfo.current_spent.toFixed(2)}\n` +
-            `Límite: S/ ${limitInfo.limit_amount.toFixed(2)}\n` +
+            `Gastado: S/ ${limitInfo.current_spent?.toFixed(2) || '0.00'}\n` +
+            `Límite: S/ ${limitInfo.limit_amount?.toFixed(2) || '0.00'}\n` +
             `No se puede procesar esta compra de S/ ${total.toFixed(2)}`
           );
         }
-        
-        // Calcular montos
-        // Siempre se descuenta el total completo (sin abonos parciales)
-        const amountToDeduct = total;
-        
-        // Si es cuenta libre, no descontamos del saldo, solo registramos como pendiente
-        const newBalance = isFreeAccount ? selectedStudent.balance : selectedStudent.balance - amountToDeduct;
+
+        // ══════════════════════════════════════════════════════════
+        // 🔒 PASO 2B: Verificar TODOS los topes configurados (backup)
+        //    La función RPC solo verifica el limit_type activo.
+        //    Aquí verificamos daily + weekly + monthly si tienen valor > 0
+        // ══════════════════════════════════════════════════════════
+        const allLimitsToCheck = [
+          { type: 'daily', limit: selectedStudent.daily_limit || 0, label: 'diario' },
+          { type: 'weekly', limit: selectedStudent.weekly_limit || 0, label: 'semanal' },
+          { type: 'monthly', limit: selectedStudent.monthly_limit || 0, label: 'mensual' },
+        ].filter(l => l.limit > 0);
+
+        if (allLimitsToCheck.length > 0) {
+          const now = new Date();
+          const todayStr = now.toISOString().split('T')[0];
+          const startOfWeek = new Date(now);
+          startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+          startOfWeek.setHours(0, 0, 0, 0);
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          startOfMonth.setHours(0, 0, 0, 0);
+
+          const { data: recentTx } = await supabase
+            .from('transactions')
+            .select('amount, metadata, created_at')
+            .eq('student_id', selectedStudent.id)
+            .eq('type', 'purchase')
+            .gte('created_at', startOfMonth.toISOString());
+
+          const kioscoTx = (recentTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
+
+          for (const lim of allLimitsToCheck) {
+            let spent = 0;
+            if (lim.type === 'daily') {
+              spent = kioscoTx.filter(t => t.created_at >= todayStr).reduce((s, t) => s + Math.abs(t.amount), 0);
+            } else if (lim.type === 'weekly') {
+              spent = kioscoTx.filter(t => t.created_at >= startOfWeek.toISOString()).reduce((s, t) => s + Math.abs(t.amount), 0);
+            } else {
+              spent = kioscoTx.reduce((s, t) => s + Math.abs(t.amount), 0);
+            }
+
+            if ((spent + total) > lim.limit) {
+              throw new Error(
+                `⚠️ Límite ${lim.label} excedido.\n` +
+                `Gastado: S/ ${spent.toFixed(2)}\n` +
+                `Límite: S/ ${lim.limit.toFixed(2)}\n` +
+                `Restante: S/ ${Math.max(0, lim.limit - spent).toFixed(2)}\n` +
+                `No se puede procesar esta compra de S/ ${total.toFixed(2)}`
+              );
+            }
+          }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // 💰 PASO 3: Decidir cómo cobrar — LÓGICA:
+        //
+        //   ¿Tiene saldo >= total?
+        //     SÍ → Descontar del saldo (sea cuenta libre o no)
+        //     NO → ¿Es cuenta libre O tiene tope configurado?
+        //           SÍ → Crear deuda (pending)
+        //           NO → Saldo insuficiente (bloquear)
+        // ══════════════════════════════════════════════════════════
+        const shouldUseBalance = currentBalance >= total;
+
+        // Alumno con tope también puede comprar a deuda (el tope ya fue verificado arriba)
+        const hasConfiguredLimitForCheckout =
+          (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
+          (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
+          (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
+        const canProceedAsDebt = isFreeAccount || hasConfiguredLimitForCheckout;
+
+        if (!shouldUseBalance && !canProceedAsDebt) {
+          throw new Error(
+            `💳 Saldo insuficiente.\n` +
+            `Saldo actual: S/ ${currentBalance.toFixed(2)}\n` +
+            `Total compra: S/ ${total.toFixed(2)}\n` +
+            `Faltan: S/ ${(total - currentBalance).toFixed(2)}`
+          );
+        }
+
+        const newBalance = shouldUseBalance 
+          ? currentBalance - total 
+          : currentBalance; // Cuenta libre sin saldo → no tocar balance
 
         console.log('💳 PROCESANDO VENTA ESTUDIANTE', {
           studentId: selectedStudent.id,
           isFreeAccount,
+          shouldUseBalance,
           total,
-          amountToDeduct,
-          balanceActual: selectedStudent.balance,
-          newBalance
+          saldoFresco: currentBalance,
+          newBalance,
+          modo: shouldUseBalance ? 'DESCONTAR SALDO' : 'DEUDA (cuenta libre)',
         });
 
-        // Crear transacción
-        const studentPaymentDetails: any = {};
-        if (!isFreeAccount && paymentMethod) {
-          studentPaymentDetails.payment_method_detail = paymentMethod;
-          if (transactionCode) studentPaymentDetails.operation_number = transactionCode;
-          if (yapeNumber) studentPaymentDetails.yape_number = yapeNumber;
-          if (plinNumber) studentPaymentDetails.plin_number = plinNumber;
-          if (cashGiven) studentPaymentDetails.cash_given = parseFloat(cashGiven);
-          if (paymentSplits.length > 0) studentPaymentDetails.payment_splits = paymentSplits;
-        }
+        // ══════════════════════════════════════════════════════════
+        // 📝 PASO 4: Crear transacción
+        // ══════════════════════════════════════════════════════════
+        const studentPaymentDetails: any = { source: 'pos' };
+        if (paymentMethod) studentPaymentDetails.payment_method_detail = paymentMethod;
+        if (transactionCode) studentPaymentDetails.operation_number = transactionCode;
+        if (yapeNumber) studentPaymentDetails.yape_number = yapeNumber;
+        if (plinNumber) studentPaymentDetails.plin_number = plinNumber;
+        if (cashGiven) studentPaymentDetails.cash_given = parseFloat(cashGiven);
+        if (paymentSplits.length > 0) studentPaymentDetails.payment_splits = paymentSplits;
+        if (shouldUseBalance) studentPaymentDetails.paid_from_balance = true;
 
-        // ✅ Calcular montos por método para pago mixto
+        // Calcular montos por método para pago mixto
         const isMixedPayment = paymentMethod === 'mixto' && paymentSplits.length > 0;
         const mixedCashAmount = isMixedPayment
           ? paymentSplits.filter(p => p.method === 'efectivo').reduce((s, p) => s + p.amount, 0)
@@ -1147,21 +1892,26 @@ const POS = () => {
           ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
           : 0;
 
+        // Descripción clara
+        const txDescription = shouldUseBalance
+          ? `Compra POS (Saldo) - S/ ${total.toFixed(2)}`
+          : `Compra POS (Cuenta Libre - Deuda) - S/ ${total.toFixed(2)}`;
+
         const { data: transaction, error: transError} = await supabase
           .from('transactions')
           .insert({
             student_id: selectedStudent.id,
-            school_id: selectedStudent.school_id, // ✅ Agregar school_id
+            school_id: selectedStudent.school_id,
             type: 'purchase',
             amount: -total,
-            description: `Compra POS${isFreeAccount ? ' (Cuenta Libre)' : ''} - Total: S/ ${total.toFixed(2)}`,
+            description: txDescription,
             balance_after: newBalance,
             created_by: user?.id,
             ticket_code: ticketCode,
-            payment_status: isFreeAccount ? 'pending' : 'paid', // Si es cuenta libre, queda pendiente
-            payment_method: isFreeAccount ? null : (paymentMethod || 'efectivo'),
-            metadata: Object.keys(studentPaymentDetails).length > 0 ? { source: 'pos', ...studentPaymentDetails } : { source: 'pos' },
-            // ✅ Columnas para pago mixto (usadas por calculate_daily_totals)
+            // SIMPLE: Si usó saldo → pagado. Si no → deuda pendiente
+            payment_status: shouldUseBalance ? 'paid' : 'pending',
+            payment_method: shouldUseBalance ? (paymentMethod || 'saldo') : null,
+            metadata: studentPaymentDetails,
             paid_with_mixed: isMixedPayment,
             cash_amount: mixedCashAmount,
             card_amount: mixedCardAmount,
@@ -1192,7 +1942,7 @@ const POS = () => {
 
         if (itemsError) throw itemsError;
 
-        // **NUEVO: Registrar en tabla SALES para módulo de Finanzas**
+        // Registrar en tabla SALES para módulo de Finanzas
         const salesItems = cart.map(item => ({
           product_id: item.product.id,
           product_name: item.product.name,
@@ -1205,23 +1955,23 @@ const POS = () => {
         await supabase
           .from('sales')
           .insert({
-            transaction_id: ticketCode,
+            transaction_id: transaction.id,
             student_id: selectedStudent.id,
             school_id: selectedStudent.school_id,
             cashier_id: user?.id,
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: isFreeAccount ? 'debt' : (paymentMethod || 'efectivo'), // ✅ FIX: usar método real en vez de hardcode 'cash'
-            cash_received: isFreeAccount ? null : (paymentMethod === 'efectivo' || !paymentMethod ? parseFloat(cashGiven) || total : null),
-            change_given: isFreeAccount ? null : (paymentMethod === 'efectivo' || !paymentMethod ? (parseFloat(cashGiven) || total) - total : null),
+            payment_method: shouldUseBalance ? (paymentMethod || 'saldo') : 'debt',
+            cash_received: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
+            change_given: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
             items: salesItems,
           });
-        
-        console.log('✅ Venta registrada en tabla sales');
 
-        // Actualizar saldo solo si NO es cuenta libre y hubo descuento
-        if (!isFreeAccount && amountToDeduct > 0) {
+        // ══════════════════════════════════════════════════════════
+        // 💰 PASO 5: Actualizar saldo en BD (solo si descontamos)
+        // ══════════════════════════════════════════════════════════
+        if (shouldUseBalance) {
           const { error: updateError } = await supabase
             .from('students')
             .update({ balance: newBalance })
@@ -1229,7 +1979,9 @@ const POS = () => {
 
           if (updateError) throw updateError;
           
-          // Actualizar estado local
+          console.log(`✅ Saldo actualizado: S/ ${currentBalance.toFixed(2)} → S/ ${newBalance.toFixed(2)}`);
+          
+          // Actualizar estado local para que se refleje de inmediato
           setSelectedStudent({
             ...selectedStudent,
             balance: newBalance
@@ -1237,8 +1989,9 @@ const POS = () => {
         }
 
         ticketInfo.newBalance = newBalance;
-        ticketInfo.amountToDeduct = amountToDeduct;
+        ticketInfo.amountToDeduct = shouldUseBalance ? total : 0;
         ticketInfo.isFreeAccount = isFreeAccount;
+        ticketInfo.paidFromBalance = shouldUseBalance;
       } else if (clientMode === 'teacher' && selectedTeacher) {
         // Profesor - Cuenta libre sin límites
         console.log('👨‍🏫 Procesando compra de profesor');
@@ -1294,20 +2047,18 @@ const POS = () => {
         await supabase
           .from('sales')
           .insert({
-            transaction_id: ticketCode,
+            transaction_id: transaction.id,            // ✅ UUID real de la transacción
             teacher_id: selectedTeacher.id,
-            school_id: selectedTeacher.school_1_id || null, // ✅ Corregido: la vista usa school_1_id
+            school_id: selectedTeacher.school_1_id || null,
             cashier_id: user?.id,
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: 'teacher_account', // Identificador especial para profesores
+            payment_method: 'teacher_account',
             cash_received: null,
             change_given: null,
             items: salesItems,
           });
-        
-        console.log('✅ Venta de profesor registrada en tabla sales');
 
         ticketInfo.isFreeAccount = true;
         ticketInfo.teacherName = selectedTeacher.full_name;
@@ -1381,8 +2132,8 @@ const POS = () => {
         await supabase
           .from('sales')
           .insert({
-            transaction_id: ticketCode,
-            student_id: null, // Cliente genérico
+            transaction_id: transaction.id,            // ✅ UUID real de la transacción
+            student_id: null,
             school_id: cashierProfile?.school_id || null,
             cashier_id: user?.id,
             total: total,
@@ -1393,8 +2144,6 @@ const POS = () => {
             change_given: (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
             items: salesItems,
           });
-        
-        console.log('✅ Venta genérica registrada en tabla sales');
       }
 
       // Mostrar notificación rápida (sin modal)
@@ -1504,8 +2253,15 @@ const POS = () => {
   
   // Verificar saldo insuficiente en useEffect
   useEffect(() => {
-    const insufficient = selectedStudent && !selectedStudent.free_account && (selectedStudent.balance < getTotal());
-    setInsufficientBalance(insufficient);
+    if (!selectedStudent) { setInsufficientBalance(false); return; }
+    const isFree = selectedStudent.free_account !== false; // null o true = cuenta libre
+    const hasLimit =
+      (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
+      (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
+      (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
+    // Solo mostrar error si: NO es cuenta libre, NO tiene tope, y saldo no alcanza
+    const insufficient = !isFree && !hasLimit && (selectedStudent.balance < getTotal());
+    setInsufficientBalance(!!insufficient);
   }, [selectedStudent, cart]); // ✅ Dependencia en 'cart' en lugar de 'total'
 
   // ─── GUARD: Bloquear POS si no hay caja abierta ─────────────────
@@ -1575,6 +2331,53 @@ const POS = () => {
         </div>
       </header>
 
+      {/* ── Banner de estado de conexión ─────────────────────────── */}
+      {(!isOnline || offlinePendingCount > 0 || isSyncing) && (
+        <div className={cn(
+          "px-3 py-2 flex items-center justify-between text-sm print:hidden",
+          !isOnline 
+            ? "bg-red-600 text-white" 
+            : isSyncing 
+              ? "bg-blue-600 text-white"
+              : "bg-amber-500 text-white"
+        )}>
+          <div className="flex items-center gap-2">
+            {!isOnline ? (
+              <>
+                <WifiOff className="h-4 w-4 animate-pulse" />
+                <span className="font-medium">
+                  SIN CONEXIÓN — Las ventas se guardan localmente
+                  {offlineDataReady && ' (datos offline listos ✓)'}
+                </span>
+              </>
+            ) : isSyncing ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span className="font-medium">Sincronizando ventas offline...</span>
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4" />
+                <span className="font-medium">{offlinePendingCount} venta(s) pendiente(s) de sincronizar</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {isOnline && offlinePendingCount > 0 && !isSyncing && (
+              <button
+                onClick={handleManualSync}
+                className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md text-xs font-semibold transition-colors"
+              >
+                Sincronizar ahora
+              </button>
+            )}
+            {isOnline && (
+              <Wifi className="h-4 w-4 opacity-70" />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Modal de Selección de Cliente (Solo si no hay cliente) */}
       {!clientMode && (
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
@@ -1635,6 +2438,44 @@ const POS = () => {
                 <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Profesor</h3>
                 <p className="text-xs sm:text-sm text-gray-600">Cuenta libre (Sin límites)</p>
               </button>
+            </div>
+
+            {/* ── Sección NFC ── */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div
+                className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                  nfcScanning
+                    ? 'border-blue-400 bg-blue-50'
+                    : nfcError
+                    ? 'border-red-300 bg-red-50'
+                    : 'border-dashed border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50'
+                }`}
+                onClick={() => { setNfcError(null); nfcPosInputRef.current?.focus(); }}
+              >
+                <div className={`h-12 w-12 rounded-full flex items-center justify-center flex-shrink-0 ${nfcScanning ? 'bg-blue-200' : nfcError ? 'bg-red-100' : 'bg-gray-200'}`}>
+                  {nfcScanning ? (
+                    <Loader2 className="h-6 w-6 text-blue-600 animate-spin" />
+                  ) : nfcError ? (
+                    <AlertCircle className="h-6 w-6 text-red-500" />
+                  ) : (
+                    <Smartphone className="h-6 w-6 text-gray-500" />
+                  )}
+                </div>
+                <div>
+                  <p className={`font-bold text-sm ${nfcScanning ? 'text-blue-700' : nfcError ? 'text-red-700' : 'text-gray-600'}`}>
+                    {nfcScanning
+                      ? 'Leyendo tarjeta...'
+                      : nfcError
+                      ? nfcError
+                      : '📡 Pasar tarjeta NFC'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {nfcScanning
+                      ? 'Acerca la tarjeta al lector'
+                      : 'Acerca la tarjeta al lector USB para identificar al alumno o profesor automáticamente'}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1995,6 +2836,97 @@ const POS = () => {
               ) : null}
             </div>
 
+            {/* ═══ Panel de Topes de Gasto ═══ */}
+            {clientMode === 'student' && selectedStudent && studentLimitsDetail.length > 0 && (
+              <div className="bg-gradient-to-r from-slate-50 to-blue-50 border-b border-slate-200 px-2 py-1.5 sm:px-3 sm:py-2">
+                <p className="text-[8px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  📊 Topes de Gasto
+                </p>
+                <div className="space-y-1">
+                  {studentLimitsDetail.map((lim) => {
+                    const pct = lim.limit > 0 ? Math.min(100, (lim.spent / lim.limit) * 100) : 0;
+                    const isExceeded = lim.remaining <= 0;
+                    const isWarning = pct >= 70 && !isExceeded;
+                    const barColor = isExceeded ? 'bg-red-500' : isWarning ? 'bg-orange-400' : 'bg-emerald-500';
+                    const textColor = isExceeded ? 'text-red-700' : isWarning ? 'text-orange-700' : 'text-slate-700';
+
+                    return (
+                      <div key={lim.type} className="flex items-center gap-1.5 sm:gap-2">
+                        {/* Etiqueta */}
+                        <div className="w-[52px] sm:w-[68px] flex-shrink-0">
+                          <span className={`text-[8px] sm:text-[10px] font-bold ${lim.isActive ? 'text-blue-700' : 'text-slate-400'}`}>
+                            {lim.isActive ? '🔒 ' : ''}{lim.label}
+                          </span>
+                        </div>
+                        {/* Barra de progreso */}
+                        <div className="flex-1 h-2.5 sm:h-3 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${barColor}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        {/* Info de restante */}
+                        <div className="w-[85px] sm:w-[110px] text-right flex-shrink-0">
+                          <span className={`text-[8px] sm:text-[10px] font-bold ${textColor}`}>
+                            {isExceeded ? '🚫 Agotado' : `S/ ${lim.remaining.toFixed(2)}`}
+                          </span>
+                          <span className="text-[7px] sm:text-[9px] text-slate-400 ml-0.5">
+                            / {lim.limit.toFixed(0)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Info de renovación */}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                  {studentLimitsDetail.map((lim) => (
+                    <span key={lim.type} className="text-[7px] sm:text-[8px] text-slate-400">
+                      🔄 {lim.label}: {lim.renewalText}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Saldo del alumno - siempre visible */}
+            {clientMode === 'student' && selectedStudent && (() => {
+              // Si tiene topes cargados, mostrar el disponible del tope más restrictivo
+              const hasLimits = studentLimitsDetail.length > 0;
+              if (hasLimits) {
+                // Tomar el tope con menos disponible (el más restrictivo)
+                const minRemaining = Math.min(...studentLimitsDetail.map(l => l.remaining));
+                const limitingLim = studentLimitsDetail.find(l => l.remaining === minRemaining)!;
+                const isExceeded = minRemaining <= 0;
+                const isWarning = minRemaining < getTotal();
+                return (
+                  <div className={`border-b px-2 py-1 sm:px-3 sm:py-1.5 flex items-center justify-between ${
+                    isExceeded ? 'bg-red-50 border-red-200' : isWarning ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-200'
+                  }`}>
+                    <span className={`text-[9px] sm:text-xs font-medium ${
+                      isExceeded ? 'text-red-600' : isWarning ? 'text-orange-600' : 'text-slate-500'
+                    }`}>
+                      🔒 Disponible ({limitingLim.label}):
+                    </span>
+                    <span className={`text-[10px] sm:text-sm font-bold ${
+                      isExceeded ? 'text-red-700' : isWarning ? 'text-orange-700' : 'text-emerald-600'
+                    }`}>
+                      S/ {Math.max(0, minRemaining).toFixed(2)}
+                    </span>
+                  </div>
+                );
+              }
+              // Sin topes: mostrar saldo normal
+              return (
+                <div className="bg-white border-b border-slate-200 px-2 py-1 sm:px-3 sm:py-1.5 flex items-center justify-between">
+                  <span className="text-[9px] sm:text-xs text-slate-500 font-medium">💰 Saldo disponible:</span>
+                  <span className={`text-[10px] sm:text-sm font-bold ${selectedStudent.balance > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    S/ {(selectedStudent.balance || 0).toFixed(2)}
+                  </span>
+                </div>
+              );
+            })()}
+
             {/* Items del Carrito - Más compacto en móvil */}
             <div className="flex-1 overflow-y-auto p-1.5 sm:p-2">
               {cart.length === 0 ? (
@@ -2059,26 +2991,62 @@ const POS = () => {
                     <p className="text-[9px] sm:text-xs text-gray-400 mt-1 sm:mt-2">{cart.length} productos</p>
                   </div>
 
-                  {selectedStudent && insufficientBalance && !selectedStudent.free_account && (
+                  {selectedStudent && insufficientBalance && (
                     <div className="bg-red-50 border-2 border-red-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
                       <AlertCircle className="h-3 w-3 sm:h-5 sm:w-5 text-red-600 flex-shrink-0" />
                       <div>
                         <p className="font-bold text-red-800 text-[9px] sm:text-sm">Saldo Insuficiente</p>
                         <p className="text-[8px] sm:text-xs text-red-600">
-                          Falta: S/ {(total - selectedStudent.balance).toFixed(2)}
+                          Falta: S/ {(getTotal() - selectedStudent.balance).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alumno con tope configurado y sin saldo suficiente → compra autorizada */}
+                  {selectedStudent &&
+                    !insufficientBalance &&
+                    selectedStudent.free_account === false &&
+                    selectedStudent.balance < getTotal() &&
+                    ((selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
+                     (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
+                     (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0)) && (
+                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
+                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-yellow-600 flex-shrink-0" />
+                      <div>
+                        <p className="font-bold text-yellow-800 text-[9px] sm:text-sm">✓ Compra dentro del tope</p>
+                        <p className="text-[8px] sm:text-xs text-yellow-700">
+                          Se registrará como deuda pendiente
                         </p>
                       </div>
                     </div>
                   )}
                   
-                  {selectedStudent && selectedStudent.free_account && (
-                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
-                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-green-600 flex-shrink-0" />
+                  {selectedStudent && selectedStudent.free_account !== false && (
+                    <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${
+                      selectedStudent.balance >= getTotal() 
+                        ? 'bg-blue-50 border-blue-300' 
+                        : 'bg-green-50 border-green-300'
+                    }`}>
+                      <Check className={`h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 ${
+                        selectedStudent.balance >= getTotal() ? 'text-blue-600' : 'text-green-600'
+                      }`} />
                       <div>
-                        <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
-                        <p className="text-[8px] sm:text-xs text-green-700">
-                          La compra se registrará como deuda para pagar después
-                        </p>
+                        {selectedStudent.balance >= getTotal() ? (
+                          <>
+                            <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
+                            <p className="text-[8px] sm:text-xs text-blue-700">
+                              Saldo: S/ {selectedStudent.balance.toFixed(2)} → S/ {(selectedStudent.balance - getTotal()).toFixed(2)}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
+                            <p className="text-[8px] sm:text-xs text-green-700">
+                              Se registrará como deuda pendiente
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2615,8 +3583,19 @@ const POS = () => {
                       return;
                     }
                   }
-                  
-                  // Abrir modal de selección de comprobante
+
+                  // Si el pago NO es efectivo puro → boleta/factura obligatoria,
+                  // saltar directo al modal de datos del cliente (sin pasar por el diálogo de tipo)
+                  const esEfectivoUnico = paymentMethod === 'efectivo';
+                  if (!esEfectivoUnico) {
+                    setShowConfirmDialog(false);
+                    setPendingInvoiceType('boleta'); // por defecto boleta, puede cambiar a factura
+                    setInvoiceTypeLocked(false);     // permitir elegir boleta o factura en el modal
+                    setShowInvoiceClientModal(true);
+                    return;
+                  }
+
+                  // Efectivo: mostrar selector de comprobante (Ticket / Boleta / Factura)
                   setShowConfirmDialog(false);
                   setShowDocumentTypeDialog(true);
                 }}
@@ -2872,12 +3851,12 @@ const POS = () => {
           </DialogHeader>
           
           <div className="grid grid-cols-3 gap-6 py-8">
-            {/* TICKET - DISPONIBLE */}
+            {/* TICKET */}
             <button
               onClick={() => {
                 setSelectedDocumentType('ticket');
                 setShowDocumentTypeDialog(false);
-                handleConfirmCheckout(true); // Procesar venta e imprimir
+                handleConfirmCheckout(true);
               }}
               className="flex flex-col items-center gap-4 p-8 border-4 border-emerald-300 bg-emerald-50 rounded-2xl hover:bg-emerald-100 hover:border-emerald-400 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
             >
@@ -2889,45 +3868,50 @@ const POS = () => {
               </div>
             </button>
             
-            {/* BOLETA - PRÓXIMAMENTE */}
+            {/* BOLETA */}
             <button
-              disabled
-              className="flex flex-col items-center gap-4 p-8 border-4 border-gray-200 bg-gray-50 rounded-2xl opacity-50 cursor-not-allowed"
+              onClick={() => {
+                setSelectedDocumentType('boleta');
+                setPendingInvoiceType('boleta');
+                setInvoiceTypeLocked(true); // ya se eligió → no preguntar en el modal
+                setShowDocumentTypeDialog(false);
+                setShowInvoiceClientModal(true);
+              }}
+              className="flex flex-col items-center gap-4 p-8 border-4 border-blue-300 bg-blue-50 rounded-2xl hover:bg-blue-100 hover:border-blue-400 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
             >
-              <Printer className="h-20 w-20 text-gray-400" />
+              <Printer className="h-20 w-20 text-blue-600" />
               <div className="text-center">
-                <p className="font-black text-xl text-gray-600">BOLETA</p>
-                <Badge variant="secondary" className="mt-2">Próximamente</Badge>
-                <p className="text-xs text-gray-500 mt-1">Requiere SUNAT</p>
+                <p className="font-black text-xl text-blue-900">BOLETA</p>
+                <p className="text-xs text-blue-700 mt-2">Persona natural / DNI</p>
+                <Badge className="mt-2 bg-blue-600 text-white text-xs">✓ Disponible</Badge>
               </div>
             </button>
             
-            {/* FACTURA - PRÓXIMAMENTE */}
+            {/* FACTURA */}
             <button
-              disabled
-              className="flex flex-col items-center gap-4 p-8 border-4 border-gray-200 bg-gray-50 rounded-2xl opacity-50 cursor-not-allowed"
+              onClick={() => {
+                setSelectedDocumentType('factura');
+                setPendingInvoiceType('factura');
+                setInvoiceTypeLocked(true); // ya se eligió → no preguntar en el modal
+                setShowDocumentTypeDialog(false);
+                setShowInvoiceClientModal(true);
+              }}
+              className="flex flex-col items-center gap-4 p-8 border-4 border-indigo-300 bg-indigo-50 rounded-2xl hover:bg-indigo-100 hover:border-indigo-400 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
             >
-              <FileText className="h-20 w-20 text-gray-400" />
+              <FileText className="h-20 w-20 text-indigo-600" />
               <div className="text-center">
-                <p className="font-black text-xl text-gray-600">FACTURA</p>
-                <Badge variant="secondary" className="mt-2">Próximamente</Badge>
-                <p className="text-xs text-gray-500 mt-1">Requiere SUNAT</p>
+                <p className="font-black text-xl text-indigo-900">FACTURA</p>
+                <p className="text-xs text-indigo-700 mt-2">Empresa / RUC</p>
+                <Badge className="mt-2 bg-indigo-600 text-white text-xs">✓ Disponible</Badge>
               </div>
             </button>
-          </div>
-
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
-            <p className="text-sm text-blue-900">
-              <strong>ℹ️ Nota:</strong> Por ahora solo está disponible la impresión de tickets. 
-              Boleta y Factura electrónicas estarán disponibles una vez conectado a SUNAT.
-            </p>
           </div>
 
           <Button
             variant="outline"
             onClick={() => {
               setShowDocumentTypeDialog(false);
-              setShowConfirmDialog(true); // Volver al modal de pago
+              setShowConfirmDialog(true);
             }}
             className="w-full"
           >
@@ -2935,6 +3919,30 @@ const POS = () => {
           </Button>
         </DialogContent>
       </Dialog>
+
+      {/* MODAL DE DATOS DEL CLIENTE (BOLETA / FACTURA) */}
+      <InvoiceClientModal
+        open={showInvoiceClientModal}
+        onClose={() => {
+          setShowInvoiceClientModal(false);
+          // Si el tipo estaba bloqueado venía del dialog de tipo → volver a él
+          // Si no estaba bloqueado venía directo de pago no-efectivo → volver al confirm dialog
+          if (invoiceTypeLocked) {
+            setShowDocumentTypeDialog(true);
+          } else {
+            setShowConfirmDialog(true);
+          }
+        }}
+        defaultType={pendingInvoiceType}
+        lockedType={invoiceTypeLocked}
+        defaultName={
+          clientMode === 'student' ? selectedStudent?.full_name :
+          clientMode === 'teacher' ? selectedTeacher?.full_name : ''
+        }
+        totalAmount={getTotal()}
+        schoolId={userSchoolId || undefined}
+        onConfirm={handleGenerateInvoice}
+      />
     </div>
     </>
   );

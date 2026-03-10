@@ -84,7 +84,6 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
         setFormData(prev => ({ ...prev, classroom_id: '' }));
       }
     } else {
-      console.log('⚠️ No hay level_id seleccionado');
       setFilteredClassrooms([]);
       setFormData(prev => ({ ...prev, classroom_id: '' }));
     }

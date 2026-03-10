@@ -732,7 +732,6 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               })
               .eq('id', existingTx.id);
           } else {
-            // No se encontró transacción previa, crear una nueva
             const transactionData: any = {
               type: 'purchase',
               amount: -Math.abs(totalPrice),
@@ -740,6 +739,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               payment_status: 'pending',
               school_id: schoolId,
               ticket_code: ticketCode,
+              created_by: user?.id,
               metadata: {
                 lunch_order_id: insertedOrderId,
                 source: 'physical_order_wizard',
@@ -754,7 +754,6 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             await supabase.from('transactions').insert([transactionData]);
           }
         } else {
-          // Pedido nuevo → transacción nueva
           const transactionData: any = {
             type: 'purchase',
             amount: -Math.abs(totalPrice),
@@ -762,6 +761,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             payment_status: 'pending',
             school_id: schoolId,
             ticket_code: ticketCode,
+            created_by: user?.id,
             metadata: {
               lunch_order_id: insertedOrderId,
               source: 'physical_order_wizard',
@@ -791,6 +791,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           school_id: schoolId,
           manual_client_name: manualName,
           ticket_code: ticketCode,
+          created_by: user?.id,
           metadata: {
             lunch_order_id: insertedOrderId,
             source: 'physical_order_wizard_fiado',
@@ -820,6 +821,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           school_id: schoolId,
           manual_client_name: manualName,
           ticket_code: ticketCode,
+          created_by: user?.id,
           metadata: {
             lunch_order_id: insertedOrderId,
             source: 'physical_order_wizard_paid',
@@ -1183,9 +1185,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                                         })
                                       );
                                     } else {
-                                      setConfigSelections(prev =>
-                                        prev.map(s => s.group_name === group.name ? { ...s, selected: opt.name } : s)
-                                      );
+                                    setConfigSelections(prev =>
+                                      prev.map(s => s.group_name === group.name ? { ...s, selected: opt.name } : s)
+                                    );
                                     }
                                   }}
                                   className={`p-2.5 rounded-lg border-2 text-xs text-left transition-all ${
@@ -1193,7 +1195,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                                       ? 'border-amber-500 bg-amber-50 text-amber-900 font-semibold'
                                       : isDisabled
                                         ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
-                                        : 'border-gray-200 hover:border-amber-300 text-gray-700'
+                                      : 'border-gray-200 hover:border-amber-300 text-gray-700'
                                   }`}
                                 >
                                   {isMultiSelect

@@ -10,12 +10,13 @@ import { WelcomeHeader } from '@/components/WelcomeHeader';
 import { ViewAsSelector } from '@/components/ViewAsSelector';
 import { VersionBadge } from '@/components/VersionBadge';
 import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
-import { 
-  ShoppingCart, 
-  DollarSign, 
-  Users, 
-  FileSearch, 
-  TrendingUp, 
+import {
+  ShoppingCart,
+  DollarSign,
+  Users,
+  FileSearch,
+  FileText,
+  TrendingUp,
   Package,
   LogOut,
   Lock,
@@ -25,9 +26,17 @@ import {
   UtensilsCrossed,
   BarChart3,
   LineChart,
-  Clock
+  Clock,
+  RefreshCw,
+  Loader2,
+  Wifi,
+  AlertTriangle,
+  Eye,
+  XCircle,
+  Bell,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
 
 interface Module {
   id: string;
@@ -47,6 +56,7 @@ const ICON_MAP: { [key: string]: any } = {
   DollarSign,
   Users,
   FileSearch,
+  FileText,
   TrendingUp,
   Package,
   ShieldCheck,
@@ -73,20 +83,63 @@ const Dashboard = () => {
   const { role, isStaff } = useRole();
   const { full_name } = useUserProfile();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
   const [schoolName, setSchoolName] = useState<string>('');
+  const [forcingUpdate, setForcingUpdate] = useState(false);
+  const [cancellationAlerts, setCancellationAlerts] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
 
   useEffect(() => {
-    // ✅ FIX: Solo cargar módulos cuando AMBOS user Y role estén disponibles
     if (user && role) {
-      // console.log('✅ Usuario y rol disponibles, cargando módulos...');
       fetchUserModules();
-      fetchSchoolInfo(); // Obtener nombre de la sede
-    } else {
-      // console.log('⏳ Esperando user y role...', { user: !!user, role });
+      fetchSchoolInfo();
+      if (role === 'admin_general') {
+        fetchCancellationAlerts();
+      }
     }
   }, [user, role]);
+
+  const fetchCancellationAlerts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('cancellation_alerts')
+        .select('*')
+        .eq('is_read', false)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (!error && data) {
+        setCancellationAlerts(data);
+      }
+    } catch (err) {
+      console.error('Error cargando alertas:', err);
+    }
+  };
+
+  const markAlertRead = async (alertId: string) => {
+    const { error } = await supabase
+      .from('cancellation_alerts')
+      .update({ is_read: true, read_by: user?.id, read_at: new Date().toISOString() })
+      .eq('id', alertId);
+    if (!error) {
+      setCancellationAlerts(prev => prev.filter(a => a.id !== alertId));
+    }
+  };
+
+  const markAllAlertsRead = async () => {
+    const ids = cancellationAlerts.map(a => a.id);
+    if (ids.length === 0) return;
+    const { error } = await supabase
+      .from('cancellation_alerts')
+      .update({ is_read: true, read_by: user?.id, read_at: new Date().toISOString() })
+      .in('id', ids);
+    if (!error) {
+      setCancellationAlerts([]);
+      setShowAlerts(false);
+    }
+  };
 
   const fetchSchoolInfo = async () => {
     if (!user) return;
@@ -311,6 +364,18 @@ const Dashboard = () => {
           is_enabled: false,
           status: 'functional' as const,
         },
+        {
+          id: '16',
+          code: 'facturacion',
+          name: 'Facturación Electrónica',
+          description: 'Boletas, facturas SUNAT, reportes y configuración Nubefact',
+          icon: 'FileText',
+          color: 'indigo',
+          route: '/facturacion',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
       ];
 
       // Admin General tiene acceso a TODO
@@ -434,6 +499,52 @@ const Dashboard = () => {
     await signOut();
   };
 
+  /** 🔄 Forzar actualización de TODOS los usuarios conectados */
+  const handleForceUpdate = async () => {
+    if (forcingUpdate) return;
+    
+    const confirmed = window.confirm(
+      '🔄 ¿Forzar actualización para TODOS los usuarios?\n\n' +
+      'Esto recargará la app de todos los padres y admins que estén conectados en este momento.\n\n' +
+      'Los que no estén conectados se actualizarán cuando abran la app.'
+    );
+    if (!confirmed) return;
+
+    setForcingUpdate(true);
+    try {
+      const channel = supabase.channel('force-update');
+      await channel.subscribe();
+      
+      // Enviar señal de recarga a todos los clientes conectados
+      await channel.send({
+        type: 'broadcast',
+        event: 'reload',
+        payload: {
+          triggered_at: new Date().toISOString(),
+          triggered_by: user?.email || 'admin',
+        },
+      });
+
+      // Esperar un poco para que se envíe
+      await new Promise(r => setTimeout(r, 1500));
+      supabase.removeChannel(channel);
+
+      toast({
+        title: '✅ Señal de actualización enviada',
+        description: 'Todos los usuarios conectados recargarán su app automáticamente en los próximos segundos.',
+      });
+    } catch (err: any) {
+      console.error('Error forzando actualización:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo enviar la señal. Intenta de nuevo.',
+      });
+    } finally {
+      setForcingUpdate(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
       {/* Header */}
@@ -464,6 +575,104 @@ const Dashboard = () => {
         {/* ViewAsSelector - Solo para Admin General */}
         <ViewAsSelector />
         
+        {/* Botón de Forzar Actualización — Solo admin_general */}
+        {(role as string) === 'admin_general' && (
+          <div className="mb-4 mt-4">
+            <button
+              onClick={handleForceUpdate}
+              disabled={forcingUpdate}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {forcingUpdate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {forcingUpdate ? 'Enviando señal...' : '🔄 Forzar Actualización de Todos los Usuarios'}
+            </button>
+            <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1">
+              <Wifi className="h-3 w-3" />
+              Recarga la app de todos los padres y admins conectados al instante.
+            </p>
+          </div>
+        )}
+
+        {/* Alertas de anulación — Solo admin_general */}
+        {(role as string) === 'admin_general' && cancellationAlerts.length > 0 && (
+          <div className="mb-4">
+            <button
+              onClick={() => setShowAlerts(!showAlerts)}
+              className="w-full flex items-center justify-between bg-red-50 border-2 border-red-200 rounded-xl p-4 hover:bg-red-100 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Bell className="h-6 w-6 text-red-600" />
+                  <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                    {cancellationAlerts.length}
+                  </span>
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-red-800 text-sm">
+                    {cancellationAlerts.length} {cancellationAlerts.length === 1 ? 'venta anulada' : 'ventas anuladas'} sin revisar
+                  </p>
+                  <p className="text-xs text-red-600">Toca para ver detalles</p>
+                </div>
+              </div>
+              <AlertTriangle className="h-5 w-5 text-red-400" />
+            </button>
+
+            {showAlerts && (
+              <div className="mt-2 bg-white border-2 border-red-200 rounded-xl overflow-hidden shadow-lg">
+                <div className="flex items-center justify-between p-3 bg-red-600 text-white">
+                  <span className="font-bold text-sm">Anulaciones Pendientes</span>
+                  <button onClick={markAllAlertsRead} className="text-xs bg-white/20 px-3 py-1 rounded-full hover:bg-white/30">
+                    Marcar todas como leídas
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto divide-y">
+                  {cancellationAlerts.map((alert) => (
+                    <div key={alert.id} className="p-3 hover:bg-gray-50 flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="destructive" className="text-[10px]">
+                            S/ {Number(alert.amount).toFixed(2)}
+                          </Badge>
+                          {alert.payment_method && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {alert.payment_method}
+                            </Badge>
+                          )}
+                          {alert.refund_method && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              Dev: {alert.refund_method}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-700 mt-1 truncate">
+                          <strong>{alert.ticket_code}</strong> — {alert.client_name || 'Cliente'}
+                        </p>
+                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                          Motivo: {alert.cancellation_reason || '(sin motivo)'}
+                        </p>
+                        <p className="text-[10px] text-gray-400">
+                          {alert.created_at ? new Date(alert.created_at).toLocaleString('es-PE') : ''}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => markAlertRead(alert.id)}
+                        className="text-gray-400 hover:text-green-600 p-1 flex-shrink-0"
+                        title="Marcar como leída"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mb-6 mt-6">
           <h2 className="text-lg font-semibold text-gray-700 mb-2">Módulos Disponibles</h2>
           <p className="text-sm text-gray-500">

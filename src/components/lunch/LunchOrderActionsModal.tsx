@@ -124,20 +124,64 @@ export function LunchOrderActionsModal({
       if (selectedAction === 'cancel') {
         console.log('💰 Revirtiendo transacción del pedido cancelado...');
         
-        // Buscar la transacción original del pedido
-        const { data: originalTransaction, error: searchError } = await supabase
+        // Buscar la transacción original por metadata->lunch_order_id (más confiable)
+        let originalTransaction: any = null;
+        let searchError: any = null;
+
+        const { data: byMetadata, error: metaErr } = await supabase
           .from('transactions')
-          .select('amount')
-          .eq(order.student_id ? 'student_id' : 'teacher_id', order.student_id || order.teacher_id)
+          .select('id, amount, metadata')
           .eq('type', 'purchase')
-          .ilike('description', `%${order.order_date}%`)
+          .neq('payment_status', 'cancelled')
+          .filter('metadata->>lunch_order_id', 'eq', order.id)
           .maybeSingle();
+
+        if (byMetadata) {
+          originalTransaction = byMetadata;
+        }
+        if (metaErr) {
+          searchError = metaErr;
+        }
+
+        // Fallback: buscar por descripción si no se encontró por metadata
+        if (!originalTransaction) {
+          const { data: byDesc, error: descErr } = await supabase
+            .from('transactions')
+            .select('id, amount')
+            .eq(order.student_id ? 'student_id' : 'teacher_id', order.student_id || order.teacher_id)
+            .eq('type', 'purchase')
+            .ilike('description', `%${order.order_date}%`)
+            .neq('payment_status', 'cancelled')
+            .maybeSingle();
+          
+          if (descErr) searchError = descErr;
+          if (byDesc) originalTransaction = byDesc;
+        }
 
         if (searchError) {
           console.error('⚠️ Error buscando transacción original:', searchError);
         }
 
         if (originalTransaction) {
+          // Marcar la transacción original como cancelled para que no cuente en cierre de caja
+          const { error: cancelError } = await supabase
+            .from('transactions')
+            .update({
+              payment_status: 'cancelled',
+              metadata: {
+                ...(originalTransaction.metadata || {}),
+                cancelled_at: new Date().toISOString(),
+                cancelled_by: user?.id,
+                cancellation_reason: reason.trim(),
+                cancelled_from: 'lunch_order_cancel',
+              },
+            })
+            .eq('id', originalTransaction.id);
+
+          if (cancelError) {
+            console.error('⚠️ Error marcando transacción como cancelada:', cancelError);
+          }
+
           // Crear transacción de reversión (monto positivo)
           const refundAmount = Math.abs(originalTransaction.amount);
           
@@ -147,20 +191,37 @@ export function LunchOrderActionsModal({
               student_id: order.student_id,
               teacher_id: order.teacher_id,
               type: 'refund',
-              amount: refundAmount, // Monto positivo (devolución)
+              amount: refundAmount,
               description: `Anulación de almuerzo - ${order.order_date}`,
               payment_method: 'adjustment',
-              school_id: order.student?.school_id || order.school_id
+              school_id: order.student?.school_id || order.school_id,
+              created_by: user?.id,
+              metadata: {
+                lunch_order_id: order.id,
+                original_transaction_id: originalTransaction.id,
+                source: 'lunch_order_cancel',
+              },
             });
 
           if (transactionError) {
             console.error('⚠️ Error creando transacción de reversión:', transactionError);
-          } else {
-            console.log('✅ Transacción revertida correctamente');
           }
-        } else {
-          console.warn('⚠️ No se encontró transacción original para revertir');
         }
+
+        // Insertar alerta de anulación para admin_general
+        await supabase.from('cancellation_alerts').insert({
+          school_id: order.student?.school_id || order.school_id,
+          lunch_order_id: order.id,
+          transaction_id: originalTransaction?.id || null,
+          alert_type: 'lunch_cancelled',
+          amount: originalTransaction ? Math.abs(originalTransaction.amount) : 0,
+          payment_method: originalTransaction?.metadata?.payment_method || 'saldo',
+          cancelled_by: user?.id,
+          cancellation_reason: reason.trim(),
+          client_name: order.student?.full_name || order.teacher?.full_name || 'Sin nombre',
+        }).then(({ error: alertErr }) => {
+          if (alertErr) console.error('⚠️ Error insertando alerta de almuerzo:', alertErr);
+        });
       }
 
       const actionMessages = {

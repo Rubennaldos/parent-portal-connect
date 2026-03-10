@@ -24,7 +24,8 @@ import {
   Lock,
   CreditCard,
   ArrowLeft,
-  Printer
+  Printer,
+  Terminal
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -35,6 +36,7 @@ import { PaymentGatewaysConfig } from '@/components/admin/PaymentGatewaysConfig'
 import { PrinterConfiguration } from '@/components/admin/PrinterConfiguration';
 import StudentsManagement from '@/components/admin/StudentsManagement';
 import ErrorDashboard from '@/components/admin/ErrorDashboard';
+import DevBacklogMonitor from '@/components/admin/DevBacklogMonitor';
 import { VersionBadge } from '@/components/VersionBadge';
 import { APP_CONFIG } from '@/config/app.config';
 
@@ -127,6 +129,10 @@ const SuperAdmin = () => {
             <TabsTrigger value="payment-gateways" className="data-[state=active]:bg-background">
               <CreditCard className="h-4 w-4 mr-2" />
               Pasarelas de Pago
+            </TabsTrigger>
+            <TabsTrigger value="ai-monitor" className="data-[state=active]:bg-background">
+              <Terminal className="h-4 w-4 mr-2" />
+              Monitor IA
             </TabsTrigger>
             <TabsTrigger value="errors" className="data-[state=active]:bg-background">
               <AlertTriangle className="h-4 w-4 mr-2" />
@@ -235,6 +241,11 @@ const SuperAdmin = () => {
                 <PaymentGatewaysConfig />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Monitor IA Tab — Tickets del Agente de Soporte */}
+          <TabsContent value="ai-monitor" className="space-y-4">
+            <DevBacklogMonitor />
           </TabsContent>
 
           {/* Logs Tab */}

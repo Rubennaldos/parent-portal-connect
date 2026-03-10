@@ -557,7 +557,7 @@ const LunchCalendar = () => {
       <main className="container mx-auto px-2 sm:px-4 py-4 sm:py-8">
         <Tabs defaultValue="calendar" className="w-full">
           {/* Tabs responsive */}
-          <TabsList className="grid w-full grid-cols-4 mb-4 sm:mb-6 h-auto">
+          <TabsList className={`grid w-full mb-4 sm:mb-6 h-auto ${canViewAllSchools ? 'grid-cols-4' : 'grid-cols-3'}`}>
             <TabsTrigger value="calendar" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
               <span className="hidden sm:inline">📅 Calendario</span>
               <span className="sm:hidden">📅</span>
@@ -566,10 +566,13 @@ const LunchCalendar = () => {
               <span className="hidden sm:inline">🍽️ Pedidos</span>
               <span className="sm:hidden">🍽️</span>
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
-              <span className="hidden sm:inline">📊 Analytics</span>
-              <span className="sm:hidden">📊</span>
-            </TabsTrigger>
+            {/* Analytics: solo superadmin y admin_general (canViewAllSchools) */}
+            {canViewAllSchools && (
+              <TabsTrigger value="analytics" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
+                <span className="hidden sm:inline">📊 Analytics</span>
+                <span className="sm:hidden">📊</span>
+              </TabsTrigger>
+            )}
             <TabsTrigger value="config" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
               <span className="hidden sm:inline">⚙️ Config</span>
               <span className="sm:hidden">⚙️</span>

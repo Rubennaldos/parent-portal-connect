@@ -1,9 +1,31 @@
-import { defineConfig } from "vite";
+import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import mkcert from "vite-plugin-mkcert";
 import { VitePWA } from "vite-plugin-pwa";
+import fs from "fs";
+
+/**
+ * 🔄 Plugin personalizado: genera /version.json en cada build
+ * con un hash único (timestamp). El VersionChecker del frontend
+ * lo compara periódicamente y fuerza recarga si cambia.
+ */
+function versionPlugin(): Plugin {
+  return {
+    name: "version-generator",
+    writeBundle() {
+      const versionData = {
+        version: Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8),
+        buildTime: new Date().toISOString(),
+      };
+      fs.writeFileSync(
+        path.resolve(__dirname, "dist", "version.json"),
+        JSON.stringify(versionData)
+      );
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -13,7 +35,7 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: "dist",
     sourcemap: false,
-    minify: "esbuild", // Cambiado de terser a esbuild (viene por defecto)
+    minify: "esbuild",
     rollupOptions: {
       output: {
         manualChunks: undefined,
@@ -25,19 +47,18 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     // ✅ HTTPS habilitado para desarrollo
-    // Esto resuelve el problema de QZ Tray pidiendo permiso constantemente
     https: mode === "development",
   },
   plugins: [
     react(), 
     mode === "development" && componentTagger(),
-    // ✅ Plugin para generar certificados SSL válidos en localhost
     mode === "development" && mkcert(),
-    // ✅ PWA - Permite instalar la app en celulares
+    
+    // ✅ PWA - Ahora con autoUpdate AGRESIVO
     VitePWA({
-      // 🔧 FIX: "prompt" en vez de "autoUpdate" para evitar que la página
-      // se recargue sola al volver a la pestaña cuando hay una actualización
-      registerType: "prompt",
+      // 🔧 autoUpdate: el SW nuevo se instala y activa AUTOMÁTICAMENTE
+      // sin pedirle nada al usuario
+      registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "icon-192.png", "icon-512.png"],
       manifest: {
         name: "Lima Café 28 - Kiosco Escolar",
@@ -66,11 +87,20 @@ export default defineConfig(({ mode }) => ({
         ],
       },
       workbox: {
-        // Cachear recursos estáticos para uso offline
+        // ✅ skipWaiting + clientsClaim: el SW nuevo toma control INMEDIATAMENTE
+        skipWaiting: true,
+        clientsClaim: true,
+        // Cachear recursos estáticos
         globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
-        // El bundle principal pesa >2MB, aumentamos el límite a 5MB
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // ❌ NO cachear version.json (siempre debe ir al servidor)
+        navigateFallbackDenylist: [/^\/version\.json$/],
         runtimeCaching: [
+          {
+            // ❌ version.json SIEMPRE NetworkOnly (nunca cachear)
+            urlPattern: /\/version\.json$/,
+            handler: "NetworkOnly",
+          },
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: "NetworkFirst",
@@ -78,16 +108,19 @@ export default defineConfig(({ mode }) => ({
               cacheName: "supabase-api-cache",
               expiration: {
                 maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24, // 1 día
+                maxAgeSeconds: 60 * 60 * 24,
               },
             },
           },
         ],
       },
       devOptions: {
-        enabled: false, // Solo activo en producción
+        enabled: false,
       },
     }),
+    
+    // ✅ Generar version.json en cada build
+    versionPlugin(),
   ].filter(Boolean),
   resolve: {
     alias: {

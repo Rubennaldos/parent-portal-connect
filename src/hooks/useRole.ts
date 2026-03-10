@@ -10,7 +10,8 @@ export type UserRole =
   | 'supervisor_red' 
   | 'gestor_unidad' 
   | 'operador_caja' 
-  | 'operador_cocina' 
+  | 'operador_cocina'
+  | 'contadora'
   | null;
 
 interface UseRoleReturn {

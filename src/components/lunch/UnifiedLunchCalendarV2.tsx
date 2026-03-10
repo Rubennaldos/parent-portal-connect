@@ -285,6 +285,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const [isInlineOrdering, setIsInlineOrdering] = useState(false);
   const [showNotesField, setShowNotesField] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
+  const expandedSectionRef = useRef<HTMLDivElement>(null);
 
   // ==========================================
   // COMPUTED
@@ -329,50 +330,57 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       const end = endOfMonth(currentDate);
       const startStr = format(start, 'yyyy-MM-dd');
       const endStr = format(end, 'yyyy-MM-dd');
-
-      // 1. Configuration - FIXED: correct column names from DB
-      const { data: configData, error: configError } = await supabase
-        .from('lunch_configuration')
-        .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days, cancellation_deadline_time, cancellation_deadline_days')
-        .eq('school_id', effectiveSchoolId)
-        .maybeSingle();
-
-      if (configError) {
-        console.error('Error loading config:', configError);
-      }
-      setConfig(configData);
-
-      // 2. PRIMERO: Cargar categorías que corresponden al tipo de usuario
-      // 🔑 La CATEGORÍA es la fuente de verdad para decidir quién ve qué menús
       const targetType = userType === 'parent' ? 'students' : 'teachers';
-      
-      const { data: allCategoriesData, error: catError } = await supabase
-        .from('lunch_categories')
-        .select('*')
-        .eq('school_id', effectiveSchoolId)
-        .or(`target_type.eq.${targetType},target_type.eq.both`);
+      const personField = userType === 'parent' ? 'student_id' : 'teacher_id';
+      const personId = userType === 'parent' ? selectedStudent?.id : userId;
 
-      if (catError) {
-        console.error('Error loading categories:', catError);
-      }
+      // Run independent queries in parallel for speed
+      const [configResult, categoriesResult, specialResult, ordersResult] = await Promise.all([
+        supabase
+          .from('lunch_configuration')
+          .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days, cancellation_deadline_time, cancellation_deadline_days')
+          .eq('school_id', effectiveSchoolId)
+          .maybeSingle(),
+        supabase
+          .from('lunch_categories')
+          .select('*')
+          .eq('school_id', effectiveSchoolId)
+          .or(`target_type.eq.${targetType},target_type.eq.both`),
+        supabase
+          .from('special_days')
+          .select('date, type, title')
+          .eq('school_id', effectiveSchoolId)
+          .gte('date', startStr)
+          .lte('date', endStr),
+        personId
+          ? supabase
+              .from('lunch_orders')
+              .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by, configurable_selections, selected_garnishes, selected_modifiers, parent_notes')
+              .eq(personField, personId)
+              .gte('order_date', startStr)
+              .lte('order_date', endStr)
+              .order('created_at', { ascending: false })
+          : Promise.resolve({ data: null, error: null }),
+      ]);
 
-      // Filtrar categorías de cocina (POS products, no almuerzos)
-      const lunchCategories = (allCategoriesData || []).filter(
+      if (configResult.error) console.error('Error loading config:', configResult.error);
+      setConfig(configResult.data);
+
+      if (categoriesResult.error) console.error('Error loading categories:', categoriesResult.error);
+
+      const lunchCategories = (categoriesResult.data || []).filter(
         (cat: any) => cat.is_kitchen_sale !== true
       );
 
-      let categoriesMap = new Map<string, LunchCategory>();
+      const categoriesMap = new Map<string, LunchCategory>();
       lunchCategories.forEach((cat: any) => {
         categoriesMap.set(cat.id, { ...cat, menu_mode: cat.menu_mode || 'standard' });
       });
 
-      // 3. DESPUÉS: Cargar menús que pertenecen a esas categorías (o sin categoría)
-      // Ya NO filtramos por lunch_menus.target_type — la categoría lo decide
+      // Menus query depends on categories
       const validCategoryIds = [...categoriesMap.keys()];
-
       let menusData: any[] = [];
       if (validCategoryIds.length > 0) {
-        // Construir filtro: menús de categorías válidas O menús sin categoría (legacy/bulk)
         const { data, error: menusError } = await supabase
           .from('lunch_menus')
           .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
@@ -381,11 +389,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           .lte('date', endStr)
           .or(`category_id.in.(${validCategoryIds.join(',')}),category_id.is.null`)
           .order('date', { ascending: true });
-
         if (menusError) throw menusError;
         menusData = data || [];
       } else {
-        // Si no hay categorías para este tipo de usuario, buscar menús sin categoría (legacy)
         const { data, error: menusError } = await supabase
           .from('lunch_menus')
           .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
@@ -394,23 +400,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           .lte('date', endStr)
           .is('category_id', null)
           .order('date', { ascending: true });
-
         if (menusError) throw menusError;
         menusData = data || [];
       }
 
-      // Build menus map - skip menus whose categories don't belong to this school
-      // (but NOT skip inactive categories — they stay visible)
       const menusMap = new Map<string, LunchMenu[]>();
-      let menusIncluded = 0;
-      let menusSkipped = 0;
       (menusData || []).forEach(menu => {
-        if (menu.category_id && !categoriesMap.has(menu.category_id)) {
-          menusSkipped++;
-          return;
-        }
-
-        menusIncluded++;
+        if (menu.category_id && !categoriesMap.has(menu.category_id)) return;
         const menuWithCat = {
           ...menu,
           category: menu.category_id ? categoriesMap.get(menu.category_id) || null : null
@@ -421,32 +417,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       });
       setMenus(menusMap);
 
-      // 4. Special days
-      const { data: specialDaysData } = await supabase
-        .from('special_days')
-        .select('date, type, title')
-        .eq('school_id', effectiveSchoolId)
-        .gte('date', startStr)
-        .lte('date', endStr);
-
       const specialMap = new Map<string, SpecialDay>();
-      (specialDaysData || []).forEach(day => specialMap.set(day.date, day));
+      (specialResult.data || []).forEach(day => specialMap.set(day.date, day));
       setSpecialDays(specialMap);
 
-      // 5. Existing orders
-      const personField = userType === 'parent' ? 'student_id' : 'teacher_id';
-      const personId = userType === 'parent' ? selectedStudent?.id : userId;
-
-      if (personId) {
-        const { data: ordersData } = await supabase
-          .from('lunch_orders')
-          .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by, configurable_selections, selected_garnishes, selected_modifiers, parent_notes')
-          .eq(personField, personId)
-          .gte('order_date', startStr)
-          .lte('order_date', endStr)
-          .order('created_at', { ascending: false });
-
-        const orders: ExistingOrder[] = (ordersData || []).map(o => ({
+      if (personId && ordersResult.data) {
+        const orders: ExistingOrder[] = (ordersResult.data || []).map((o: any) => ({
           id: o.id,
           date: o.order_date,
           categoryName: o.category_id ? categoriesMap.get(o.category_id)?.name || null : null,
@@ -465,7 +441,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           parent_notes: o.parent_notes || null,
         }));
 
-        // Obtener el payment_status de las transacciones vinculadas (para saber si ya están pagadas)
         if (orders.length > 0 && userType === 'parent') {
           const { data: txData } = await supabase
             .from('transactions')
@@ -485,7 +460,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             });
           }
         }
-
         setExistingOrders(orders);
       }
 
@@ -627,6 +601,15 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   }, [selectedDay]);
 
+  // Auto-scroll al expandir un menú/categoría
+  useEffect(() => {
+    if (expandedCategoryId && expandedSectionRef.current) {
+      setTimeout(() => {
+        expandedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+    }
+  }, [expandedCategoryId, wizardStep]);
+
   const scrollCarousel = (direction: 'left' | 'right') => {
     if (carouselRef.current) {
       carouselRef.current.scrollBy({
@@ -729,38 +712,74 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     await handleCategorySelect(category);
   };
 
-  // Handle inline order success → open payment
+  // Handle direct menu tap (skip category step - go straight to menu/confirm)
+  const handleDirectMenuTap = async (category: LunchCategory, menu: LunchMenu) => {
+    if (!selectedDay) return;
+
+    // If same menu already expanded, collapse
+    if (expandedCategoryId === category.id && isInlineOrdering) {
+      setExpandedCategoryId(null);
+      setIsInlineOrdering(false);
+      setWizardStep('idle');
+      return;
+    }
+
+    const dayOrders = existingOrders.filter(o => o.date === selectedDay && !o.is_cancelled);
+    const hasOrderForCategory = dayOrders.some(o => o.categoryId === category.id);
+    if (hasOrderForCategory) {
+      toast({ title: '⚠️ Ya tienes pedido', description: `Ya pediste "${category.name}" para este día.` });
+      return;
+    }
+
+    const validation = canOrderForDate(selectedDay);
+    if (!validation.canOrder) {
+      toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: validation.reason });
+      return;
+    }
+
+    setExpandedCategoryId(category.id);
+    setIsInlineOrdering(true);
+    setWizardDates([selectedDay]);
+    setWizardCurrentIndex(0);
+    setCreatedOrderIds([]);
+    setCreatedTransactionIds([]);
+    setTotalOrderAmount(0);
+    setOrderDescriptions([]);
+    setQuantity(1);
+    setMenuModifierGroups([]);
+    setSelectedModifiers([]);
+    setModifierFavorites([]);
+    setParentNotes('');
+    setShowNotesField(false);
+    setBulkPreselectedCategory(null);
+    setShowDayTransition(false);
+    setOrdersCreated(0);
+
+    // Set category context
+    setSelectedCategory(category);
+    setSkipAutoSelect(true);
+
+    // Jump straight to menu selection (skipping category step)
+    await handleMenuSelect(menu);
+  };
+
+  // Handle inline order success → close wizard (NO abrir pago automáticamente)
   useEffect(() => {
     if (isInlineOrdering && wizardStep === 'done' && ordersCreated > 0) {
-      // Brief delay to show success, then offer payment
       const timer = setTimeout(() => {
+        setExpandedCategoryId(null);
+        setIsInlineOrdering(false);
+        setWizardStep('idle');
+        setWizardDates([]);
+        setSelectedDates(new Set());
+        fetchMonthlyData();
+
         if (userType === 'parent' && totalOrderAmount > 0) {
-          // Keep payment data, close inline, open payment
-          const savedAmount = totalOrderAmount;
-          const savedDescs = [...orderDescriptions];
-          const savedOrderIds = [...createdOrderIds];
-          const savedTxIds = [...createdTransactionIds];
-
-          setExpandedCategoryId(null);
-          setIsInlineOrdering(false);
-          setWizardStep('idle');
-          setWizardDates([]);
-          setSelectedDates(new Set());
-          fetchMonthlyData();
-
-          // Restore payment data after state reset
-          setTimeout(() => {
-            setTotalOrderAmount(savedAmount);
-            setOrderDescriptions(savedDescs);
-            setCreatedOrderIds(savedOrderIds);
-            setCreatedTransactionIds(savedTxIds);
-            setShowPaymentModal(true);
-          }, 100);
-        } else {
-          // Teacher flow - just close
-          setExpandedCategoryId(null);
-          setIsInlineOrdering(false);
-          closeWizard();
+          toast({
+            title: '✅ Pedido registrado',
+            description: `S/ ${totalOrderAmount.toFixed(2)} pendiente de pago. Puedes seguir pidiendo o pagar desde la pestaña Pagos.`,
+            duration: 5000,
+          });
         }
       }, 1500);
       return () => clearTimeout(timer);
@@ -1805,368 +1824,357 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           </div>
         )}
 
-        {/* Category cards grid */}
-        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-          {categories.map(({ category, menus: catMenus }) => {
-            const IconComponent = ICON_MAP[category.icon || 'utensils'] || UtensilsCrossed;
-            const price = category.price || config?.lunch_price || 0;
-            const isExpanded = expandedCategoryId === category.id && isInlineOrdering;
-            const hasOrderForThis = dayOrders.some(o => o.categoryId === category.id);
-            const canOrderNow = dayData.canOrder && !hasOrderForThis;
-            const mainMenu = catMenus[0];
+        {/* Menus shown directly, grouped by category */}
+        {categories.map(({ category, menus: catMenus }) => {
+          const IconComponent = ICON_MAP[category.icon || 'utensils'] || UtensilsCrossed;
+          const price = category.price || config?.lunch_price || 0;
+          const isExpanded = expandedCategoryId === category.id && isInlineOrdering;
+          const hasOrderForThis = dayOrders.some(o => o.categoryId === category.id);
+          const canOrderNow = dayData.canOrder && !hasOrderForThis;
+          const isConfigurable = category.is_configurable;
 
-            return (
-              <div key={category.id} className={cn("col-span-1", isExpanded && "col-span-2")}>
-                {/* Card */}
+          return (
+            <div key={category.id} className="space-y-2">
+              {/* Category header (compact) */}
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: (category.color || '#8B5CF6') + '20' }}
+                >
+                  <IconComponent className="h-3.5 w-3.5" style={{ color: category.color || '#8B5CF6' }} />
+                </div>
+                <span className="font-bold text-sm" style={{ color: category.color || '#8B5CF6' }}>{category.name}</span>
+                <span className="text-sm font-black text-purple-700">S/ {price.toFixed(2)}</span>
+                {hasOrderForThis && (
+                  <Badge className="bg-green-500 text-[10px] px-1.5 py-0 ml-auto">✓ Pedido</Badge>
+                )}
+              </div>
+
+              {/* Configurable category: single compact button */}
+              {isConfigurable && (
                 <button
                   onClick={() => canOrderNow ? handleCategoryCardTap(category) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
                   disabled={!canOrderNow && !hasOrderForThis}
                   className={cn(
-                    "w-full text-left rounded-xl border-2 p-3 transition-all duration-200",
+                    "w-full text-left rounded-lg border-2 p-2.5 transition-all",
                     "disabled:opacity-50 disabled:cursor-not-allowed",
-                    isExpanded && "border-purple-500 bg-purple-50 shadow-lg",
-                    !isExpanded && canOrderNow && "bg-white border-gray-200 hover:border-purple-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98]",
+                    isExpanded && "border-amber-400 bg-amber-50",
+                    !isExpanded && canOrderNow && "bg-white border-gray-200 hover:border-amber-400 hover:bg-amber-50/50 active:scale-[0.98]",
                     !isExpanded && hasOrderForThis && "bg-green-50 border-green-300",
-                    !isExpanded && !canOrderNow && !hasOrderForThis && "bg-gray-50 border-gray-200",
                   )}
                 >
-                  <div className="flex items-start gap-2.5">
-                    <div
-                      className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: (category.color || '#8B5CF6') + '20' }}
-                    >
-                      <IconComponent className="h-5 w-5" style={{ color: category.color || '#8B5CF6' }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sm text-gray-900 truncate">{category.name}</p>
-                      {mainMenu && (
-                        <p className="text-[11px] text-gray-500 truncate mt-0.5">{mainMenu.main_course}</p>
-                      )}
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-base font-black text-purple-700">S/ {price.toFixed(2)}</span>
-                        {hasOrderForThis && (
-                          <Badge className="bg-green-500 text-[10px] px-1.5 py-0">✓ Pedido</Badge>
-                        )}
-                        {canOrderNow && !isExpanded && (
-                          <span className="text-[10px] text-purple-600 font-semibold">Pedir →</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  <p className="text-xs font-semibold text-amber-800">🍽️ Arma tu plato personalizado</p>
+                  {canOrderNow && !isExpanded && <p className="text-[10px] text-amber-600 mt-0.5">Toca para personalizar →</p>}
                 </button>
+              )}
 
-                {/* Inline expanded ordering form */}
-                {isExpanded && (
-                  <div className="mt-2 bg-white rounded-xl border-2 border-purple-200 p-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                    {/* Inline success state */}
-                    {wizardStep === 'done' && (
-                      <div className="text-center py-4">
-                        <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-2 animate-bounce" />
-                        <p className="font-bold text-green-700">¡Pedido registrado!</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {userType === 'parent' ? 'Preparando pago...' : 'Listo ✓'}
-                        </p>
-                      </div>
-                    )}
+              {/* Standard menus: show each menu directly */}
+              {!isConfigurable && (
+                <div className={cn(
+                  "grid gap-2",
+                  catMenus.length > 1 ? "grid-cols-2" : "grid-cols-1"
+                )}>
+                  {catMenus.map((menu) => (
+                    <button
+                      key={menu.id}
+                      onClick={() => canOrderNow ? handleDirectMenuTap(category, menu) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
+                      disabled={!canOrderNow && !hasOrderForThis}
+                      className={cn(
+                        "w-full text-left rounded-lg border-2 p-2.5 transition-all",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                        canOrderNow && "bg-white border-gray-200 hover:border-purple-400 hover:bg-purple-50/50 active:scale-[0.98]",
+                        hasOrderForThis && "bg-green-50 border-green-300",
+                      )}
+                    >
+                      <p className="font-bold text-sm text-gray-900">{menu.main_course}</p>
+                      {menu.starter && <p className="text-[11px] text-gray-500 mt-0.5">🥗 {menu.starter}</p>}
+                      {menu.beverage && <p className="text-[11px] text-gray-500">🥤 {menu.beverage}</p>}
+                      {menu.dessert && <p className="text-[11px] text-gray-500">🍮 {menu.dessert}</p>}
+                      {menu.notes && <p className="text-[10px] text-gray-400 mt-0.5 italic">{menu.notes}</p>}
+                      {canOrderNow && (
+                        <p className="text-[10px] text-purple-600 font-semibold mt-1">Pedir →</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-                    {/* Day transition feedback */}
-                    {showDayTransition && (
-                      <div className="text-center py-4 animate-pulse">
-                        <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-1" />
-                        <p className="text-sm font-bold text-green-700">✅ Registrado</p>
-                      </div>
-                    )}
+              {/* Inline expanded ordering form */}
+              {isExpanded && (
+                <div ref={expandedSectionRef} className="bg-white rounded-xl border-2 border-purple-200 p-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                  {wizardStep === 'done' && (
+                    <div className="text-center py-3">
+                      <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-1 animate-bounce" />
+                      <p className="font-bold text-green-700 text-sm">¡Pedido registrado!</p>
+                      <p className="text-xs text-gray-500">{userType === 'parent' ? 'Puedes seguir pidiendo otros días' : 'Listo ✓'}</p>
+                    </div>
+                  )}
 
-                    {/* Menu selection step */}
-                    {!showDayTransition && wizardStep === 'select_menu' && selectedCategory && (
-                      <div className="space-y-2">
-                        {categoryMenuOptions.length > 1 && (
-                          <p className="text-xs font-semibold text-gray-600">
-                            {categoryMenuOptions.length} opciones disponibles:
-                          </p>
-                        )}
-                        {categoryMenuOptions.length === 1 && (
-                          <p className="text-xs font-semibold text-purple-700">
-                            Menú del día:
-                          </p>
-                        )}
-                        {categoryMenuOptions.map((menu) => (
-                          <button
-                            key={menu.id}
-                            onClick={() => handleMenuSelect(menu)}
-                            className={cn(
-                              "w-full text-left rounded-lg border-2 transition-all",
-                              categoryMenuOptions.length === 1
-                                ? "p-3 border-purple-300 bg-purple-50 hover:border-purple-500"
-                                : "p-2.5 border-gray-200 hover:border-purple-400 hover:bg-purple-50"
-                            )}
-                          >
-                            <p className="font-bold text-sm">{menu.main_course}</p>
-                            {menu.starter && <p className="text-xs text-gray-600">🥗 Entrada: {menu.starter}</p>}
-                            {menu.beverage && <p className="text-xs text-gray-600">🥤 Bebida: {menu.beverage}</p>}
-                            {menu.dessert && <p className="text-xs text-gray-600">🍮 Postre: {menu.dessert}</p>}
-                            {menu.notes && <p className="text-[10px] text-gray-400 mt-1 italic">{menu.notes}</p>}
-                            {categoryMenuOptions.length === 1 && (
-                              <p className="text-xs text-purple-600 font-semibold mt-2 text-center">
-                                Toca para seleccionar →
-                              </p>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                  {showDayTransition && (
+                    <div className="text-center py-3 animate-pulse">
+                      <CheckCircle2 className="h-7 w-7 text-green-500 mx-auto mb-1" />
+                      <p className="text-sm font-bold text-green-700">✅ Registrado</p>
+                    </div>
+                  )}
 
-                    {/* Configurable plate step */}
-                    {!showDayTransition && wizardStep === 'configurable_select' && selectedCategory && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold text-amber-700">🍽️ Arma tu plato:</p>
-                        {configPlateGroups.map((group) => {
-                          const currentSelection = configSelections.find(s => s.group_name === group.name);
-                          const isMultiSelect = (group.max_selections || 1) > 1;
-                          const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
-                          const maxSel = group.max_selections || 1;
+                  {/* Configurable plate step */}
+                  {!showDayTransition && wizardStep === 'configurable_select' && selectedCategory && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-amber-700">🍽️ Arma tu plato:</p>
+                      {configPlateGroups.map((group) => {
+                        const currentSelection = configSelections.find(s => s.group_name === group.name);
+                        const isMultiSelect = (group.max_selections || 1) > 1;
+                        const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
+                        const maxSel = group.max_selections || 1;
 
-                          return (
-                            <div key={group.id} className="bg-amber-50 rounded-lg p-2 space-y-1.5">
-                              <p className="text-xs font-semibold text-amber-900">
-                                {group.name}
-                                {group.is_required && <span className="text-red-500">*</span>}
-                                {isMultiSelect && <span className="text-[10px] text-gray-400 ml-1">({selectedItems.length}/{maxSel})</span>}
-                              </p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {group.options.map(option => {
-                                  const isSelected = isMultiSelect ? selectedItems.includes(option.name) : currentSelection?.selected === option.name;
-                                  const isDisabled = isMultiSelect && !isSelected && selectedItems.length >= maxSel;
-                                  return (
-                                    <button
-                                      key={option.id}
-                                      disabled={isDisabled}
-                                      onClick={() => {
-                                        if (isMultiSelect) {
-                                          setConfigSelections(prev => prev.map(s => {
-                                            if (s.group_name !== group.name) return s;
-                                            const current = s.selected ? s.selected.split(', ').filter(Boolean) : [];
-                                            let updated: string[];
-                                            if (current.includes(option.name)) { updated = current.filter(n => n !== option.name); }
-                                            else if (current.length < maxSel) { updated = [...current, option.name]; }
-                                            else { return s; }
-                                            return { ...s, selected: updated.join(', ') };
-                                          }));
-                                        } else {
-                                          setConfigSelections(prev => prev.map(s => s.group_name === group.name ? { ...s, selected: option.name } : s));
-                                        }
-                                      }}
-                                      className={cn(
-                                        "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
-                                        isSelected ? "border-amber-500 bg-amber-100 text-amber-900" :
-                                        isDisabled ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed" :
-                                        "border-gray-200 hover:border-amber-300 text-gray-600"
-                                      )}
-                                    >
-                                      {isSelected && '✓ '}{option.name}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                        return (
+                          <div key={group.id} className="bg-amber-50 rounded-lg p-2 space-y-1.5">
+                            <p className="text-xs font-semibold text-amber-900">
+                              {group.name}
+                              {group.is_required && <span className="text-red-500">*</span>}
+                              {isMultiSelect && <span className="text-[10px] text-gray-400 ml-1">({selectedItems.length}/{maxSel})</span>}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {group.options.map(option => {
+                                const isSelected = isMultiSelect ? selectedItems.includes(option.name) : currentSelection?.selected === option.name;
+                                const isDisabledOpt = isMultiSelect && !isSelected && selectedItems.length >= maxSel;
+                                return (
+                                  <button
+                                    key={option.id}
+                                    disabled={isDisabledOpt}
+                                    onClick={() => {
+                                      if (isMultiSelect) {
+                                        setConfigSelections(prev => prev.map(s => {
+                                          if (s.group_name !== group.name) return s;
+                                          const current = s.selected ? s.selected.split(', ').filter(Boolean) : [];
+                                          let updated: string[];
+                                          if (current.includes(option.name)) { updated = current.filter(n => n !== option.name); }
+                                          else if (current.length < maxSel) { updated = [...current, option.name]; }
+                                          else { return s; }
+                                          return { ...s, selected: updated.join(', ') };
+                                        }));
+                                      } else {
+                                        setConfigSelections(prev => prev.map(s => s.group_name === group.name ? { ...s, selected: option.name } : s));
+                                      }
+                                    }}
+                                    className={cn(
+                                      "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
+                                      isSelected ? "border-amber-500 bg-amber-100 text-amber-900" :
+                                      isDisabledOpt ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed" :
+                                      "border-gray-200 hover:border-amber-300 text-gray-600"
+                                    )}
+                                  >
+                                    {isSelected && '✓ '}{option.name}
+                                  </button>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
-                        <Button
-                          size="sm"
-                          onClick={() => setWizardStep('confirm')}
-                          className="w-full bg-amber-600 hover:bg-amber-700 text-sm"
-                          disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                          </div>
+                        );
+                      })}
+                      <Button
+                        size="sm"
+                        onClick={() => setWizardStep('confirm')}
+                        className="w-full bg-amber-600 hover:bg-amber-700 text-sm"
+                        disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                      >
+                        Continuar →
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Menu selection step (only if entered via old path) */}
+                  {!showDayTransition && wizardStep === 'select_menu' && selectedCategory && (
+                    <div className="space-y-2">
+                      {categoryMenuOptions.map((menu) => (
+                        <button
+                          key={menu.id}
+                          onClick={() => handleMenuSelect(menu)}
+                          className="w-full text-left rounded-lg border-2 p-2.5 border-gray-200 hover:border-purple-400 hover:bg-purple-50 transition-all"
                         >
+                          <p className="font-bold text-sm">{menu.main_course}</p>
+                          {menu.starter && <p className="text-xs text-gray-600">🥗 {menu.starter}</p>}
+                          {menu.beverage && <p className="text-xs text-gray-600">🥤 {menu.beverage}</p>}
+                          {menu.dessert && <p className="text-xs text-gray-600">🍮 {menu.dessert}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Modifiers step */}
+                  {!showDayTransition && wizardStep === 'modifiers' && selectedCategory && selectedMenu && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-purple-700">✨ Personaliza tu pedido:</p>
+
+                      {modifierFavorites.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {modifierFavorites.map(fav => (
+                            <Button key={fav.id} type="button" variant="outline" size="sm"
+                              onClick={() => applyFavorite(fav)}
+                              className="text-[10px] h-7 border-yellow-300 hover:bg-yellow-50"
+                            >
+                              ⭐ {fav.favorite_name}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+
+                      {menuModifierGroups.map(group => {
+                        const currentSel = selectedModifiers.find(m => m.group_id === group.id);
+                        const isSkipped = currentSel?.selected_option_id === 'skip';
+                        return (
+                          <div key={group.id} className="bg-purple-50 rounded-lg p-2 space-y-1.5">
+                            <p className="text-xs font-semibold text-purple-900">{group.name}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {group.options.map(option => {
+                                const isSelected = !isSkipped && currentSel?.selected_option_id === option.id;
+                                return (
+                                  <button
+                                    key={option.id}
+                                    onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: option.id, selected_name: option.name } : m))}
+                                    className={cn(
+                                      "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
+                                      isSelected ? "border-purple-500 bg-purple-100 text-purple-900" : "border-gray-200 hover:border-purple-300 text-gray-600"
+                                    )}
+                                  >
+                                    {isSelected && '✓ '}{option.name}
+                                  </button>
+                                );
+                              })}
+                              <button
+                                onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: 'skip', selected_name: `Sin ${group.name.toLowerCase()}` } : m))}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 border-dashed transition-all",
+                                  isSkipped ? "border-gray-500 bg-gray-100 text-gray-700" : "border-gray-300 hover:border-gray-400 text-gray-400"
+                                )}
+                              >
+                                Sin {group.name.toLowerCase()}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={saveAsFavorite} className="text-xs text-yellow-700 border-yellow-300 flex-1">
+                          ⭐ Guardar
+                        </Button>
+                        <Button size="sm" onClick={() => setWizardStep('confirm')} className="bg-purple-600 hover:bg-purple-700 text-xs flex-1">
                           Continuar →
                         </Button>
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {/* Modifiers step */}
-                    {!showDayTransition && wizardStep === 'modifiers' && selectedCategory && selectedMenu && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold text-purple-700">✨ Personaliza tu pedido:</p>
+                  {/* Confirm step */}
+                  {!showDayTransition && wizardStep === 'confirm' && selectedCategory && (
+                    <div className="space-y-2">
+                      {selectedMenu && (
+                        <div className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+                          <p className="font-bold text-sm text-gray-800">{selectedMenu.main_course}</p>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                            {selectedMenu.starter && <span className="text-[11px] text-gray-500">🥗 {selectedMenu.starter}</span>}
+                            {selectedMenu.beverage && <span className="text-[11px] text-gray-500">🥤 {selectedMenu.beverage}</span>}
+                            {selectedMenu.dessert && <span className="text-[11px] text-gray-500">🍮 {selectedMenu.dessert}</span>}
+                          </div>
+                        </div>
+                      )}
 
-                        {modifierFavorites.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {modifierFavorites.map(fav => (
-                              <Button key={fav.id} type="button" variant="outline" size="sm"
-                                onClick={() => applyFavorite(fav)}
-                                className="text-[10px] h-7 border-yellow-300 hover:bg-yellow-50"
+                      {(configSelections.filter(s => s.selected).length > 0 || selectedModifiers.filter(m => m.selected_name).length > 0) && (
+                        <div className="flex flex-wrap gap-1">
+                          {configSelections.filter(s => s.selected).map((sel, i) => (
+                            <span key={`c${i}`} className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">{sel.selected}</span>
+                          ))}
+                          {selectedModifiers.filter(m => m.selected_name).map((mod, i) => (
+                            <span key={`m${i}`} className="text-[9px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">{mod.selected_name}</span>
+                          ))}
+                        </div>
+                      )}
+
+                      {availableGarnishes.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          <span className="text-[10px] text-orange-600 font-semibold mr-0.5">🍟</span>
+                          {availableGarnishes.map(g => {
+                            const isSel = selectedGarnishes.has(g);
+                            return (
+                              <button key={g} onClick={() => setSelectedGarnishes(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; })}
+                                className={cn("px-1.5 py-0.5 rounded-full text-[10px] border transition-all", isSel ? "bg-orange-600 text-white border-orange-700" : "bg-white text-orange-600 border-orange-200 hover:border-orange-400")}
                               >
-                                ⭐ {fav.favorite_name}
-                              </Button>
-                            ))}
-                          </div>
-                        )}
+                                {isSel ? '✓ ' : ''}{g}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                        {menuModifierGroups.map(group => {
-                          const currentSel = selectedModifiers.find(m => m.group_id === group.id);
-                          const isSkipped = currentSel?.selected_option_id === 'skip';
-                          return (
-                            <div key={group.id} className="bg-purple-50 rounded-lg p-2 space-y-1.5">
-                              <p className="text-xs font-semibold text-purple-900">{group.name}</p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {group.options.map(option => {
-                                  const isSelected = !isSkipped && currentSel?.selected_option_id === option.id;
-                                  return (
-                                    <button
-                                      key={option.id}
-                                      onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: option.id, selected_name: option.name } : m))}
-                                      className={cn(
-                                        "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
-                                        isSelected ? "border-purple-500 bg-purple-100 text-purple-900" : "border-gray-200 hover:border-purple-300 text-gray-600"
-                                      )}
-                                    >
-                                      {isSelected && '✓ '}{option.name}
-                                    </button>
-                                  );
-                                })}
-                                <button
-                                  onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: 'skip', selected_name: `Sin ${group.name.toLowerCase()}` } : m))}
-                                  className={cn(
-                                    "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 border-dashed transition-all",
-                                    isSkipped ? "border-gray-500 bg-gray-100 text-gray-700" : "border-gray-300 hover:border-gray-400 text-gray-400"
-                                  )}
-                                >
-                                  Sin {group.name.toLowerCase()}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={saveAsFavorite} className="text-xs text-yellow-700 border-yellow-300 flex-1">
-                            ⭐ Guardar
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 bg-gray-50 rounded-lg border px-2 py-1">
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.max(1, quantity - 1))} disabled={quantity <= 1}>
+                            <Minus className="h-3 w-3" />
                           </Button>
-                          <Button size="sm" onClick={() => setWizardStep('confirm')} className="bg-purple-600 hover:bg-purple-700 text-xs flex-1">
-                            Continuar →
+                          <span className="text-sm font-black w-5 text-center">{quantity}</span>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.min(10, quantity + 1))}>
+                            <Plus className="h-3 w-3" />
                           </Button>
                         </div>
+                        <span className="text-lg font-black text-purple-700">
+                          S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}
+                        </span>
                       </div>
-                    )}
 
-                    {/* Confirm step — compact with direct "Pedir" */}
-                    {!showDayTransition && wizardStep === 'confirm' && selectedCategory && (
-                      <div className="space-y-2">
-                        {/* Detalle del menú elegido */}
-                        {selectedMenu && (
-                          <div className="bg-gray-50 rounded-lg p-2 border border-gray-200">
-                            <p className="font-bold text-sm text-gray-800">{selectedMenu.main_course}</p>
-                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                              {selectedMenu.starter && <span className="text-[11px] text-gray-500">🥗 {selectedMenu.starter}</span>}
-                              {selectedMenu.beverage && <span className="text-[11px] text-gray-500">🥤 {selectedMenu.beverage}</span>}
-                              {selectedMenu.dessert && <span className="text-[11px] text-gray-500">🍮 {selectedMenu.dessert}</span>}
-                            </div>
-                          </div>
+                      {userType === 'parent' && (
+                        showNotesField ? (
+                          <Textarea
+                            placeholder="Escribe tus observaciones..."
+                            value={parentNotes}
+                            onChange={(e) => setParentNotes(e.target.value)}
+                            maxLength={250}
+                            rows={2}
+                            autoFocus
+                            className="resize-none text-xs"
+                          />
+                        ) : (
+                          <button onClick={() => setShowNotesField(true)} className="text-[10px] text-gray-400 hover:text-gray-600 transition-all">
+                            📝 Agregar nota
+                          </button>
+                        )
+                      )}
+
+                      <Button
+                        className="w-full h-11 bg-purple-600 hover:bg-purple-700 font-bold text-sm shadow-lg active:scale-[0.98] transition-all"
+                        disabled={submitting}
+                        onClick={handleConfirmOrder}
+                      >
+                        {submitting ? (
+                          <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Procesando...</>
+                        ) : (
+                          <>🍽️ Pedir — S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}</>
                         )}
+                      </Button>
+                      <button
+                        className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 py-0.5"
+                        onClick={() => {
+                          setExpandedCategoryId(null);
+                          setIsInlineOrdering(false);
+                          setWizardStep('idle');
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
 
-                        {/* Config/modifier badges (compact) */}
-                        {(configSelections.filter(s => s.selected).length > 0 || selectedModifiers.filter(m => m.selected_name).length > 0) && (
-                          <div className="flex flex-wrap gap-1">
-                            {configSelections.filter(s => s.selected).map((sel, i) => (
-                              <span key={`c${i}`} className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">{sel.selected}</span>
-                            ))}
-                            {selectedModifiers.filter(m => m.selected_name).map((mod, i) => (
-                              <span key={`m${i}`} className="text-[9px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">{mod.selected_name}</span>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Garnishes (inline) */}
-                        {availableGarnishes.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            <span className="text-[10px] text-orange-600 font-semibold mr-0.5">🍟</span>
-                            {availableGarnishes.map(g => {
-                              const isSel = selectedGarnishes.has(g);
-                              return (
-                                <button key={g} onClick={() => setSelectedGarnishes(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; })}
-                                  className={cn("px-1.5 py-0.5 rounded-full text-[10px] border transition-all", isSel ? "bg-orange-600 text-white border-orange-700" : "bg-white text-orange-600 border-orange-200 hover:border-orange-400")}
-                                >
-                                  {isSel ? '✓ ' : ''}{g}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* Quantity (inline compact) */}
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1 bg-gray-50 rounded-lg border px-2 py-1">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.max(1, quantity - 1))} disabled={quantity <= 1}>
-                              <Minus className="h-3 w-3" />
-                            </Button>
-                            <span className="text-sm font-black w-5 text-center">{quantity}</span>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.min(10, quantity + 1))}>
-                              <Plus className="h-3 w-3" />
-                            </Button>
-                          </div>
-                          <span className="text-lg font-black text-purple-700">
-                            S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}
-                          </span>
-                        </div>
-
-                        {/* Notes toggle (collapsed) */}
-                        {userType === 'parent' && (
-                          showNotesField ? (
-                            <Textarea
-                              placeholder="Escribe tus observaciones..."
-                              value={parentNotes}
-                              onChange={(e) => setParentNotes(e.target.value)}
-                              maxLength={250}
-                              rows={2}
-                              autoFocus
-                              className="resize-none text-xs"
-                            />
-                          ) : (
-                            <button
-                              onClick={() => setShowNotesField(true)}
-                              className="text-[10px] text-gray-400 hover:text-gray-600 transition-all"
-                            >
-                              📝 Agregar nota
-                            </button>
-                          )
-                        )}
-
-                        {/* ACTION BUTTONS — big Pedir + small Cancel */}
-                        <Button
-                          className="w-full h-11 bg-purple-600 hover:bg-purple-700 font-bold text-sm shadow-lg active:scale-[0.98] transition-all"
-                          disabled={submitting}
-                          onClick={handleConfirmOrder}
-                        >
-                          {submitting ? (
-                            <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Procesando...</>
-                          ) : (
-                            <>🍽️ Pedir — S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}</>
-                          )}
-                        </Button>
-                        <button
-                          className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 py-0.5"
-                          onClick={() => {
-                            setExpandedCategoryId(null);
-                            setIsInlineOrdering(false);
-                            setWizardStep('idle');
-                          }}
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Category loading (when handleCategorySelect is running) */}
-                    {!showDayTransition && wizardStep === 'category' && (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="h-5 w-5 animate-spin text-purple-600" />
-                        <span className="text-xs text-gray-500 ml-2">Cargando opciones...</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  {wizardStep === 'category' && (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-purple-600" />
+                      <span className="text-xs text-gray-500 ml-2">Cargando opciones...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -2235,16 +2243,24 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
               )}
 
               <div className="flex flex-col justify-center gap-3 mt-6">
-                {/* Botón Pagar para padres — OBLIGATORIO */}
                 {userType === 'parent' && totalOrderAmount > 0 ? (
                   <>
+                    <Button
+                      onClick={closeWizard}
+                      size="lg"
+                      className="bg-green-600 hover:bg-green-700 text-white font-bold w-full"
+                    >
+                      <UtensilsCrossed className="h-5 w-5 mr-2" />
+                      Seguir pidiendo
+                    </Button>
                     <Button
                       onClick={() => {
                         closeWizard();
                         setTimeout(() => setShowPaymentModal(true), 300);
                       }}
+                      variant="outline"
                       size="lg"
-                      className="bg-purple-600 hover:bg-purple-700 text-white font-bold w-full"
+                      className="border-purple-300 text-purple-700 hover:bg-purple-50 w-full"
                     >
                       <CreditCardIcon className="h-5 w-5 mr-2" />
                       Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
@@ -3187,8 +3203,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         } catch { return null; }
       })()}
 
-      {/* DAY CAROUSEL + MONTH NAV */}
-      <Card className="overflow-hidden">
+      {/* DAY CAROUSEL + MONTH NAV (sticky para que siempre sea visible) */}
+      <Card className="overflow-hidden sticky top-0 z-20 shadow-md">
         <CardHeader className="pb-2 pt-3 px-3">
           <div className="flex items-center justify-between">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}>

@@ -165,6 +165,7 @@ export const SalesList = () => {
   // Modal de anular venta
   const [showAnnul, setShowAnnul] = useState(false);
   const [annulReason, setAnnulReason] = useState('');
+  const [refundMethod, setRefundMethod] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   
   // Validación de contraseña para cajeros
@@ -346,6 +347,13 @@ export const SalesList = () => {
 
   const fetchTransactions = async () => {
     try {
+      // 🔒 GUARD: Si el usuario NO puede ver todas las sedes, esperar a que se cargue su school_id
+      if (!canViewAllSchools && !userSchoolId) {
+        console.log('⏳ Esperando school_id del usuario antes de cargar ventas...');
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       
       console.log('🚀 fetchTransactions INICIADO con salesFilter:', salesFilter);
@@ -401,13 +409,9 @@ export const SalesList = () => {
           console.log('✅ Admin con acceso total - Mostrando TODAS las sedes');
         }
       } else {
-        // Si NO tiene permiso, solo ve su propia sede
-        if (userSchoolId) {
-          console.log('🔒 Admin de sede - FORZANDO filtro por su sede:', userSchoolId);
-          query = query.eq('school_id', userSchoolId);
-        } else {
-          console.log('⚠️ Admin de sede - NO SE ENCONTRÓ userSchoolId');
-        }
+        // Si NO tiene permiso, OBLIGATORIAMENTE filtra por su sede
+        console.log('🔒 Admin de sede - FORZANDO filtro por su sede:', userSchoolId);
+        query = query.eq('school_id', userSchoolId!);
       }
 
       // Filtrar según pestaña
@@ -624,6 +628,10 @@ export const SalesList = () => {
     }
   };
 
+  const isNonCashPayment = (method?: string) => {
+    return method && ['yape', 'yape_qr', 'yape_numero', 'tarjeta', 'transferencia', 'plin', 'plin_qr'].includes(method);
+  };
+
   const handleAnnulSale = async () => {
     if (!selectedTransaction || !annulReason.trim()) {
       toast({
@@ -634,10 +642,17 @@ export const SalesList = () => {
       return;
     }
 
+    if (isNonCashPayment(selectedTransaction.payment_method) && !refundMethod) {
+      toast({
+        variant: 'destructive',
+        title: 'Selecciona método de devolución',
+        description: `Esta venta fue pagada con ${selectedTransaction.payment_method?.toUpperCase()}. Indica cómo se devolvió el dinero.`,
+      });
+      return;
+    }
+
     setIsProcessing(true);
     try {
-      // 1. Marcar como anulada usando payment_status = 'cancelled' y guardar motivo en metadata
-      // Primero obtener metadata actual para no sobreescribirla
       const { data: currentTx } = await supabase
         .from('transactions')
         .select('metadata')
@@ -655,13 +670,38 @@ export const SalesList = () => {
             cancelled_at: new Date().toISOString(),
             cancelled_by: user?.id,
             cancellation_reason: annulReason.trim(),
+            ...(refundMethod ? { refund_method: refundMethod } : {}),
           },
         })
         .eq('id', selectedTransaction.id);
 
       if (updateError) throw updateError;
 
-      // 2. Si es venta de estudiante, devolver saldo
+      const { error: salesError } = await supabase
+        .from('sales')
+        .update({ payment_method: 'cancelled' })
+        .eq('transaction_id', selectedTransaction.id);
+
+      if (salesError) {
+        console.error('⚠️ Error actualizando sales:', salesError);
+      }
+
+      // Insertar alerta de anulación para admin_general
+      await supabase.from('cancellation_alerts').insert({
+        school_id: selectedTransaction.school_id,
+        transaction_id: selectedTransaction.id,
+        alert_type: 'sale_cancelled',
+        amount: Math.abs(selectedTransaction.amount),
+        payment_method: selectedTransaction.payment_method,
+        refund_method: refundMethod || null,
+        cancelled_by: user?.id,
+        cancellation_reason: annulReason.trim(),
+        client_name: selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'Cliente genérico',
+        ticket_code: selectedTransaction.ticket_code,
+      }).then(({ error }) => {
+        if (error) console.error('⚠️ Error insertando alerta:', error);
+      });
+
       if (selectedTransaction.student_id && selectedTransaction.student) {
         const amountToReturn = Math.abs(selectedTransaction.amount);
         const newBalance = selectedTransaction.student.balance + amountToReturn;
@@ -685,6 +725,7 @@ export const SalesList = () => {
       }
 
       setShowAnnul(false);
+      setRefundMethod('');
       fetchTransactions();
     } catch (error: any) {
       console.error('Error annulling sale:', error);
@@ -1388,25 +1429,50 @@ export const SalesList = () => {
             </DialogDescription>
           </DialogHeader>
           
-          <div>
-            <Label htmlFor="reason">Motivo de Anulación *</Label>
-            <Textarea
-              id="reason"
-              value={annulReason}
-              onChange={(e) => setAnnulReason(e.target.value)}
-              placeholder="Ej: Error en el pedido, producto incorrecto, cliente canceló..."
-              rows={3}
-            />
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="reason">Motivo de Anulación *</Label>
+              <Textarea
+                id="reason"
+                value={annulReason}
+                onChange={(e) => setAnnulReason(e.target.value)}
+                placeholder="Ej: Error en el pedido, producto incorrecto, cliente canceló..."
+                rows={3}
+              />
+            </div>
+
+            {selectedTransaction && isNonCashPayment(selectedTransaction.payment_method) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <Label className="text-amber-800 font-semibold text-sm">
+                  💰 ¿Cómo se devolvió el dinero al cliente? *
+                </Label>
+                <p className="text-xs text-amber-600 mb-2">
+                  El pago fue con <strong>{selectedTransaction.payment_method?.toUpperCase()}</strong>. Selecciona el método de devolución.
+                </p>
+                <select
+                  value={refundMethod}
+                  onChange={(e) => setRefundMethod(e.target.value)}
+                  className="w-full border border-amber-300 rounded-md p-2 text-sm bg-white"
+                >
+                  <option value="">-- Seleccionar --</option>
+                  <option value="mismo_medio">Se devolvió por el mismo medio ({selectedTransaction.payment_method})</option>
+                  <option value="efectivo">Se devolvió en efectivo</option>
+                  <option value="saldo_cuenta">Se acreditó al saldo del alumno</option>
+                  <option value="no_devuelto">No se devolvió (producto no entregado)</option>
+                  <option value="pendiente">Devolución pendiente</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAnnul(false)}>
+            <Button variant="outline" onClick={() => { setShowAnnul(false); setRefundMethod(''); }}>
               Cancelar
             </Button>
             <Button 
               variant="destructive" 
               onClick={handleAnnulSale} 
-              disabled={isProcessing || !annulReason.trim()}
+              disabled={isProcessing || !annulReason.trim() || (isNonCashPayment(selectedTransaction?.payment_method) && !refundMethod)}
             >
               {isProcessing ? 'Anulando...' : 'Confirmar Anulación'}
             </Button>

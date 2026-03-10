@@ -50,6 +50,7 @@ import { ParentLunchOrders } from '@/components/parent/ParentLunchOrders';
 import { ParentDataForm } from '@/components/parent/ParentDataForm';
 import { EditStudentModal } from '@/components/parent/EditStudentModal';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
+import { MaintenanceScreen } from '@/components/parent/MaintenanceScreen';
 
 interface Student {
   id: string;
@@ -90,6 +91,7 @@ const Index = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [studentDebts, setStudentDebts] = useState<Record<string, number>>({}); // 💰 Deudas por estudiante
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
+  const [pendingRechargesMap, setPendingRechargesMap] = useState<Record<string, number>>({}); // ⏳ Recargas pendientes por estudiante
   const [loading, setLoading] = useState(true);
   const [parentName, setParentName] = useState<string>('');
   const [parentProfileData, setParentProfileData] = useState<any>(null); // 👤 Datos del perfil del padre
@@ -100,12 +102,15 @@ const Index = () => {
     return sessionStorage.getItem('parentPortalTab') || 'alumnos';
   });
 
-  // Guardar la pestaña activa cuando cambia + refrescar pagos pendientes
+  // Guardar la pestaña activa cuando cambia + refrescar datos
   useEffect(() => {
     sessionStorage.setItem('parentPortalTab', activeTab);
     // Refrescar contador de pagos pendientes al cambiar de pestaña
-    // (especialmente útil cuando el padre vuelve de Pagos después de pagar)
     fetchPendingPaymentsCount();
+    // Refrescar deudas del StudentCard cuando el padre vuelve a "alumnos"
+    if (activeTab === 'alumnos' && students.length > 0) {
+      calculateStudentDebts(students);
+    }
   }, [activeTab]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showParentDataForm, setShowParentDataForm] = useState(false);
@@ -127,15 +132,17 @@ const Index = () => {
   const [photoConsentAccepted, setPhotoConsentAccepted] = useState(false);
   const [rechargeSuggestedAmount, setRechargeSuggestedAmount] = useState<number | undefined>(undefined);
   const [photoConsentRefresh, setPhotoConsentRefresh] = useState(0); // Para forzar refresh en MoreMenu
-  const [showLunchFastConfirm, setShowLunchFastConfirm] = useState(false);
-  const [todayMenu, setTodayMenu] = useState<any>(null);
-  const [isOrdering, setIsOrdering] = useState(false);
+  // (LUNCH FAST eliminado)
   
   // Estudiante seleccionado
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
 
   // Estado para evitar doble apertura
   const [isOpeningPhotoModal, setIsOpeningPhotoModal] = useState(false);
+
+  // 🔧 Modo Mantenimiento por módulo
+  const [maintenanceAlmuerzos, setMaintenanceAlmuerzos] = useState<{ title: string; message: string } | null>(null);
+  const [maintenancePagos, setMaintenancePagos] = useState<{ title: string; message: string } | null>(null);
 
   useEffect(() => {
     fetchStudents();
@@ -192,6 +199,62 @@ const Index = () => {
       console.error("Error fetching parent profile:", e);
     }
   };
+
+  // 🔧 Verificar modo mantenimiento para los módulos del padre
+  const fetchMaintenanceConfig = async () => {
+    if (!user) return;
+    try {
+      // Obtener school_id del padre
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.school_id) return;
+
+      // Obtener configs de mantenimiento para esa sede
+      const { data: configs, error } = await supabase
+        .from('maintenance_config')
+        .select('module_key, enabled, title, message, bypass_emails')
+        .eq('school_id', profile.school_id)
+        .eq('enabled', true);
+
+      if (error) throw error;
+      if (!configs || configs.length === 0) {
+        setMaintenanceAlmuerzos(null);
+        setMaintenancePagos(null);
+        return;
+      }
+
+      const userEmail = user.email?.toLowerCase() || '';
+
+      configs.forEach((cfg: any) => {
+        // Si el correo del padre está en bypass → NO mostrar mantenimiento
+        const isBypassed = (cfg.bypass_emails || []).some(
+          (e: string) => e.toLowerCase() === userEmail
+        );
+
+        if (isBypassed) return; // bypass → módulo normal
+
+        if (cfg.module_key === 'almuerzos_padres') {
+          setMaintenanceAlmuerzos({ title: cfg.title, message: cfg.message });
+        }
+        if (cfg.module_key === 'pagos_padres') {
+          setMaintenancePagos({ title: cfg.title, message: cfg.message });
+        }
+      });
+    } catch (e) {
+      console.error('Error checking maintenance mode:', e);
+    }
+  };
+
+  // Cargar estado de mantenimiento al montar
+  useEffect(() => {
+    if (user) {
+      fetchMaintenanceConfig();
+    }
+  }, [user]);
 
   const checkOnboardingStatus = async () => {
     if (!user) return;
@@ -312,6 +375,7 @@ const Index = () => {
       // ✅ Calcular deudas con delay para cada estudiante
       if (data && data.length > 0) {
         await calculateStudentDebts(data);
+        fetchPendingRecharges(data); // ⏳ Cargar recargas pendientes en paralelo
       }
     } catch (error: any) {
       console.error('Error fetching students:', error);
@@ -352,6 +416,28 @@ const Index = () => {
     }
     
     setStudentDebts(debtsMap);
+  };
+
+  // ⏳ Obtener recargas pendientes de aprobación por estudiante
+  const fetchPendingRecharges = async (studentsData: Student[]) => {
+    if (!studentsData || studentsData.length === 0) return;
+    const studentIds = studentsData.map(s => s.id);
+    try {
+      const { data } = await supabase
+        .from('recharge_requests')
+        .select('student_id, amount')
+        .in('student_id', studentIds)
+        .eq('status', 'pending')
+        .eq('request_type', 'recharge');
+
+      const map: Record<string, number> = {};
+      for (const row of data || []) {
+        map[row.student_id] = (map[row.student_id] || 0) + row.amount;
+      }
+      setPendingRechargesMap(map);
+    } catch (err) {
+      // silently ignore
+    }
   };
 
   // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
@@ -407,9 +493,13 @@ const Index = () => {
 
       if (transError) throw transError;
 
+      // Acreditar saldo + activar modo "Con Recargas" automáticamente
       const { error: updateError } = await supabase
         .from('students')
-        .update({ balance: newBalance })
+        .update({ 
+          balance: newBalance,
+          free_account: false, // Al recargar, pasa a modo prepago
+        })
         .eq('id', selectedStudent.id);
 
       if (updateError) throw updateError;
@@ -517,100 +607,9 @@ const Index = () => {
     setShowLimitModal(true);
   };
 
-  const handleLunchFast = async (student: Student) => {
-    setSelectedStudent(student);
-    try {
-      const { data, error } = await supabase.rpc('get_today_lunch_menu', {
-        p_school_id: student.school_id
-      });
+  // handleLunchFast eliminado
 
-      if (error) throw error;
-
-      const menu = data?.[0];
-      if (!menu || menu.is_special_day || !menu.main_course) {
-        toast({
-          title: "Lunch Fast no disponible",
-          description: menu?.special_day_title || "No hay menú programado para el día de hoy.",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      setTodayMenu(menu);
-      setShowLunchFastConfirm(true);
-    } catch (error) {
-      console.error('Error in handleLunchFast:', error);
-      toast({
-        title: "Error",
-        description: "No se pudo consultar el menú de hoy",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const handleConfirmLunchOrder = async () => {
-    if (!selectedStudent || !todayMenu) return;
-    
-    setIsOrdering(true);
-    try {
-      // Registrar la orden de almuerzo como una compra inmediata
-      const amount = todayMenu.price || 15.00;
-      
-      // Si es cuenta libre, crear transacción pendiente (deuda)
-      if (selectedStudent.free_account !== false) {
-        // 🎫 Generar ticket_code
-        let ticketCode: string | null = null;
-        try {
-          const { data: ticketNumber, error: ticketErr } = await supabase
-            .rpc('get_next_ticket_number', { p_user_id: user?.id });
-          if (!ticketErr && ticketNumber) {
-            ticketCode = ticketNumber;
-          }
-        } catch (err) {
-          console.warn('⚠️ No se pudo generar ticket_code:', err);
-        }
-
-        const { error } = await supabase.from('transactions').insert({
-          student_id: selectedStudent.id,
-          type: 'purchase',
-          amount: -Math.abs(amount), // Negativo = deuda
-          description: `LUNCH FAST: ${todayMenu.main_course}`,
-          payment_status: 'pending',
-          created_by: user?.id,
-          ticket_code: ticketCode,
-          metadata: { lunch_menu_id: todayMenu.id, source: 'lunch_fast' }
-        });
-
-        if (error) throw error;
-      } else {
-        // Si es cuenta prepagada, solo descontar del saldo (NO crear transacción)
-        // El pago ya se registró cuando recargó el saldo
-        const { error: balanceError } = await supabase
-          .from('students')
-          .update({ balance: selectedStudent.balance - amount })
-          .eq('id', selectedStudent.id);
-
-        if (balanceError) throw balanceError;
-      }
-
-      toast({
-        title: "¡Pedido Confirmado! 🚀",
-        description: `Se ha separado el almuerzo para ${selectedStudent.full_name}`,
-      });
-
-      await fetchStudents();
-      setShowLunchFastConfirm(false);
-    } catch (error) {
-      console.error('Error confirming lunch order:', error);
-      toast({
-        title: "Error",
-        description: "No se pudo procesar el pedido",
-        variant: "destructive"
-      });
-    } finally {
-      setIsOrdering(false);
-    }
-  };
+  // handleConfirmLunchOrder eliminado
 
   const handleToggleFreeAccount = async (student: Student, newValue: boolean) => {
     // VALIDACIÓN: Si intenta pasar a Prepago (newValue = false) y TIENE DEUDA (balance < 0)
@@ -704,7 +703,7 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3 sm:pt-4">
           <div 
             onClick={() => setActiveTab('pagos')}
-            className="cursor-pointer bg-gradient-to-r from-red-50 via-red-100 to-orange-50 border-2 border-red-300 rounded-xl p-3 sm:p-4 shadow-md animate-pulse hover:shadow-lg transition-all duration-300"
+            className="cursor-pointer bg-gradient-to-r from-red-50 via-red-100 to-orange-50 border-2 border-red-300 rounded-xl p-3 sm:p-4 shadow-md hover:shadow-lg transition-all duration-300"
           >
             <div className="flex items-center gap-3">
               <div className="flex-shrink-0 p-2 bg-red-200 rounded-full">
@@ -770,9 +769,9 @@ const Index = () => {
                       key={student.id}
                       student={student}
                       totalDebt={studentDebts[student.id] || 0} // 💰 Pasar deuda calculada con delay
+                      pendingRechargeAmount={pendingRechargesMap[student.id] || 0} // ⏳ Recarga pendiente
                       onRecharge={() => openRechargeModal(student)}
                       onViewHistory={() => openHistoryModal(student)}
-                      onLunchFast={() => handleLunchFast(student)}
                       onViewMenu={() => openMenuModal(student)}
                       onOpenSettings={() => openSettingsModal(student)}
                       onPhotoClick={() => openPhotoModal(student)}
@@ -798,12 +797,26 @@ const Index = () => {
 
         {/* Pestaña Pagos */}
         <div className={activeTab !== 'pagos' ? 'hidden' : ''}>
-          {user?.id && <PaymentsTab userId={user.id} />}
+          {user?.id && maintenancePagos ? (
+            /* 🔧 Módulo en mantenimiento */
+            <MaintenanceScreen
+              title={maintenancePagos.title}
+              message={maintenancePagos.message}
+            />
+          ) : user?.id ? (
+            <PaymentsTab userId={user.id} isActive={activeTab === 'pagos'} />
+          ) : null}
         </div>
 
         {/* Pestaña Almuerzos */}
         <div className={activeTab !== 'almuerzos' ? 'hidden' : ''}>
-          {user && (
+          {user && maintenanceAlmuerzos ? (
+            /* 🔧 Módulo en mantenimiento */
+            <MaintenanceScreen
+              title={maintenanceAlmuerzos.title}
+              message={maintenanceAlmuerzos.message}
+            />
+          ) : user ? (
             <div className="px-2 sm:px-4 space-y-4 sm:space-y-6">
               {/* Sub-pestañas para Almuerzos */}
               <Tabs defaultValue="hacer-pedido" className="w-full">
@@ -835,7 +848,7 @@ const Index = () => {
                 </TabsContent>
               </Tabs>
             </div>
-          )}
+          ) : null}
         </div>
 
       </main>
@@ -922,62 +935,7 @@ const Index = () => {
             </Dialog>
           )}
 
-          {/* Modal de Confirmación LUNCH FAST */}
-          <Dialog open={showLunchFastConfirm} onOpenChange={setShowLunchFastConfirm}>
-            <DialogContent className="max-w-md border-4 border-orange-500">
-              <DialogHeader>
-                <DialogTitle className="text-2xl font-black text-center text-orange-600">
-                  ¿CONFIRMAR ALMUERZO HOY?
-                </DialogTitle>
-                <DialogDescription className="text-center pt-2">
-                  Se realizará el pedido para <span className="font-bold text-gray-900">{selectedStudent.full_name}</span>
-                </DialogDescription>
-              </DialogHeader>
-
-              {todayMenu && (
-                <div className="bg-orange-50 rounded-2xl p-6 border-2 border-orange-200 shadow-inner">
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-start border-b border-orange-200 pb-2">
-                      <span className="text-xs font-bold text-orange-700 uppercase">Entrada</span>
-                      <span className="text-sm font-semibold text-gray-800">{todayMenu.starter || 'Sopa del día'}</span>
-                    </div>
-                    <div className="flex justify-between items-start border-b border-orange-200 pb-2">
-                      <span className="text-xs font-bold text-orange-700 uppercase">Segundo</span>
-                      <span className="text-sm font-bold text-gray-900">{todayMenu.main_course}</span>
-                    </div>
-                    <div className="flex justify-between items-start border-b border-orange-200 pb-2">
-                      <span className="text-xs font-bold text-orange-700 uppercase">Bebida</span>
-                      <span className="text-sm font-semibold text-gray-800">{todayMenu.beverage || 'Refresco natural'}</span>
-                    </div>
-                    <div className="flex justify-center pt-4">
-                      <div className="text-center">
-                        <span className="text-xs font-bold text-gray-500 uppercase block">Total a pagar</span>
-                        <span className="text-4xl font-black text-orange-600">S/ {(todayMenu.price || 15).toFixed(2)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3 pt-4">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setShowLunchFastConfirm(false)}
-                  className="h-14 font-bold border-2"
-                  disabled={isOrdering}
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  onClick={handleConfirmLunchOrder}
-                  className="h-14 font-black bg-orange-600 hover:bg-orange-700 text-lg shadow-lg"
-                  disabled={isOrdering}
-                >
-                  {isOrdering ? 'Procesando...' : '¡SÍ, PEDIR!'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {/* LUNCH FAST eliminado */}
         </>
       )}
 
@@ -1101,18 +1059,10 @@ const Index = () => {
         </div>
       </nav>
 
-      {/* Footer - Créditos del sistema */}
-      <div className="fixed bottom-16 sm:bottom-20 left-0 right-0 pointer-events-none z-10">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="bg-gradient-to-r from-emerald-50/80 to-blue-50/80 backdrop-blur-sm border border-emerald-200/50 rounded-lg shadow-sm py-2 px-4 pointer-events-auto">
-            <div className="flex items-center justify-center gap-2 text-[10px] sm:text-xs text-gray-600">
-              <span className="font-medium">©</span>
-              <span>2026 <span className="font-semibold text-emerald-700">ERP Profesional</span></span>
-            </div>
-            <div className="text-center text-[9px] sm:text-[10px] text-gray-500 mt-1">
-              Diseñado por <span className="font-semibold text-emerald-600">ARQUISIA Soluciones</span> para <span className="font-semibold text-blue-600">Lima Café 28</span>
-            </div>
-          </div>
+      {/* Footer - Créditos del sistema (al final del contenido, no flotante) */}
+      <div className="pb-20 sm:pb-24">
+        <div className="text-center py-3 text-[9px] sm:text-[10px] text-gray-400">
+          © 2026 <span className="font-semibold">ERP Profesional</span> · Diseñado por <span className="font-semibold">ARQUISIA Soluciones</span> para <span className="font-semibold">Lima Café 28</span>
         </div>
       </div>
 

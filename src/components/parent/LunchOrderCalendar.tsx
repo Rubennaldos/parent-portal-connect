@@ -137,8 +137,13 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
     console.log('✅ Estudiantes cargados:', data);
     setStudents(data || []);
     
-    // Auto-seleccionar todos los estudiantes
-    setSelectedStudents(new Set(data?.map(s => s.id) || []));
+    // ⚠️ FIX: NO auto-seleccionar todos los hijos. Si hay más de uno, dejar vacío
+    // para que el padre elija manualmente cuál hijo. Si hay solo uno, seleccionarlo.
+    if (data && data.length === 1) {
+      setSelectedStudents(new Set([data[0].id]));
+    } else {
+      setSelectedStudents(new Set());
+    }
     
     return data || [];
   };
@@ -528,11 +533,13 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
       
       for (const dateStr of selectedDates) {
         for (const studentId of selectedStudents) {
+          const student = students.find(s => s.id === studentId);
           orders.push({
             student_id: studentId,
             order_date: dateStr,
             status: 'confirmed',
             created_at: new Date().toISOString(),
+            school_id: student?.school_id || null,
           });
         }
       }
@@ -601,25 +608,39 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                 }
               });
             } else {
-              console.log(`💰 Estudiante ${student.full_name} tiene SALDO PREPAGADO - Descontando del balance`);
+              console.log(`💰 Estudiante ${student.full_name} es PREPAGADO - Creando transacción pendiente (NO se toca el saldo de recargas)`);
               
-              // Para cuentas con saldo, descontar del balance
-              const { data: currentStudent } = await supabase
-                .from('students')
-                .select('balance')
-                .eq('id', studentId)
-                .single();
+              // 🚨 IMPORTANTE: Los almuerzos NUNCA descuentan del saldo de recargas.
+              // Recargas y almuerzos son cajas 100% independientes.
+              // Se crea una transacción pendiente igual que cuenta libre.
+              const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
 
-              if (currentStudent) {
-                const newBalance = (currentStudent.balance || 0) - config.lunch_price;
-                
-                await supabase
-                  .from('students')
-                  .update({ balance: newBalance })
-                  .eq('id', studentId);
-
-                // ✅ NO crear transacción para cuentas prepagadas
+              // 🎫 Generar ticket_code
+              let ticketCode2: string | null = null;
+              try {
+                const { data: ticketNumber, error: ticketErr } = await supabase
+                  .rpc('get_next_ticket_number', { p_user_id: parentId });
+                if (!ticketErr && ticketNumber) {
+                  ticketCode2 = ticketNumber;
+                }
+              } catch (err) {
+                // silencioso
               }
+
+              transactions.push({
+                student_id: studentId,
+                type: 'purchase',
+                amount: -config.lunch_price,
+                payment_status: 'pending',
+                description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
+                created_at: new Date().toISOString(),
+                ticket_code: ticketCode2,
+                metadata: {
+                  lunch_order_id: lunchOrderId || null,
+                  source: 'parent_lunch_calendar',
+                  order_date: dateStr
+                }
+              });
             }
           }
         }
@@ -848,7 +869,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                     <Button
                       onClick={handleSubmitOrders}
                       disabled={submitting || selectedDates.size === 0 || selectedStudents.size === 0}
-                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-10 sm:h-12 md:h-14 text-xs sm:text-sm md:text-base font-black shadow-lg animate-pulse"
+                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-10 sm:h-12 md:h-14 text-xs sm:text-sm md:text-base font-black shadow-lg"
                     >
                       {submitting ? (
                         <>Procesando...</>

@@ -19,53 +19,57 @@ serve(async (req) => {
 
     // ========== MODO TEST: solo verificar credenciales ==========
     if (body.test === true) {
-      const supabase = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      );
       const { data: cfg } = await supabase
         .from("billing_config")
         .select("nubefact_ruta, nubefact_token")
         .eq("school_id", body.school_id)
         .single();
 
-      const ruta = cfg?.nubefact_ruta || body.nubefact_ruta;
+      const ruta  = cfg?.nubefact_ruta  || body.nubefact_ruta;
       const token = cfg?.nubefact_token || body.nubefact_token;
 
       if (!ruta || !token) {
         return new Response(JSON.stringify({ ok: false, error: "Sin credenciales — verifica RUTA y TOKEN" }), {
-          status: 200, headers: { ...cors, "Content-Type": "application/json" }
+          status: 200, headers: { ...cors, "Content-Type": "application/json" },
         });
       }
 
       try {
         const testRes = await fetch(ruta, {
           method: "GET",
-          headers: { "Authorization": `Token ${token}` },
+          headers: { "Authorization": `Token token=${token}` },
         });
         const ok = testRes.status < 500;
         return new Response(JSON.stringify({ ok, status: testRes.status }), {
-          status: 200, headers: { ...cors, "Content-Type": "application/json" }
+          status: 200, headers: { ...cors, "Content-Type": "application/json" },
         });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-          status: 200, headers: { ...cors, "Content-Type": "application/json" }
+          status: 200, headers: { ...cors, "Content-Type": "application/json" },
         });
       }
     }
 
+    // ========== GENERACIÓN DE COMPROBANTE ==========
     const {
       school_id,
       transaction_id,
-      tipo,
+      sale_id,
+      payment_id,
+      cashier_id,
+      created_by,
+      tipo,           // 1=factura, 2=boleta, 7=NC-boleta, 8=NC-factura
       cliente,
       items,
       monto_total,
       doc_ref,
-      demo_mode = false,   // si true: no envía a SUNAT (pruebas)
+      demo_mode = false,
+      payment_method,
+      related_invoice_id,
+      cancellation_reason,
     } = body;
 
-    // 1. Obtener credenciales Nubefact de este cliente/sede
+    // 1. Obtener configuración Nubefact de la sede
     const { data: cfg, error: cfgErr } = await supabase
       .from("billing_config")
       .select("*")
@@ -74,48 +78,65 @@ serve(async (req) => {
 
     if (cfgErr || !cfg) {
       return new Response(
-        JSON.stringify({ success: false, error: `Sin configuración para school_id=${school_id}. Detalle: ${cfgErr?.message}` }),
+        JSON.stringify({ success: false, error: `Sin configuración Nubefact para school_id=${school_id}. Detalle: ${cfgErr?.message}` }),
         { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
-    // Mapeo tipos internos → tipos Nubefact
-    // Interno: 1=factura, 2=boleta, 7=nota_credito_boleta, 8=nota_credito_factura
-    // Nubefact: 1=factura, 2=boleta, 3=nota_credito, 4=nota_debito
-    const nubefact_tipo = tipo === 7 || tipo === 8 ? 3 : tipo;
+    // 2. Mapeo tipos internos → tipos Nubefact
+    // Interno: 1=factura, 2=boleta, 7=NC-boleta, 8=NC-factura
+    // Nubefact: 1=factura, 2=boleta, 3=nota_credito
+    const nubefact_tipo = (tipo === 7 || tipo === 8) ? 3 : tipo;
 
-    // 2. Determinar serie según tipo de documento
+    // 3. Determinar serie según tipo
     const serie = tipo === 1 ? cfg.serie_factura
                 : tipo === 7 ? cfg.serie_nc_boleta
                 : tipo === 8 ? cfg.serie_nc_factura
                 : cfg.serie_boleta;
 
-    // 3. Obtener número correlativo (contar docs previos del mismo tipo/serie)
+    // 4. Tipo de documento SUNAT
+    const invoice_type_map: Record<number, string> = {
+      1: "factura", 2: "boleta", 7: "nota_credito", 8: "nota_credito",
+    };
+    const document_type_code_map: Record<number, string> = {
+      1: "01", 2: "03", 7: "07", 8: "07",
+    };
+
+    // 5. Número correlativo — desde tabla invoices (más confiable que electronic_documents)
     let numero = 1;
     try {
       const { count } = await supabase
-        .from("electronic_documents")
+        .from("invoices")
         .select("*", { count: "exact", head: true })
         .eq("school_id", school_id)
-        .eq("tipo_comprobante", tipo)
         .eq("serie", serie);
       numero = (count || 0) + 1;
     } catch (_) {
-      // Si la tabla no existe aún, empezamos desde 1
-      numero = 1;
+      // Fallback a electronic_documents si invoices no existe aún
+      try {
+        const { count } = await supabase
+          .from("electronic_documents")
+          .select("*", { count: "exact", head: true })
+          .eq("school_id", school_id)
+          .eq("tipo_comprobante", tipo)
+          .eq("serie", serie);
+        numero = (count || 0) + 1;
+      } catch (_2) {
+        numero = 1;
+      }
     }
 
-    // 4. Calcular IGV
-    const igv_pct = Number(cfg.igv_porcentaje) || 18;
-    const igv_monto = monto_total - (monto_total / (1 + igv_pct / 100));
+    // 6. Calcular IGV
+    const igv_pct      = Number(cfg.igv_porcentaje) || 18;
+    const igv_monto    = monto_total - (monto_total / (1 + igv_pct / 100));
     const base_imponible = monto_total - igv_monto;
 
-    // 5. Fecha
-    const hoy = new Date();
+    // 7. Fecha
+    const hoy   = new Date();
     const fecha = `${String(hoy.getDate()).padStart(2, "0")}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${hoy.getFullYear()}`;
 
-    // 6. Items del comprobante
-    const itemsDoc = items ?? [{
+    // 8. Items del comprobante (Nubefact format)
+    const itemsNubefact = items ?? [{
       unidad_de_medida: "NIU",
       codigo: "001",
       descripcion: "Consumo cafetería / almuerzo",
@@ -130,92 +151,186 @@ serve(async (req) => {
       anticipo_regularizacion: false,
     }];
 
-    // 7. Armar payload para Nubefact
+    // 9. Tipo de documento del cliente
+    // Nubefact: 0=sin doc, 1=DNI, 6=RUC
+    const clientDocTypeNubefact =
+      cliente?.doc_type === "ruc"  ? 6 :
+      cliente?.doc_type === "dni"  ? 1 :
+      (cliente?.tipo_doc ?? 0);
+
+    // 10. Payload para Nubefact
     const payload: Record<string, unknown> = {
-      operacion: "generar_comprobante",
-      tipo_de_comprobante: nubefact_tipo,  // tipo mapeado a códigos Nubefact
+      operacion:                      "generar_comprobante",
+      tipo_de_comprobante:            nubefact_tipo,
       serie,
       numero,
-      sunat_transaction: 1,
-      cliente_tipo_de_documento: cliente?.tipo_doc ?? 0,
-      // Nubefact requiere "-" (no vacío) cuando no hay documento (tipo 0 = consumidor final)
-      cliente_numero_de_documento: cliente?.numero_doc || (cliente?.tipo_doc === 0 || !cliente?.tipo_doc ? "-" : ""),
-      cliente_denominacion: cliente?.nombre ?? "Cliente",
-      cliente_direccion: "",
-      cliente_email: cliente?.email ?? "",
-      fecha_de_emision: fecha,
-      moneda: 1,
-      tipo_de_cambio: "",
-      porcentaje_de_igv: igv_pct,
-      total_gravada: +base_imponible.toFixed(2),
-      total_igv: +igv_monto.toFixed(2),
-      total: +monto_total.toFixed(2),
-      enviar_automaticamente_a_la_sunat: !demo_mode,   // false en modo demo
-      enviar_automaticamente_al_cliente: !demo_mode && !!(cliente?.email),
-      items: itemsDoc,
+      sunat_transaction:              1,
+      cliente_tipo_de_documento:      clientDocTypeNubefact,
+      cliente_numero_de_documento:    cliente?.doc_number || cliente?.numero_doc || (clientDocTypeNubefact === 0 ? "-" : ""),
+      cliente_denominacion:           cliente?.razon_social || cliente?.nombre || "Consumidor Final",
+      cliente_direccion:              cliente?.direccion || "",
+      cliente_email:                  cliente?.email   || "",
+      fecha_de_emision:               fecha,
+      moneda:                         1,
+      tipo_de_cambio:                 "",
+      porcentaje_de_igv:              igv_pct,
+      total_gravada:                  +base_imponible.toFixed(2),
+      total_igv:                      +igv_monto.toFixed(2),
+      total:                          +monto_total.toFixed(2),
+      enviar_automaticamente_a_la_sunat:  !demo_mode,
+      enviar_automaticamente_al_cliente:  !demo_mode && !!(cliente?.email),
+      items: itemsNubefact,
     };
 
-    // Campos extra para Nota de Crédito (tipo interno 7 u 8)
+    // Campos extra para Nota de Crédito
     if ((tipo === 7 || tipo === 8) && doc_ref) {
-      payload.tipo_de_nota_de_credito = 1; // 1 = Anulación de operación
-      payload.documento_que_se_modifica_tipo = doc_ref.tipo;
-      payload.documento_que_se_modifica_serie = doc_ref.serie;
-      payload.documento_que_se_modifica_numero = doc_ref.numero;
+      payload.tipo_de_nota_de_credito            = 1;
+      payload.documento_que_se_modifica_tipo     = doc_ref.tipo;
+      payload.documento_que_se_modifica_serie    = doc_ref.serie;
+      payload.documento_que_se_modifica_numero   = doc_ref.numero;
     }
 
-    // 8. Llamar a la API de Nubefact
-    const nubefactRes = await fetch(cfg.nubefact_ruta, {
-      method: "POST",
+    // 11. Llamar a la API de Nubefact
+    const nubefactRes  = await fetch(cfg.nubefact_ruta, {
+      method:  "POST",
       headers: {
-        "Authorization": `Token ${cfg.nubefact_token}`,
-        "Content-Type": "application/json",
+        "Authorization": `Token token=${cfg.nubefact_token}`,
+        "Content-Type":  "application/json",
       },
       body: JSON.stringify(payload),
     });
 
     const nubefactData = await nubefactRes.json();
 
-    // 9. Guardar documento en base de datos (tolerante si la tabla no existe aún)
-    let docGuardado: any = null;
+    // 12. Estado SUNAT
+    const sunat_status =
+      nubefactData.aceptada_por_sunat ? "accepted" :
+      nubefactData.errors             ? "rejected" :
+      demo_mode                       ? "pending"  : "processing";
+
+    // 13. Guardar en tabla `invoices` (nueva, principal)
+    let savedInvoice: any = null;
     try {
-    const { data: _doc } = await supabase
-      .from("electronic_documents")
-      .insert({
+      // Items para tabla invoice_items
+      const invoiceItemsDB = (items ?? []).map((it: any) => ({
+        description:         it.descripcion || "Consumo",
+        quantity:            it.cantidad || 1,
+        unit_price:          it.valor_unitario || base_imponible,
+        subtotal:            it.subtotal || base_imponible,
+        igv_amount:          it.igv || igv_monto,
+        total:               it.total || monto_total,
+        product_code:        it.codigo || null,
+        unit_type:           it.unidad_de_medida || "NIU",
+        tax_type:            "gravada",
+        discount_percentage: 0,
+        discount_amount:     0,
+      }));
+
+      const invoicePayload = {
+        school_id,
+        sale_id:           sale_id ?? transaction_id ?? null,
+        payment_id:        payment_id ?? null,
+        cashier_id:        cashier_id ?? null,
+        created_by:        created_by ?? null,
+        invoice_type:      invoice_type_map[tipo] || "boleta",
+        document_type_code: document_type_code_map[tipo] || "03",
+        serie,
+        numero,
+        client_document_type:   cliente?.doc_type || (clientDocTypeNubefact === 6 ? "ruc" : clientDocTypeNubefact === 1 ? "dni" : "-"),
+        client_document_number: cliente?.doc_number || cliente?.numero_doc || null,
+        client_name:            cliente?.razon_social || cliente?.nombre || "Consumidor Final",
+        client_address:         cliente?.direccion || null,
+        client_email:           cliente?.email || null,
+        currency:               "PEN",
+        subtotal:               +base_imponible.toFixed(2),
+        igv_rate:               igv_pct / 100,
+        igv_amount:             +igv_monto.toFixed(2),
+        discount_amount:        0,
+        total_amount:           +monto_total.toFixed(2),
+        items:                  invoiceItemsDB,
+        sunat_status,
+        sunat_response_code:    nubefactData.codigo_respuesta_sunat ?? null,
+        sunat_response_message: nubefactData.respuesta_sunat ?? nubefactData.errors ?? null,
+        nubefact_id:            nubefactData.enlace_del_pdf?.split("/").pop() ?? null,
+        pdf_url:                nubefactData.enlace_del_pdf ?? null,
+        xml_url:                nubefactData.enlace_del_xml ?? null,
+        cdr_url:                nubefactData.enlace_del_cdr ?? null,
+        hash_signature:         nubefactData.hash_cpe ?? null,
+        qr_code:                nubefactData.codigo_qr ?? null,
+        related_invoice_id:     related_invoice_id ?? null,
+        cancellation_reason:    cancellation_reason ?? null,
+        payment_method:         payment_method ?? null,
+        emission_date:          new Date().toISOString().split("T")[0],
+        sent_to_sunat_at:       !demo_mode ? new Date().toISOString() : null,
+        notes:                  demo_mode ? "MODO DEMO — no enviado a SUNAT" : null,
+      };
+
+      const { data: inv, error: invErr } = await supabase
+        .from("invoices")
+        .insert(invoicePayload)
+        .select()
+        .single();
+
+      if (invErr) {
+        console.error("Error guardando en invoices:", invErr);
+      } else {
+        savedInvoice = inv;
+
+        // Guardar items en invoice_items
+        if (invoiceItemsDB.length > 0 && inv?.id) {
+          await supabase.from("invoice_items").insert(
+            invoiceItemsDB.map((item) => ({ ...item, invoice_id: inv.id }))
+          );
+        }
+
+        // Log del evento
+        await supabase.from("invoicing_logs").insert({
+          invoice_id:   inv.id,
+          event_type:   "created",
+          event_message: `Comprobante ${serie}-${String(numero).padStart(8,"0")} generado. Estado SUNAT: ${sunat_status}`,
+          request_payload:  payload,
+          response_payload: nubefactData,
+        });
+      }
+    } catch (dbErr) {
+      console.error("Error guardando invoice:", dbErr);
+    }
+
+    // 14. Fallback: guardar en electronic_documents (compatibilidad)
+    try {
+      await supabase.from("electronic_documents").insert({
         school_id,
         transaction_id: transaction_id ?? null,
         tipo_comprobante: tipo,
         serie,
         numero,
-        enlace_pdf: nubefactData.enlace_del_pdf ?? null,
-        enlace_xml: nubefactData.enlace_del_xml ?? null,
-        enlace_cdr: nubefactData.enlace_del_cdr ?? null,
-        estado: nubefactData.aceptada_por_sunat ? "aceptado"
-              : nubefactData.errors ? "rechazado"
-              : "pendiente",
-        cliente_nombre: cliente?.nombre ?? null,
-        cliente_documento: cliente?.numero_doc ?? null,
-        monto_total: +monto_total.toFixed(2),
-        igv: +igv_monto.toFixed(2),
-        doc_ref_serie: doc_ref?.serie ?? null,
+        enlace_pdf:   nubefactData.enlace_del_pdf ?? null,
+        enlace_xml:   nubefactData.enlace_del_xml ?? null,
+        enlace_cdr:   nubefactData.enlace_del_cdr ?? null,
+        estado:       sunat_status === "accepted" ? "aceptado" : sunat_status === "rejected" ? "rechazado" : "pendiente",
+        cliente_nombre:   cliente?.razon_social || cliente?.nombre || null,
+        cliente_documento: cliente?.doc_number || null,
+        monto_total:  +monto_total.toFixed(2),
+        igv:          +igv_monto.toFixed(2),
+        doc_ref_serie:  doc_ref?.serie ?? null,
         doc_ref_numero: doc_ref?.numero ?? null,
         respuesta_sunat: nubefactData,
-      })
-      .select()
-      .single();
-    docGuardado = _doc;
-    } catch (dbErr) {
-      console.error("Error guardando en electronic_documents:", dbErr);
-      // No falla si la tabla no existe - el comprobante ya fue generado en Nubefact
+      });
+    } catch (_) {
+      // No crítico si electronic_documents no existe
     }
 
     return new Response(
-      JSON.stringify({ success: true, documento: docGuardado ?? { serie, numero }, nubefact: nubefactData }),
+      JSON.stringify({
+        success:   true,
+        documento: savedInvoice ?? { id: null, serie, numero, enlace_pdf: nubefactData.enlace_del_pdf, enlace_xml: nubefactData.enlace_del_xml, estado: sunat_status },
+        nubefact:  nubefactData,
+      }),
       { headers: { ...cors, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
     console.error("generate-document ERROR:", error);
-    // Siempre devolver 200 para que el cliente pueda leer el mensaje de error
     return new Response(
       JSON.stringify({ success: false, error: String(error) }),
       { status: 200, headers: { ...cors, "Content-Type": "application/json" } }

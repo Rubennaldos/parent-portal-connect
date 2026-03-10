@@ -18,7 +18,8 @@ import {
   AlertCircle,
   ArrowLeft,
   BarChart3,
-  Wallet
+  Wallet,
+  Receipt,
 } from 'lucide-react';
 
 // Importar los componentes de cada tab
@@ -26,8 +27,10 @@ import { BillingDashboard } from '@/components/billing/BillingDashboard';
 import { BillingCollection } from '@/components/billing/BillingCollection';
 import { BillingReports } from '@/components/billing/BillingReports';
 import { BillingConfig } from '@/components/billing/BillingConfig';
+import { BillingNubefactConfig } from '@/components/billing/BillingNubefactConfig';
 import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
 import { VoucherApproval } from '@/components/billing/VoucherApproval';
+import { InvoicesList } from '@/components/billing/InvoicesList';
 
 interface TabPermissions {
   dashboard: boolean;
@@ -38,6 +41,8 @@ interface TabPermissions {
   vouchers: boolean;
   pagos_realizados: boolean; // Historial de pagos — visible para todos los que pueden cobrar
   config_sede: boolean;      // Configuración de sede — solo para gestores de unidad
+  comprobantes: boolean;     // Lista de boletas/facturas emitidas
+  config_sunat: boolean;     // Configuración Nubefact/SUNAT
 }
 
 const Cobranzas = () => {
@@ -55,6 +60,8 @@ const Cobranzas = () => {
     vouchers: false,
     pagos_realizados: false,
     config_sede: false,
+    comprobantes: false,
+    config_sunat: false,
   });
   const [pendingVouchers, setPendingVouchers] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -81,6 +88,8 @@ const Cobranzas = () => {
           vouchers: true,
           pagos_realizados: true,
           config_sede: false, // admin_general usa BillingConfig completo, no la versión de sede
+          comprobantes: true,
+          config_sunat: true,
         });
         setActiveTab('dashboard');
         fetchPendingVouchers();
@@ -118,6 +127,8 @@ const Cobranzas = () => {
         vouchers: false,
         pagos_realizados: false,
         config_sede: false,
+        comprobantes: false,
+        config_sunat: false,
       };
 
       // Mapear los permisos de la BD a las pestañas
@@ -125,6 +136,11 @@ const Cobranzas = () => {
         const permission = perm.permissions;
         if (permission?.module === 'cobranzas') {
           switch (permission.action) {
+            case 'ver_modulo':
+              // Acceso mínimo: ver historial de pagos y dashboard básico
+              perms.pagos_realizados = true;
+              perms.dashboard = true;
+              break;
             case 'ver_dashboard':
               perms.dashboard = true;
               break;
@@ -212,15 +228,16 @@ const Cobranzas = () => {
     );
   }
 
-  // Pestañas visibles (Reportes eliminado de la UI)
+  // Pestañas visibles
   const visibleTabCount = [
     permissions.dashboard,
     permissions.collect,
     permissions.pagos_realizados,
-    // permissions.reports — eliminado de la UI
     permissions.vouchers,
+    permissions.comprobantes,
     permissions.config_sede,
     permissions.config,
+    permissions.config_sunat,
   ].filter(Boolean).length;
 
   return (
@@ -338,6 +355,19 @@ const Cobranzas = () => {
                       )}
                     </button>
                   )}
+                  {permissions.comprobantes && (
+                    <button
+                      onClick={() => setActiveTab('comprobantes')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'comprobantes'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <FileText className="h-4 w-4" />
+                      Comprobantes
+                    </button>
+                  )}
                   {permissions.config && (
                     <button
                       onClick={() => setActiveTab('config')}
@@ -349,6 +379,19 @@ const Cobranzas = () => {
                     >
                       <Settings className="h-4 w-4" />
                       Config
+                    </button>
+                  )}
+                  {permissions.config_sunat && (
+                    <button
+                      onClick={() => setActiveTab('config_sunat')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'config_sunat'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <Settings className="h-4 w-4" />
+                      Config SUNAT
                     </button>
                   )}
                 </div>
@@ -425,6 +468,19 @@ const Cobranzas = () => {
                       )}
                     </button>
                   )}
+                  {permissions.comprobantes && (
+                    <button
+                      onClick={() => setActiveTab('comprobantes')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'comprobantes'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Comprobantes
+                    </button>
+                  )}
                   {permissions.config && (
                     <button
                       onClick={() => setActiveTab('config')}
@@ -436,6 +492,19 @@ const Cobranzas = () => {
                     >
                       <Settings className="h-3.5 w-3.5" />
                       Config
+                    </button>
+                  )}
+                  {permissions.config_sunat && (
+                    <button
+                      onClick={() => setActiveTab('config_sunat')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'config_sunat'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      Config SUNAT
                     </button>
                   )}
                 </div>
@@ -481,6 +550,20 @@ const Cobranzas = () => {
               {activeTab === 'config' && permissions.config && (
                 <div className="mt-4 sm:mt-6">
                   <BillingConfig />
+                </div>
+              )}
+
+              {/* Comprobantes Electrónicos Tab */}
+              {activeTab === 'comprobantes' && permissions.comprobantes && (
+                <div className="mt-4 sm:mt-6">
+                  <InvoicesList />
+                </div>
+              )}
+
+              {/* Configuración SUNAT / Nubefact Tab */}
+              {activeTab === 'config_sunat' && permissions.config_sunat && (
+                <div className="mt-4 sm:mt-6">
+                  <BillingNubefactConfig />
                 </div>
               )}
             </div>

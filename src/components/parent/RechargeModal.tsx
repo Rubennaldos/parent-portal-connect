@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { cn } from '@/lib/utils';
 import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
 import {
@@ -24,6 +25,7 @@ import {
   Copy,
   Check,
   PlusCircle,
+  Hash,
 } from 'lucide-react';
 
 interface ExtraVoucher {
@@ -61,6 +63,8 @@ interface RechargeModalProps {
   paidTransactionIds?: string[];
   /** Desglose de ítems que se están pagando */
   breakdownItems?: BreakdownItem[];
+  /** IDs de todos los estudiantes incluidos en un pago combinado */
+  combinedStudentIds?: string[];
 }
 
 interface PaymentConfig {
@@ -96,15 +100,18 @@ export function RechargeModal({
   lunchOrderIds,
   paidTransactionIds,
   breakdownItems,
+  combinedStudentIds,
 }: RechargeModalProps) {
+  const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
-  const [step, setStep] = useState<'amount' | 'method' | 'voucher' | 'success'>('amount');
+  const [step, setStep] = useState<'amount' | 'method' | 'voucher' | 'combined' | 'success'>('combined');
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [collapsedExtras, setCollapsedExtras] = useState<Set<string>>(new Set());
   const [amount, setAmount] = useState('');
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('yape');
   const [referenceCode, setReferenceCode] = useState('');
@@ -131,14 +138,13 @@ export function RechargeModal({
       setNotes('');
       setExtraVouchers([]);
 
+      setCollapsedExtras(new Set());
       if (skipAmountStep) {
-        // Pre-llenar monto y saltar al paso de método
         setAmount(String(suggestedAmount));
-        setStep('method');
       } else {
-        setStep('amount');
         setAmount('');
       }
+      setStep('combined');
     }
   }, [isOpen, studentId]);
 
@@ -183,15 +189,22 @@ export function RechargeModal({
   };
 
   // ── Helper: subir imagen a storage ──
-  const uploadVoucherImage = async (file: File, userId: string): Promise<string | null> => {
+  // ⚠️ LANZA error si falla — así el insert no se hace sin foto
+  const uploadVoucherImage = async (file: File, userId: string): Promise<string> => {
     const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
     const fileName = `${userId}/${safeName}`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('vouchers')
       .upload(fileName, file, { upsert: false });
-    if (uploadError) { console.warn('No se pudo subir imagen:', uploadError.message); return null; }
+    if (uploadError) {
+      console.error('Error al subir imagen del voucher:', uploadError.message);
+      throw new Error(`No se pudo subir la foto del comprobante: ${uploadError.message}. Verifica tu conexión e intenta nuevamente.`);
+    }
     const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
+    if (!publicUrl) {
+      throw new Error('No se pudo obtener la URL pública de la imagen. Contacta al administrador.');
+    }
     return publicUrl;
   };
 
@@ -218,8 +231,18 @@ export function RechargeModal({
     // ── Validar código principal obligatorio ──
     if (!referenceCode.trim()) {
       toast({
-        title: 'Código de operación obligatorio',
+        title: '🚫 Número de operación obligatorio',
         description: 'Debes ingresar el número de operación o código de transacción para continuar.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // ── Validar foto del comprobante principal obligatoria ──
+    if (!voucherFile) {
+      toast({
+        title: '🚫 Foto del comprobante obligatoria',
+        description: 'Debes adjuntar la captura o foto del comprobante de pago para continuar.',
         variant: 'destructive',
       });
       return;
@@ -230,8 +253,16 @@ export function RechargeModal({
       if (!ev.referenceCode.trim()) {
         toast({
           variant: 'destructive',
-          title: 'Código obligatorio en comprobante adicional',
+          title: '🚫 Código obligatorio en comprobante adicional',
           description: 'Cada comprobante adicional debe tener su número de operación.',
+        });
+        return;
+      }
+      if (!ev.voucherFile) {
+        toast({
+          variant: 'destructive',
+          title: '🚫 Foto obligatoria en comprobante adicional',
+          description: 'Cada comprobante adicional debe tener su foto adjuntada.',
         });
         return;
       }
@@ -298,19 +329,22 @@ export function RechargeModal({
 
       // Prevenir doble envío para debt_payment con transaction IDs
       if (requestType === 'debt_payment' && paidTransactionIds && paidTransactionIds.length > 0) {
+        const checkStudentIds = isCombinedPayment ? combinedStudentIds! : [studentId];
         const { data: existingDebt } = await supabase
           .from('recharge_requests')
           .select('id, status')
           .eq('parent_id', user.id)
           .eq('request_type', 'debt_payment')
           .eq('status', 'pending')
-          .eq('student_id', studentId);
+          .in('student_id', checkStudentIds);
 
         if (existingDebt && existingDebt.length > 0) {
           toast({
             variant: 'destructive',
             title: '⚠️ Comprobante ya enviado',
-            description: 'Ya tienes un comprobante pendiente de revisión para este alumno.',
+            description: isCombinedPayment
+              ? 'Ya tienes un comprobante pendiente de revisión para uno de los alumnos incluidos.'
+              : 'Ya tienes un comprobante pendiente de revisión para este alumno.',
           });
           setLoading(false);
           return;
@@ -324,16 +358,21 @@ export function RechargeModal({
         .single();
 
       // ── Subir imagen principal ──
-      let voucherUrl: string | null = null;
-      if (voucherFile) voucherUrl = await uploadVoucherImage(voucherFile, user.id);
+      // Si falla el upload, se lanza un error y el insert NO ocurre (evita vouchers sin foto)
+      const voucherUrl = await uploadVoucherImage(voucherFile, user.id);
 
       const baseDescription = requestDescription || (
         requestType === 'lunch_payment' ? 'Pago de almuerzo' :
-        requestType === 'debt_payment' ? 'Pago de deuda pendiente' :
+        requestType === 'debt_payment' ? (isCombinedPayment ? `Pago combinado: ${studentName}` : 'Pago de deuda pendiente') :
         'Recarga de saldo'
       );
 
       const totalParts = 1 + extraVouchers.length;
+
+      // ── Nota: si es pago combinado, agregar info de todos los alumnos ──
+      const effectiveNotes = isCombinedPayment
+        ? `${notes.trim() ? notes.trim() + ' | ' : ''}Pago combinado: ${studentName}`
+        : (notes.trim() || null);
 
       // ── Insertar comprobante principal ──
       const { error: insertError } = await supabase.from('recharge_requests').insert({
@@ -344,7 +383,7 @@ export function RechargeModal({
         payment_method: selectedMethod,
         reference_code: referenceCode.trim(),
         voucher_url: voucherUrl,
-        notes: notes.trim() || null,
+        notes: effectiveNotes,
         status: 'pending',
         request_type: requestType,
         description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
@@ -356,8 +395,8 @@ export function RechargeModal({
       // ── Insertar comprobantes adicionales ──
       for (let i = 0; i < extraVouchers.length; i++) {
         const ev = extraVouchers[i];
-        let evVoucherUrl: string | null = null;
-        if (ev.voucherFile) evVoucherUrl = await uploadVoucherImage(ev.voucherFile, user.id);
+        // Si falla el upload del comprobante adicional, también se lanza error
+        const evVoucherUrl = await uploadVoucherImage(ev.voucherFile!, user.id);
 
         const { error: evError } = await supabase.from('recharge_requests').insert({
           student_id: studentId,
@@ -367,7 +406,7 @@ export function RechargeModal({
           payment_method: selectedMethod,
           reference_code: ev.referenceCode.trim(),
           voucher_url: evVoucherUrl,
-          notes: notes.trim() || null,
+          notes: effectiveNotes,
           status: 'pending',
           request_type: requestType,
           description: `${baseDescription} (Pago ${i + 2} de ${totalParts})`,
@@ -461,6 +500,33 @@ export function RechargeModal({
   // ─────────────────────── PASO 1: Monto ───────────────────────
   const renderStepAmount = () => (
     <div className="space-y-5">
+
+      {/* ⚠️ AVISO IMPORTANTE: solo para recarga de kiosco */}
+      {requestType === 'recharge' && (
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 bg-amber-400 rounded-full flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-xl font-black">!</span>
+            </div>
+            <div>
+              <p className="font-bold text-amber-900 text-base leading-tight mb-1">
+                ⚠️ ¿Para qué sirve esta recarga?
+              </p>
+              <p className="text-amber-800 text-sm leading-relaxed">
+                Este saldo es <strong>únicamente para compras en el kiosco</strong> (recreo, snacks, etc.).
+              </p>
+              <p className="text-amber-700 text-sm leading-relaxed mt-2">
+                👉 Si deseas <strong>pagar los almuerzos</strong>, hazlo desde la pestaña{' '}
+                <span className="bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
+                  💳 Pagos
+                </span>{' '}
+                al finalizar tu pedido de almuerzo.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
         <div>
           <p className="text-xs text-gray-500">Saldo actual de {studentName}</p>
@@ -772,43 +838,63 @@ export function RechargeModal({
         </div>
       )}
 
-      {/* Número de operación */}
-      <div className="space-y-1">
-        <Label className="font-semibold">
-          Número de operación / código de transacción <span className="text-red-500">*</span>
+      {/* Número de operación — OBLIGATORIO */}
+      <div className={`space-y-1.5 rounded-xl p-3 border-2 ${referenceCode.trim() ? 'border-green-300 bg-green-50' : 'border-red-400 bg-red-50'}`}>
+        <Label className="font-bold text-sm flex items-center gap-1.5">
+          <Hash className="h-4 w-4 text-red-500" />
+          Número de operación
+          <span className="text-red-600 font-black">* OBLIGATORIO</span>
         </Label>
         <Input
-          placeholder="Ej: 123456789"
+          placeholder="Ej: 123456789 (lo encuentras en tu app después de pagar)"
           value={referenceCode}
           onChange={(e) => setReferenceCode(e.target.value)}
-          className="font-mono"
+          className={`font-mono text-base font-semibold border-2 h-11 ${referenceCode.trim() ? 'border-green-400 bg-white' : 'border-red-400 bg-white'}`}
         />
-        <p className="text-xs text-gray-400">Lo encuentras en tu app de Yape/Plin/banco después de realizar el pago. <span className="text-red-500 font-medium">Campo obligatorio — cada código solo puede usarse una vez.</span></p>
+        {!referenceCode.trim() ? (
+          <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
+            ⚠️ Sin este número no se puede procesar tu pago. Lo encuentras en Yape/Plin/banco tras realizar la transferencia.
+          </p>
+        ) : (
+          <p className="text-xs text-green-700 font-medium flex items-center gap-1">
+            ✅ Código ingresado correctamente.
+          </p>
+        )}
       </div>
 
-      {/* Subir imagen */}
-      <div className="space-y-2">
-        <Label className="font-semibold">Captura del comprobante <span className="text-gray-400 text-xs">(opcional pero recomendado)</span></Label>
+      {/* Subir imagen — OBLIGATORIO */}
+      <div className={`space-y-2 rounded-xl p-3 border-2 ${voucherFile ? 'border-green-300 bg-green-50' : 'border-red-400 bg-red-50'}`}>
+        <Label className="font-bold text-sm flex items-center gap-1.5">
+          <ImageIcon className="h-4 w-4 text-red-500" />
+          Foto del comprobante
+          <span className="text-red-600 font-black">* OBLIGATORIO</span>
+        </Label>
 
         {voucherPreview ? (
           <div className="relative">
-            <img src={voucherPreview} alt="Voucher" className="w-full max-h-48 object-contain rounded-lg border border-gray-200" />
+            <img src={voucherPreview} alt="Voucher" className="w-full max-h-48 object-contain rounded-lg border border-green-300" />
             <button
               onClick={() => { setVoucherFile(null); setVoucherPreview(null); }}
               className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
             >
               <X className="h-3 w-3" />
             </button>
+            <p className="text-xs text-green-700 font-medium mt-1 flex items-center gap-1">✅ Foto adjuntada correctamente.</p>
           </div>
         ) : (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-blue-400 hover:bg-blue-50 transition-all text-gray-500"
-          >
-            <Upload className="h-6 w-6" />
-            <span className="text-sm">Toca para adjuntar captura de pantalla</span>
-            <span className="text-xs text-gray-400">JPG, PNG — máx. 5 MB</span>
-          </button>
+          <>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full h-28 border-2 border-dashed border-red-400 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-red-500 hover:bg-red-100 transition-all text-red-500"
+            >
+              <Upload className="h-6 w-6" />
+              <span className="text-sm font-semibold">Toca para adjuntar la captura del pago</span>
+              <span className="text-xs">JPG, PNG — máx. 5 MB</span>
+            </button>
+            <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
+              ⚠️ Debes adjuntar la foto o captura del comprobante de pago para continuar.
+            </p>
+          </>
         )}
         <input
           ref={fileInputRef}
@@ -878,27 +964,34 @@ export function RechargeModal({
             <p className="text-xs text-red-500 font-medium">Campo obligatorio — debe ser diferente al anterior.</p>
           </div>
 
-          {/* Imagen adicional */}
-          <div className="space-y-1">
-            <Label className="text-sm">Captura <span className="text-gray-400 text-xs">(opcional)</span></Label>
+          {/* Imagen adicional — OBLIGATORIO */}
+          <div className={`space-y-1 rounded-lg p-2 border-2 ${ev.voucherFile ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'}`}>
+            <Label className="text-sm font-bold flex items-center gap-1">
+              <ImageIcon className="h-3.5 w-3.5 text-red-500" />
+              Foto del comprobante <span className="text-red-600 font-black">* OBLIGATORIO</span>
+            </Label>
             {ev.voucherPreview ? (
               <div className="relative">
-                <img src={ev.voucherPreview} alt="Voucher adicional" className="w-full max-h-32 object-contain rounded-lg border border-blue-200" />
+                <img src={ev.voucherPreview} alt="Voucher adicional" className="w-full max-h-32 object-contain rounded-lg border border-green-200" />
                 <button
                   onClick={() => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, voucherFile: null, voucherPreview: null } : v))}
                   className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
                 >
                   <X className="h-3 w-3" />
                 </button>
+                <p className="text-xs text-green-700 font-medium mt-1">✅ Foto adjuntada.</p>
               </div>
             ) : (
-              <button
-                onClick={() => extraFileRefs.current[ev.id]?.click()}
-                className="w-full h-20 border-2 border-dashed border-blue-300 rounded-xl flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-100 transition-all text-blue-500"
-              >
-                <Upload className="h-5 w-5" />
-                <span className="text-xs">Adjuntar captura</span>
-              </button>
+              <>
+                <button
+                  onClick={() => extraFileRefs.current[ev.id]?.click()}
+                  className="w-full h-20 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center gap-1 hover:border-red-500 hover:bg-red-100 transition-all text-red-500"
+                >
+                  <Upload className="h-5 w-5" />
+                  <span className="text-xs font-semibold">Adjuntar captura</span>
+                </button>
+                <p className="text-xs text-red-600 font-semibold">⚠️ Obligatorio para este comprobante.</p>
+              </>
             )}
             <input
               ref={el => { extraFileRefs.current[ev.id] = el; }}
@@ -943,8 +1036,19 @@ export function RechargeModal({
         <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">← Atrás</Button>
         <Button
           onClick={handleSubmit}
-          disabled={loading || !referenceCode.trim() || extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount)}
-          className="flex-grow h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2"
+          disabled={
+            loading ||
+            !referenceCode.trim() ||
+            !voucherFile ||
+            extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount || !ev.voucherFile)
+          }
+          title={
+            !referenceCode.trim() ? 'Falta el número de operación' :
+            !voucherFile ? 'Falta adjuntar la foto del comprobante' :
+            extraVouchers.some(ev => !ev.referenceCode.trim()) ? 'Falta código en un comprobante adicional' :
+            extraVouchers.some(ev => !ev.voucherFile) ? 'Falta foto en un comprobante adicional' : ''
+          }
+          className="flex-grow h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
           {loading ? (
             <><Loader2 className="h-4 w-4 animate-spin" /> Enviando...</>
@@ -969,6 +1073,415 @@ export function RechargeModal({
     </div>
   );
 
+  // ─────────────────────── VISTA COMBINADA (1 sola pantalla) ───────────────────────
+  const renderCombinedView = () => {
+    const hasAnyMethod = !!(
+      (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
+      (paymentConfig?.plin_enabled !== false && paymentConfig?.plin_number) ||
+      (paymentConfig?.transferencia_enabled !== false && (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info))
+    );
+
+    const canSubmit = !!(
+      (skipAmountStep || (amount && parseFloat(amount) > 0)) &&
+      currentMethodInfo.number &&
+      referenceCode.trim() &&
+      voucherFile &&
+      !extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount || !ev.voucherFile)
+    );
+
+    return (
+      <div className="space-y-3">
+        {/* Amount section (compact) — only for recharge */}
+        {!skipAmountStep && (
+          <div className="space-y-2">
+            {requestType === 'recharge' && (
+              <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 text-xs text-amber-800">
+                <strong>⚠️ Esta recarga es solo para compras en el kiosco.</strong> Para almuerzos, usa la pestaña Pagos.
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-sm">S/</span>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="text-xl h-11 text-center font-bold pl-8"
+                  min="1"
+                  step="1"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {quickAmounts.map((q) => (
+                <Button
+                  key={q}
+                  variant={amount === q.toString() ? 'default' : 'outline'}
+                  onClick={() => setAmount(q.toString())}
+                  size="sm"
+                  className="h-8 text-xs font-semibold"
+                >
+                  S/{q}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Summary bar */}
+        {(skipAmountStep && parseFloat(amount) > 0) && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] text-gray-500">
+                {requestType === 'lunch_payment' ? 'Pago almuerzo' : requestType === 'debt_payment' ? 'Pago deuda' : 'Recarga'}
+                {' — '}{studentName}
+              </p>
+              <p className="text-lg font-black text-blue-700">S/ {parseFloat(amount).toFixed(2)}</p>
+            </div>
+            {requestType === 'debt_payment' && breakdownItems && breakdownItems.length > 0 && (
+              <button
+                onClick={() => setShowBreakdown(v => !v)}
+                className="text-[10px] text-blue-600 hover:underline"
+              >
+                {showBreakdown ? 'Ocultar' : 'Ver'} desglose
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Breakdown (debt_payment) */}
+        {showBreakdown && breakdownItems && breakdownItems.length > 0 && (
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-32 overflow-y-auto text-xs">
+            {breakdownItems.map((item, i) => (
+              <div key={i} className="flex justify-between px-3 py-1.5">
+                <span className="text-gray-700 truncate flex-1 mr-2">{item.description}</span>
+                <span className="font-semibold text-red-600">S/ {item.amount.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!hasAnyMethod ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center space-y-2">
+            <AlertCircle className="h-8 w-8 text-amber-500 mx-auto" />
+            <p className="text-sm font-medium text-amber-800">Medios de pago no configurados</p>
+            <p className="text-xs text-amber-600">Contacta a la administración del colegio.</p>
+          </div>
+        ) : (
+          <>
+            {/* Method tabs — horizontal */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1.5">Método de pago</p>
+              <div className="grid grid-cols-3 gap-2">
+                {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
+                  const info = methodInfo[m];
+                  const isAvailable = !!info.number && info.enabled;
+                  const isSelected = selectedMethod === m;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => isAvailable && setSelectedMethod(m)}
+                      disabled={!isAvailable}
+                      className={cn(
+                        "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all",
+                        isSelected && isAvailable ? "border-blue-500 bg-blue-50 shadow-sm" : "border-gray-200 bg-white",
+                        !isAvailable && "opacity-30 cursor-not-allowed",
+                        isAvailable && !isSelected && "hover:border-gray-300"
+                      )}
+                    >
+                      <div className="h-8 w-8 flex items-center justify-center">{info.icon}</div>
+                      <span className="text-[10px] font-bold text-gray-800">{info.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Payment details card */}
+            {currentMethodInfo.number && (
+              <div className="bg-white border-2 border-blue-200 rounded-xl overflow-hidden">
+                <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
+                  <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
+                    {selectedMethod === 'transferencia' ? '🏦 Datos bancarios' : `📱 ${currentMethodInfo.label}`}
+                  </p>
+                </div>
+                <div className="p-3 space-y-2">
+                  {selectedMethod === 'transferencia' ? (
+                    <>
+                      {methodInfo.transferencia.bankName && (
+                        <div className="pb-1 border-b border-gray-100">
+                          <p className="text-[9px] text-gray-400 uppercase">Banco</p>
+                          <p className="text-sm font-semibold text-gray-800">{methodInfo.transferencia.bankName}</p>
+                        </div>
+                      )}
+                      {currentMethodInfo.holder && (
+                        <div className="pb-1 border-b border-gray-100">
+                          <p className="text-[9px] text-gray-400 uppercase">Titular</p>
+                          <p className="text-sm font-semibold text-gray-800">{currentMethodInfo.holder}</p>
+                        </div>
+                      )}
+                      {methodInfo.transferencia.accountNumber && (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[9px] text-gray-400 uppercase">Cta. Corriente</p>
+                            <p className="text-sm font-bold font-mono text-gray-900 break-all">{methodInfo.transferencia.accountNumber}</p>
+                          </div>
+                          <button
+                            onClick={() => handleCopy(methodInfo.transferencia.accountNumber!, 'account')}
+                            className={cn(
+                              "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border-2 transition-all shrink-0 active:scale-95",
+                              copiedField === 'account' ? "bg-green-100 text-green-700 border-green-300" : "bg-blue-600 text-white border-blue-600"
+                            )}
+                          >
+                            {copiedField === 'account' ? <><Check className="h-3 w-3" />Copiado</> : <><Copy className="h-3 w-3" />Copiar</>}
+                          </button>
+                        </div>
+                      )}
+                      {methodInfo.transferencia.cci && (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[9px] text-gray-400 uppercase">CCI</p>
+                            <p className="text-sm font-bold font-mono text-gray-900 break-all">{methodInfo.transferencia.cci}</p>
+                          </div>
+                          <button
+                            onClick={() => handleCopy(methodInfo.transferencia.cci!, 'cci')}
+                            className={cn(
+                              "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border-2 transition-all shrink-0 active:scale-95",
+                              copiedField === 'cci' ? "bg-green-100 text-green-700 border-green-300" : "bg-blue-600 text-white border-blue-600"
+                            )}
+                          >
+                            {copiedField === 'cci' ? <><Check className="h-3 w-3" />Copiado</> : <><Copy className="h-3 w-3" />Copiar</>}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {currentMethodInfo.holder && (
+                        <div className="pb-1 border-b border-gray-100">
+                          <p className="text-[9px] text-gray-400 uppercase">Titular</p>
+                          <p className="text-sm font-semibold text-gray-800">{currentMethodInfo.holder}</p>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[9px] text-gray-400 uppercase">Número</p>
+                          <p className="text-xl font-bold text-gray-900 tracking-widest">{currentMethodInfo.number}</p>
+                        </div>
+                        <button
+                          onClick={() => handleCopy(currentMethodInfo.number!, 'number')}
+                          className={cn(
+                            "flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-bold border-2 transition-all shrink-0 active:scale-95",
+                            copiedField === 'number' ? "bg-green-100 text-green-700 border-green-300" : "bg-blue-600 text-white border-blue-600"
+                          )}
+                        >
+                          {copiedField === 'number' ? <><Check className="h-3.5 w-3.5" />Copiado</> : <><Copy className="h-3.5 w-3.5" />Copiar</>}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Reference code + Voucher — inline */}
+            <div className={cn(
+              "rounded-xl p-3 border-2 space-y-1.5",
+              referenceCode.trim() ? "border-green-300 bg-green-50/50" : "border-amber-300 bg-amber-50/30"
+            )}>
+              <Label className="font-bold text-xs flex items-center gap-1">
+                <Hash className="h-3.5 w-3.5 text-red-500" />
+                N° de operación <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                placeholder="Ej: 123456789"
+                value={referenceCode}
+                onChange={(e) => setReferenceCode(e.target.value)}
+                className="font-mono text-sm font-semibold h-10"
+              />
+              {referenceCode.trim() && <p className="text-[10px] text-green-600 font-medium">✅ Código ingresado</p>}
+            </div>
+
+            <div className={cn(
+              "rounded-xl p-3 border-2 space-y-1.5",
+              voucherFile ? "border-green-300 bg-green-50/50" : "border-amber-300 bg-amber-50/30"
+            )}>
+              <Label className="font-bold text-xs flex items-center gap-1">
+                <ImageIcon className="h-3.5 w-3.5 text-red-500" />
+                Foto del comprobante <span className="text-red-500">*</span>
+              </Label>
+
+              {voucherPreview ? (
+                <div className="relative">
+                  <img src={voucherPreview} alt="Voucher" className="w-full max-h-36 object-contain rounded-lg border border-green-300" />
+                  <button
+                    onClick={() => { setVoucherFile(null); setVoucherPreview(null); }}
+                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <p className="text-[10px] text-green-600 font-medium mt-1">✅ Foto adjuntada</p>
+                </div>
+              ) : (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full h-20 border-2 border-dashed border-amber-400 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-amber-500 hover:bg-amber-100/50 transition-all text-amber-600"
+                >
+                  <Upload className="h-5 w-5" />
+                  <span className="text-xs font-semibold">Toca para adjuntar captura</span>
+                </button>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+            </div>
+
+            {/* Note */}
+            <Input
+              placeholder="Nota adicional (opcional)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="text-xs h-9"
+            />
+
+            {/* Extra vouchers — COLLAPSIBLE */}
+            {extraVouchers.map((ev, idx) => {
+              const isCollapsed = collapsedExtras.has(ev.id);
+              const isComplete = !!(ev.referenceCode.trim() && ev.voucherFile && ev.amount && parseFloat(ev.amount) > 0);
+
+              if (isCollapsed && isComplete) {
+                // Collapsed summary
+                return (
+                  <div
+                    key={ev.id}
+                    className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 cursor-pointer"
+                    onClick={() => setCollapsedExtras(prev => { const n = new Set(prev); n.delete(ev.id); return n; })}
+                  >
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                      <span className="text-xs font-semibold text-gray-700">
+                        Voucher {idx + 2} — S/ {parseFloat(ev.amount).toFixed(2)} — {currentMethodInfo.label} ✓
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExtraVouchers(prev => prev.filter(v => v.id !== ev.id)); }}
+                      className="text-red-400 hover:text-red-600 p-0.5"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              }
+
+              // Expanded form
+              return (
+                <div key={ev.id} className="border-2 border-blue-200 rounded-xl p-3 space-y-2 bg-blue-50">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-700">💳 Comprobante {idx + 2}</span>
+                    <button onClick={() => setExtraVouchers(prev => prev.filter(v => v.id !== ev.id))} className="text-red-400 hover:text-red-600 p-0.5">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-xs">S/</span>
+                    <Input type="number" min="0.01" step="0.01" placeholder="Monto" value={ev.amount}
+                      onChange={(e) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, amount: e.target.value } : v))}
+                      className="pl-8 font-mono text-sm h-9" />
+                  </div>
+
+                  <Input
+                    placeholder="N° operación"
+                    value={ev.referenceCode}
+                    onChange={(e) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, referenceCode: e.target.value } : v))}
+                    className="font-mono text-sm h-9"
+                  />
+
+                  {ev.voucherPreview ? (
+                    <div className="relative">
+                      <img src={ev.voucherPreview} alt="Voucher" className="w-full max-h-28 object-contain rounded-lg border border-green-200" />
+                      <button onClick={() => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, voucherFile: null, voucherPreview: null } : v))}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button onClick={() => extraFileRefs.current[ev.id]?.click()}
+                        className="w-full h-16 border-2 border-dashed border-blue-300 rounded-lg flex flex-col items-center justify-center gap-1 hover:bg-blue-100/50 text-blue-500 text-xs font-semibold">
+                        <Upload className="h-4 w-4" />
+                        Adjuntar foto
+                      </button>
+                    </>
+                  )}
+                  <input
+                    ref={el => { extraFileRefs.current[ev.id] = el; }}
+                    type="file" accept="image/*" className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 5 * 1024 * 1024) { toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' }); return; }
+                      const reader = new FileReader();
+                      reader.onload = (ev2) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, voucherFile: file, voucherPreview: ev2.target?.result as string } : v));
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+
+                  {/* Collapse button when complete */}
+                  {isComplete && (
+                    <Button size="sm" variant="outline" className="w-full text-xs h-8 text-blue-600 border-blue-300"
+                      onClick={() => setCollapsedExtras(prev => { const n = new Set(prev); n.add(ev.id); return n; })}>
+                      ✓ Minimizar
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add extra voucher */}
+            <button
+              onClick={() => {
+                // Collapse all complete previous vouchers
+                const newCollapsed = new Set(collapsedExtras);
+                extraVouchers.forEach(ev => {
+                  if (ev.referenceCode.trim() && ev.voucherFile && ev.amount && parseFloat(ev.amount) > 0) {
+                    newCollapsed.add(ev.id);
+                  }
+                });
+                setCollapsedExtras(newCollapsed);
+                setExtraVouchers(prev => [...prev, { id: `extra_${Date.now()}`, referenceCode: '', voucherFile: null, voucherPreview: null, amount: '' }]);
+              }}
+              className="w-full h-9 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center gap-1.5 text-gray-500 font-semibold hover:bg-gray-50 transition-all text-xs"
+            >
+              <PlusCircle className="h-3.5 w-3.5" />
+              Otro comprobante (pago en partes)
+            </button>
+
+            {/* Submit */}
+            <Button
+              onClick={handleSubmit}
+              disabled={loading || !canSubmit}
+              className="w-full h-12 bg-green-600 hover:bg-green-700 font-bold text-base shadow-lg"
+            >
+              {loading ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Enviando...</>
+              ) : extraVouchers.length > 0 ? (
+                <><Send className="h-4 w-4 mr-2" />Enviar {1 + extraVouchers.length} comprobantes</>
+              ) : (
+                <><Send className="h-4 w-4 mr-2" />Enviar comprobante</>
+              )}
+            </Button>
+
+            {onCancel && (
+              <button type="button" onClick={onCancel} className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 underline py-0.5">
+                Cancelar — volver
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
   // ─────────────────────── PASO 4: Éxito ───────────────────────
   const renderStepSuccess = () => (
     <div className="text-center space-y-5 py-4">
@@ -981,11 +1494,24 @@ export function RechargeModal({
           {requestType === 'lunch_payment'
             ? <>Recibimos tu pago de almuerzo de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
             : requestType === 'debt_payment'
-            ? <>Recibimos tu pago de deuda de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+            ? isCombinedPayment
+              ? <>Recibimos tu pago combinado de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+              : <>Recibimos tu pago de deuda de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
             : <>Recibimos tu solicitud de recarga de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
           }
         </p>
       </div>
+
+      {isCombinedPayment && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-left">
+          <p className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
+            👨‍👧‍👦 Pago combinado para {combinedStudentIds?.length || 0} alumno(s)
+          </p>
+          <p className="text-[11px] text-emerald-600 mt-1">
+            Este comprobante cubre las deudas de todos tus hijos incluidos.
+          </p>
+        </div>
+      )}
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
         <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
@@ -1024,29 +1550,30 @@ export function RechargeModal({
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
             <Wallet className="h-5 w-5 text-blue-600" />
-            {step === 'success' ? '¡Listo!' : requestType === 'lunch_payment' ? 'Pagar Almuerzo' : requestType === 'debt_payment' ? 'Pagar Deuda' : 'Recargar Saldo'}
+            {step === 'success'
+              ? '¡Listo!'
+              : isCombinedPayment
+              ? 'Pagar Todo Junto'
+              : requestType === 'lunch_payment'
+              ? 'Pagar Almuerzo'
+              : requestType === 'debt_payment'
+              ? 'Pagar Deuda'
+              : 'Recargar Saldo'}
           </DialogTitle>
           {step !== 'success' && (
             <DialogDescription>
-              Para <strong>{studentName}</strong>
+              {isCombinedPayment ? (
+                <>
+                  Para <strong>{studentName}</strong>
+                  <span className="ml-1 text-emerald-600 text-[10px] font-semibold">(pago combinado)</span>
+                </>
+              ) : (
+                <>Para <strong>{studentName}</strong></>
+              )}
               {step !== 'amount' && <> — <strong>S/ {parseFloat(amount || '0').toFixed(2)}</strong></>}
             </DialogDescription>
           )}
         </DialogHeader>
-
-        {/* Indicador de pasos */}
-        {step !== 'success' && (
-          <div className="flex items-center gap-1 mb-1">
-            {visibleSteps.map((s, i) => (
-              <div key={s} className="flex items-center gap-1 flex-1">
-                <div className={`h-2 rounded-full flex-1 transition-colors ${
-                  step === s ? 'bg-blue-500' :
-                  currentStepIndex > i ? 'bg-green-400' : 'bg-gray-200'
-                }`} />
-              </div>
-            ))}
-          </div>
-        )}
 
         {loadingConfig ? (
           <div className="flex items-center justify-center py-10">
@@ -1054,9 +1581,7 @@ export function RechargeModal({
           </div>
         ) : (
           <>
-            {step === 'amount' && renderStepAmount()}
-            {step === 'method' && renderStepMethod()}
-            {step === 'voucher' && renderStepVoucher()}
+            {step === 'combined' && renderCombinedView()}
             {step === 'success' && renderStepSuccess()}
           </>
         )}
