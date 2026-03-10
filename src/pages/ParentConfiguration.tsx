@@ -823,11 +823,12 @@ const ParentConfiguration = () => {
   };
 
   const filteredParents = parents.filter(parent => {
-    const matchesSearch = parent.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         parent.dni.includes(searchTerm) ||
-                         (parent.nickname && parent.nickname.toLowerCase().includes(searchTerm.toLowerCase()));
+    const term = searchTerm.toLowerCase();
+    const matchesSearch = !searchTerm ||
+                         (parent.full_name?.toLowerCase().includes(term)) ||
+                         (parent.dni?.includes(searchTerm)) ||
+                         (parent.nickname?.toLowerCase().includes(term));
     
-    // Filtrar por colegio: buscar si al menos uno de los hijos está en ese colegio
     const matchesSchool = selectedSchool === 'all' || 
                          (parent.children && parent.children.some((child: any) => child.school_id === selectedSchool));
     
@@ -835,10 +836,12 @@ const ParentConfiguration = () => {
   });
 
   const filteredTeachers = teachers.filter(teacher => {
-    const matchesSearch = teacher.full_name.toLowerCase().includes(searchTermTeacher.toLowerCase()) ||
-                         teacher.dni.includes(searchTermTeacher) ||
-                         (teacher.personal_email && teacher.personal_email.toLowerCase().includes(searchTermTeacher.toLowerCase())) ||
-                         (teacher.corporate_email && teacher.corporate_email.toLowerCase().includes(searchTermTeacher.toLowerCase()));
+    const term = searchTermTeacher.toLowerCase();
+    const matchesSearch = !searchTermTeacher ||
+                         (teacher.full_name?.toLowerCase().includes(term)) ||
+                         (teacher.dni?.includes(searchTermTeacher)) ||
+                         (teacher.personal_email?.toLowerCase().includes(term)) ||
+                         (teacher.corporate_email?.toLowerCase().includes(term));
     
     const matchesSchool = selectedSchoolTeacher === 'all' || 
                          teacher.school_id_1 === selectedSchoolTeacher || 
