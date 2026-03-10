@@ -374,12 +374,19 @@ export default function LunchOrders() {
           .order('order_date', { ascending: false })
           .order('created_at', { ascending: false });
 
-        const { data, error } = await query;
-        
-        if (error) {
-          console.error('❌ ERROR EN QUERY:', error);
-          throw error;
+        // Paginación para superar el límite de 1000 filas de Supabase
+        let allData: any[] = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        while (true) {
+          const { data: page, error: pageError } = await query.range(from, from + PAGE_SIZE - 1);
+          if (pageError) throw pageError;
+          if (!page || page.length === 0) break;
+          allData = allData.concat(page);
+          if (page.length < PAGE_SIZE) break;
+          from += PAGE_SIZE;
         }
+        const data = allData;
         
         console.log('✅ Pedidos cargados (rango):', data?.length || 0);
         // Debug: verificar si llegan todos los pedidos y si tienen student
