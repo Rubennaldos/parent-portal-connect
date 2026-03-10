@@ -3519,7 +3519,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             totalOrderAmountRef.current = 0;
             setOrderDescriptions([]);
           }}
-          }}
           studentName={selectedStudent.full_name}
           studentId={selectedStudent.id}
           currentBalance={selectedStudent.balance || 0}
