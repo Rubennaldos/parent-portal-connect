@@ -382,6 +382,13 @@ export default function LunchOrders() {
         }
         
         console.log('✅ Pedidos cargados (rango):', data?.length || 0);
+        // Debug: verificar si llegan todos los pedidos y si tienen student
+        if (data && data.length > 0) {
+          const sinStudent = data.filter((o: any) => !o.student && !o.teacher && !o.manual_name);
+          if (sinStudent.length > 0) {
+            console.warn('⚠️ Pedidos sin join de student/teacher:', sinStudent.length, sinStudent.map((o: any) => ({ id: o.id, order_date: o.order_date, student_id: o.student_id })));
+          }
+        }
         
         // Cargar categorías para los menús que tengan category_id
         if (data && data.length > 0) {
@@ -665,12 +672,16 @@ export default function LunchOrders() {
     // Filtrar por búsqueda
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(order => 
-        order.student?.full_name.toLowerCase().includes(term) ||
-        order.teacher?.full_name.toLowerCase().includes(term) ||
-        order.manual_name?.toLowerCase().includes(term) ||
-        order.student?.temporary_classroom_name?.toLowerCase().includes(term)
-      );
+      filtered = filtered.filter(order => {
+        if (order.student?.full_name?.toLowerCase().includes(term)) return true;
+        if (order.teacher?.full_name?.toLowerCase().includes(term)) return true;
+        if (order.manual_name?.toLowerCase().includes(term)) return true;
+        if (order.student?.temporary_classroom_name?.toLowerCase().includes(term)) return true;
+        // Fallback: buscar en nombre_estudiante guardado directamente en el pedido
+        if ((order as any).student_name?.toLowerCase().includes(term)) return true;
+        if ((order as any).client_name?.toLowerCase().includes(term)) return true;
+        return false;
+      });
     }
 
     setFilteredOrders(filtered);
