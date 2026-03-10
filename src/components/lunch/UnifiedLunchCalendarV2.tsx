@@ -783,19 +783,22 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   useEffect(() => {
     if (isInlineOrdering && wizardStep === 'done' && ordersCreated > 0) {
       const timer = setTimeout(() => {
+        // Capture amount BEFORE resetting the ref
+        const pendingAmount = totalOrderAmountRef.current;
+
         setExpandedCategoryId(null);
         setIsInlineOrdering(false);
         setWizardStep('idle');
         setWizardDates([]);
         setSelectedDates(new Set());
-        totalOrderAmountRef.current = 0;
+        // Do NOT reset totalOrderAmount / createdOrderIds here — the payment banner stays visible
         fetchMonthlyData();
 
-        if (userType === 'parent' && totalOrderAmountRef.current > 0) {
+        if (userType === 'parent' && pendingAmount > 0) {
           toast({
-            title: '✅ Pedido registrado',
-            description: `S/ ${totalOrderAmountRef.current.toFixed(2)} pendiente de pago. Puedes seguir pidiendo o pagar desde la pestaña Pagos.`,
-            duration: 5000,
+            title: '✅ Pedido agregado',
+            description: `Puedes seguir eligiendo días o pagar S/ ${pendingAmount.toFixed(2)} ahora.`,
+            duration: 4000,
           });
         }
       }, 1500);
@@ -1952,21 +1955,47 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
                   {/* Configurable plate step */}
                   {!showDayTransition && wizardStep === 'configurable_select' && selectedCategory && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-amber-700">🍽️ Arma tu plato:</p>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-amber-700">🍽️ Arma tu plato</span>
+                        <span className="text-[10px] text-gray-400">Elige tus opciones y toca Confirmar</span>
+                      </div>
                       {configPlateGroups.map((group) => {
                         const currentSelection = configSelections.find(s => s.group_name === group.name);
                         const isMultiSelect = (group.max_selections || 1) > 1;
                         const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
                         const maxSel = group.max_selections || 1;
+                        const hasSelection = selectedItems.length > 0 || (!isMultiSelect && !!currentSelection?.selected);
+                        const isSatisfied = !group.is_required || hasSelection;
 
                         return (
-                          <div key={group.id} className="bg-amber-50 rounded-lg p-2 space-y-1.5">
-                            <p className="text-xs font-semibold text-amber-900">
-                              {group.name}
-                              {group.is_required && <span className="text-red-500">*</span>}
-                              {isMultiSelect && <span className="text-[10px] text-gray-400 ml-1">({selectedItems.length}/{maxSel})</span>}
-                            </p>
+                          <div key={group.id} className={cn(
+                            "rounded-lg p-2.5 space-y-2 border-2 transition-all",
+                            isSatisfied ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"
+                          )}>
+                            {/* Group header */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-gray-800">{group.name}</p>
+                                {group.is_required && !hasSelection && (
+                                  <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold">Requerido</span>
+                                )}
+                                {hasSelection && (
+                                  <span className="text-[9px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded font-semibold">✓</span>
+                                )}
+                              </div>
+                              {isMultiSelect && (
+                                <span className={cn(
+                                  "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                                  selectedItems.length === maxSel
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-gray-100 text-gray-500"
+                                )}>
+                                  {selectedItems.length}/{maxSel}
+                                </span>
+                              )}
+                            </div>
+                            {/* Options */}
                             <div className="flex flex-wrap gap-1.5">
                               {group.options.map(option => {
                                 const isSelected = isMultiSelect ? selectedItems.includes(option.name) : currentSelection?.selected === option.name;
@@ -1991,10 +2020,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                                       }
                                     }}
                                     className={cn(
-                                      "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
-                                      isSelected ? "border-amber-500 bg-amber-100 text-amber-900" :
-                                      isDisabledOpt ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed" :
-                                      "border-gray-200 hover:border-amber-300 text-gray-600"
+                                      "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all active:scale-95",
+                                      isSelected
+                                        ? "border-amber-500 bg-amber-400 text-white shadow-sm"
+                                        : isDisabledOpt
+                                          ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed"
+                                          : "border-gray-200 bg-white hover:border-amber-400 hover:bg-amber-50 text-gray-700"
                                     )}
                                   >
                                     {isSelected && '✓ '}{option.name}
@@ -2002,16 +2033,22 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                                 );
                               })}
                             </div>
+                            {/* Hint for multi-select */}
+                            {isMultiSelect && selectedItems.length < maxSel && (
+                              <p className="text-[10px] text-amber-600">
+                                {maxSel === 2 ? 'Elige hasta 2 opciones' : `Puedes elegir hasta ${maxSel} opciones`}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
                       <Button
                         size="sm"
                         onClick={() => setWizardStep('confirm')}
-                        className="w-full bg-amber-600 hover:bg-amber-700 text-sm"
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm h-10"
                         disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
                       >
-                        Continuar →
+                        Confirmar opciones →
                       </Button>
                     </div>
                   )}
@@ -2455,18 +2492,32 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                         const maxSel = group.max_selections || 1;
 
                         return (
-                          <div key={group.id} className="bg-white rounded-lg border-2 border-amber-200 p-3 space-y-2">
-                            <p className="font-semibold text-sm text-amber-900">
-                              {group.name}
-                              {group.is_required && <span className="text-red-500 ml-1">*</span>}
+                          <div key={group.id} className={cn(
+                            "bg-white rounded-lg border-2 p-3 space-y-2 transition-all",
+                            !group.is_required || (isMultiSelect ? selectedItems.length > 0 : !!currentSelection?.selected)
+                              ? "border-amber-200"
+                              : "border-red-300 bg-red-50"
+                          )}>
+                            <div className="flex items-center justify-between">
+                              <p className="font-semibold text-sm text-amber-900">
+                                {group.name}
+                                {group.is_required && !(isMultiSelect ? selectedItems.length > 0 : !!currentSelection?.selected) && (
+                                  <span className="ml-1.5 text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold">Requerido</span>
+                                )}
+                              </p>
                               {isMultiSelect ? (
-                                <span className="ml-2 text-xs font-normal text-gray-400">
-                                  elige hasta {maxSel} opciones ({selectedItems.length}/{maxSel})
+                                <span className={cn(
+                                  "text-xs font-bold px-2 py-0.5 rounded-full",
+                                  selectedItems.length === maxSel
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-gray-100 text-gray-500"
+                                )}>
+                                  {selectedItems.length}/{maxSel}
                                 </span>
                               ) : (
-                                <span className="ml-2 text-xs font-normal text-gray-400">elige una opción</span>
+                                <span className="text-xs font-normal text-gray-400">1 opción</span>
                               )}
-                            </p>
+                            </div>
                             <div className="grid grid-cols-2 gap-2">
                               {group.options.map(option => {
                                 const isSelected = isMultiSelect
@@ -3294,6 +3345,39 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         </CardContent>
       </Card>
 
+      {/* PAYMENT PENDING BANNER — visible after ordering, lets parent keep ordering or pay */}
+      {userType === 'parent' && totalOrderAmount > 0 && !isInlineOrdering && createdOrderIds.length > 0 && (
+        <div className="flex items-center justify-between gap-3 bg-purple-600 text-white rounded-xl px-4 py-3 shadow-lg">
+          <div>
+            <p className="text-xs font-semibold text-purple-200">Pedidos pendientes de pago</p>
+            <p className="text-lg font-black">S/ {totalOrderAmount.toFixed(2)}</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-purple-200 hover:text-white hover:bg-white/20 text-xs h-8"
+              onClick={() => {
+                setTotalOrderAmount(0);
+                setCreatedOrderIds([]);
+                setCreatedTransactionIds([]);
+                setOrderDescriptions([]);
+              }}
+            >
+              Ignorar
+            </Button>
+            <Button
+              size="sm"
+              className="bg-white text-purple-700 hover:bg-purple-50 font-bold text-xs h-8 shadow"
+              onClick={() => setShowPaymentModal(true)}
+            >
+              <CreditCardIcon className="h-3.5 w-3.5 mr-1" />
+              Pagar ahora
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* MENU CARDS (below selected day) */}
       {selectedDay && !multiSelectMode && renderMenuCards()}
 
@@ -3432,7 +3516,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             setCreatedOrderIds([]);
             setCreatedTransactionIds([]);
             setTotalOrderAmount(0);
+            totalOrderAmountRef.current = 0;
             setOrderDescriptions([]);
+          }}
           }}
           studentName={selectedStudent.full_name}
           studentId={selectedStudent.id}
