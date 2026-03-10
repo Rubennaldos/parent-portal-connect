@@ -197,27 +197,18 @@ const Products = () => {
     let productsData: Product[] = [];
 
     if (role === 'admin_general') {
-      // Admin general ve TODOS los productos
       const { data } = await supabase.from('products').select('*').eq('active', true).order('name');
       productsData = (data || []) as Product[];
     } else if (userSchoolId) {
-      // Gestor de unidad / cajero: solo productos de SU sede (misma lógica que POS)
       const { data } = await supabase
         .from('products')
         .select('*')
         .eq('active', true)
-        .or(`school_ids.cs.{${userSchoolId}},school_ids.eq.{},school_ids.is.null`)
+        .contains('school_ids', [userSchoolId])
         .order('name');
       productsData = (data || []) as Product[];
     } else {
-      // Sin sede asignada — mostrar solo productos globales
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .eq('active', true)
-        .or('school_ids.eq.{},school_ids.is.null')
-        .order('name');
-      productsData = (data || []) as Product[];
+      productsData = [];
     }
 
     setProducts(productsData);
