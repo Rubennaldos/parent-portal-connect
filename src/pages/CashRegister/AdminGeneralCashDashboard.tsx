@@ -604,7 +604,7 @@ export default function AdminGeneralCashDashboard() {
 
           {/* Totales del período */}
           {closureHistory.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               <Card className="bg-blue-50 border-blue-200">
                 <CardContent className="pt-4 pb-4 text-center">
                   <p className="text-xs text-blue-600 font-medium uppercase">Total Ventas</p>
@@ -626,6 +626,22 @@ export default function AdminGeneralCashDashboard() {
                   <p className="text-xs text-purple-600 font-medium uppercase">Yape</p>
                   <p className="text-xl font-black text-purple-700">
                     S/ {closureHistory.reduce((s, c) => s + c.total_yape + c.total_yape_qr, 0).toFixed(2)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-orange-50 border-orange-200">
+                <CardContent className="pt-4 pb-4 text-center">
+                  <p className="text-xs text-orange-600 font-medium uppercase">Tarjeta</p>
+                  <p className="text-xl font-black text-orange-700">
+                    S/ {closureHistory.reduce((s, c) => s + c.total_card, 0).toFixed(2)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-amber-50 border-amber-200">
+                <CardContent className="pt-4 pb-4 text-center">
+                  <p className="text-xs text-amber-600 font-medium uppercase">Crédito</p>
+                  <p className="text-xl font-black text-amber-700">
+                    S/ {closureHistory.reduce((s, c) => s + c.total_credit, 0).toFixed(2)}
                   </p>
                 </CardContent>
               </Card>
@@ -681,7 +697,7 @@ export default function AdminGeneralCashDashboard() {
                         </div>
 
                         {/* Montos rápidos */}
-                        <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-4 text-sm flex-wrap">
                           <div className="text-center">
                             <p className="text-[10px] text-gray-500 uppercase">Inició</p>
                             <p className="font-bold">S/ {closure.initial_amount.toFixed(2)}</p>
@@ -695,9 +711,25 @@ export default function AdminGeneralCashDashboard() {
                             <p className="font-bold text-blue-700">S/ {closure.total_sales.toFixed(2)}</p>
                           </div>
                           <div className="text-center">
-                            <p className="text-[10px] text-gray-500 uppercase">Yape</p>
+                            <p className="text-[10px] text-green-600 uppercase">Efectivo</p>
+                            <p className="font-bold text-green-700">S/ {closure.total_cash.toFixed(2)}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[10px] text-purple-600 uppercase">Yape</p>
                             <p className="font-bold text-purple-700">S/ {(closure.total_yape + closure.total_yape_qr).toFixed(2)}</p>
                           </div>
+                          {closure.total_card > 0 && (
+                            <div className="text-center">
+                              <p className="text-[10px] text-orange-600 uppercase">Tarjeta</p>
+                              <p className="font-bold text-orange-700">S/ {closure.total_card.toFixed(2)}</p>
+                            </div>
+                          )}
+                          {closure.total_credit > 0 && (
+                            <div className="text-center">
+                              <p className="text-[10px] text-amber-600 uppercase">Crédito</p>
+                              <p className="font-bold text-amber-700">S/ {closure.total_credit.toFixed(2)}</p>
+                            </div>
+                          )}
                           <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
                             Math.abs(diff) < 0.01
                               ? 'bg-green-100 text-green-700'
