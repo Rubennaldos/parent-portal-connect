@@ -1,0 +1,459 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Wrench,
+  Loader2,
+  Save,
+  Plus,
+  X,
+  AlertTriangle,
+  ShieldCheck,
+  Mail,
+  UtensilsCrossed,
+  CreditCard,
+  Eye,
+  School,
+} from 'lucide-react';
+
+// Módulos disponibles para poner en mantenimiento
+const AVAILABLE_MODULES = [
+  {
+    key: 'almuerzos_padres',
+    label: 'Almuerzos (Portal Padres)',
+    icon: UtensilsCrossed,
+    description: 'Módulo de pedidos de almuerzos para padres de familia',
+  },
+  {
+    key: 'pagos_padres',
+    label: 'Pagos (Portal Padres)',
+    icon: CreditCard,
+    description: 'Módulo de pagos y recargas para padres de familia',
+  },
+];
+
+interface MaintenanceConfigData {
+  id?: string;
+  school_id: string;
+  module_key: string;
+  enabled: boolean;
+  title: string;
+  message: string;
+  bypass_emails: string[];
+}
+
+interface Props {
+  schoolId: string | null;
+}
+
+export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [configs, setConfigs] = useState<Record<string, MaintenanceConfigData>>({});
+  const [expandedModule, setExpandedModule] = useState<string | null>(null);
+  const [newEmail, setNewEmail] = useState('');
+
+  // ── Si admin_general no tiene sede, permitir seleccionar una ──
+  const [allSchools, setAllSchools] = useState<{ id: string; name: string }[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(propSchoolId);
+  const schoolId = propSchoolId || selectedSchoolId;
+
+  useEffect(() => {
+    if (!propSchoolId) {
+      // Admin general: cargar lista de sedes
+      supabase.from('schools').select('id, name').order('name').then(({ data }) => {
+        setAllSchools(data || []);
+        if (!selectedSchoolId && data && data.length > 0) {
+          setSelectedSchoolId(data[0].id);
+        }
+        if (!data || data.length === 0) setLoading(false);
+      });
+    }
+  }, [propSchoolId]);
+
+  useEffect(() => {
+    if (schoolId) {
+      fetchConfigs();
+    } else {
+      setLoading(false);
+    }
+  }, [schoolId]);
+
+  const fetchConfigs = async () => {
+    if (!schoolId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('maintenance_config')
+        .select('*')
+        .eq('school_id', schoolId);
+
+      if (error) throw error;
+
+      const configMap: Record<string, MaintenanceConfigData> = {};
+      // Inicializar con defaults para todos los módulos
+      AVAILABLE_MODULES.forEach((mod) => {
+        configMap[mod.key] = {
+          school_id: schoolId,
+          module_key: mod.key,
+          enabled: false,
+          title: `Módulo de ${mod.label.split(' (')[0]} en Mantenimiento`,
+          message: `Estamos preparando el módulo de ${mod.label.split(' (')[0].toLowerCase()} para ofrecerte la mejor experiencia. Pronto podrás realizar tus pedidos. ¡Gracias por tu paciencia!`,
+          bypass_emails: [],
+        };
+      });
+
+      // Sobrescribir con datos de la DB
+      data?.forEach((row: any) => {
+        configMap[row.module_key] = {
+          id: row.id,
+          school_id: row.school_id,
+          module_key: row.module_key,
+          enabled: row.enabled,
+          title: row.title,
+          message: row.message,
+          bypass_emails: row.bypass_emails || [],
+        };
+      });
+
+      setConfigs(configMap);
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo cargar la configuración de mantenimiento.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggle = (moduleKey: string, enabled: boolean) => {
+    setConfigs((prev) => ({
+      ...prev,
+      [moduleKey]: { ...prev[moduleKey], enabled },
+    }));
+  };
+
+  const handleFieldChange = (moduleKey: string, field: 'title' | 'message', value: string) => {
+    setConfigs((prev) => ({
+      ...prev,
+      [moduleKey]: { ...prev[moduleKey], [field]: value },
+    }));
+  };
+
+  const handleAddEmail = (moduleKey: string) => {
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      toast({ variant: 'destructive', title: 'Correo inválido', description: 'Ingresa un correo válido.' });
+      return;
+    }
+    const current = configs[moduleKey]?.bypass_emails || [];
+    if (current.includes(email)) {
+      toast({ variant: 'destructive', title: 'Ya existe', description: 'Este correo ya está en la lista.' });
+      return;
+    }
+    setConfigs((prev) => ({
+      ...prev,
+      [moduleKey]: {
+        ...prev[moduleKey],
+        bypass_emails: [...current, email],
+      },
+    }));
+    setNewEmail('');
+  };
+
+  const handleRemoveEmail = (moduleKey: string, email: string) => {
+    setConfigs((prev) => ({
+      ...prev,
+      [moduleKey]: {
+        ...prev[moduleKey],
+        bypass_emails: prev[moduleKey].bypass_emails.filter((e) => e !== email),
+      },
+    }));
+  };
+
+  const handleSave = async () => {
+    if (!schoolId || !user) return;
+    setSaving(true);
+    try {
+      for (const moduleKey of Object.keys(configs)) {
+        const cfg = configs[moduleKey];
+        const payload = {
+          school_id: schoolId,
+          module_key: moduleKey,
+          enabled: cfg.enabled,
+          title: cfg.title,
+          message: cfg.message,
+          bypass_emails: cfg.bypass_emails,
+          updated_by: user.id,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error } = await supabase
+          .from('maintenance_config')
+          .upsert(payload, { onConflict: 'school_id,module_key' });
+
+        if (error) throw error;
+      }
+
+      toast({ title: '✅ Configuración guardada', description: 'El modo mantenimiento se actualizó correctamente.' });
+      fetchConfigs();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error al guardar', description: e?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-600" />
+        <p className="ml-3 text-gray-600">Cargando configuración de mantenimiento...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <Card className="border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-3 text-xl">
+            <div className="p-2 bg-amber-500 rounded-lg">
+              <Wrench className="h-6 w-6 text-white" />
+            </div>
+            Modo Mantenimiento
+          </CardTitle>
+          <CardDescription className="text-sm">
+            Controla qué módulos del portal de padres están disponibles. Agrega tu correo de prueba para verlos tú solo.
+          </CardDescription>
+        </CardHeader>
+
+        {/* Selector de sede para admin_general */}
+        {!propSchoolId && allSchools.length > 0 && (
+          <CardContent className="pt-0">
+            <div className="flex items-center gap-3">
+              <School className="h-5 w-5 text-amber-700 shrink-0" />
+              <Select
+                value={selectedSchoolId || ''}
+                onValueChange={(val) => setSelectedSchoolId(val)}
+              >
+                <SelectTrigger className="border-2 border-amber-300 bg-white">
+                  <SelectValue placeholder="Selecciona una sede" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allSchools.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Módulos por Mantenimiento */}
+      <Card className="border-2 shadow-lg">
+        <CardHeader className="bg-gradient-to-r from-gray-50 to-slate-50 border-b-2">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Wrench className="h-5 w-5 text-amber-600" />
+            Modo Mantenimiento por Módulo
+          </CardTitle>
+          <CardDescription>
+            💡 Activa el mantenimiento de un módulo para que los padres no puedan usarlo temporalmente. Agrega correos de <strong>prueba / bypass</strong> para que esos usuarios sí puedan ver el módulo aunque esté en mantenimiento.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          {AVAILABLE_MODULES.map((mod) => {
+            const cfg = configs[mod.key];
+            const Icon = mod.icon;
+            const isExpanded = expandedModule === mod.key;
+
+            return (
+              <div key={mod.key} className="border-2 rounded-xl overflow-hidden transition-all">
+                {/* Módulo Header */}
+                <div
+                  className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${
+                    cfg?.enabled
+                      ? 'bg-amber-50 border-amber-300'
+                      : 'bg-white hover:bg-gray-50'
+                  }`}
+                  onClick={() => setExpandedModule(isExpanded ? null : mod.key)}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon className="h-5 w-5 text-gray-600" />
+                    <span className="font-semibold text-gray-900">{mod.label}</span>
+                    {cfg?.enabled && (
+                      <Badge className="bg-amber-100 text-amber-800 border border-amber-300">
+                        <Wrench className="h-3 w-3 mr-1" />
+                        En Mantenimiento
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-500">
+                      {cfg?.enabled ? 'Desactivar' : 'Activar'}
+                    </span>
+                    <Switch
+                      checked={cfg?.enabled || false}
+                      onCheckedChange={(checked) => {
+                        handleToggle(mod.key, checked);
+                        if (checked && !isExpanded) setExpandedModule(mod.key);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </div>
+
+                {/* Módulo Expandido */}
+                {isExpanded && (
+                  <div className="border-t-2 p-4 bg-white space-y-5">
+                    <div className="flex items-center gap-2 text-amber-700 font-semibold">
+                      <Wrench className="h-4 w-4" />
+                      Editar: {mod.label}
+                    </div>
+
+                    {/* Título */}
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium text-gray-700">Título que ven los padres</Label>
+                      <Input
+                        value={cfg?.title || ''}
+                        onChange={(e) => handleFieldChange(mod.key, 'title', e.target.value)}
+                        placeholder="Módulo en Mantenimiento"
+                        className="border-2"
+                      />
+                    </div>
+
+                    {/* Mensaje */}
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium text-gray-700">Mensaje para los padres</Label>
+                      <Textarea
+                        value={cfg?.message || ''}
+                        onChange={(e) => handleFieldChange(mod.key, 'message', e.target.value)}
+                        placeholder="Estamos trabajando para mejorar..."
+                        rows={3}
+                        className="border-2"
+                      />
+                    </div>
+
+                    {/* Bypass Emails */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 text-green-600" />
+                        <Label className="text-sm font-medium text-gray-700">
+                          Correos que ven el módulo aunque esté en mantenimiento (bypass)
+                        </Label>
+                      </div>
+
+                      {/* Lista de emails */}
+                      {cfg?.bypass_emails?.length === 0 ? (
+                        <p className="text-xs text-amber-600 italic">Sin correos bypass</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {cfg?.bypass_emails?.map((email) => (
+                            <Badge
+                              key={email}
+                              variant="secondary"
+                              className="bg-green-50 text-green-700 border border-green-200 pl-2 pr-1 py-1 text-xs"
+                            >
+                              <Mail className="h-3 w-3 mr-1" />
+                              {email}
+                              <button
+                                onClick={() => handleRemoveEmail(mod.key, email)}
+                                className="ml-1 p-0.5 rounded-full hover:bg-red-100 transition-colors"
+                              >
+                                <X className="h-3 w-3 text-red-500" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Agregar email */}
+                      <div className="flex gap-2">
+                        <Input
+                          value={newEmail}
+                          onChange={(e) => setNewEmail(e.target.value)}
+                          placeholder="correo@ejemplo.com"
+                          className="border-2 flex-1"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddEmail(mod.key);
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={() => handleAddEmail(mod.key)}
+                          className="shrink-0"
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Agregar
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        Estos correos pueden ver y usar el módulo aunque esté en mantenimiento. Ideal para pruebas.
+                      </p>
+                    </div>
+
+                    {/* Warning si está activo */}
+                    {cfg?.enabled && (
+                      <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                        <p className="text-sm text-red-700">
+                          <strong>⚠️ Mantenimiento ACTIVO:</strong> Los padres que no estén en la lista bypass verán la pantalla de mantenimiento en lugar del módulo.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Preview */}
+                    <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3 text-gray-500 text-xs font-semibold uppercase">
+                        <Eye className="h-4 w-4" />
+                        Vista previa (lo que verán los padres)
+                      </div>
+                      <div className="bg-white rounded-xl p-6 text-center space-y-3 shadow-sm border">
+                        <div className="w-16 h-16 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
+                          <Wrench className="h-8 w-8 text-amber-600" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          🔧 {cfg?.title || 'Módulo en Mantenimiento'}
+                        </h3>
+                        <p className="text-gray-500 text-sm max-w-md mx-auto">
+                          {cfg?.message || 'Estamos trabajando para mejorar tu experiencia.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* Botón Guardar */}
+      <Button
+        onClick={handleSave}
+        disabled={saving || !schoolId}
+        className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 h-12 text-base shadow-lg"
+      >
+        {saving ? (
+          <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Guardando...</>
+        ) : (
+          <><Save className="h-5 w-5 mr-2" /> Guardar Configuración</>
+        )}
+      </Button>
+    </div>
+  );
+}

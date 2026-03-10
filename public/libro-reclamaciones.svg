@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 360" width="300" height="360">
+  <rect width="300" height="360" rx="8" fill="white" stroke="#e0e0e0" stroke-width="2"/>
+  
+  <!-- Title -->
+  <text x="150" y="80" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="42" fill="#00A3E0" letter-spacing="1">
+    Libro de
+  </text>
+  <text x="150" y="130" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="36" fill="#00A3E0" letter-spacing="1">
+    Reclamaciones
+  </text>
+  
+  <!-- Open Book Illustration -->
+  <g transform="translate(150, 250)">
+    <!-- Book shadow -->
+    <ellipse cx="0" cy="50" rx="90" ry="12" fill="#d0d0d0" opacity="0.4"/>
+    
+    <!-- Left page back -->
+    <path d="M-5,-45 Q-5,-50 -10,-50 L-85,-30 Q-90,-28 -90,-23 L-90,25 Q-90,30 -85,32 L-10,45 Q-5,46 -5,40 Z" fill="#e8e8f0" stroke="#b0b0c0" stroke-width="1"/>
+    
+    <!-- Right page back -->
+    <path d="M5,-45 Q5,-50 10,-50 L85,-30 Q90,-28 90,-23 L90,25 Q90,30 85,32 L10,45 Q5,46 5,40 Z" fill="#e8e8f0" stroke="#b0b0c0" stroke-width="1"/>
+    
+    <!-- Left page -->
+    <path d="M-3,-40 Q-3,-45 -8,-45 L-80,-27 Q-85,-25 -85,-20 L-85,22 Q-85,27 -80,29 L-8,42 Q-3,43 -3,38 Z" fill="white" stroke="#c0c0d0" stroke-width="0.8"/>
+    
+    <!-- Right page -->
+    <path d="M3,-40 Q3,-45 8,-45 L80,-27 Q85,-25 85,-20 L85,22 Q85,27 80,29 L8,42 Q3,43 3,38 Z" fill="white" stroke="#c0c0d0" stroke-width="0.8"/>
+    
+    <!-- Left page lines -->
+    <line x1="-72" y1="-14" x2="-15" y2="-25" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="-72" y1="-2" x2="-15" y2="-13" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="-72" y1="10" x2="-15" y2="-1" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="-72" y1="22" x2="-15" y2="11" stroke="#c8d8e8" stroke-width="1.2"/>
+    
+    <!-- Right page lines -->
+    <line x1="72" y1="-14" x2="15" y2="-25" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="72" y1="-2" x2="15" y2="-13" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="72" y1="10" x2="15" y2="-1" stroke="#c8d8e8" stroke-width="1.2"/>
+    <line x1="72" y1="22" x2="15" y2="11" stroke="#c8d8e8" stroke-width="1.2"/>
+    
+    <!-- Book spine -->
+    <path d="M0,-48 L0,45" stroke="#8090a0" stroke-width="1.5"/>
+    
+    <!-- Spine cover bottom -->
+    <ellipse cx="0" cy="45" rx="5" ry="3" fill="#5070a0"/>
+    
+    <!-- Book cover bottom edge -->
+    <path d="M-90,25 Q-45,45 0,45 Q45,45 90,25" fill="none" stroke="#7080a0" stroke-width="2"/>
+    <path d="M-90,25 Q-45,45 0,45 Q45,45 90,25 L90,28 Q45,48 0,48 Q-45,48 -90,28 Z" fill="#8098b8"/>
+  </g>
+</svg>
