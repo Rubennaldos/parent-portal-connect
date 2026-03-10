@@ -30,8 +30,8 @@ import {
   Clock,
   AlertTriangle,
   Zap,
-  UtensilsCrossed,
-  Coffee,
+  Users,
+  User,
 } from 'lucide-react';
 
 const PERUVIAN_BANKS = [
@@ -103,11 +103,13 @@ export const BillingConfig = () => {
   const [selectedSchool, setSelectedSchool] = useState<string>('');
   const [config, setConfig] = useState<BillingConfig | null>(null);
 
-  // Form data — Mensaje (3 plantillas)
-  const [messageTemplate, setMessageTemplate] = useState('');
+  // Form data — Mensaje (plantillas por tipo de persona)
+  const [studentMessageTemplate, setStudentMessageTemplate] = useState('');
+  const [teacherMessageTemplate, setTeacherMessageTemplate] = useState('');
+  const [activeTemplateTab, setActiveTemplateTab] = useState<'student' | 'teacher'>('student');
+  // Guardamos también las plantillas por tipo de cobro para BillingCollection (sin exponer en UI)
   const [lunchMessageTemplate, setLunchMessageTemplate] = useState('');
   const [cafeteriaMessageTemplate, setCafeteriaMessageTemplate] = useState('');
-  const [activeTemplateTab, setActiveTemplateTab] = useState<'all' | 'lunch' | 'cafeteria'>('all');
   // Form data — Pago
   const [bankInfo, setBankInfo] = useState('');
   const [bankHolder, setBankHolder] = useState('');
@@ -157,22 +159,17 @@ export const BillingConfig = () => {
   };
 
   const getCompleteMessage = () => {
-    const tpl = activeTemplateTab === 'lunch' ? lunchMessageTemplate
-      : activeTemplateTab === 'cafeteria' ? cafeteriaMessageTemplate
-      : messageTemplate;
+    const tpl = activeTemplateTab === 'student' ? studentMessageTemplate : teacherMessageTemplate;
     return tpl + getPaymentInfoText();
   };
 
   const getActiveTemplate = () => {
-    if (activeTemplateTab === 'lunch') return lunchMessageTemplate;
-    if (activeTemplateTab === 'cafeteria') return cafeteriaMessageTemplate;
-    return messageTemplate;
+    return activeTemplateTab === 'student' ? studentMessageTemplate : teacherMessageTemplate;
   };
 
   const setActiveTemplate = (val: string) => {
-    if (activeTemplateTab === 'lunch') setLunchMessageTemplate(val);
-    else if (activeTemplateTab === 'cafeteria') setCafeteriaMessageTemplate(val);
-    else setMessageTemplate(val);
+    if (activeTemplateTab === 'student') setStudentMessageTemplate(val);
+    else setTeacherMessageTemplate(val);
   };
 
   // ✅ Esperar a que el rol esté cargado antes de cargar sedes
@@ -303,7 +300,8 @@ export const BillingConfig = () => {
 
       if (data) {
         setConfig(data);
-        setMessageTemplate(data.message_template);
+        setStudentMessageTemplate(data.student_message_template || data.message_template || '');
+        setTeacherMessageTemplate(data.teacher_message_template || '');
         setLunchMessageTemplate(data.lunch_message_template || '');
         setCafeteriaMessageTemplate(data.cafeteria_message_template || '');
         setBankInfo(data.bank_account_info || '');
@@ -321,10 +319,8 @@ export const BillingConfig = () => {
         setBankCCI(data.bank_cci || '');
       } else {
         // No hay config, usar valores por defecto
-        setMessageTemplate(`🔔 *COBRANZA LIMA CAFÉ 28*
-...
-Para pagar, contacte con administración.
-Gracias.`);
+        setStudentMessageTemplate('');
+        setTeacherMessageTemplate('');
         setLunchMessageTemplate('');
         setCafeteriaMessageTemplate('');
         setBankInfo('');
@@ -425,7 +421,9 @@ Gracias.`);
     try {
       const payload = {
         school_id: selectedSchool,
-        message_template: messageTemplate,
+        message_template: studentMessageTemplate,
+        student_message_template: studentMessageTemplate || null,
+        teacher_message_template: teacherMessageTemplate || null,
         lunch_message_template: lunchMessageTemplate || null,
         cafeteria_message_template: cafeteriaMessageTemplate || null,
         updated_by: user.id,
@@ -594,6 +592,9 @@ Gracias.`);
               <CardDescription className="text-sm sm:text-base mt-2">
                 Configura mensajes distintos para almuerzos, cafetería o todo junto.
               </CardDescription>
+              <p className="text-xs text-gray-600 mt-1 max-w-xl">
+                Cómo usarlo: escribe el mensaje una vez. Donde quieras poner el nombre o el monto, escribe entre llaves la variable (ej. {'{destinatario}'}, {'{nombre}'}, {'{monto}'}). Al copiar el mensaje en Cobrar, el sistema rellena esos huecos con los datos de cada persona — sirve igual para alumnos y profesores, no tienes que cambiar el texto.
+              </p>
             </div>
             {canViewAllSchools && schools.length > 1 && (
               <div className="flex items-center gap-2 shrink-0">
@@ -610,61 +611,66 @@ Gracias.`);
           </div>
         </CardHeader>
         <CardContent className="space-y-4 p-3 sm:p-6">
-          {/* Tabs de tipo de plantilla */}
+          {/* Tabs Alumnos / Profesores */}
           <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
-            {([
-              { key: 'all' as const, label: 'Todo', icon: MessageSquare, color: 'blue' },
-              { key: 'lunch' as const, label: 'Almuerzos', icon: UtensilsCrossed, color: 'orange' },
-              { key: 'cafeteria' as const, label: 'Cafetería', icon: Coffee, color: 'purple' },
-            ]).map(({ key, label, icon: Icon, color }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setActiveTemplateTab(key)}
-                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
-                  activeTemplateTab === key
-                    ? `bg-white shadow-sm text-${color}-700 ring-1 ring-${color}-200`
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => setActiveTemplateTab('student')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
+                activeTemplateTab === 'student'
+                  ? 'bg-white shadow-sm text-blue-700 ring-1 ring-blue-200'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Alumnos
+              <span className="text-[10px] font-normal text-gray-400">(va al padre)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTemplateTab('teacher')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
+                activeTemplateTab === 'teacher'
+                  ? 'bg-white shadow-sm text-purple-700 ring-1 ring-purple-200'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <User className="h-3.5 w-3.5" />
+              Profesores / Otros
+              <span className="text-[10px] font-normal text-gray-400">(va al profe)</span>
+            </button>
           </div>
 
-          {activeTemplateTab !== 'all' && !getActiveTemplate().trim() && (
+          {activeTemplateTab === 'teacher' && !teacherMessageTemplate.trim() && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-              Si esta plantilla está vacía, se usará la plantilla "Todo" como respaldo al copiar el mensaje.
+              Si esta plantilla está vacía, se usará la plantilla de Alumnos como respaldo.
             </div>
           )}
 
           <div className="space-y-2">
             <Label className="text-base font-semibold">
-              {activeTemplateTab === 'lunch' ? 'Mensaje de Almuerzos' : activeTemplateTab === 'cafeteria' ? 'Mensaje de Cafetería' : 'Mensaje General (Todo)'}
+              {activeTemplateTab === 'student' ? 'Mensaje para Alumnos' : 'Mensaje para Profesores / Clientes'}
             </Label>
             <Textarea
               value={getActiveTemplate()}
               onChange={(e) => setActiveTemplate(e.target.value)}
               rows={10}
               className="font-mono text-sm border-2"
-              placeholder={activeTemplateTab === 'all'
-                ? 'Escribe la plantilla para cobranza general...'
-                : `Escribe la plantilla para cobranza de ${activeTemplateTab === 'lunch' ? 'almuerzos' : 'cafetería'}... (dejar vacío para usar plantilla general)`}
+              placeholder={activeTemplateTab === 'student'
+                ? 'Escribe el mensaje para los padres de alumnos...\nEj: Estimado(a) {destinatario}, su hijo/a {nombre} tiene un consumo pendiente...'
+                : 'Escribe el mensaje para profesores y otros clientes...\nEj: Estimado(a) {nombre}, tiene un consumo pendiente de S/ {monto}...\n(Si lo dejas vacío se usará la plantilla de Alumnos)'}
             />
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1">
-              <p className="text-xs font-semibold text-blue-800">Variables disponibles:</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-blue-800">Variables disponibles (haz clic para insertar):</p>
               <div className="flex flex-wrap gap-1.5">
                 {[
-                  { var: '{destinatario}', desc: 'A quién va dirigido' },
-                  { var: '{nombre}', desc: 'Nombre del deudor' },
-                  { var: '{nombre_padre}', desc: 'Padre (solo alumnos)' },
-                  { var: '{nombre_estudiante}', desc: 'Alumno' },
+                  { var: '{destinatario}', desc: activeTemplateTab === 'student' ? 'Nombre del padre' : 'Nombre de la persona' },
+                  { var: '{nombre}', desc: activeTemplateTab === 'student' ? 'Nombre del alumno' : 'Nombre del deudor' },
+                  { var: '{monto}', desc: 'Monto a cobrar' },
+                  { var: '{monto_almuerzo}', desc: 'Solo almuerzos' },
+                  { var: '{monto_cafeteria}', desc: 'Solo cafetería' },
                   { var: '{periodo}', desc: 'Período' },
-                  { var: '{monto}', desc: 'Monto' },
-                  { var: '{monto_almuerzo}', desc: 'Monto almuerzo' },
-                  { var: '{monto_cafeteria}', desc: 'Monto cafetería' },
-                  { var: '{numero_cuenta}', desc: 'Cuenta' },
+                  { var: '{numero_cuenta}', desc: 'Cuenta bancaria' },
                   { var: '{numero_cci}', desc: 'CCI' },
                   { var: '{numero_yape}', desc: 'Yape' },
                   { var: '{numero_plin}', desc: 'Plin' },
@@ -677,14 +683,9 @@ Gracias.`);
                     title={`Insertar: ${desc}`}
                   >
                     <span>{v}</span>
-                    <span className="text-gray-400 font-sans text-[10px]">{desc}</span>
+                    <span className="text-gray-400 font-sans text-[10px]">→ {desc}</span>
                   </button>
                 ))}
-              </div>
-              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-800 space-y-0.5">
-                <p className="font-semibold">💡 Usa estas variables universales para no cambiar la plantilla:</p>
-                <p><span className="font-mono">{'{destinatario}'}</span> → papá/mamá si es alumno, el profe/cliente si no lo es</p>
-                <p><span className="font-mono">{'{nombre}'}</span> → siempre el nombre del deudor (alumno, profe o manual)</p>
               </div>
             </div>
           </div>
@@ -692,12 +693,12 @@ Gracias.`);
           <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300">
             <p className="text-sm font-semibold mb-2 flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-blue-600" />
-              Vista Previa:
+              Vista Previa ({activeTemplateTab === 'student' ? 'Alumno' : 'Profesor'}):
             </p>
             <div className="bg-white p-3 rounded-lg border-2 border-gray-200 shadow-inner whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
               {getCompleteMessage()
-                .replace(/\{destinatario\}/g, 'María García')
-                .replace(/\{nombre\}/g, 'Juan Pérez')
+                .replace(/\{destinatario\}/g, activeTemplateTab === 'student' ? 'María García (mamá)' : 'Prof. López')
+                .replace(/\{nombre\}/g, activeTemplateTab === 'student' ? 'Juan Pérez' : 'Prof. López')
                 .replace(/\{nombre_padre\}/g, 'María García')
                 .replace(/\{nombre_estudiante\}/g, 'Juan Pérez')
                 .replace(/\{periodo\}/g, 'Semana 1-5 Enero')
@@ -727,7 +728,7 @@ Gracias.`);
               {savingMessage ? (
                 <><Loader2 className="h-4 w-4 animate-spin" /> Guardando...</>
               ) : (
-                <><Save className="h-4 w-4" /> Guardar las 3 plantillas</>
+                <><Save className="h-4 w-4" /> Guardar plantillas</>
               )}
             </Button>
           </div>

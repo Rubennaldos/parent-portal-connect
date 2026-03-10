@@ -145,6 +145,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [loadingSchoolConfig, setLoadingSchoolConfig] = useState(false);
   const [savingSchoolConfig, setSavingSchoolConfig] = useState(false);
   const [configMessageTemplate, setConfigMessageTemplate] = useState('');
+  const [configStudentTemplate, setConfigStudentTemplate] = useState('');
+  const [configTeacherTemplate, setConfigTeacherTemplate] = useState('');
   const [configLunchTemplate, setConfigLunchTemplate] = useState('');
   const [configCafeteriaTemplate, setConfigCafeteriaTemplate] = useState('');
   const [configYapeEnabled, setConfigYapeEnabled] = useState(true);
@@ -1391,7 +1393,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
     const template = type === 'lunch' ? (configLunchTemplate.trim() || configMessageTemplate)
       : type === 'cafeteria' ? (configCafeteriaTemplate.trim() || configMessageTemplate)
-      : configMessageTemplate;
+      : debtor.client_type === 'student'
+        ? (configStudentTemplate.trim() || configMessageTemplate)
+        : (configTeacherTemplate.trim() || configStudentTemplate.trim() || configMessageTemplate);
 
     let message: string;
     if (template && template.trim()) {
@@ -1570,9 +1574,11 @@ Gracias.`;
     const lunchAmount = lunchTransactions.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
     const lunchCount = lunchTransactions.length;
 
-    // Usar plantilla de almuerzos si existe, sino la general
+    // Usar plantilla según tipo de deudor, con fallback
     let message: string;
-    const lunchTemplate = configLunchTemplate.trim() || configMessageTemplate;
+    const lunchTemplate = configLunchTemplate.trim()
+      || (debtor.client_type === 'student' ? configStudentTemplate.trim() : configTeacherTemplate.trim())
+      || configMessageTemplate;
     if (lunchTemplate && lunchTemplate.trim()) {
       message = resolveMessageTemplate(lunchTemplate, debtor, lunchAmount, lunchCount);
     } else {
@@ -1965,7 +1971,9 @@ Agradecemos su pronta atención. 🙏`;
         .maybeSingle();
       if (error) throw error;
       setSchoolConfig(data || null);
-      setConfigMessageTemplate(data?.message_template || '');
+      setConfigMessageTemplate(data?.student_message_template || data?.message_template || '');
+      setConfigStudentTemplate(data?.student_message_template || data?.message_template || '');
+      setConfigTeacherTemplate(data?.teacher_message_template || '');
       setConfigLunchTemplate(data?.lunch_message_template || '');
       setConfigCafeteriaTemplate(data?.cafeteria_message_template || '');
       setConfigYapeEnabled(data?.yape_enabled ?? true);
@@ -2007,7 +2015,9 @@ Agradecemos su pronta atención. 🙏`;
     try {
       const payload = {
         school_id: userSchoolId,
-        message_template: configMessageTemplate,
+        message_template: configStudentTemplate || configMessageTemplate,
+        student_message_template: configStudentTemplate || null,
+        teacher_message_template: configTeacherTemplate || null,
         lunch_message_template: configLunchTemplate || null,
         cafeteria_message_template: configCafeteriaTemplate || null,
         yape_enabled: configYapeEnabled,
