@@ -286,6 +286,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const [showNotesField, setShowNotesField] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
   const expandedSectionRef = useRef<HTMLDivElement>(null);
+  // Prevents stale fetch responses from overwriting newer data (race condition guard)
+  const fetchGenerationRef = useRef(0);
+  // Mirror ref so the inline-order useEffect always reads the latest totalOrderAmount
+  const totalOrderAmountRef = useRef(0);
 
   // ==========================================
   // COMPUTED
@@ -303,7 +307,14 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // ⚠️ IMPORTANTE: Incluir selectedStudent?.id para que al cambiar de hijo (hermanos en la misma sede)
   // se recarguen los pedidos existentes del nuevo hijo
   useEffect(() => {
-    if (effectiveSchoolId) fetchMonthlyData();
+    if (effectiveSchoolId) {
+      // Collapse any open inline order form when student or month changes
+      setExpandedCategoryId(null);
+      setIsInlineOrdering(false);
+      setWizardStep('idle');
+      setSelectedDay(null);
+      fetchMonthlyData();
+    }
   }, [currentDate, effectiveSchoolId, selectedStudent?.id]);
 
   const fetchStudents = async () => {
@@ -324,6 +335,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   };
 
   const fetchMonthlyData = async () => {
+    // Increment generation so any in-flight older fetch is ignored when it resolves
+    const generation = ++fetchGenerationRef.current;
+
     try {
       setLoading(true);
       const start = startOfMonth(currentDate);
@@ -364,6 +378,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       ]);
 
       if (configResult.error) console.error('Error loading config:', configResult.error);
+      // Guard: if a newer fetch was triggered while awaiting, discard this stale response
+      if (generation !== fetchGenerationRef.current) return;
       setConfig(configResult.data);
 
       if (categoriesResult.error) console.error('Error loading categories:', categoriesResult.error);
@@ -601,14 +617,14 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     }
   }, [selectedDay]);
 
-  // Auto-scroll al expandir un menú/categoría
+  // Auto-scroll when a category expands (only on expand, not on every wizardStep change)
   useEffect(() => {
     if (expandedCategoryId && expandedSectionRef.current) {
       setTimeout(() => {
         expandedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 150);
     }
-  }, [expandedCategoryId, wizardStep]);
+  }, [expandedCategoryId]); // intentionally excludes wizardStep to avoid re-scroll on every step
 
   const scrollCarousel = (direction: 'left' | 'right') => {
     if (carouselRef.current) {
@@ -772,12 +788,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         setWizardStep('idle');
         setWizardDates([]);
         setSelectedDates(new Set());
+        totalOrderAmountRef.current = 0;
         fetchMonthlyData();
 
-        if (userType === 'parent' && totalOrderAmount > 0) {
+        if (userType === 'parent' && totalOrderAmountRef.current > 0) {
           toast({
             title: '✅ Pedido registrado',
-            description: `S/ ${totalOrderAmount.toFixed(2)} pendiente de pago. Puedes seguir pidiendo o pagar desde la pestaña Pagos.`,
+            description: `S/ ${totalOrderAmountRef.current.toFixed(2)} pendiente de pago. Puedes seguir pidiendo o pagar desde la pestaña Pagos.`,
             duration: 5000,
           });
         }
@@ -1140,6 +1157,18 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     isSubmittingRef.current = true;
 
     const currentDateStr = wizardDates[wizardCurrentIndex];
+
+    // Re-validate deadline at submit time (user may have left form open past the cutoff)
+    const deadlineCheck = canOrderForDate(currentDateStr);
+    if (!deadlineCheck.canOrder) {
+      toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: deadlineCheck.reason || 'Ya no es posible pedir para este día.' });
+      setExpandedCategoryId(null);
+      setIsInlineOrdering(false);
+      setWizardStep('idle');
+      isSubmittingRef.current = false;
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -1301,7 +1330,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       if (userType === 'parent' && insertedOrder?.id) {
         setCreatedOrderIds(prev => [...prev, insertedOrder.id]);
         if (txData?.id) setCreatedTransactionIds(prev => [...prev, txData.id]);
-        setTotalOrderAmount(prev => prev + (unitPrice * quantity));
+        setTotalOrderAmount(prev => {
+          const next = prev + (unitPrice * quantity);
+          totalOrderAmountRef.current = next;
+          return next;
+        });
         setOrderDescriptions(prev => [...prev, `${quantity}x ${selectedCategory.name} - ${dateFormatted}`]);
       }
 
