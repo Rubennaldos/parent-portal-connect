@@ -374,6 +374,10 @@ export default function LunchOrders() {
           .order('order_date', { ascending: false })
           .order('created_at', { ascending: false });
 
+        if (adminSchoolId && !canViewAllSchools) {
+          query = query.eq('school_id', adminSchoolId);
+        }
+
         // Paginación para superar el límite de 1000 filas de Supabase
         let allData: any[] = [];
         let from = 0;
@@ -530,8 +534,12 @@ export default function LunchOrders() {
           )
         `)
         .eq('order_date', selectedDate)
-        .eq('is_cancelled', false) // 🚫 SOLO traer los que son explícitamente false
+        .eq('is_cancelled', false)
         .order('created_at', { ascending: false });
+
+      if (adminSchoolId && !canViewAllSchools) {
+        query = query.eq('school_id', adminSchoolId);
+      }
 
       const { data, error } = await query;
       
