@@ -1611,6 +1611,7 @@ export default function LunchOrders() {
         if (exportColumns.pago)          row.push(r.pago);
         if (exportColumns.total)         row.push(r.total);
         if (exportColumns.origen)        row.push(r.origen);
+        return row;
       });
 
       const deliveryLabel = isDateRangeMode
