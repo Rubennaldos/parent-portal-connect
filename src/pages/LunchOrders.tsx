@@ -1666,7 +1666,8 @@ export default function LunchOrders() {
       setShowExportModal(false);
       toast({ title: '✅ Excel generado', description: 'El reporte Excel ha sido descargado.' });
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo generar el Excel.' });
+      console.error('Excel export error:', error);
+      toast({ variant: 'destructive', title: 'Error', description: `No se pudo generar el Excel: ${error?.message || 'Error desconocido'}` });
     }
   };
 

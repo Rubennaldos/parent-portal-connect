@@ -23,7 +23,7 @@ const DEV_CONFIG = {
 // 🔴 PRODUCCIÓN (para el cliente)
 const PROD_CONFIG = {
   url: import.meta.env.VITE_SUPABASE_URL || 'https://duxqzozoahvrvqseinji.supabase.co',
-  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_1IjZsZ2X-_fay6oFVUc2Qg_gzCZRFNU',
+  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1eHF6b3pvYWh2cnZxc2VpbmppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODgwOTQsImV4cCI6MjA4MjM2NDA5NH0.JLxfApjPBYkCBPd5yfKyIE0SI-sw_8S_vweDR59Hflg',
 };
 
 // Seleccionar configuración según el entorno
