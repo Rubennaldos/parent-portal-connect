@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Eye, EyeOff, ShieldCheck, HelpCircle, Phone, Mail, AlertCircle, Users, UtensilsCrossed } from 'lucide-react';
 import SplashScreen from '@/components/SplashScreen';
+import LibroReclamaciones from '@/components/LibroReclamaciones';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { APP_CONFIG } from '@/config/app.config';
 
@@ -24,6 +25,7 @@ export default function Auth() {
   const [showSplash, setShowSplash] = useState(true);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [showPasswordRecoveryModal, setShowPasswordRecoveryModal] = useState(false);
+  const [showLibroReclamaciones, setShowLibroReclamaciones] = useState(false);
   
   // Estados del formulario
   const [email, setEmail] = useState('');
@@ -140,6 +142,26 @@ export default function Auth() {
           }
         } else {
           console.log('✅ LOGIN EXITOSO');
+          
+          // Verificar si la cuenta está desactivada
+          const { data: { user: loggedUser } } = await supabase.auth.getUser();
+          if (loggedUser) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('is_active')
+              .eq('id', loggedUser.id)
+              .single();
+            
+            if (profile?.is_active === false) {
+              await supabase.auth.signOut();
+              toast({
+                variant: 'destructive',
+                title: 'Cuenta desactivada',
+                description: 'Tu cuenta ha sido desactivada. Contacta al administrador.',
+              });
+              return;
+            }
+          }
         }
       }
     } catch (err: any) {
@@ -344,6 +366,27 @@ export default function Auth() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Libro de Reclamaciones — Imagen oficial */}
+      <div className="w-full flex justify-center pb-3 sm:pb-4">
+        <button
+          type="button"
+          onClick={() => setShowLibroReclamaciones(true)}
+          className="group transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#00A3E0]/40 rounded-xl"
+          aria-label="Libro de Reclamaciones"
+        >
+          <img
+            src="/libro-reclamaciones.svg"
+            alt="Libro de Reclamaciones"
+            className="h-20 sm:h-24 w-auto drop-shadow-sm group-hover:drop-shadow-md transition-all"
+          />
+        </button>
+      </div>
+
+      <LibroReclamaciones
+        open={showLibroReclamaciones}
+        onClose={() => setShowLibroReclamaciones(false)}
+      />
 
       {/* Footer - Texto más pequeño y ajustado en móvil */}
       <footer className="py-4 sm:py-6 md:py-8 text-center space-y-1.5 sm:space-y-2">

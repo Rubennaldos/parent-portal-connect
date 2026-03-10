@@ -10,10 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
-import { Lock, Users, Shield, ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Loader2, Building2, UserPlus, Eye, EyeOff, Edit2, Key, Settings2, Search } from "lucide-react";
+import { Lock, Users, Shield, ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Loader2, Building2, UserPlus, Eye, EyeOff, Edit2, Key, Settings2, Search, BookOpen } from "lucide-react";
 import { CreateProfileModal } from './CreateProfileModal';
 import { ResetUserPasswordModal } from './ResetUserPasswordModal';
 import { ManageCustomSchoolsModal } from './ManageCustomSchoolsModal';
+import { ReclamacionesPanel } from './ReclamacionesPanel';
 import { Input } from "@/components/ui/input";
 
 interface School {
@@ -38,6 +39,7 @@ interface UserProfile {
   school_id: string | null;
   school: { name: string; code: string } | null;
   custom_schools: string[] | null;
+  is_active: boolean;
 }
 
 interface ModulePermissions {
@@ -290,6 +292,32 @@ export const AccessControlModuleV2 = () => {
     setManageSchoolsModalOpen(true);
   };
 
+  const handleToggleActive = async (user: UserProfile) => {
+    const newStatus = !(user.is_active !== false);
+    const action = newStatus ? 'activar' : 'desactivar';
+    
+    if (!confirm(`¿Estás seguro de ${action} la cuenta de ${user.full_name || user.email}?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_active: newStatus })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      toast({
+        title: newStatus ? '✅ Cuenta activada' : '🔒 Cuenta desactivada',
+        description: `${user.full_name || user.email} ha sido ${newStatus ? 'activada' : 'desactivada'}.`,
+      });
+
+      await fetchUsers();
+    } catch (error: any) {
+      console.error('Error toggling user status:', error);
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo cambiar el estado de la cuenta.' });
+    }
+  };
+
   // Filtrar usuarios según búsqueda
   const filteredUsers = users.filter(user => {
     const searchLower = userSearchTerm.toLowerCase();
@@ -313,7 +341,41 @@ export const AccessControlModuleV2 = () => {
         .order('action');
       
       if (permsError) throw permsError;
-      setPermissions(permsData || []);
+
+      // 🔧 Auto-crear permisos faltantes para módulos definidos en MODULE_CONFIG
+      let allPerms = permsData || [];
+      const existingModuleActions = new Set(allPerms.map(p => `${p.module}::${p.action}`));
+      const missingPerms: { module: string; action: string; name: string }[] = [];
+
+      Object.entries(MODULE_CONFIG).forEach(([moduleCode, config]) => {
+        config.permissions.forEach(perm => {
+          const key = `${moduleCode}::${perm.action}`;
+          if (!existingModuleActions.has(key)) {
+            missingPerms.push({
+              module: moduleCode,
+              action: perm.action,
+              name: `${config.name} - ${perm.label}`
+            });
+          }
+        });
+      });
+
+      if (missingPerms.length > 0) {
+        console.log('🔧 Creando permisos faltantes:', missingPerms);
+        const { data: insertedPerms, error: insertError } = await supabase
+          .from('permissions')
+          .insert(missingPerms)
+          .select();
+        
+        if (!insertError && insertedPerms) {
+          allPerms = [...allPerms, ...insertedPerms];
+          console.log(`✅ ${insertedPerms.length} permisos creados automáticamente`);
+        } else {
+          console.error('❌ Error creando permisos:', insertError);
+        }
+      }
+
+      setPermissions(allPerms);
 
       // Fetch schools
       const { data: schoolsData, error: schoolsError } = await supabase
@@ -345,6 +407,7 @@ export const AccessControlModuleV2 = () => {
           full_name,
           role,
           school_id,
+          is_active,
           school:schools(name, code)
         `)
         .in('role', ['supervisor_red', 'gestor_unidad', 'operador_caja', 'operador_cocina']);
@@ -415,11 +478,29 @@ export const AccessControlModuleV2 = () => {
     }
   };
 
+  // Acciones que se activan automáticamente cuando se habilita un módulo (scope por defecto)
+  const DEFAULT_SCOPE_ON_ENABLE: { [moduleCode: string]: string } = {
+    cobranzas: 'cobrar_su_sede',
+    ventas: 'ver_su_sede',
+    productos: 'ver_su_sede',
+    almuerzos: 'ver_su_sede',
+    cash_register: 'ver_su_sede',
+  };
+
   const handleModuleToggle = async (moduleCode: string, enabled: boolean) => {
     if (!selectedRole) return;
     
     setSavingPermission(`module-${moduleCode}`);
     
+    // Scope por defecto para este módulo (si aplica)
+    const defaultScope = DEFAULT_SCOPE_ON_ENABLE[moduleCode];
+    const currentPermsForModule = roleModulePermissions[moduleCode]?.permissions || {};
+    const hasScopeAlreadySet = defaultScope
+      ? Object.entries(currentPermsForModule).some(
+          ([action, granted]) => action.includes('_su_sede') || action.includes('_todas_sedes') || action.includes('_personalizado') ? granted : false
+        )
+      : true;
+
     try {
       // Actualizar estado local primero
       setRoleModulePermissions(prev => {
@@ -430,7 +511,9 @@ export const AccessControlModuleV2 = () => {
             enabled,
             permissions: {
               ...currentPerms,
-              ver_modulo: enabled
+              ver_modulo: enabled,
+              // Si se activa y no hay scope configurado, auto-asignar el scope por defecto
+              ...(enabled && defaultScope && !hasScopeAlreadySet ? { [defaultScope]: true } : {})
             }
           }
         };
@@ -444,6 +527,9 @@ export const AccessControlModuleV2 = () => {
         
         if (enabled) {
           if (perm.action === 'ver_modulo') {
+            finalGranted = true;
+          } else if (defaultScope && perm.action === defaultScope && !hasScopeAlreadySet) {
+            // Auto-activar scope por defecto si no había ninguno configurado
             finalGranted = true;
           } else {
             // Mantener el valor actual de otros permisos
@@ -791,15 +877,15 @@ export const AccessControlModuleV2 = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5" />
-            Gestión de Permisos por Módulo
+            Control de Acceso y Reclamaciones
           </CardTitle>
           <CardDescription>
-            Activa o desactiva módulos completos y configura permisos específicos para cada rol
+            Gestión de permisos, roles de usuarios y libro de reclamaciones
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="roles">
                 <Shield className="h-4 w-4 mr-2" />
                 Permisos de Roles
@@ -807,6 +893,10 @@ export const AccessControlModuleV2 = () => {
               <TabsTrigger value="users">
                 <Users className="h-4 w-4 mr-2" />
                 Usuarios ({users.length})
+              </TabsTrigger>
+              <TabsTrigger value="reclamaciones">
+                <BookOpen className="h-4 w-4 mr-2" />
+                Reclamaciones
               </TabsTrigger>
             </TabsList>
 
@@ -880,11 +970,18 @@ export const AccessControlModuleV2 = () => {
                 {/* Lista de usuarios */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredUsers.map(user => (
-                    <Card key={user.id}>
+                    <Card key={user.id} className={user.is_active === false ? 'opacity-60 border-red-200 bg-red-50/30' : ''}>
                       <CardHeader>
                         <div className="flex items-start justify-between">
                           <div>
-                            <CardTitle className="text-base">{user.full_name || 'Sin nombre'}</CardTitle>
+                            <CardTitle className="text-base flex items-center gap-2">
+                              {user.full_name || 'Sin nombre'}
+                              {user.is_active === false && (
+                                <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+                                  Desactivado
+                                </Badge>
+                              )}
+                            </CardTitle>
                             <CardDescription className="text-sm">{user.email}</CardDescription>
                           </div>
                           <Badge variant="outline">
@@ -932,6 +1029,18 @@ export const AccessControlModuleV2 = () => {
                               <Key className="h-4 w-4" />
                               Cambiar Contraseña
                             </Button>
+                            <Button
+                              variant={user.is_active === false ? "outline" : "destructive"}
+                              size="sm"
+                              onClick={() => handleToggleActive(user)}
+                              className={user.is_active === false ? "gap-2 border-green-300 text-green-700 hover:bg-green-50" : "gap-2"}
+                            >
+                              {user.is_active === false ? (
+                                <><CheckCircle2 className="h-4 w-4" /> Activar</>
+                              ) : (
+                                <><XCircle className="h-4 w-4" /> Desactivar</>
+                              )}
+                            </Button>
                           </div>
                         </div>
                       </CardContent>
@@ -950,6 +1059,11 @@ export const AccessControlModuleV2 = () => {
                   </div>
                 )}
               </div>
+            </TabsContent>
+
+            {/* TAB: RECLAMACIONES */}
+            <TabsContent value="reclamaciones" className="mt-6">
+              <ReclamacionesPanel />
             </TabsContent>
           </Tabs>
         </CardContent>
