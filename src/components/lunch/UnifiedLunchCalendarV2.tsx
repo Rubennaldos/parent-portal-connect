@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,9 @@ import {
   Ban,
   Trash2,
   CreditCard as CreditCardIcon,
+  PlusCircle,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { RechargeModal } from '@/components/parent/RechargeModal';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -122,6 +124,11 @@ interface ExistingOrder {
   cancelled_by: string | null;
   /** payment_status de la transacción vinculada (null si no tiene transacción) */
   transaction_payment_status?: string | null;
+  // Selecciones del plato armado
+  configurable_selections?: Array<{ group_name: string; selected?: string; selected_name?: string }> | null;
+  selected_garnishes?: string[] | null;
+  selected_modifiers?: Array<{ group_name: string; selected_name: string }> | null;
+  parent_notes?: string | null;
 }
 
 // ==========================================
@@ -238,6 +245,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // Payment flow (parents only)
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [createdOrderIds, setCreatedOrderIds] = useState<string[]>([]);
+  const [createdTransactionIds, setCreatedTransactionIds] = useState<string[]>([]);
   const [totalOrderAmount, setTotalOrderAmount] = useState(0);
   const [orderDescriptions, setOrderDescriptions] = useState<string[]>([]);
 
@@ -261,9 +269,22 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   // ── Categoría pre-seleccionada del bulk (para auto-seleccionar en el wizard) ──
   const [bulkPreselectedCategory, setBulkPreselectedCategory] = useState<LunchCategory | null>(null);
+  // ── Flag para permitir cambio manual de categoría (evita que el auto-select re-lance) ──
+  const [skipAutoSelect, setSkipAutoSelect] = useState(false);
+
+  // ── Observaciones del padre (solo para pedidos individuales) ──
+  const [parentNotes, setParentNotes] = useState('');
 
   // ── Feedback visual al avanzar entre días ──
   const [showDayTransition, setShowDayTransition] = useState(false);
+
+  // ── Nuevo diseño: Carrusel de días + pedido inline ──
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+  const [isInlineOrdering, setIsInlineOrdering] = useState(false);
+  const [showNotesField, setShowNotesField] = useState(false);
+  const carouselRef = useRef<HTMLDivElement>(null);
 
   // ==========================================
   // COMPUTED
@@ -278,9 +299,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     if (userType === 'parent') fetchStudents();
   }, [userType, userId]);
 
+  // ⚠️ IMPORTANTE: Incluir selectedStudent?.id para que al cambiar de hijo (hermanos en la misma sede)
+  // se recarguen los pedidos existentes del nuevo hijo
   useEffect(() => {
     if (effectiveSchoolId) fetchMonthlyData();
-  }, [currentDate, effectiveSchoolId]);
+  }, [currentDate, effectiveSchoolId, selectedStudent?.id]);
 
   const fetchStudents = async () => {
     try {
@@ -319,47 +342,61 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       }
       setConfig(configData);
 
-      // 2. Menus - FIXED: include target_type='both' AND target_type IS NULL
-      // NULL = menú creado sin target_type (carga masiva), visible para todos
+      // 2. PRIMERO: Cargar categorías que corresponden al tipo de usuario
+      // 🔑 La CATEGORÍA es la fuente de verdad para decidir quién ve qué menús
       const targetType = userType === 'parent' ? 'students' : 'teachers';
-      const { data: menusData, error: menusError } = await supabase
-        .from('lunch_menus')
-        .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
+      
+      const { data: allCategoriesData, error: catError } = await supabase
+        .from('lunch_categories')
+        .select('*')
         .eq('school_id', effectiveSchoolId)
-        .or(`target_type.eq.${targetType},target_type.eq.both,target_type.is.null`)
-        .gte('date', startStr)
-        .lte('date', endStr)
-        .order('date', { ascending: true });
+        .or(`target_type.eq.${targetType},target_type.eq.both`);
 
-      if (menusError) throw menusError;
+      if (catError) {
+        console.error('Error loading categories:', catError);
+      }
 
-      // 3. Categories - Cargamos TODAS las categorías (activas e inactivas) para
-      //    mostrar menús y pedidos existentes. El filtro de is_active solo aplica
-      //    al wizard de creación de nuevos pedidos (LunchCategoryWizard).
-      const categoryIds = [...new Set((menusData || []).map(m => m.category_id).filter(Boolean))] as string[];
+      // Filtrar categorías de cocina (POS products, no almuerzos)
+      const lunchCategories = (allCategoriesData || []).filter(
+        (cat: any) => cat.is_kitchen_sale !== true
+      );
+
       let categoriesMap = new Map<string, LunchCategory>();
+      lunchCategories.forEach((cat: any) => {
+        categoriesMap.set(cat.id, { ...cat, menu_mode: cat.menu_mode || 'standard' });
+      });
 
-      if (categoryIds.length > 0) {
-        const { data: categoriesData, error: catError } = await supabase
-          .from('lunch_categories')
-          .select('*')
-          .in('id', categoryIds)
-          .eq('school_id', effectiveSchoolId);
-        // ⚠️ NO filtramos por is_active aquí: si una categoría está desactivada,
-        //    los menús y pedidos existentes deben seguir siendo visibles.
+      // 3. DESPUÉS: Cargar menús que pertenecen a esas categorías (o sin categoría)
+      // Ya NO filtramos por lunch_menus.target_type — la categoría lo decide
+      const validCategoryIds = [...categoriesMap.keys()];
 
-        if (catError) {
-          console.error('Error loading categories:', catError);
-        }
+      let menusData: any[] = [];
+      if (validCategoryIds.length > 0) {
+        // Construir filtro: menús de categorías válidas O menús sin categoría (legacy/bulk)
+        const { data, error: menusError } = await supabase
+          .from('lunch_menus')
+          .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
+          .eq('school_id', effectiveSchoolId)
+          .gte('date', startStr)
+          .lte('date', endStr)
+          .or(`category_id.in.(${validCategoryIds.join(',')}),category_id.is.null`)
+          .order('date', { ascending: true });
 
-        // Filter out kitchen-sale categories (POS products, not lunch menus)
-        const lunchCategories = (categoriesData || []).filter(
-          (cat: any) => cat.is_kitchen_sale !== true
-        );
+        if (menusError) throw menusError;
+        menusData = data || [];
+      } else {
+        // Si no hay categorías para este tipo de usuario, buscar menús sin categoría (legacy)
+        const { data, error: menusError } = await supabase
+          .from('lunch_menus')
+          .select('id, date, starter, main_course, beverage, dessert, notes, category_id, target_type, allows_modifiers, garnishes')
+          .eq('school_id', effectiveSchoolId)
+          .gte('date', startStr)
+          .lte('date', endStr)
+          .is('category_id', null)
+          .order('date', { ascending: true });
 
-        lunchCategories.forEach((cat: any) => {
-          categoriesMap.set(cat.id, { ...cat, menu_mode: cat.menu_mode || 'standard' });
-        });
+        if (menusError) throw menusError;
+        menusData = data || [];
       }
 
       // Build menus map - skip menus whose categories don't belong to this school
@@ -403,7 +440,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       if (personId) {
         const { data: ordersData } = await supabase
           .from('lunch_orders')
-          .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by')
+          .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by, configurable_selections, selected_garnishes, selected_modifiers, parent_notes')
           .eq(personField, personId)
           .gte('order_date', startStr)
           .lte('order_date', endStr)
@@ -421,7 +458,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           created_by: o.created_by,
           delivered_by: o.delivered_by,
           cancelled_by: o.cancelled_by,
-          transaction_payment_status: null
+          transaction_payment_status: null,
+          configurable_selections: o.configurable_selections || null,
+          selected_garnishes: o.selected_garnishes || null,
+          selected_modifiers: o.selected_modifiers || null,
+          parent_notes: o.parent_notes || null,
         }));
 
         // Obtener el payment_status de las transacciones vinculadas (para saber si ya están pagadas)
@@ -513,6 +554,220 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   }, [config]);
 
   // ==========================================
+  // CAROUSEL: Auto-select today & scroll
+  // ==========================================
+
+  // Compute carousel days for current month
+  const carouselDays = useMemo(() => {
+    const start = startOfMonth(currentDate);
+    const end = endOfMonth(currentDate);
+    const days = eachDayOfInterval({ start, end });
+    const peruTodayStr = getPeruTodayStr();
+
+    return days.map(date => {
+      const dateStr = format(date, 'yyyy-MM-dd');
+      const dayMenus = menus.get(dateStr) || [];
+      const dayOrders = existingOrders.filter(o => o.date === dateStr && !o.is_cancelled);
+      const isPast = dateStr < peruTodayStr;
+      const isToday = dateStr === peruTodayStr;
+      const hasMenus = dayMenus.length > 0;
+      const hasOrders = dayOrders.length > 0;
+      const isSpecial = specialDays.has(dateStr);
+      const validation = hasMenus ? canOrderForDate(dateStr) : { canOrder: false };
+      const isBlocked = hasMenus && !validation.canOrder && !hasOrders;
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+
+      return {
+        date,
+        dateStr,
+        dayMenus,
+        dayOrders,
+        isPast,
+        isToday,
+        hasMenus,
+        hasOrders,
+        isSpecial,
+        isBlocked,
+        isWeekend,
+        canOrder: validation.canOrder,
+      };
+    });
+  }, [currentDate, menus, existingOrders, specialDays, canOrderForDate]);
+
+  // Auto-select first available day when data loads
+  useEffect(() => {
+    if (!loading && menus.size > 0 && !selectedDay) {
+      const peruTodayStr = getPeruTodayStr();
+      const firstAvailable = carouselDays.find(d => d.dateStr >= peruTodayStr && d.hasMenus);
+      if (firstAvailable) {
+        setSelectedDay(firstAvailable.dateStr);
+      } else if (carouselDays.length > 0) {
+        // If no available day, select first with menus
+        const first = carouselDays.find(d => d.hasMenus);
+        if (first) setSelectedDay(first.dateStr);
+      }
+    }
+  }, [loading, menus, carouselDays]);
+
+  // Reset selectedDay when changing months
+  useEffect(() => {
+    setSelectedDay(null);
+    setExpandedCategoryId(null);
+    setIsInlineOrdering(false);
+    setWizardStep('idle');
+  }, [currentDate]);
+
+  // Scroll carousel to selected day
+  useEffect(() => {
+    if (selectedDay && carouselRef.current) {
+      const el = carouselRef.current.querySelector(`[data-date="${selectedDay}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [selectedDay]);
+
+  const scrollCarousel = (direction: 'left' | 'right') => {
+    if (carouselRef.current) {
+      carouselRef.current.scrollBy({
+        left: direction === 'left' ? -200 : 200,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  // Handle carousel day click
+  const handleCarouselDayClick = (dateStr: string) => {
+    const dayData = carouselDays.find(d => d.dateStr === dateStr);
+    if (!dayData) return;
+
+    if (multiSelectMode) {
+      // In multi-select: toggle for batch ordering
+      if (dayData.hasOrders) {
+        toast({ title: '📋 Ya tiene pedido', description: 'Este día ya tiene un pedido registrado.' });
+        return;
+      }
+      if (!dayData.hasMenus) {
+        toast({ title: '📭 Sin menú', description: 'No hay menú disponible para este día.' });
+        return;
+      }
+      if (dayData.isSpecial) {
+        toast({ title: '⭐ Día especial', description: 'Este día está marcado como especial y no permite pedidos.' });
+        return;
+      }
+      if (!dayData.canOrder) {
+        toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: 'Ya pasó la hora límite para pedir este día.' });
+        return;
+      }
+      toggleDateSelection(dateStr);
+      setSelectedDay(dateStr);
+    } else {
+      // Single mode: just view menus
+      if (dateStr === selectedDay && dayData.hasOrders) {
+        // Double-tap on same day with orders → view orders
+        setViewOrdersDate(dateStr);
+        setViewOrdersModal(true);
+        return;
+      }
+      setSelectedDay(dateStr);
+      setExpandedCategoryId(null);
+      setIsInlineOrdering(false);
+      setWizardStep('idle');
+    }
+  };
+
+  // Handle category card tap (inline ordering)
+  const handleCategoryCardTap = async (category: LunchCategory) => {
+    if (!selectedDay) return;
+
+    // If already expanded, collapse
+    if (expandedCategoryId === category.id && isInlineOrdering) {
+      setExpandedCategoryId(null);
+      setIsInlineOrdering(false);
+      setWizardStep('idle');
+      return;
+    }
+
+    // Check for existing orders
+    const dayOrders = existingOrders.filter(o => o.date === selectedDay && !o.is_cancelled);
+    const hasOrderForCategory = dayOrders.some(o => o.categoryId === category.id);
+    if (hasOrderForCategory) {
+      toast({ title: '⚠️ Ya tienes pedido', description: `Ya pediste "${category.name}" para este día. Toca el día para ver/cancelar.` });
+      return;
+    }
+
+    // Check deadline
+    const validation = canOrderForDate(selectedDay);
+    if (!validation.canOrder) {
+      toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: validation.reason });
+      return;
+    }
+
+    // Setup inline ordering
+    setExpandedCategoryId(category.id);
+    setIsInlineOrdering(true);
+
+    // Setup wizard state
+    setWizardDates([selectedDay]);
+    setWizardCurrentIndex(0);
+    setCreatedOrderIds([]);
+    setCreatedTransactionIds([]);
+    setTotalOrderAmount(0);
+    setOrderDescriptions([]);
+    setSelectedMenu(null);
+    setQuantity(1);
+    setMenuModifierGroups([]);
+    setSelectedModifiers([]);
+    setModifierFavorites([]);
+    setParentNotes('');
+    setShowNotesField(false);
+    setBulkPreselectedCategory(null);
+    setShowDayTransition(false);
+    setOrdersCreated(0);
+
+    // handleCategorySelect sets wizardStep and loads data
+    await handleCategorySelect(category);
+  };
+
+  // Handle inline order success → open payment
+  useEffect(() => {
+    if (isInlineOrdering && wizardStep === 'done' && ordersCreated > 0) {
+      // Brief delay to show success, then offer payment
+      const timer = setTimeout(() => {
+        if (userType === 'parent' && totalOrderAmount > 0) {
+          // Keep payment data, close inline, open payment
+          const savedAmount = totalOrderAmount;
+          const savedDescs = [...orderDescriptions];
+          const savedOrderIds = [...createdOrderIds];
+          const savedTxIds = [...createdTransactionIds];
+
+          setExpandedCategoryId(null);
+          setIsInlineOrdering(false);
+          setWizardStep('idle');
+          setWizardDates([]);
+          setSelectedDates(new Set());
+          fetchMonthlyData();
+
+          // Restore payment data after state reset
+          setTimeout(() => {
+            setTotalOrderAmount(savedAmount);
+            setOrderDescriptions(savedDescs);
+            setCreatedOrderIds(savedOrderIds);
+            setCreatedTransactionIds(savedTxIds);
+            setShowPaymentModal(true);
+          }, 100);
+        } else {
+          // Teacher flow - just close
+          setExpandedCategoryId(null);
+          setIsInlineOrdering(false);
+          closeWizard();
+        }
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isInlineOrdering, wizardStep, ordersCreated]);
+
+  // ==========================================
   // MULTI-DAY SELECTION
   // ==========================================
 
@@ -593,6 +848,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   // ── Auto-seleccionar categoría cuando hay bulk pre-seleccionada ──
   useEffect(() => {
     if (wizardStep !== 'category' || !bulkPreselectedCategory) return;
+    // Si el usuario pidió cambiar categoría manualmente, NO auto-seleccionar
+    if (skipAutoSelect) return;
 
     const currentDateStr = wizardDates[wizardCurrentIndex];
     if (!currentDateStr) return;
@@ -608,7 +865,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       }, bulkMenuMode === 'auto' ? 100 : 0);
       return () => clearTimeout(timer);
     }
-  }, [wizardStep, wizardCurrentIndex, bulkPreselectedCategory]);
+  }, [wizardStep, wizardCurrentIndex, bulkPreselectedCategory, skipAutoSelect]);
 
   // ── Auto-avanzar en modo automático (bulk "rápido") ──
   useEffect(() => {
@@ -741,6 +998,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   const handleCategorySelect = async (category: LunchCategory) => {
     setSelectedCategory(category);
+    // Resetear flag de cambio manual — el usuario ya eligió, para los días siguientes
+    // el auto-select puede funcionar normalmente
+    if (skipAutoSelect) setSkipAutoSelect(false);
 
     // ── Plato Configurable: flujo especial ──
     if (category.menu_mode === 'configurable') {
@@ -778,22 +1038,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setCategoryMenuOptions(categoryMenus);
 
     if (categoryMenus.length === 1) {
-      // Solo 1 menú → auto-seleccionar
-      const menu = categoryMenus[0];
-      setSelectedMenu(menu);
-
-      // ¿Tiene modificadores habilitados?
-      if (menu.allows_modifiers) {
-        const hasGroups = await loadMenuModifiers(menu.id);
-        if (hasGroups) {
-          await loadFavorites(category.id);
-          setWizardStep('modifiers');
-          return;
-        }
-      }
-      setMenuModifierGroups([]);
-      setSelectedModifiers([]);
-      setWizardStep('confirm');
+      // Solo 1 menú → mostrar detalle para que el padre lo vea antes de confirmar
+      setSelectedMenu(null);
+      setWizardStep('select_menu');
     } else if (categoryMenus.length > 1) {
       // Múltiples menús → mostrar paso de selección
       setSelectedMenu(null);
@@ -929,6 +1176,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       if (configSelections.length > 0) {
         orderPayload.configurable_selections = configSelections;
       }
+      // Solo agregar observaciones del padre si es pedido individual (no bulk)
+      if (parentNotes.trim() && wizardDates.length <= 1) {
+        orderPayload.parent_notes = parentNotes.trim();
+      }
 
       let insertedOrder: { id: string } | null = null;
 
@@ -999,7 +1250,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         // ticket_code generation failed silently
       }
 
-      const { error: txError } = await supabase
+      const { data: txData, error: txError } = await supabase
         .from('transactions')
         .insert([{
           [personField]: personId,
@@ -1018,16 +1269,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             category_name: selectedCategory.name,
             quantity,
           }
-        }]);
+        }])
+        .select('id')
+        .single();
 
       if (txError) console.error('❌ Error creating transaction:', txError);
 
       const newCount = ordersCreated + 1;
       setOrdersCreated(newCount);
 
-      // Track for payment (parents)
+      // Track for payment (parents) — incluir tanto order IDs como transaction IDs
       if (userType === 'parent' && insertedOrder?.id) {
         setCreatedOrderIds(prev => [...prev, insertedOrder.id]);
+        if (txData?.id) setCreatedTransactionIds(prev => [...prev, txData.id]);
         setTotalOrderAmount(prev => prev + (unitPrice * quantity));
         setOrderDescriptions(prev => [...prev, `${quantity}x ${selectedCategory.name} - ${dateFormatted}`]);
       }
@@ -1047,6 +1301,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             studentId: selectedStudent.id,
             ordersCreatedSoFar: newCount,
             createdOrderIds: [...createdOrderIds, ...(insertedOrder?.id ? [insertedOrder.id] : [])],
+            createdTransactionIds: [...createdTransactionIds, ...(txData?.id ? [txData.id] : [])],
             totalOrderAmount: totalOrderAmount + (unitPrice * quantity),
             orderDescriptions: [...orderDescriptions, `${quantity}x ${selectedCategory.name} - ${dateFormatted}`],
             savedAt: new Date().toISOString(),
@@ -1112,6 +1367,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     setSelectedGarnishes(new Set());
     setConfigPlateGroups([]);
     setConfigSelections([]);
+    setParentNotes('');
     setShowCancelConfirm(false);
     setBulkPreselectedCategory(null);
     setShowDayTransition(false);
@@ -1138,6 +1394,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       studentId: selectedStudent.id,
       ordersCreatedSoFar: ordersCreated,
       createdOrderIds,
+      createdTransactionIds,
       totalOrderAmount,
       orderDescriptions,
       savedAt: new Date().toISOString(),
@@ -1180,6 +1437,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
       setQuantity(1);
       setOrdersCreated(progress.ordersCreatedSoFar || 0);
       setCreatedOrderIds(progress.createdOrderIds || []);
+      setCreatedTransactionIds(progress.createdTransactionIds || []);
       setTotalOrderAmount(progress.totalOrderAmount || 0);
       setOrderDescriptions(progress.orderDescriptions || []);
 
@@ -1364,89 +1622,551 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     return 'available';
   };
 
-  const renderCalendar = () => {
-    const start = startOfMonth(currentDate);
-    const end = endOfMonth(currentDate);
-    const days = eachDayOfInterval({ start, end });
-    const startDayOfWeek = start.getDay();
-    const peruTodayStr = getPeruTodayStr();
+  // ==========================================
+  // DAY CAROUSEL (replaces calendar grid)
+  // ==========================================
+
+  const renderDayCarousel = () => {
+    return (
+      <div className="relative">
+        {/* Left arrow (PC only) */}
+        <button
+          onClick={() => scrollCarousel('left')}
+          className="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 shadow-lg rounded-full p-1.5 border hover:bg-gray-50 transition-all"
+          style={{ marginLeft: -6 }}
+        >
+          <ChevronLeft className="h-4 w-4 text-gray-600" />
+        </button>
+
+        {/* Scrollable day strip */}
+        <div
+          ref={carouselRef}
+          className="flex gap-2 overflow-x-auto px-1 py-2 snap-x snap-mandatory scroll-smooth"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
+        >
+          <style>{`.carousel-scroll::-webkit-scrollbar { display: none; }`}</style>
+          {carouselDays.map(day => {
+            const isActive = !multiSelectMode && selectedDay === day.dateStr;
+            const isMultiSelected = multiSelectMode && selectedDates.has(day.dateStr);
+            const isInteractive = day.hasMenus || day.hasOrders;
+            // In multi-select: highlight available days to guide the user
+            const isMultiSelectable = multiSelectMode && day.hasMenus && day.canOrder && !day.hasOrders && !day.isSpecial;
+
+            return (
+              <button
+                key={day.dateStr}
+                data-date={day.dateStr}
+                onClick={() => (isInteractive || (multiSelectMode && day.hasMenus)) && handleCarouselDayClick(day.dateStr)}
+                disabled={!isInteractive && !day.isSpecial && !multiSelectMode}
+                className={cn(
+                  "flex-shrink-0 snap-center flex flex-col items-center justify-center",
+                  "w-14 h-[72px] sm:w-16 sm:h-20 rounded-xl border-2 transition-all duration-200",
+                  "disabled:opacity-30 disabled:cursor-not-allowed",
+                  // Active state (only in single mode)
+                  isActive && "bg-purple-600 border-purple-600 text-white shadow-lg shadow-purple-200 scale-105",
+                  // Multi-selected (blue check)
+                  isMultiSelected && "bg-blue-500 border-blue-500 text-white shadow-lg shadow-blue-200 scale-105",
+                  // Multi-select available: pulsing blue border
+                  isMultiSelectable && !isMultiSelected && "border-blue-400 bg-blue-50 hover:bg-blue-100 hover:border-blue-500",
+                  // Today ring
+                  day.isToday && !isActive && !isMultiSelected && !isMultiSelectable && "ring-2 ring-purple-400 ring-offset-1",
+                  // Has orders (green)
+                  !isActive && !isMultiSelected && !isMultiSelectable && day.hasOrders && "bg-green-50 border-green-400 hover:border-green-500",
+                  // Available (white, interactive) — single mode only
+                  !multiSelectMode && !isActive && !day.hasOrders && day.canOrder && day.hasMenus && "bg-white border-gray-200 hover:border-purple-400 hover:bg-purple-50",
+                  // Blocked (red tint)
+                  !isActive && !isMultiSelected && !isMultiSelectable && day.isBlocked && !day.hasOrders && "bg-red-50 border-red-200",
+                  // Special day
+                  !isActive && !isMultiSelected && !isMultiSelectable && day.isSpecial && "bg-amber-50 border-amber-200",
+                  // No menus / weekend empty
+                  !isActive && !isMultiSelected && !isMultiSelectable && !day.hasMenus && !day.isSpecial && !day.hasOrders && "bg-gray-50 border-gray-100",
+                  // In multi-select: dim days that can't be selected
+                  multiSelectMode && !isMultiSelected && !isMultiSelectable && day.hasMenus && "opacity-50",
+                )}
+              >
+                {/* Day name */}
+                <span className={cn(
+                  "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider",
+                  isActive ? "text-purple-200" : isMultiSelected ? "text-blue-200" : isMultiSelectable ? "text-blue-500" : "text-gray-400",
+                )}>
+                  {WEEKDAYS[day.date.getDay()]}
+                </span>
+
+                {/* Day number */}
+                <span className={cn(
+                  "text-lg sm:text-xl font-black leading-tight",
+                  isActive ? "text-white" : isMultiSelected ? "text-white" :
+                  isMultiSelectable ? "text-blue-700" :
+                  day.hasOrders ? "text-green-700" :
+                  day.canOrder && day.hasMenus ? "text-gray-800" :
+                  day.isBlocked ? "text-red-400" : "text-gray-300",
+                )}>
+                  {format(day.date, 'd')}
+                </span>
+
+                {/* Status indicator */}
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  {isMultiSelected && (
+                    <Check className="h-3.5 w-3.5 text-white" />
+                  )}
+                  {isMultiSelectable && !isMultiSelected && (
+                    <PlusCircle className="h-3 w-3 text-blue-500" />
+                  )}
+                  {!isMultiSelected && !isMultiSelectable && day.hasOrders && (
+                    <div className={cn("flex items-center gap-0.5", isActive ? "text-green-300" : "text-green-600")}>
+                      <CheckCircle2 className="h-3 w-3" />
+                      <span className="text-[8px] font-bold">{day.dayOrders.reduce((s, o) => s + o.quantity, 0)}</span>
+                    </div>
+                  )}
+                  {!multiSelectMode && !isMultiSelected && !day.hasOrders && day.canOrder && day.hasMenus && (
+                    <UtensilsCrossed className={cn("h-3 w-3", isActive ? "text-purple-300" : "text-blue-400")} />
+                  )}
+                  {!isMultiSelected && !isMultiSelectable && day.isBlocked && !day.hasOrders && (
+                    <Lock className={cn("h-3 w-3", isActive ? "text-red-300" : "text-red-400")} />
+                  )}
+                  {!isMultiSelected && !isMultiSelectable && day.isSpecial && (
+                    <span className="text-[8px]">⭐</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right arrow (PC only) */}
+        <button
+          onClick={() => scrollCarousel('right')}
+          className="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 shadow-lg rounded-full p-1.5 border hover:bg-gray-50 transition-all"
+          style={{ marginRight: -6 }}
+        >
+          <ChevronRight className="h-4 w-4 text-gray-600" />
+        </button>
+      </div>
+    );
+  };
+
+  // ==========================================
+  // MENU CARDS (below selected day)
+  // ==========================================
+
+  const renderMenuCards = () => {
+    if (!selectedDay) return null;
+
+    const dayData = carouselDays.find(d => d.dateStr === selectedDay);
+    if (!dayData) return null;
+
+    const dayMenus = dayData.dayMenus;
+    const dayOrders = dayData.dayOrders;
+
+    // Group menus by category
+    const categoriesMap = new Map<string, { category: LunchCategory; menus: LunchMenu[] }>();
+    dayMenus.forEach(menu => {
+      if (menu.category_id && menu.category) {
+        const existing = categoriesMap.get(menu.category_id);
+        if (existing) {
+          existing.menus.push(menu);
+        } else {
+          categoriesMap.set(menu.category_id, { category: menu.category, menus: [menu] });
+        }
+      }
+    });
+    const categories = Array.from(categoriesMap.values());
+
+    const formattedDate = format(getPeruDateOnly(selectedDay), "EEEE d 'de' MMMM", { locale: es });
 
     return (
-      <div className="grid grid-cols-7 gap-1 sm:gap-2">
-        {WEEKDAYS.map(day => (
-          <div key={day} className="text-center text-[10px] sm:text-xs font-medium text-gray-500 p-1 sm:p-2">{day}</div>
-        ))}
-
-        {Array.from({ length: startDayOfWeek }).map((_, i) => (
-          <div key={`empty-${i}`} />
-        ))}
-
-        {days.map(date => {
-          const dateStr = format(date, 'yyyy-MM-dd');
-          const status = getDayStatus(dateStr);
-          const isSelected = selectedDates.has(dateStr);
-          const isToday = dateStr === peruTodayStr;
-          const dayOrders = existingOrders.filter(o => o.date === dateStr && !o.is_cancelled);
-          const dayMenus = menus.get(dateStr) || [];
-
-          const isDisabled = status === 'unavailable' || status === 'special' ||
-                             (status === 'blocked' && dayOrders.length === 0);
-
-          return (
-            <button
-              key={dateStr}
-              onClick={() => handleDateClick(dateStr)}
-              disabled={isDisabled}
-              className={cn(
-                "aspect-square p-0.5 sm:p-1 rounded-lg border-2 transition-all relative flex flex-col items-center justify-start",
-                "hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40",
-                isToday && "ring-2 ring-blue-400",
-                isSelected && "bg-blue-100 border-blue-500 ring-2 ring-blue-300",
-                !isSelected && status === 'available' && "bg-white border-gray-200 hover:border-blue-400 hover:bg-blue-50",
-                !isSelected && status === 'has_orders' && "bg-green-50 border-green-300 hover:border-green-400",
-                !isSelected && status === 'special' && "bg-gray-100 border-gray-300",
-                !isSelected && status === 'unavailable' && "bg-gray-50 border-gray-200",
-                !isSelected && status === 'blocked' && "bg-red-50 border-red-200",
-              )}
+      <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        {/* Day header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-base sm:text-lg text-gray-900 capitalize">{formattedDate}</h3>
+            {dayData.isSpecial && (
+              <p className="text-xs text-amber-600">⭐ {specialDays.get(selectedDay)?.title || 'Día especial'}</p>
+            )}
+          </div>
+          {dayOrders.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-green-700 border-green-300 hover:bg-green-50"
+              onClick={() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); }}
             >
-              <span className={cn(
-                "text-xs sm:text-sm font-medium",
-                isSelected && "text-blue-700 font-bold",
-                !isSelected && status === 'blocked' && "text-red-400",
-                !isSelected && status === 'unavailable' && "text-gray-400",
-                !isSelected && status === 'has_orders' && "text-green-700 font-bold",
-              )}>
-                {format(date, 'd')}
-              </span>
+              <Eye className="h-3.5 w-3.5 mr-1" />
+              {dayOrders.length} pedido{dayOrders.length > 1 ? 's' : ''}
+            </Button>
+          )}
+        </div>
 
-              {isSelected && (
-                <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-600 mt-0.5" />
-              )}
+        {/* No menus message */}
+        {categories.length === 0 && (
+          <div className="text-center py-6 text-gray-400">
+            <UtensilsCrossed className="h-8 w-8 mx-auto mb-2 opacity-40" />
+            <p className="text-sm">No hay menús disponibles este día</p>
+          </div>
+        )}
 
-              {!isSelected && status === 'blocked' && (
-                <Lock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-red-400 mt-0.5" />
-              )}
+        {/* Category cards grid */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
+          {categories.map(({ category, menus: catMenus }) => {
+            const IconComponent = ICON_MAP[category.icon || 'utensils'] || UtensilsCrossed;
+            const price = category.price || config?.lunch_price || 0;
+            const isExpanded = expandedCategoryId === category.id && isInlineOrdering;
+            const hasOrderForThis = dayOrders.some(o => o.categoryId === category.id);
+            const canOrderNow = dayData.canOrder && !hasOrderForThis;
+            const mainMenu = catMenus[0];
 
-              {!isSelected && status === 'available' && dayMenus.length > 0 && (
-                <UtensilsCrossed className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-500 mt-0.5" />
-              )}
+            return (
+              <div key={category.id} className={cn("col-span-1", isExpanded && "col-span-2")}>
+                {/* Card */}
+                <button
+                  onClick={() => canOrderNow ? handleCategoryCardTap(category) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
+                  disabled={!canOrderNow && !hasOrderForThis}
+                  className={cn(
+                    "w-full text-left rounded-xl border-2 p-3 transition-all duration-200",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                    isExpanded && "border-purple-500 bg-purple-50 shadow-lg",
+                    !isExpanded && canOrderNow && "bg-white border-gray-200 hover:border-purple-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98]",
+                    !isExpanded && hasOrderForThis && "bg-green-50 border-green-300",
+                    !isExpanded && !canOrderNow && !hasOrderForThis && "bg-gray-50 border-gray-200",
+                  )}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <div
+                      className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ backgroundColor: (category.color || '#8B5CF6') + '20' }}
+                    >
+                      <IconComponent className="h-5 w-5" style={{ color: category.color || '#8B5CF6' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-gray-900 truncate">{category.name}</p>
+                      {mainMenu && (
+                        <p className="text-[11px] text-gray-500 truncate mt-0.5">{mainMenu.main_course}</p>
+                      )}
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-base font-black text-purple-700">S/ {price.toFixed(2)}</span>
+                        {hasOrderForThis && (
+                          <Badge className="bg-green-500 text-[10px] px-1.5 py-0">✓ Pedido</Badge>
+                        )}
+                        {canOrderNow && !isExpanded && (
+                          <span className="text-[10px] text-purple-600 font-semibold">Pedir →</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
 
-              {dayOrders.length > 0 && (
-                <Badge className="absolute top-0 right-0 h-3.5 w-3.5 sm:h-4 sm:w-4 p-0 flex items-center justify-center text-[8px] sm:text-[9px] bg-green-500">
-                  {dayOrders.reduce((sum, o) => sum + o.quantity, 0)}
-                </Badge>
-              )}
+                {/* Inline expanded ordering form */}
+                {isExpanded && (
+                  <div className="mt-2 bg-white rounded-xl border-2 border-purple-200 p-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                    {/* Inline success state */}
+                    {wizardStep === 'done' && (
+                      <div className="text-center py-4">
+                        <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-2 animate-bounce" />
+                        <p className="font-bold text-green-700">¡Pedido registrado!</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {userType === 'parent' ? 'Preparando pago...' : 'Listo ✓'}
+                        </p>
+                      </div>
+                    )}
 
-              {!isSelected && dayMenus.length > 0 && status !== 'has_orders' && status !== 'blocked' && (
-                <div className="flex gap-0.5 mt-0.5">
-                  {Array.from(new Set(dayMenus.map(m => m.category?.color || '#3B82F6'))).slice(0, 3).map((color, idx) => (
-                    <div key={idx} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
-                  ))}
-                </div>
-              )}
-            </button>
-          );
-        })}
+                    {/* Day transition feedback */}
+                    {showDayTransition && (
+                      <div className="text-center py-4 animate-pulse">
+                        <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-1" />
+                        <p className="text-sm font-bold text-green-700">✅ Registrado</p>
+                      </div>
+                    )}
+
+                    {/* Menu selection step */}
+                    {!showDayTransition && wizardStep === 'select_menu' && selectedCategory && (
+                      <div className="space-y-2">
+                        {categoryMenuOptions.length > 1 && (
+                          <p className="text-xs font-semibold text-gray-600">
+                            {categoryMenuOptions.length} opciones disponibles:
+                          </p>
+                        )}
+                        {categoryMenuOptions.length === 1 && (
+                          <p className="text-xs font-semibold text-purple-700">
+                            Menú del día:
+                          </p>
+                        )}
+                        {categoryMenuOptions.map((menu) => (
+                          <button
+                            key={menu.id}
+                            onClick={() => handleMenuSelect(menu)}
+                            className={cn(
+                              "w-full text-left rounded-lg border-2 transition-all",
+                              categoryMenuOptions.length === 1
+                                ? "p-3 border-purple-300 bg-purple-50 hover:border-purple-500"
+                                : "p-2.5 border-gray-200 hover:border-purple-400 hover:bg-purple-50"
+                            )}
+                          >
+                            <p className="font-bold text-sm">{menu.main_course}</p>
+                            {menu.starter && <p className="text-xs text-gray-600">🥗 Entrada: {menu.starter}</p>}
+                            {menu.beverage && <p className="text-xs text-gray-600">🥤 Bebida: {menu.beverage}</p>}
+                            {menu.dessert && <p className="text-xs text-gray-600">🍮 Postre: {menu.dessert}</p>}
+                            {menu.notes && <p className="text-[10px] text-gray-400 mt-1 italic">{menu.notes}</p>}
+                            {categoryMenuOptions.length === 1 && (
+                              <p className="text-xs text-purple-600 font-semibold mt-2 text-center">
+                                Toca para seleccionar →
+                              </p>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Configurable plate step */}
+                    {!showDayTransition && wizardStep === 'configurable_select' && selectedCategory && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-amber-700">🍽️ Arma tu plato:</p>
+                        {configPlateGroups.map((group) => {
+                          const currentSelection = configSelections.find(s => s.group_name === group.name);
+                          const isMultiSelect = (group.max_selections || 1) > 1;
+                          const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
+                          const maxSel = group.max_selections || 1;
+
+                          return (
+                            <div key={group.id} className="bg-amber-50 rounded-lg p-2 space-y-1.5">
+                              <p className="text-xs font-semibold text-amber-900">
+                                {group.name}
+                                {group.is_required && <span className="text-red-500">*</span>}
+                                {isMultiSelect && <span className="text-[10px] text-gray-400 ml-1">({selectedItems.length}/{maxSel})</span>}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {group.options.map(option => {
+                                  const isSelected = isMultiSelect ? selectedItems.includes(option.name) : currentSelection?.selected === option.name;
+                                  const isDisabled = isMultiSelect && !isSelected && selectedItems.length >= maxSel;
+                                  return (
+                                    <button
+                                      key={option.id}
+                                      disabled={isDisabled}
+                                      onClick={() => {
+                                        if (isMultiSelect) {
+                                          setConfigSelections(prev => prev.map(s => {
+                                            if (s.group_name !== group.name) return s;
+                                            const current = s.selected ? s.selected.split(', ').filter(Boolean) : [];
+                                            let updated: string[];
+                                            if (current.includes(option.name)) { updated = current.filter(n => n !== option.name); }
+                                            else if (current.length < maxSel) { updated = [...current, option.name]; }
+                                            else { return s; }
+                                            return { ...s, selected: updated.join(', ') };
+                                          }));
+                                        } else {
+                                          setConfigSelections(prev => prev.map(s => s.group_name === group.name ? { ...s, selected: option.name } : s));
+                                        }
+                                      }}
+                                      className={cn(
+                                        "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
+                                        isSelected ? "border-amber-500 bg-amber-100 text-amber-900" :
+                                        isDisabled ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed" :
+                                        "border-gray-200 hover:border-amber-300 text-gray-600"
+                                      )}
+                                    >
+                                      {isSelected && '✓ '}{option.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <Button
+                          size="sm"
+                          onClick={() => setWizardStep('confirm')}
+                          className="w-full bg-amber-600 hover:bg-amber-700 text-sm"
+                          disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                        >
+                          Continuar →
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Modifiers step */}
+                    {!showDayTransition && wizardStep === 'modifiers' && selectedCategory && selectedMenu && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-purple-700">✨ Personaliza tu pedido:</p>
+
+                        {modifierFavorites.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {modifierFavorites.map(fav => (
+                              <Button key={fav.id} type="button" variant="outline" size="sm"
+                                onClick={() => applyFavorite(fav)}
+                                className="text-[10px] h-7 border-yellow-300 hover:bg-yellow-50"
+                              >
+                                ⭐ {fav.favorite_name}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
+
+                        {menuModifierGroups.map(group => {
+                          const currentSel = selectedModifiers.find(m => m.group_id === group.id);
+                          const isSkipped = currentSel?.selected_option_id === 'skip';
+                          return (
+                            <div key={group.id} className="bg-purple-50 rounded-lg p-2 space-y-1.5">
+                              <p className="text-xs font-semibold text-purple-900">{group.name}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {group.options.map(option => {
+                                  const isSelected = !isSkipped && currentSel?.selected_option_id === option.id;
+                                  return (
+                                    <button
+                                      key={option.id}
+                                      onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: option.id, selected_name: option.name } : m))}
+                                      className={cn(
+                                        "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 transition-all",
+                                        isSelected ? "border-purple-500 bg-purple-100 text-purple-900" : "border-gray-200 hover:border-purple-300 text-gray-600"
+                                      )}
+                                    >
+                                      {isSelected && '✓ '}{option.name}
+                                    </button>
+                                  );
+                                })}
+                                <button
+                                  onClick={() => setSelectedModifiers(prev => prev.map(m => m.group_id === group.id ? { ...m, selected_option_id: 'skip', selected_name: `Sin ${group.name.toLowerCase()}` } : m))}
+                                  className={cn(
+                                    "px-2.5 py-1.5 rounded-lg text-xs font-medium border-2 border-dashed transition-all",
+                                    isSkipped ? "border-gray-500 bg-gray-100 text-gray-700" : "border-gray-300 hover:border-gray-400 text-gray-400"
+                                  )}
+                                >
+                                  Sin {group.name.toLowerCase()}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={saveAsFavorite} className="text-xs text-yellow-700 border-yellow-300 flex-1">
+                            ⭐ Guardar
+                          </Button>
+                          <Button size="sm" onClick={() => setWizardStep('confirm')} className="bg-purple-600 hover:bg-purple-700 text-xs flex-1">
+                            Continuar →
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Confirm step — compact with direct "Pedir" */}
+                    {!showDayTransition && wizardStep === 'confirm' && selectedCategory && (
+                      <div className="space-y-2">
+                        {/* Detalle del menú elegido */}
+                        {selectedMenu && (
+                          <div className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+                            <p className="font-bold text-sm text-gray-800">{selectedMenu.main_course}</p>
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                              {selectedMenu.starter && <span className="text-[11px] text-gray-500">🥗 {selectedMenu.starter}</span>}
+                              {selectedMenu.beverage && <span className="text-[11px] text-gray-500">🥤 {selectedMenu.beverage}</span>}
+                              {selectedMenu.dessert && <span className="text-[11px] text-gray-500">🍮 {selectedMenu.dessert}</span>}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Config/modifier badges (compact) */}
+                        {(configSelections.filter(s => s.selected).length > 0 || selectedModifiers.filter(m => m.selected_name).length > 0) && (
+                          <div className="flex flex-wrap gap-1">
+                            {configSelections.filter(s => s.selected).map((sel, i) => (
+                              <span key={`c${i}`} className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">{sel.selected}</span>
+                            ))}
+                            {selectedModifiers.filter(m => m.selected_name).map((mod, i) => (
+                              <span key={`m${i}`} className="text-[9px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">{mod.selected_name}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Garnishes (inline) */}
+                        {availableGarnishes.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            <span className="text-[10px] text-orange-600 font-semibold mr-0.5">🍟</span>
+                            {availableGarnishes.map(g => {
+                              const isSel = selectedGarnishes.has(g);
+                              return (
+                                <button key={g} onClick={() => setSelectedGarnishes(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; })}
+                                  className={cn("px-1.5 py-0.5 rounded-full text-[10px] border transition-all", isSel ? "bg-orange-600 text-white border-orange-700" : "bg-white text-orange-600 border-orange-200 hover:border-orange-400")}
+                                >
+                                  {isSel ? '✓ ' : ''}{g}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Quantity (inline compact) */}
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 bg-gray-50 rounded-lg border px-2 py-1">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.max(1, quantity - 1))} disabled={quantity <= 1}>
+                              <Minus className="h-3 w-3" />
+                            </Button>
+                            <span className="text-sm font-black w-5 text-center">{quantity}</span>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setQuantity(Math.min(10, quantity + 1))}>
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <span className="text-lg font-black text-purple-700">
+                            S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}
+                          </span>
+                        </div>
+
+                        {/* Notes toggle (collapsed) */}
+                        {userType === 'parent' && (
+                          showNotesField ? (
+                            <Textarea
+                              placeholder="Escribe tus observaciones..."
+                              value={parentNotes}
+                              onChange={(e) => setParentNotes(e.target.value)}
+                              maxLength={250}
+                              rows={2}
+                              autoFocus
+                              className="resize-none text-xs"
+                            />
+                          ) : (
+                            <button
+                              onClick={() => setShowNotesField(true)}
+                              className="text-[10px] text-gray-400 hover:text-gray-600 transition-all"
+                            >
+                              📝 Agregar nota
+                            </button>
+                          )
+                        )}
+
+                        {/* ACTION BUTTONS — big Pedir + small Cancel */}
+                        <Button
+                          className="w-full h-11 bg-purple-600 hover:bg-purple-700 font-bold text-sm shadow-lg active:scale-[0.98] transition-all"
+                          disabled={submitting}
+                          onClick={handleConfirmOrder}
+                        >
+                          {submitting ? (
+                            <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />Procesando...</>
+                          ) : (
+                            <>🍽️ Pedir — S/ {((selectedCategory.price || config?.lunch_price || 0) * quantity).toFixed(2)}</>
+                          )}
+                        </Button>
+                        <button
+                          className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 py-0.5"
+                          onClick={() => {
+                            setExpandedCategoryId(null);
+                            setIsInlineOrdering(false);
+                            setWizardStep('idle');
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Category loading (when handleCategorySelect is running) */}
+                    {!showDayTransition && wizardStep === 'category' && (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="h-5 w-5 animate-spin text-purple-600" />
+                        <span className="text-xs text-gray-500 ml-2">Cargando opciones...</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
@@ -1457,6 +2177,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
 
   const renderWizardDialog = () => {
     if (wizardStep === 'idle') return null;
+    // Skip dialog when ordering inline (single day)
+    if (isInlineOrdering) return null;
 
     const currentDateStr = wizardDates[wizardCurrentIndex];
     const totalDays = wizardDates.length;
@@ -1565,11 +2287,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   </span>
                 </DialogTitle>
                 <DialogDescription>
-                  {wizardStep === 'category' && (bulkPreselectedCategory ? `Auto-seleccionando "${bulkPreselectedCategory.name}"...` : 'Selecciona la categoría del menú')}
-                  {wizardStep === 'select_menu' && 'Elige el menú que deseas'}
+                  {wizardStep === 'category' && (bulkPreselectedCategory && !skipAutoSelect ? `Auto-seleccionando "${bulkPreselectedCategory.name}"...` : 'Selecciona la categoría del menú')}
+                  {wizardStep === 'select_menu' && (categoryMenuOptions.length === 1 ? 'Revisa el menú del día y selecciónalo' : 'Elige el menú que deseas')}
                   {wizardStep === 'configurable_select' && '🍽️ Elige tus opciones'}
                   {wizardStep === 'modifiers' && '✨ Personaliza tu pedido'}
-                  {wizardStep === 'confirm' && 'Selecciona la cantidad y confirma tu pedido'}
+                  {wizardStep === 'confirm' && 'Confirma tu pedido'}
                 </DialogDescription>
                 {/* Barra de progreso multi-día */}
                 {totalDays > 1 && (
@@ -2007,6 +2729,24 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                       </div>
                     </div>
 
+                    {/* Observaciones del padre — solo en pedidos individuales (1 día) */}
+                    {wizardDates.length <= 1 && userType === 'parent' && (
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                          📝 Observaciones <span className="text-xs font-normal text-gray-400">(opcional)</span>
+                        </label>
+                        <Textarea
+                          placeholder="Ej: Mi hijo es alérgico a los mariscos, sin picante, porción pequeña..."
+                          value={parentNotes}
+                          onChange={(e) => setParentNotes(e.target.value)}
+                          maxLength={250}
+                          rows={2}
+                          className="resize-none text-sm"
+                        />
+                        <p className="text-[10px] text-gray-400 text-right">{parentNotes.length}/250</p>
+                      </div>
+                    )}
+
                     {/* Total */}
                     <div className="bg-green-50 p-4 rounded-lg border-2 border-green-300">
                       <div className="flex justify-between items-center">
@@ -2025,6 +2765,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                   <Button
                     variant="outline"
                     onClick={() => {
+                      setSkipAutoSelect(true); // Evitar que el auto-select re-lance
                       setWizardStep('category');
                       setSelectedCategory(null);
                       setSelectedMenu(null);
@@ -2039,6 +2780,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     <Button
                       variant="outline"
                       onClick={() => {
+                        setSkipAutoSelect(true); // Evitar que el auto-select re-lance
                         setWizardStep('category');
                         setSelectedCategory(null);
                         setSelectedMenu(null);
@@ -2109,6 +2851,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                         setSelectedMenu(null);
                         setQuantity(1);
                       } else {
+                        setSkipAutoSelect(true); // Evitar que el auto-select re-lance
                         setWizardStep('category');
                         setSelectedCategory(null);
                         setSelectedMenu(null);
@@ -2207,6 +2950,53 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     Creado: {format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: es })}
                   </p>
 
+                  {/* Selecciones del plato armado */}
+                  {(() => {
+                    const cfgs = order.configurable_selections;
+                    const garns = order.selected_garnishes;
+                    const mods = order.selected_modifiers;
+                    const hasCfgs = cfgs && cfgs.length > 0;
+                    const hasGarns = garns && garns.length > 0;
+                    const hasMods = mods && mods.length > 0;
+                    if (!hasCfgs && !hasGarns && !hasMods && !order.parent_notes) return null;
+                    return (
+                      <div className="mt-2 space-y-1.5">
+                        {hasMods && (
+                          <div className="flex flex-wrap gap-1">
+                            {mods!.map((m, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
+                                <strong className="mr-1">{m.group_name}:</strong> {m.selected_name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {hasCfgs && (
+                          <div className="flex flex-wrap gap-1">
+                            {cfgs!.map((c, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded px-2 py-0.5">
+                                <strong className="mr-1">{c.group_name}:</strong> {c.selected ?? c.selected_name ?? ''}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {hasGarns && (
+                          <div className="flex flex-wrap gap-1">
+                            {garns!.map((g, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-green-50 text-green-700 border border-green-200 rounded px-2 py-0.5">
+                                🥗 {g}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {order.parent_notes && (
+                          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                            📝 <strong>Obs:</strong> {order.parent_notes}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Badge de pago si aplica */}
                   {!order.is_cancelled && order.transaction_payment_status && (
                     <div className="mt-2">
@@ -2298,6 +3088,25 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
     );
   }
 
+  // No hay estudiantes vinculados a este padre
+  if (userType === 'parent' && !loading && students.length === 0) {
+    return (
+      <Card className="bg-orange-50 border-orange-300">
+        <CardContent className="py-10 text-center space-y-3">
+          <div className="text-5xl">👦</div>
+          <p className="text-orange-800 font-semibold text-lg">Sin estudiantes vinculados</p>
+          <p className="text-orange-700 text-sm max-w-xs mx-auto">
+            Tu cuenta no tiene ningún estudiante registrado. 
+            Comunícate con el administrador del colegio para que vincule a tu hijo/a a tu cuenta.
+          </p>
+          <p className="text-orange-500 text-xs">
+            (Código de cuenta: <span className="font-mono font-bold">{userId.slice(0, 8).toUpperCase()}</span>)
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   // Orders disabled by admin
   if (config && !config.orders_enabled) {
     return (
@@ -2314,188 +3123,192 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   }
 
   return (
-    <div className="space-y-4">
-      {/* Botón "Pedir todo el mes" + Continuar progreso */}
-      {userType === 'parent' && selectedStudent && (
-        <div className="flex flex-col sm:flex-row gap-2">
-          {/* Restaurar progreso guardado */}
-          {(() => {
-            const saved = selectedStudent ? sessionStorage.getItem(`lunch_wizard_${selectedStudent.id}`) : null;
-            if (!saved) return null;
-            try {
-              const progress = JSON.parse(saved);
-              const hoursDiff = (Date.now() - new Date(progress.savedAt).getTime()) / (1000 * 60 * 60);
-              if (hoursDiff > 24) return null;
-              const remainingDays = (progress.dates as string[]).length;
-              return (
-                <Button
-                  onClick={() => restoreWizardProgress()}
-                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold flex-1"
-                >
-                  <CalendarIcon className="h-4 w-4 mr-2" />
-                  Continuar pedido ({remainingDays} días pendientes)
-                </Button>
-              );
-            } catch { return null; }
-          })()}
-          <Button
-            onClick={handleBulkOrderMonth}
-            variant="outline"
-            className="border-purple-300 text-purple-700 hover:bg-purple-50 font-semibold flex-1"
-          >
-            <CalendarIcon className="h-4 w-4 mr-2" />
-            📅 Pedir todo el mes
-          </Button>
-        </div>
-      )}
-
+    <div className="space-y-3">
       {/* STUDENT SELECTOR (parents only) */}
       {userType === 'parent' && students.length > 0 && (
-        <Card>
+        <Card className={cn(wizardStep !== 'idle' && !isInlineOrdering && "opacity-60")}>
           <CardContent className="p-3">
-            <p className="text-xs font-medium text-gray-500 mb-2">Selecciona tu hijo(a):</p>
-            <div className="flex gap-2 flex-wrap">
-              {students.map(student => (
-                <Button
-                  key={student.id}
-                  variant={selectedStudent?.id === student.id ? "default" : "outline"}
-                  size="sm"
-                  className={cn("gap-2", selectedStudent?.id === student.id && "bg-purple-600 hover:bg-purple-700")}
-                  onClick={() => {
-                    setSelectedStudent(student);
-                    setExistingOrders([]);
-                    setSelectedDates(new Set());
-                  }}
-                >
-                  <Users className="h-3.5 w-3.5" />
-                  {student.full_name}
-                </Button>
-              ))}
-            </div>
+            <p className="text-xs font-medium text-gray-500 mb-2">
+              {wizardStep !== 'idle' && !isInlineOrdering
+                ? `📌 Pidiendo para: ${selectedStudent?.full_name || ''}` 
+                : students.length > 1 ? 'Selecciona tu hijo(a):' : `Pidiendo para: ${selectedStudent?.full_name || ''}`}
+            </p>
+            {students.length > 1 && (
+              <div className="flex gap-2 flex-wrap">
+                {students.map(student => (
+                  <Button
+                    key={student.id}
+                    variant={selectedStudent?.id === student.id ? "default" : "outline"}
+                    size="sm"
+                    disabled={wizardStep !== 'idle' && !isInlineOrdering}
+                    className={cn(
+                      "gap-2",
+                      selectedStudent?.id === student.id && "bg-purple-600 hover:bg-purple-700",
+                    )}
+                    onClick={() => {
+                      if (wizardStep !== 'idle' && !isInlineOrdering) return;
+                      setSelectedStudent(student);
+                      setExistingOrders([]);
+                      setSelectedDates(new Set());
+                      setSelectedDay(null);
+                      setExpandedCategoryId(null);
+                      setIsInlineOrdering(false);
+                      setWizardStep('idle');
+                    }}
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    {student.full_name}
+                  </Button>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* CALENDAR */}
-      <Card>
-        <CardHeader className="pb-3">
+      {/* Restore progress banner */}
+      {userType === 'parent' && selectedStudent && (() => {
+        const saved = sessionStorage.getItem(`lunch_wizard_${selectedStudent.id}`);
+        if (!saved) return null;
+        try {
+          const progress = JSON.parse(saved);
+          const hoursDiff = (Date.now() - new Date(progress.savedAt).getTime()) / (1000 * 60 * 60);
+          if (hoursDiff > 24) return null;
+          const remainingDays = (progress.dates as string[]).length;
+          return (
+            <Button
+              onClick={() => restoreWizardProgress()}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold"
+            >
+              <CalendarIcon className="h-4 w-4 mr-2" />
+              Continuar pedido ({remainingDays} días pendientes)
+            </Button>
+          );
+        } catch { return null; }
+      })()}
+
+      {/* DAY CAROUSEL + MONTH NAV */}
+      <Card className="overflow-hidden">
+        <CardHeader className="pb-2 pt-3 px-3">
           <div className="flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
               <ChevronLeft className="h-5 w-5" />
             </Button>
-            <div className="text-center">
-              <CardTitle className="text-base sm:text-lg">
+            <div className="text-center flex-1">
+              <CardTitle className="text-sm sm:text-base font-bold">
                 {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
               </CardTitle>
-              <CardDescription className="text-xs sm:text-sm">
-                Toca los días disponibles para seleccionarlos
-              </CardDescription>
+              {!multiSelectMode && (
+                <CardDescription className="text-[10px] sm:text-xs">
+                  Desliza y elige un día
+                </CardDescription>
+              )}
+              {multiSelectMode && (
+                <CardDescription className="text-[10px] sm:text-xs text-blue-600 font-semibold">
+                  Modo múltiple: toca los días para seleccionar
+                </CardDescription>
+              )}
             </div>
-            <Button variant="ghost" size="icon" onClick={() => { setCurrentDate(addMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(addMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
               <ChevronRight className="h-5 w-5" />
             </Button>
           </div>
-        </CardHeader>
 
-        <CardContent className="pt-0">
-          {renderCalendar()}
-
-          {/* Legend */}
-          <div className="mt-4 flex flex-wrap gap-3 text-[10px] sm:text-xs text-gray-600">
-            <div className="flex items-center gap-1">
-              <UtensilsCrossed className="h-3 w-3 text-blue-500" />
-              <span>Disponible</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Check className="h-3 w-3 text-blue-600" />
-              <span>Seleccionado</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Lock className="h-3 w-3 text-red-400" />
-              <span>Bloqueado</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[7px] bg-green-500">1</Badge>
-              <span>Ya pedido</span>
+          {/* Multi-select toggle */}
+          <div className="flex items-center justify-between mt-2 px-1">
+            <button
+              onClick={() => {
+                setMultiSelectMode(!multiSelectMode);
+                if (multiSelectMode) setSelectedDates(new Set());
+              }}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
+                multiSelectMode
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+              )}
+            >
+              <CalendarIcon className="h-3.5 w-3.5" />
+              Pedido múltiple
+            </button>
+            {/* Legend mini */}
+            <div className="flex items-center gap-2 text-[9px] text-gray-400">
+              <span className="flex items-center gap-0.5"><UtensilsCrossed className="h-2.5 w-2.5 text-blue-400" />Menú</span>
+              <span className="flex items-center gap-0.5"><CheckCircle2 className="h-2.5 w-2.5 text-green-500" />Pedido</span>
+              <span className="flex items-center gap-0.5"><Lock className="h-2.5 w-2.5 text-red-400" />Cerrado</span>
             </div>
           </div>
+        </CardHeader>
 
-          {/* Deadline info - Enhanced with concrete example */}
-          {config?.order_deadline_time && (
-            <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-lg p-2.5 border border-amber-200">
-              <Clock className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-              <div>
-                <p>
-                  Hora límite para pedir: <strong>{config.order_deadline_time.substring(0, 5)}</strong>
-                  {(config.order_deadline_days ?? 0) > 0
-                    ? <>, <strong>{config.order_deadline_days} día(s) antes</strong> del día del pedido</>
-                    : <> <strong>del mismo día</strong></>
-                  }
-                </p>
-                <p className="text-amber-600 mt-0.5">
-                  {(() => {
-                    const peruNow = getPeruNow();
-                    const tomorrow = new Date(peruNow.getFullYear(), peruNow.getMonth(), peruNow.getDate() + 1);
-                    const tomorrowStr = format(tomorrow, "EEEE d", { locale: es });
-                    const deadlineDays = config.order_deadline_days ?? 0;
-                    const deadlineForTomorrow = new Date(
-                      tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate() - deadlineDays,
-                      ...config.order_deadline_time.split(':').slice(0, 2).map(Number), 0
-                    );
-                    return `Ej: Para pedir el ${tomorrowStr}, el límite es ${format(deadlineForTomorrow, "EEEE d 'a las' HH:mm", { locale: es })}`;
-                  })()}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Cancellation info */}
-          {config?.cancellation_deadline_time && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-blue-700 bg-blue-50 rounded-lg p-2.5 border border-blue-200">
-              <XCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              <span>
-                Cancelar hasta: <strong>{config.cancellation_deadline_time.substring(0, 5)}</strong>
-                {config.cancellation_deadline_days > 0 && <>, {config.cancellation_deadline_days} día(s) antes</>}
-                {' '}del día del pedido
-              </span>
-            </div>
-          )}
+        <CardContent className="pt-0 px-2 pb-3">
+          {renderDayCarousel()}
         </CardContent>
       </Card>
 
-      {/* FLOATING ACTION BAR (when days are selected) */}
-      {selectedDates.size > 0 && (
+      {/* MENU CARDS (below selected day) */}
+      {selectedDay && !multiSelectMode && renderMenuCards()}
+
+      {/* Deadline info (compact) */}
+      {config?.order_deadline_time && (
+        <div className="flex items-center gap-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
+          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>
+            Límite: <strong>{config.order_deadline_time.substring(0, 5)}</strong>
+            {(config.order_deadline_days ?? 0) > 0
+              ? <>, {config.order_deadline_days}d antes</>
+              : <> mismo día</>
+            }
+          </span>
+        </div>
+      )}
+
+      {/* FLOATING ACTION BAR (multi-select mode) */}
+      {multiSelectMode && (
         <div className="sticky bottom-20 sm:bottom-24 z-30">
-          <Card className="bg-gradient-to-r from-purple-600 to-blue-600 border-0 shadow-xl">
-            <CardContent className="p-3 sm:p-4 flex items-center justify-between">
-              <div className="text-white">
-                <p className="font-bold text-sm sm:text-base">
-                  {selectedDates.size} día{selectedDates.size > 1 ? 's' : ''} seleccionado{selectedDates.size > 1 ? 's' : ''}
-                </p>
-                <p className="text-xs text-purple-200">
-                  {Array.from(selectedDates).sort().map(d => {
-                    const parts = d.split('-');
-                    return parseInt(parts[2]);
-                  }).join(', ')}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-white hover:bg-white/20"
-                  onClick={() => setSelectedDates(new Set())}
-                >
-                  Limpiar
-                </Button>
-                <Button
-                  size="sm"
-                  className="bg-white text-purple-700 hover:bg-purple-50 font-bold"
-                  onClick={() => startWizard()}
-                >
-                  Hacer Pedido
-                </Button>
-              </div>
+          <Card className={cn(
+            "border-0 shadow-xl rounded-2xl",
+            selectedDates.size > 0
+              ? "bg-gradient-to-r from-purple-600 to-blue-600"
+              : "bg-gradient-to-r from-gray-500 to-gray-600"
+          )}>
+            <CardContent className="p-3 sm:p-4">
+              {selectedDates.size === 0 ? (
+                <div className="text-center text-white">
+                  <p className="font-bold text-sm">👆 Toca los días disponibles para seleccionarlos</p>
+                  <p className="text-xs text-gray-200 mt-0.5">Los días con 🍴 azul tienen menú disponible</p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="text-white">
+                    <p className="font-bold text-sm sm:text-base">
+                      ✅ {selectedDates.size} día{selectedDates.size > 1 ? 's' : ''} seleccionado{selectedDates.size > 1 ? 's' : ''}
+                    </p>
+                    <p className="text-xs text-purple-200">
+                      Días: {Array.from(selectedDates).sort().map(d => parseInt(d.split('-')[2])).join(', ')}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-white hover:bg-white/20"
+                      onClick={() => setSelectedDates(new Set())}
+                    >
+                      ✕
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-white text-purple-700 hover:bg-purple-50 font-bold shadow-lg"
+                      onClick={() => {
+                        setMultiSelectMode(false);
+                        startWizard();
+                      }}
+                    >
+                      🍽️ Hacer Pedido
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -2513,28 +3326,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           <CardContent className="py-8 text-center">
             <CalendarIcon className="h-12 w-12 text-gray-400 mx-auto mb-3" />
             <p className="text-gray-600 font-medium">No hay menús disponibles este mes</p>
+            <p className="text-gray-400 text-sm mt-1">Prueba avanzando al siguiente mes →</p>
           </CardContent>
         </Card>
       )}
-
-      {/* INFO CARD */}
-      <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
-        <CardContent className="pt-4 pb-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-purple-600 mt-0.5 flex-shrink-0" />
-            <div className="flex-1 text-xs sm:text-sm">
-              <p className="font-medium text-gray-900">¿Cómo funciona?</p>
-              <ol className="text-gray-600 mt-1 space-y-0.5 list-decimal list-inside">
-                <li>Toca los días disponibles para seleccionarlos</li>
-                <li>Presiona <strong>"Hacer Pedido"</strong> en la barra morada</li>
-                <li>Elige categoría y cantidad para cada día</li>
-                {userType === 'parent' && <li>Envía tu comprobante de pago para confirmar</li>}
-                <li>Toca días verdes para ver o cancelar pedidos</li>
-              </ol>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* CANCEL CONFIRMATION DIALOG */}
       <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
@@ -2579,147 +3374,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         </DialogContent>
       </Dialog>
 
-      {/* BULK ORDER MONTH MODAL */}
-      <Dialog open={showBulkOrderModal} onOpenChange={setShowBulkOrderModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold flex items-center gap-2">
-              📅 Pedir todo el mes
-            </DialogTitle>
-            <DialogDescription>
-              Selecciona la categoría y el modo de selección para todo el mes.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            {/* Info de días */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-sm text-blue-800">
-                <strong>{bulkValidDates.length} días disponibles</strong> del{' '}
-                {bulkDateRange.from && format(getPeruDateOnly(bulkDateRange.from), "d 'de' MMMM", { locale: es })} al{' '}
-                {bulkDateRange.to && format(getPeruDateOnly(bulkDateRange.to), "d 'de' MMMM", { locale: es })}
-              </p>
-              <p className="text-xs text-blue-600 mt-1">
-                Solo incluye días con menú disponible, sin pedidos existentes y dentro del plazo.
-              </p>
-            </div>
-
-            {/* Selector de categoría */}
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-gray-700">Elige la categoría:</p>
-              {bulkAvailableCategories.map(cat => {
-                const isSelected = bulkCategory?.id === cat.id;
-                const IconComponent = ICON_MAP[cat.icon || 'utensils'] || UtensilsCrossed;
-                const price = cat.price || config?.lunch_price || 0;
-
-                // Contar días con esta categoría usando la cache
-                const daysWithCat = bulkValidDates.filter(dateStr => {
-                  const dayMenus = menus.get(dateStr);
-                  return dayMenus?.some(m => m.category_id === cat.id);
-                }).length;
-
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => {
-                      setBulkCategory(cat);
-                      setBulkEstimatedTotal(price * daysWithCat);
-                      setBulkDaysCount(daysWithCat);
-                    }}
-                    className={cn(
-                      "w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left",
-                      isSelected
-                        ? "border-purple-500 bg-purple-50"
-                        : "border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
-                    )}
-                  >
-                    <div
-                      className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: (cat.color || '#8B5CF6') + '20' }}
-                    >
-                      <IconComponent className="h-5 w-5" style={{ color: cat.color || '#8B5CF6' }} />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-bold">{cat.name}</p>
-                      <p className="text-xs text-gray-500">{daysWithCat} días disponibles</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-gray-900">S/ {price.toFixed(2)}</p>
-                      <p className="text-xs text-gray-500">por día</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Modo de selección de menú */}
-            {bulkCategory && (
-              <>
-                <div className="space-y-2">
-                  <p className="text-sm font-semibold text-gray-700">¿Cómo quieres elegir los platos?</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setBulkMenuMode('auto')}
-                      className={cn(
-                        "p-3 rounded-lg border-2 transition-all text-center",
-                        bulkMenuMode === 'auto'
-                          ? "border-green-500 bg-green-50"
-                          : "border-gray-200 hover:border-green-300"
-                      )}
-                    >
-                      <Sparkles className="h-6 w-6 mx-auto mb-1 text-green-600" />
-                      <p className="text-sm font-bold">Automático</p>
-                      <p className="text-[10px] text-gray-500">El sistema elige el menú del día (más rápido)</p>
-                    </button>
-                    <button
-                      onClick={() => setBulkMenuMode('manual')}
-                      className={cn(
-                        "p-3 rounded-lg border-2 transition-all text-center",
-                        bulkMenuMode === 'manual'
-                          ? "border-purple-500 bg-purple-50"
-                          : "border-gray-200 hover:border-purple-300"
-                      )}
-                    >
-                      <UtensilsCrossed className="h-6 w-6 mx-auto mb-1 text-purple-600" />
-                      <p className="text-sm font-bold">Elegir cada día</p>
-                      <p className="text-[10px] text-gray-500">Selecciona el plato para cada día</p>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <p className="text-sm text-amber-800 font-semibold">⚠️ Atención</p>
-                  <p className="text-xs text-amber-700 mt-1">
-                    Estás pidiendo <strong>{bulkDaysCount} días</strong> de la categoría{' '}
-                    <strong>"{bulkCategory.name}"</strong>.{' '}
-                    {bulkMenuMode === 'auto'
-                      ? 'El sistema seleccionará automáticamente el menú disponible para cada día.'
-                      : 'Podrás elegir el plato específico para cada día.'}
-                  </p>
-                </div>
-                <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 flex justify-between items-center">
-                  <span className="text-lg font-bold text-gray-900">Total estimado:</span>
-                  <span className="text-2xl font-black text-green-700">S/ {bulkEstimatedTotal.toFixed(2)}</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          <DialogFooter className="gap-2 mt-4">
-            <Button variant="outline" onClick={() => setShowBulkOrderModal(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={confirmBulkOrder}
-              disabled={!bulkCategory}
-              className="bg-purple-600 hover:bg-purple-700"
-            >
-              {bulkMenuMode === 'auto' ? '🚀 Pedir Rápido' : '📝 Elegir Platos'} ({bulkDaysCount} días)
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* PAYMENT MODAL (parents only) */}
       {userType === 'parent' && selectedStudent && (
         <RechargeModal
@@ -2727,6 +3381,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           onClose={() => {
             setShowPaymentModal(false);
             setCreatedOrderIds([]);
+            setCreatedTransactionIds([]);
             setTotalOrderAmount(0);
             setOrderDescriptions([]);
           }}
@@ -2738,6 +3393,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           requestType="lunch_payment"
           requestDescription={`Pago almuerzo: ${orderDescriptions.join(' | ')}`}
           lunchOrderIds={createdOrderIds}
+          paidTransactionIds={createdTransactionIds.length > 0 ? createdTransactionIds : undefined}
           onRecharge={async () => {
             // El RechargeModal maneja todo internamente
             toast({ title: '✅ Comprobante enviado', description: 'Tu pago será revisado por el administrador.' });
