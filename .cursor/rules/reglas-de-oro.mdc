@@ -1,0 +1,113 @@
+---
+description: Reglas de oro del sistema ERP — separación de módulos, lógica de pagos y almuerzos
+alwaysApply: true
+---
+
+# REGLAS DE ORO — ERP Profesional (parent-portal-connect)
+
+## REGLA #1 — ALMUERZOS y RECARGAS/SALDO son sistemas COMPLETAMENTE INDEPENDIENTES
+
+**Los almuerzos NO dependen del tipo de cuenta del alumno. NUNCA.**
+
+```
+❌ MAL: "Si el alumno es free_account, no puede pedir almuerzo"
+❌ MAL: "Si el kiosco está desactivado, el almuerzo también"
+❌ MAL: "Si no tiene saldo, no confirmar el pedido de almuerzo"
+❌ MAL: "Verificar balance antes de crear un lunch_order"
+
+✅ BIEN: El padre pide el almuerzo → se registra → queda pendiente de pago
+✅ BIEN: El pago del almuerzo es POSTERIOR e independiente del saldo del kiosco
+✅ BIEN: Un alumno con kiosco desactivado SÍ puede tener almuerzos
+```
+
+**Las tablas involucradas en cada módulo son distintas:**
+
+| Módulo | Tablas | Regla |
+|--------|--------|-------|
+| Almuerzos | `lunch_orders`, `lunch_menus`, `lunch_categories` | Independiente del saldo |
+| Kiosco/Saldo | `transactions` (type=purchase), `students.balance` | Solo POS y kiosco |
+| Recargas | `transactions` (type=recharge), `recharge_requests` | Solo saldo del alumno |
+| Pagos almuerzo | `transactions` (metadata.lunch_order_id), `recharge_requests` (type=lunch_payment/debt_payment) | Vinculado a lunch_orders, NO al saldo |
+
+---
+
+## REGLA #2 — Estado de pago de almuerzo: campo correcto
+
+El estado de pago de un almuerzo se determina por:
+- `transactions.payment_status` donde `metadata->>'lunch_order_id'` = el ID del pedido
+- **NO** por `lunch_orders.status` (ese es el estado de entrega/confirmación)
+- **NO** por `students.balance`
+- **NO** por `free_account`
+
+```
+lunch_orders.status valores:
+  'pending'   → pedido creado, pendiente de confirmar/pagar
+  'confirmed' → pago aprobado o confirmado por admin
+  'delivered' → entregado físicamente
+  'cancelled' → anulado
+
+transactions.payment_status para almuerzos:
+  'pending'   → deuda activa (padre debe pagar)
+  'paid'      → voucher aprobado o pagado con saldo
+  'cancelled' → anulado — NO cuenta como deuda
+```
+
+---
+
+## REGLA #3 — Al aprobar un voucher de pago
+
+Al aprobar `recharge_requests` con `request_type = 'lunch_payment'` o `'debt_payment'`:
+1. Actualizar `transactions.payment_status = 'paid'` en los tickets vinculados
+2. Actualizar `lunch_orders.status = 'confirmed'` en las órdenes activas
+3. **NO tocar** `students.balance` — el saldo del kiosco no se ve afectado
+4. **NO tocar** `students.free_account` — el tipo de cuenta no cambia
+
+---
+
+## REGLA #4 — Kiosco desactivado
+
+`students.kiosk_disabled = true` significa:
+- ❌ No puede comprar en el kiosco (POS)
+- ✅ SÍ puede pedir almuerzos
+- ✅ SÍ puede recibir almuerzos
+- ✅ Sus deudas de almuerzo siguen siendo válidas
+
+---
+
+## REGLA #5 — Transacciones: siempre distinguir el origen
+
+```typescript
+// POS / Kiosco → metadata.lunch_order_id es NULL
+// Almuerzo     → metadata.lunch_order_id tiene un UUID
+
+// Para calcular deuda de almuerzos:
+.eq('payment_status', 'pending')
+.not('metadata->lunch_order_id', 'is', null)  // SOLO almuerzos
+
+// Para calcular ventas del kiosco:
+.eq('payment_status', 'paid')
+.filter('metadata->lunch_order_id', 'is', null)  // SOLO POS
+```
+
+---
+
+## REGLA #6 — No mezclar módulos en queries
+
+```
+❌ MAL: Filtrar lunch_orders por students.balance
+❌ MAL: Calcular deuda de almuerzo sumando transactions de kiosco
+❌ MAL: Mostrar saldo del kiosco como si fuera pago de almuerzo
+
+✅ BIEN: Cada query de almuerzo filtra por metadata->>'lunch_order_id' IS NOT NULL
+✅ BIEN: Cada query de kiosco filtra por metadata->>'lunch_order_id' IS NULL
+✅ BIEN: Recargas solo afectan students.balance — nunca lunch_orders
+```
+
+---
+
+## REGLA #7 — Sede (school_id)
+
+- Todo registro SIEMPRE debe tener `school_id`
+- Un admin `gestor_unidad` SOLO ve datos de su sede — filtrar en SQL, no en frontend
+- Un admin `admin_general` puede ver todo — no filtrar
+- El filtro de sede va en la QUERY de Supabase, no en el frontend con `.filter()`
