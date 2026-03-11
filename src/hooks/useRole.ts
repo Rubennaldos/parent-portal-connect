@@ -116,7 +116,7 @@ export function useRole(): UseRoleReturn {
       case 'admin_general':
         return '/dashboard'; // Dashboard de módulos de negocio
       case 'supervisor_red':
-        return '/dashboard'; // Auditor multi-sede
+        return '/cobranzas'; // Solo módulo de cobranzas
       case 'gestor_unidad':
         return '/dashboard'; // Administrador de sede
       case 'operador_caja':

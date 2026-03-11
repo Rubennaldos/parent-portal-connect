@@ -129,10 +129,10 @@ export function PermissionProtectedRoute({ children, moduleCode }: PermissionPro
               Contacta al administrador del sistema si necesitas acceso.
             </p>
             <button
-              onClick={() => window.location.href = '/#/dashboard'}
+              onClick={() => window.location.href = getDefaultRoute()}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
             >
-              Volver al Dashboard
+              Volver
             </button>
           </CardContent>
         </Card>

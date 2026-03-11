@@ -99,15 +99,14 @@ const App = () => (
               }
             />
             
-            {/* Dashboard de Módulos - Solo Admin General y roles de negocio */}
+            {/* Dashboard de Módulos - Admin General y roles de negocio (supervisor_red NO ve dashboard) */}
             <Route
               path="/dashboard"
               element={
                 <ProtectedRoute allowedRoles={[
-                  'admin_general', 
-                  'supervisor_red', 
-                  'gestor_unidad', 
-                  'operador_caja', 
+                  'admin_general',
+                  'gestor_unidad',
+                  'operador_caja',
                   'operador_cocina'
                 ]}>
                   <Dashboard />
