@@ -421,6 +421,28 @@ export const VoucherApproval = () => {
             req.paid_transaction_ids.forEach(id => txIdsToUpdate.add(id));
           }
 
+          // C) Fallback: si no encontramos transacciones por A ni B, buscar por student_id
+          if (txIdsToUpdate.size === 0 && req.student_id) {
+            console.log(`🔄 [VoucherApproval] Fallback: buscando tx pendientes por student_id ${req.student_id}`);
+            const { data: fallbackTxs } = await supabase
+              .from('transactions')
+              .select('id, amount')
+              .eq('student_id', req.student_id)
+              .eq('type', 'purchase')
+              .in('payment_status', ['pending', 'partial'])
+              .order('created_at', { ascending: true });
+
+            if (fallbackTxs && fallbackTxs.length > 0) {
+              let remaining = req.amount;
+              for (const tx of fallbackTxs) {
+                if (remaining <= 0.01) break;
+                txIdsToUpdate.add(tx.id);
+                remaining -= Math.abs(tx.amount);
+              }
+              console.log(`🔄 [VoucherApproval] Fallback encontró ${txIdsToUpdate.size} transacciones a cubrir`);
+            }
+          }
+
           console.log(`📋 [VoucherApproval] Transacciones a actualizar: ${txIdsToUpdate.size}`, Array.from(txIdsToUpdate));
 
           // 🔑 PASO 2: Leer metadata actual de todas las transacciones (para merge)
@@ -455,11 +477,28 @@ export const VoucherApproval = () => {
           }
 
           // 🔑 PASO 4: Confirmar lunch_orders activas
-          if (req.lunch_order_ids && req.lunch_order_ids.length > 0) {
+          // Recopilar IDs de órdenes desde req.lunch_order_ids + metadata de transacciones actualizadas
+          const orderIdsToConfirm = new Set<string>(req.lunch_order_ids || []);
+
+          // Fallback: extraer lunch_order_id de las transacciones que acabamos de marcar como pagadas
+          if (txIdsToUpdate.size > 0) {
+            const { data: updatedTxMeta } = await supabase
+              .from('transactions')
+              .select('metadata')
+              .in('id', Array.from(txIdsToUpdate));
+
+            (updatedTxMeta || []).forEach(tx => {
+              if (tx.metadata?.lunch_order_id) {
+                orderIdsToConfirm.add(tx.metadata.lunch_order_id);
+              }
+            });
+          }
+
+          if (orderIdsToConfirm.size > 0) {
             const { data: activeOrders } = await supabase
               .from('lunch_orders')
               .select('id')
-              .in('id', req.lunch_order_ids)
+              .in('id', Array.from(orderIdsToConfirm))
               .eq('is_cancelled', false)
               .neq('status', 'cancelled');
 
@@ -471,6 +510,7 @@ export const VoucherApproval = () => {
                 .in('id', activeIds);
 
               if (orderErr) console.error('❌ Error confirmando orders:', orderErr);
+              else console.log(`✅ [VoucherApproval] ${activeIds.length} lunch_orders confirmadas`);
             }
           }
 
