@@ -8,8 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen } from 'lucide-react';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
+import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -887,7 +888,7 @@ const ParentConfiguration = () => {
 
         {/* Tabs principales */}
         <Tabs defaultValue="parents" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 bg-white/90 backdrop-blur-sm border-2 border-emerald-200 rounded-xl p-1 shadow-md">
+          <TabsList className="grid w-full grid-cols-5 bg-white/90 backdrop-blur-sm border-2 border-emerald-200 rounded-xl p-1 shadow-md">
             <TabsTrigger value="parents" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
               <Users className="h-4 w-4 mr-2" />
               Gestión de Padres
@@ -901,6 +902,11 @@ const ParentConfiguration = () => {
               </TabsTrigger>
             )}
             
+            <TabsTrigger value="directory" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
+              <BookOpen className="h-4 w-4 mr-2" />
+              Directorio
+            </TabsTrigger>
+
             <TabsTrigger value="analytics" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
               <BarChart3 className="h-4 w-4 mr-2" />
               Lima Analytics
@@ -1327,6 +1333,18 @@ const ParentConfiguration = () => {
             </Card>
           </TabsContent>
           )}
+
+          {/* Pestaña Directorio de Alumnos */}
+          <TabsContent value="directory" className="mt-6">
+            <Card className="border-2 border-emerald-200 bg-white/80 backdrop-blur-sm shadow-lg">
+              <CardContent className="pt-6">
+                <StudentsDirectory
+                  schoolId={userSchoolId}
+                  canViewAllSchools={canViewAllSchools}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Pestaña de Analytics */}
           <TabsContent value="analytics" className="mt-6">
