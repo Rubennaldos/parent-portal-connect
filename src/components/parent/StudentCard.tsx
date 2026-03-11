@@ -184,13 +184,16 @@ export function StudentCard({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
-                  {hasDebt ? 'Deuda' : isActivePrepaid ? 'Saldo' : 'Estado'}
+                  {hasDebt ? 'Deuda Kiosco' : isActivePrepaid ? 'Saldo Kiosco' : 'Estado'}
                 </p>
                 <p className={`text-2xl font-bold mt-0.5 ${
                   hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
                 }`}>
                   {hasDebt ? `S/ ${totalDebt.toFixed(2)}` : isActivePrepaid ? `S/ ${displayBalance.toFixed(2)}` : 'Al día'}
                 </p>
+                {isActivePrepaid && (
+                  <p className="text-[9px] text-blue-400 mt-0.5">Solo para snacks y recreo</p>
+                )}
               </div>
               <div className={`p-2 rounded-lg ${
                 hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
@@ -267,6 +270,15 @@ export function StudentCard({
           )}
         </div>
 
+        {/* Nota aclaratoria recargas vs almuerzos */}
+        {isPrepaid && !student.kiosk_disabled && (
+          <div className="bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
+            <p className="text-[10px] text-sky-700 leading-relaxed">
+              💡 <strong>Recargar</strong> = saldo para kiosco (snacks, recreo). Los <strong>almuerzos</strong> se pagan aparte desde la pestaña <strong>Pagos</strong>.
+            </p>
+          </div>
+        )}
+
         {/* Action buttons */}
         <div className="space-y-2 pt-1">
           {/* Recharge button (only for prepaid mode) */}
@@ -278,7 +290,7 @@ export function StudentCard({
               className="w-full h-9 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
             >
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              {displayBalance === 0 ? 'Cargar Saldo' : 'Recargar'}
+              {displayBalance === 0 ? 'Cargar Saldo Kiosco' : 'Recargar Kiosco'}
             </Button>
           )}
 

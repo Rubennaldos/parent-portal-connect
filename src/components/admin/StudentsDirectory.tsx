@@ -1,15 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Search, Users, SlidersHorizontal, GraduationCap,
   CreditCard, Wallet, ShieldOff, ShieldCheck,
   TrendingDown, Banknote, RefreshCw, AlertCircle,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, X, Clock, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +29,16 @@ interface Student {
   monthly_limit: number | null;
   school_id: string;
   parent: { full_name: string | null; email: string | null } | null;
+}
+
+interface RechargeRecord {
+  id: string;
+  amount: number;
+  status: string;
+  payment_method: string;
+  reference_code: string | null;
+  created_at: string;
+  request_type: string;
 }
 
 interface Props {
@@ -53,6 +64,31 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
   const [sortBy, setSortBy] = useState<'name' | 'grade' | 'balance'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showFilters, setShowFilters] = useState(false);
+
+  // ── Modal detalle recargas ──
+  const [rechargeModalStudent, setRechargeModalStudent] = useState<Student | null>(null);
+  const [rechargeRecords, setRechargeRecords] = useState<RechargeRecord[]>([]);
+  const [loadingRecharges, setLoadingRecharges] = useState(false);
+
+  const openRechargeDetail = useCallback(async (student: Student) => {
+    setRechargeModalStudent(student);
+    setLoadingRecharges(true);
+    try {
+      const { data, error } = await supabase
+        .from('recharge_requests')
+        .select('id, amount, status, payment_method, reference_code, created_at, request_type')
+        .eq('student_id', student.id)
+        .order('created_at', { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      setRechargeRecords((data || []) as RechargeRecord[]);
+    } catch (err) {
+      console.error('Error cargando recargas:', err);
+      setRechargeRecords([]);
+    } finally {
+      setLoadingRecharges(false);
+    }
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -395,16 +431,22 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                           }
                         </div>
 
-                        {/* Tipo de cuenta */}
-                        <div className={cn(
-                          'rounded-lg px-2.5 py-2 flex items-center justify-between',
-                          isPrepaid ? 'bg-blue-50' : 'bg-emerald-50'
-                        )}>
+                        {/* Tipo de cuenta — clickeable si es prepaid */}
+                        <div
+                          onClick={() => isPrepaid ? openRechargeDetail(student) : undefined}
+                          className={cn(
+                            'rounded-lg px-2.5 py-2 flex items-center justify-between transition-all',
+                            isPrepaid ? 'bg-blue-50 cursor-pointer hover:bg-blue-100 hover:ring-2 hover:ring-blue-300' : 'bg-emerald-50'
+                          )}
+                        >
                           <div>
                             <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Cuenta</p>
                             <p className={cn('text-xs font-bold mt-0.5', isPrepaid ? 'text-blue-700' : 'text-emerald-700')}>
                               {isPrepaid ? 'Con Recargas' : 'Cuenta Libre'}
                             </p>
+                            {isPrepaid && (
+                              <p className="text-[8px] text-blue-400 mt-0.5">Toca para ver detalle</p>
+                            )}
                           </div>
                           {isPrepaid
                             ? <CreditCard className="h-4 w-4 text-blue-400" />
@@ -481,6 +523,97 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
           </div>
         ))
       )}
+
+      {/* ── Modal detalle recargas ── */}
+      <Dialog open={!!rechargeModalStudent} onOpenChange={(open) => { if (!open) setRechargeModalStudent(null); }}>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <CreditCard className="h-5 w-5 text-blue-600" />
+              Recargas — {rechargeModalStudent?.full_name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Resumen rápido */}
+          {rechargeModalStudent && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
+                <p className="text-[10px] text-gray-500 uppercase">Saldo actual</p>
+                <p className="text-lg font-black text-blue-700">S/ {(rechargeModalStudent.balance || 0).toFixed(2)}</p>
+              </div>
+              <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
+                <p className="text-[10px] text-gray-500 uppercase">Total recargado</p>
+                <p className="text-lg font-black text-green-700">
+                  S/ {rechargeRecords
+                    .filter(r => r.status === 'approved' && r.request_type === 'recharge')
+                    .reduce((s, r) => s + r.amount, 0)
+                    .toFixed(2)}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {loadingRecharges ? (
+            <div className="flex items-center justify-center py-8 gap-2">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+              <span className="text-sm text-gray-500">Cargando...</span>
+            </div>
+          ) : rechargeRecords.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <Banknote className="h-8 w-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No hay registros de recargas</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {rechargeRecords.map(r => {
+                const isPending = r.status === 'pending';
+                const isApproved = r.status === 'approved';
+                const isRejected = r.status === 'rejected';
+                const typeLabel = r.request_type === 'recharge' ? 'Kiosco'
+                  : r.request_type === 'lunch_payment' ? 'Almuerzo'
+                  : r.request_type === 'debt_payment' ? 'Deuda' : r.request_type;
+                const date = new Date(r.created_at);
+                const dateStr = date.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+                const timeStr = date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+
+                return (
+                  <div key={r.id} className={cn(
+                    'rounded-lg border px-3 py-2.5 flex items-center gap-3',
+                    isPending ? 'bg-amber-50 border-amber-200' :
+                    isApproved ? 'bg-green-50 border-green-200' :
+                    isRejected ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
+                  )}>
+                    {isPending && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                    {isApproved && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />}
+                    {isRejected && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-gray-900">S/ {r.amount.toFixed(2)}</p>
+                        <Badge className={cn(
+                          'text-[9px] border-0',
+                          r.request_type === 'recharge' ? 'bg-blue-100 text-blue-700' :
+                          r.request_type === 'lunch_payment' ? 'bg-orange-100 text-orange-700' :
+                          'bg-gray-100 text-gray-700'
+                        )}>
+                          {typeLabel}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-gray-500">{dateStr} · {timeStr}</span>
+                        <span className="text-[10px] text-gray-400">·</span>
+                        <span className="text-[10px] text-gray-500 capitalize">{r.payment_method}</span>
+                      </div>
+                      {r.reference_code && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">Ref: {r.reference_code}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
