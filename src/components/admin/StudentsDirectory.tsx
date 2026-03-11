@@ -11,8 +11,10 @@ import {
   CreditCard, Wallet, ShieldOff, ShieldCheck,
   TrendingDown, Banknote, RefreshCw, AlertCircle,
   ChevronDown, ChevronUp, X, Clock, CheckCircle2, XCircle,
+  Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import * as XLSX from 'xlsx';
 
 interface Student {
   id: string;
@@ -147,6 +149,74 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
       setLoadingRecharges(false);
     }
   }, []);
+
+  const downloadExcel = useCallback(() => {
+    if (!rechargeModalStudent || allTransactions.length === 0) return;
+
+    let runningBalance = 0;
+    const rows = allTransactions.map((tx) => {
+      const isRecharge = tx.type === 'recharge' && tx.payment_status === 'paid';
+      const isKioskPurchase = tx.type === 'purchase' && tx.payment_status === 'paid' && !tx.is_deleted
+        && (tx.payment_method === 'saldo' || tx.payment_method === null);
+      const isDeleted = tx.is_deleted;
+      const isLunch = !!(tx.metadata?.lunch_order_id) || (tx.description || '').toLowerCase().includes('almuerzo');
+      const isLunchFast = (tx.description || '').toUpperCase().includes('LUNCH FAST');
+
+      let delta = 0;
+      let tipo = '';
+      let afectaSaldo = false;
+
+      if (isRecharge) {
+        delta = tx.amount;
+        runningBalance += delta;
+        tipo = 'RECARGA';
+        afectaSaldo = true;
+      } else if (isDeleted) {
+        delta = Math.abs(tx.amount);
+        runningBalance += delta;
+        tipo = 'DEVOLUCIÓN (anulado)';
+        afectaSaldo = true;
+      } else if (isKioskPurchase) {
+        delta = tx.amount;
+        runningBalance += delta;
+        tipo = isLunchFast ? 'LUNCH FAST (error)' : 'COMPRA KIOSCO';
+        afectaSaldo = true;
+      } else {
+        tipo = isLunch ? 'ALMUERZO (no toca saldo)' : 'PAGO EXTERNO';
+      }
+
+      const date = new Date(tx.created_at);
+      return {
+        'Fecha': date.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+        'Hora': date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
+        'Ticket': tx.ticket_code || '',
+        'Tipo': tipo,
+        'Descripción': tx.description || '',
+        'Método Pago': tx.payment_method || '',
+        'Estado': tx.payment_status,
+        'Monto': tx.amount,
+        'Afecta Saldo': afectaSaldo ? 'SÍ' : 'NO',
+        'Movimiento Saldo': afectaSaldo ? delta : '',
+        'Saldo Acumulado': afectaSaldo ? runningBalance : '',
+      };
+    });
+
+    rows.push({
+      'Fecha': '', 'Hora': '', 'Ticket': '', 'Tipo': 'RESUMEN',
+      'Descripción': `Saldo calculado: S/ ${balanceSummary?.saldo_calculado.toFixed(2) || '0.00'} | Saldo en sistema: S/ ${(rechargeModalStudent.balance || 0).toFixed(2)} | Diferencia: S/ ${balanceSummary?.diferencia.toFixed(2) || '0.00'}`,
+      'Método Pago': '', 'Estado': '', 'Monto': '' as any, 'Afecta Saldo': '',
+      'Movimiento Saldo': '' as any, 'Saldo Acumulado': balanceSummary?.saldo_calculado ?? '' as any,
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = [12, 8, 16, 22, 50, 14, 10, 10, 12, 14, 14];
+    ws['!cols'] = colWidths.map(w => ({ wch: w }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Cuenta');
+    const safeName = rechargeModalStudent.full_name.replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '').substring(0, 30);
+    XLSX.writeFile(wb, `Estado_Cuenta_${safeName}.xlsx`);
+  }, [rechargeModalStudent, allTransactions, balanceSummary]);
 
   const load = async () => {
     setLoading(true);
@@ -586,10 +656,22 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
       <Dialog open={!!rechargeModalStudent} onOpenChange={(open) => { if (!open) setRechargeModalStudent(null); }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <CreditCard className="h-5 w-5 text-blue-600" />
-              Estado de cuenta — {rechargeModalStudent?.full_name}
-            </DialogTitle>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <CreditCard className="h-5 w-5 text-blue-600" />
+                Estado de cuenta — {rechargeModalStudent?.full_name}
+              </DialogTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadExcel}
+                disabled={loadingRecharges || allTransactions.length === 0}
+                className="h-8 gap-1.5 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Excel
+              </Button>
+            </div>
           </DialogHeader>
 
           {/* Tabs: Balance vs Vouchers */}
