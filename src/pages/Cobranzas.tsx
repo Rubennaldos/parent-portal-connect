@@ -77,6 +77,25 @@ const Cobranzas = () => {
       setLoading(true);
       console.log('🔍 Verificando permisos de Cobranzas para rol:', role);
 
+      // Supervisor Red: SOLO pestaña Cobrar, nada más
+      if (role === 'supervisor_red') {
+        setPermissions({
+          dashboard: false,
+          collect: true,
+          reports: false,
+          statistics: false,
+          config: false,
+          vouchers: false,
+          pagos_realizados: false,
+          config_sede: false,
+          comprobantes: false,
+          config_sunat: false,
+        });
+        setActiveTab('collect');
+        setLoading(false);
+        return;
+      }
+
       // Admin General tiene todos los permisos siempre
       if (role === 'admin_general') {
         setPermissions({
@@ -246,15 +265,17 @@ const Cobranzas = () => {
         {/* Header — responsivo */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate('/dashboard')}
-              className="shrink-0"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1">Volver</span>
-            </Button>
+            {role !== 'supervisor_red' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/dashboard')}
+                className="shrink-0"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden sm:inline ml-1">Volver</span>
+              </Button>
+            )}
             <div className="min-w-0">
               <h1 className="text-xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2">
                 <DollarSign className="h-6 w-6 sm:h-8 sm:w-8 text-red-600 shrink-0" />
