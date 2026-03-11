@@ -49,6 +49,19 @@ interface BalanceSummary {
   diferencia: number;
 }
 
+interface TransactionRow {
+  id: string;
+  type: string;
+  amount: number;
+  payment_status: string;
+  payment_method: string | null;
+  description: string | null;
+  created_at: string;
+  is_deleted: boolean;
+  ticket_code: string | null;
+  metadata: any;
+}
+
 interface Props {
   schoolId: string | null; // null = admin general (ver todos)
   canViewAllSchools: boolean;
@@ -76,13 +89,17 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
   // ── Modal detalle recargas ──
   const [rechargeModalStudent, setRechargeModalStudent] = useState<Student | null>(null);
   const [rechargeRecords, setRechargeRecords] = useState<RechargeRecord[]>([]);
+  const [allTransactions, setAllTransactions] = useState<TransactionRow[]>([]);
   const [balanceSummary, setBalanceSummary] = useState<BalanceSummary | null>(null);
   const [loadingRecharges, setLoadingRecharges] = useState(false);
+  const [modalTab, setModalTab] = useState<'balance' | 'vouchers'>('balance');
 
   const openRechargeDetail = useCallback(async (student: Student) => {
     setRechargeModalStudent(student);
     setLoadingRecharges(true);
     setBalanceSummary(null);
+    setAllTransactions([]);
+    setModalTab('balance');
     try {
       const [rechargeRes, txRes] = await Promise.all([
         supabase
@@ -93,14 +110,17 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
           .limit(30),
         supabase
           .from('transactions')
-          .select('type, amount, payment_status, payment_method, is_deleted')
-          .eq('student_id', student.id),
+          .select('id, type, amount, payment_status, payment_method, description, created_at, is_deleted, ticket_code, metadata')
+          .eq('student_id', student.id)
+          .order('created_at', { ascending: true }),
       ]);
 
       if (rechargeRes.error) throw rechargeRes.error;
       setRechargeRecords((rechargeRes.data || []) as RechargeRecord[]);
 
-      const txs = txRes.data || [];
+      const txs = (txRes.data || []) as TransactionRow[];
+      setAllTransactions(txs);
+
       const recargas = txs
         .filter(t => t.type === 'recharge' && t.payment_status === 'paid')
         .reduce((s, t) => s + t.amount, 0);
@@ -564,82 +584,99 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
 
       {/* ── Modal detalle recargas ── */}
       <Dialog open={!!rechargeModalStudent} onOpenChange={(open) => { if (!open) setRechargeModalStudent(null); }}>
-        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <CreditCard className="h-5 w-5 text-blue-600" />
-              Recargas — {rechargeModalStudent?.full_name}
+              Estado de cuenta — {rechargeModalStudent?.full_name}
             </DialogTitle>
           </DialogHeader>
 
-          {/* Resumen rápido */}
-          {rechargeModalStudent && (
+          {/* Tabs: Balance vs Vouchers */}
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 mb-3">
+            <button
+              onClick={() => setModalTab('balance')}
+              className={cn(
+                'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all',
+                modalTab === 'balance' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              )}
+            >
+              Estado de Cuenta
+            </button>
+            <button
+              onClick={() => setModalTab('vouchers')}
+              className={cn(
+                'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all',
+                modalTab === 'vouchers' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              )}
+            >
+              Comprobantes ({rechargeRecords.length})
+            </button>
+          </div>
+
+          {/* Resumen rápido (siempre visible) */}
+          {rechargeModalStudent && balanceSummary && (
             <div className="space-y-3 mb-3">
               <div className="grid grid-cols-2 gap-2">
                 <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
-                  <p className="text-[10px] text-gray-500 uppercase">Saldo sistema</p>
+                  <p className="text-[10px] text-gray-500 uppercase">Saldo en sistema</p>
                   <p className={cn('text-lg font-black', (rechargeModalStudent.balance || 0) < 0 ? 'text-red-600' : 'text-blue-700')}>
                     S/ {(rechargeModalStudent.balance || 0).toFixed(2)}
                   </p>
                 </div>
-                <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
-                  <p className="text-[10px] text-gray-500 uppercase">Total recargado</p>
-                  <p className="text-lg font-black text-green-700">
-                    S/ {rechargeRecords
-                      .filter(r => r.status === 'approved' && r.request_type === 'recharge')
-                      .reduce((s, r) => s + r.amount, 0)
-                      .toFixed(2)}
+                <div className={cn('rounded-lg px-3 py-2 text-center', Math.abs(balanceSummary.diferencia) > 0.01 ? 'bg-amber-50' : 'bg-green-50')}>
+                  <p className="text-[10px] text-gray-500 uppercase">Saldo calculado</p>
+                  <p className={cn('text-lg font-black', balanceSummary.saldo_calculado < 0 ? 'text-red-600' : 'text-emerald-700')}>
+                    S/ {balanceSummary.saldo_calculado.toFixed(2)}
                   </p>
                 </div>
               </div>
 
-              {/* Tablita de balance: sumas y restas */}
-              {balanceSummary && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1.5">
-                    <p className="text-[10px] font-bold text-gray-600 uppercase">Balance detallado</p>
+              {/* Tablita resumen */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-100 px-3 py-1.5">
+                  <p className="text-[10px] font-bold text-gray-600 uppercase">Resumen de balance</p>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="text-xs text-gray-600">+ Recargas aprobadas</span>
+                    <span className="text-xs font-bold text-green-700">+ S/ {balanceSummary.recargas.toFixed(2)}</span>
                   </div>
-                  <div className="divide-y divide-gray-100">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="text-xs text-gray-600">− Consumido en kiosco</span>
+                    <span className="text-xs font-bold text-red-600">− S/ {Math.abs(balanceSummary.compras_saldo).toFixed(2)}</span>
+                  </div>
+                  {balanceSummary.devuelto > 0 && (
                     <div className="flex items-center justify-between px-3 py-1.5">
-                      <span className="text-xs text-gray-600">+ Recargas aprobadas</span>
-                      <span className="text-xs font-bold text-green-700">S/ {balanceSummary.recargas.toFixed(2)}</span>
+                      <span className="text-xs text-gray-600">+ Devoluciones</span>
+                      <span className="text-xs font-bold text-blue-600">+ S/ {balanceSummary.devuelto.toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between px-3 py-1.5">
-                      <span className="text-xs text-gray-600">− Gastado del saldo (kiosco)</span>
-                      <span className="text-xs font-bold text-red-600">S/ {Math.abs(balanceSummary.compras_saldo).toFixed(2)}</span>
-                    </div>
-                    {balanceSummary.devuelto > 0 && (
-                      <div className="flex items-center justify-between px-3 py-1.5">
-                        <span className="text-xs text-gray-600">+ Devuelto (anulaciones)</span>
-                        <span className="text-xs font-bold text-blue-600">S/ {balanceSummary.devuelto.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
-                      <span className="text-xs font-bold text-gray-800">= Saldo calculado</span>
-                      <span className={cn('text-sm font-black', balanceSummary.saldo_calculado < 0 ? 'text-red-600' : 'text-emerald-700')}>
-                        S/ {balanceSummary.saldo_calculado.toFixed(2)}
+                  )}
+                  <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-t-2 border-gray-200">
+                    <span className="text-xs font-bold text-gray-800">= Saldo real</span>
+                    <span className={cn('text-sm font-black', balanceSummary.saldo_calculado < 0 ? 'text-red-600' : 'text-emerald-700')}>
+                      S/ {balanceSummary.saldo_calculado.toFixed(2)}
+                    </span>
+                  </div>
+                  {Math.abs(balanceSummary.diferencia) > 0.01 && (
+                    <div className={cn(
+                      'flex items-center justify-between px-3 py-2',
+                      balanceSummary.diferencia > 0 ? 'bg-amber-50' : 'bg-red-50'
+                    )}>
+                      <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Diferencia con sistema
+                      </span>
+                      <span className={cn(
+                        'text-sm font-black',
+                        balanceSummary.diferencia > 0 ? 'text-amber-600' : 'text-red-600'
+                      )}>
+                        {balanceSummary.diferencia > 0 ? '+' : ''}S/ {balanceSummary.diferencia.toFixed(2)}
                       </span>
                     </div>
-                    {Math.abs(balanceSummary.diferencia) > 0.01 && (
-                      <div className={cn(
-                        'flex items-center justify-between px-3 py-2',
-                        balanceSummary.diferencia > 0 ? 'bg-amber-50' : 'bg-red-50'
-                      )}>
-                        <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
-                          <AlertCircle className="h-3 w-3" />
-                          Diferencia
-                        </span>
-                        <span className={cn(
-                          'text-sm font-black',
-                          balanceSummary.diferencia > 0 ? 'text-amber-600' : 'text-red-600'
-                        )}>
-                          {balanceSummary.diferencia > 0 ? '+' : ''}S/ {balanceSummary.diferencia.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
@@ -648,59 +685,160 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
               <span className="text-sm text-gray-500">Cargando...</span>
             </div>
-          ) : rechargeRecords.length === 0 ? (
-            <div className="text-center py-8 text-gray-400">
-              <Banknote className="h-8 w-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">No hay registros de recargas</p>
+          ) : modalTab === 'balance' ? (
+            /* ── PESTAÑA: Estado de cuenta (cada movimiento con saldo acumulado) ── */
+            <div>
+              {allTransactions.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Banknote className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No hay movimientos registrados</p>
+                </div>
+              ) : (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  {/* Header */}
+                  <div className="grid grid-cols-[1fr_70px_70px] gap-1 bg-gray-700 text-white px-3 py-2">
+                    <span className="text-[10px] font-bold uppercase">Movimiento</span>
+                    <span className="text-[10px] font-bold uppercase text-right">Monto</span>
+                    <span className="text-[10px] font-bold uppercase text-right">Saldo</span>
+                  </div>
+                  {/* Rows */}
+                  {(() => {
+                    let runningBalance = 0;
+                    return allTransactions.map((tx, i) => {
+                      const isRecharge = tx.type === 'recharge' && tx.payment_status === 'paid';
+                      const isKioskPurchase = tx.type === 'purchase' && tx.payment_status === 'paid' && !tx.is_deleted
+                        && (tx.payment_method === 'saldo' || tx.payment_method === null);
+                      const isDeleted = tx.is_deleted;
+                      const isLunch = !!(tx.metadata?.lunch_order_id) || (tx.description || '').toLowerCase().includes('almuerzo');
+                      const isLunchFast = (tx.description || '').toUpperCase().includes('LUNCH FAST');
+
+                      let delta = 0;
+                      let label = '';
+                      let color = 'text-gray-500';
+                      let bgColor = '';
+
+                      if (isRecharge) {
+                        delta = tx.amount;
+                        runningBalance += delta;
+                        label = 'Recarga';
+                        color = 'text-green-700';
+                        bgColor = 'bg-green-50';
+                      } else if (isDeleted) {
+                        delta = Math.abs(tx.amount);
+                        runningBalance += delta;
+                        label = 'Devolución (anulado)';
+                        color = 'text-blue-700';
+                        bgColor = 'bg-blue-50';
+                      } else if (isKioskPurchase) {
+                        delta = tx.amount;
+                        runningBalance += delta;
+                        label = isLunchFast ? 'LUNCH FAST' : 'Compra kiosco';
+                        color = 'text-red-700';
+                        bgColor = isLunchFast ? 'bg-red-100' : 'bg-red-50';
+                      } else {
+                        label = isLunch ? 'Almuerzo (no toca saldo)' : 'Pago externo';
+                        color = 'text-gray-400';
+                        bgColor = 'bg-gray-50';
+                      }
+
+                      const date = new Date(tx.created_at);
+                      const dateStr = date.toLocaleDateString('es-PE', { day: '2-digit', month: 'short' });
+                      const affectsBalance = isRecharge || isKioskPurchase || isDeleted;
+
+                      return (
+                        <div key={tx.id} className={cn(
+                          'grid grid-cols-[1fr_70px_70px] gap-1 px-3 py-1.5 border-b border-gray-100 items-center',
+                          bgColor
+                        )}>
+                          <div className="min-w-0">
+                            <p className={cn('text-[11px] font-semibold truncate', color)}>
+                              {affectsBalance ? (delta > 0 ? '▲' : '▼') : '○'} {label}
+                            </p>
+                            <p className="text-[9px] text-gray-400 truncate">
+                              {dateStr} · {tx.ticket_code || (tx.payment_method || '')}
+                              {isLunchFast && ' ⚠️'}
+                            </p>
+                          </div>
+                          <p className={cn('text-[11px] font-bold text-right', color)}>
+                            {affectsBalance
+                              ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`
+                              : <span className="text-gray-300">—</span>
+                            }
+                          </p>
+                          <p className={cn('text-[11px] font-black text-right', affectsBalance ? 'text-gray-900' : 'text-gray-300')}>
+                            {affectsBalance ? runningBalance.toFixed(2) : '—'}
+                          </p>
+                        </div>
+                      );
+                    });
+                  })()}
+                  {/* Footer: saldo final calculado */}
+                  <div className="grid grid-cols-[1fr_70px_70px] gap-1 px-3 py-2 bg-gray-800 text-white">
+                    <span className="text-[10px] font-bold uppercase">Saldo final calculado</span>
+                    <span></span>
+                    <span className="text-sm font-black text-right">
+                      {balanceSummary?.saldo_calculado.toFixed(2) || '0.00'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="space-y-2">
-              {rechargeRecords.map(r => {
-                const isPending = r.status === 'pending';
-                const isApproved = r.status === 'approved';
-                const isRejected = r.status === 'rejected';
-                const typeLabel = r.request_type === 'recharge' ? 'Kiosco'
-                  : r.request_type === 'lunch_payment' ? 'Almuerzo'
-                  : r.request_type === 'debt_payment' ? 'Deuda' : r.request_type;
-                const date = new Date(r.created_at);
-                const dateStr = date.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
-                const timeStr = date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+            /* ── PESTAÑA: Comprobantes (vouchers de recharge_requests) ── */
+            rechargeRecords.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Banknote className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No hay comprobantes</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {rechargeRecords.map(r => {
+                  const isPending = r.status === 'pending';
+                  const isApproved = r.status === 'approved';
+                  const isRejected = r.status === 'rejected';
+                  const typeLabel = r.request_type === 'recharge' ? 'Kiosco'
+                    : r.request_type === 'lunch_payment' ? 'Almuerzo'
+                    : r.request_type === 'debt_payment' ? 'Deuda' : r.request_type;
+                  const date = new Date(r.created_at);
+                  const dateStr = date.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+                  const timeStr = date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
-                return (
-                  <div key={r.id} className={cn(
-                    'rounded-lg border px-3 py-2.5 flex items-center gap-3',
-                    isPending ? 'bg-amber-50 border-amber-200' :
-                    isApproved ? 'bg-green-50 border-green-200' :
-                    isRejected ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
-                  )}>
-                    {isPending && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
-                    {isApproved && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />}
-                    {isRejected && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-bold text-gray-900">S/ {r.amount.toFixed(2)}</p>
-                        <Badge className={cn(
-                          'text-[9px] border-0',
-                          r.request_type === 'recharge' ? 'bg-blue-100 text-blue-700' :
-                          r.request_type === 'lunch_payment' ? 'bg-orange-100 text-orange-700' :
-                          'bg-gray-100 text-gray-700'
-                        )}>
-                          {typeLabel}
-                        </Badge>
+                  return (
+                    <div key={r.id} className={cn(
+                      'rounded-lg border px-3 py-2.5 flex items-center gap-3',
+                      isPending ? 'bg-amber-50 border-amber-200' :
+                      isApproved ? 'bg-green-50 border-green-200' :
+                      isRejected ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
+                    )}>
+                      {isPending && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                      {isApproved && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />}
+                      {isRejected && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-bold text-gray-900">S/ {r.amount.toFixed(2)}</p>
+                          <Badge className={cn(
+                            'text-[9px] border-0',
+                            r.request_type === 'recharge' ? 'bg-blue-100 text-blue-700' :
+                            r.request_type === 'lunch_payment' ? 'bg-orange-100 text-orange-700' :
+                            'bg-gray-100 text-gray-700'
+                          )}>
+                            {typeLabel}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-gray-500">{dateStr} · {timeStr}</span>
+                          <span className="text-[10px] text-gray-400">·</span>
+                          <span className="text-[10px] text-gray-500 capitalize">{r.payment_method}</span>
+                        </div>
+                        {r.reference_code && (
+                          <p className="text-[10px] text-gray-400 mt-0.5">Ref: {r.reference_code}</p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-gray-500">{dateStr} · {timeStr}</span>
-                        <span className="text-[10px] text-gray-400">·</span>
-                        <span className="text-[10px] text-gray-500 capitalize">{r.payment_method}</span>
-                      </div>
-                      {r.reference_code && (
-                        <p className="text-[10px] text-gray-400 mt-0.5">Ref: {r.reference_code}</p>
-                      )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )
           )}
         </DialogContent>
       </Dialog>
