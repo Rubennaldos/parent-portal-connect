@@ -325,17 +325,28 @@ export const VoucherApproval = () => {
         }
       }
 
-      // 1. Actualizar estado de la solicitud
-      const { error: reqErr } = await supabase
+      // 1. Actualizar estado — GUARD: solo si aún está pendiente (evita double-approve)
+      const { data: approveResult, error: reqErr } = await supabase
         .from('recharge_requests')
         .update({
           status: 'approved',
           approved_by: user.id,
           approved_at: new Date().toISOString(),
         })
-        .eq('id', req.id);
+        .eq('id', req.id)
+        .eq('status', 'pending')
+        .select('id');
 
       if (reqErr) throw reqErr;
+      if (!approveResult || approveResult.length === 0) {
+        toast({
+          title: '⚠️ Ya fue procesado',
+          description: 'Este comprobante ya fue aprobado o rechazado por otro administrador.',
+          variant: 'destructive',
+        });
+        fetchRequests();
+        return;
+      }
 
       if (isLunchPayment || isDebtPayment) {
         // ══════════════════════════════════════════════════════════════
@@ -555,27 +566,25 @@ export const VoucherApproval = () => {
 
         if (txErr) throw txErr;
 
-        // 🔒 IMPORTANTE: Leer el balance ACTUAL del estudiante en este momento,
-        // NO usar req.students?.balance que puede estar obsoleto (stale data).
-        // Esto evita errores cuando el admin abre la página y aprueba después.
-        const { data: freshStudent, error: fetchErr } = await supabase
+        // 🔒 ATÓMICO: Sumar la recarga al saldo usando RPC (evita race conditions)
+        const { data: balanceAfterRecharge, error: rpcErr } = await supabase
+          .rpc('adjust_student_balance', {
+            p_student_id: req.student_id,
+            p_amount: req.amount,
+          });
+
+        if (rpcErr) throw rpcErr;
+
+        const currentBalance = balanceAfterRecharge ?? 0;
+
+        // Activar modo "Con Recargas"
+        await supabase
           .from('students')
-          .select('balance')
-          .eq('id', req.student_id)
-          .single();
-
-        if (fetchErr) throw fetchErr;
-
-        const currentBalance = freshStudent?.balance ?? 0;
-        // Si el balance es negativo por un bug previo, la recarga debe partir de 0
-        // Los almuerzos nunca deben haber descontado del saldo de recargas
-        const safeBalance = Math.max(0, currentBalance);
-        const newBalance = safeBalance + req.amount;
+          .update({ free_account: false })
+          .eq('id', req.student_id);
 
         // ══════════════════════════════════════════════════════════
         // 💳 AUTO-SALDAR deudas pendientes del kiosco con el nuevo saldo
-        // Si el alumno tenía compras kiosco pendientes (antes de la recarga),
-        // se liquidan automáticamente del nuevo saldo.
         // ══════════════════════════════════════════════════════════
         const { data: allPendingTxs } = await supabase
           .from('transactions')
@@ -583,18 +592,16 @@ export const VoucherApproval = () => {
           .eq('student_id', req.student_id)
           .eq('type', 'purchase')
           .eq('payment_status', 'pending')
-          .order('created_at', { ascending: true }); // Más antigua primero
+          .order('created_at', { ascending: true });
 
-        // Filtrar solo kiosco (excluir almuerzos y pagos de almuerzo)
         const kioskDebts = (allPendingTxs || []).filter(
           (t: any) => !(t.metadata as any)?.lunch_order_id
         );
 
-        let finalBalance = newBalance;
+        let finalBalance = currentBalance;
         let totalSaldado = 0;
         const txsToSettle: string[] = [];
 
-        // Saldar de más antigua a más nueva mientras el saldo alcance
         for (const debt of kioskDebts) {
           const debtAmount = Math.abs(debt.amount);
           if (finalBalance >= debtAmount) {
@@ -604,29 +611,31 @@ export const VoucherApproval = () => {
           }
         }
 
-        // Si hay deudas a saldar, marcarlas como pagadas en un solo UPDATE
         if (txsToSettle.length > 0) {
-          await supabase
+          const { error: settleErr } = await supabase
             .from('transactions')
             .update({
               payment_status: 'paid',
               payment_method: 'saldo',
             })
-            .in('id', txsToSettle);
+            .in('id', txsToSettle)
+            .eq('payment_status', 'pending');
 
-          console.log(`✅ Auto-saldado: ${txsToSettle.length} deuda(s) por S/ ${totalSaldado.toFixed(2)}`);
+          if (settleErr) {
+            console.error('❌ Error auto-saldando deudas:', settleErr);
+          } else {
+            console.log(`✅ Auto-saldado: ${txsToSettle.length} deuda(s) por S/ ${totalSaldado.toFixed(2)}`);
+          }
+
+          // Ajustar balance atómicamente por el monto saldado
+          const { error: adjErr } = await supabase
+            .rpc('adjust_student_balance', {
+              p_student_id: req.student_id,
+              p_amount: -totalSaldado,
+            });
+          if (adjErr) console.error('❌ Error ajustando balance por auto-saldo:', adjErr);
+          finalBalance = currentBalance - totalSaldado;
         }
-
-        // 🔄 Al aprobar una recarga: acreditar saldo + cambiar a "Con Recargas" (free_account = false)
-        const { error: stuErr } = await supabase
-          .from('students')
-          .update({
-            balance: finalBalance, // Saldo ya con deudas descontadas
-            free_account: false,   // Activa modo "Con Recargas" automáticamente
-          })
-          .eq('id', req.student_id);
-
-        if (stuErr) throw stuErr;
 
         // Toast informativo según si se saldaron deudas
         if (totalSaldado > 0) {

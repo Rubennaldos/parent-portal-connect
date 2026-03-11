@@ -1969,22 +1969,23 @@ const POS = () => {
           });
 
         // ══════════════════════════════════════════════════════════
-        // 💰 PASO 5: Actualizar saldo en BD (solo si descontamos)
+        // 💰 PASO 5: Actualizar saldo ATÓMICAMENTE (solo si descontamos)
         // ══════════════════════════════════════════════════════════
         if (shouldUseBalance) {
-          const { error: updateError } = await supabase
-            .from('students')
-            .update({ balance: newBalance })
-            .eq('id', selectedStudent.id);
+          const { data: updatedBalance, error: rpcError } = await supabase
+            .rpc('adjust_student_balance', {
+              p_student_id: selectedStudent.id,
+              p_amount: -total,
+            });
 
-          if (updateError) throw updateError;
+          if (rpcError) throw rpcError;
           
-          console.log(`✅ Saldo actualizado: S/ ${currentBalance.toFixed(2)} → S/ ${newBalance.toFixed(2)}`);
+          const actualNewBalance = updatedBalance ?? newBalance;
+          console.log(`✅ Saldo actualizado atómicamente: → S/ ${actualNewBalance.toFixed(2)}`);
           
-          // Actualizar estado local para que se refleje de inmediato
           setSelectedStudent({
             ...selectedStudent,
-            balance: newBalance
+            balance: actualNewBalance
           });
         }
 

@@ -477,8 +477,6 @@ const Index = () => {
     if (!selectedStudent) return;
     
     try {
-      const newBalance = selectedStudent.balance + amount;
-
       const { error: transError } = await supabase
         .from('transactions')
         .insert({
@@ -486,27 +484,32 @@ const Index = () => {
           type: 'recharge',
           amount: amount,
           description: `Recarga vía ${method === 'yape' ? 'Yape' : method === 'plin' ? 'Plin' : method === 'card' ? 'Tarjeta' : 'Banco'}`,
-          balance_after: newBalance,
           created_by: user?.id,
           payment_method: method,
         });
 
       if (transError) throw transError;
 
-      // Acreditar saldo + activar modo "Con Recargas" automáticamente
-      const { error: updateError } = await supabase
+      // 🔒 ATÓMICO: Sumar al saldo usando RPC (evita race conditions)
+      const { data: updatedBalance, error: rpcErr } = await supabase
+        .rpc('adjust_student_balance', {
+          p_student_id: selectedStudent.id,
+          p_amount: amount,
+        });
+
+      if (rpcErr) throw rpcErr;
+
+      // Activar modo "Con Recargas"
+      await supabase
         .from('students')
-        .update({ 
-          balance: newBalance,
-          free_account: false, // Al recargar, pasa a modo prepago
-        })
+        .update({ free_account: false })
         .eq('id', selectedStudent.id);
 
-      if (updateError) throw updateError;
+      const finalBalance = updatedBalance ?? (selectedStudent.balance + amount);
 
       toast({
         title: '✅ ¡Recarga Exitosa!',
-        description: `Nuevo saldo: S/ ${newBalance.toFixed(2)}`,
+        description: `Nuevo saldo: S/ ${finalBalance.toFixed(2)}`,
       });
 
       await fetchStudents();

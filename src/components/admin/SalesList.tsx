@@ -704,18 +704,21 @@ export const SalesList = () => {
 
       if (selectedTransaction.student_id && selectedTransaction.student) {
         const amountToReturn = Math.abs(selectedTransaction.amount);
-        const newBalance = selectedTransaction.student.balance + amountToReturn;
 
-        const { error: balanceError } = await supabase
-          .from('students')
-          .update({ balance: newBalance })
-          .eq('id', selectedTransaction.student_id);
+        // 🔒 ATÓMICO: Devolver saldo usando RPC (evita usar balance stale del state)
+        const { data: updatedBalance, error: rpcError } = await supabase
+          .rpc('adjust_student_balance', {
+            p_student_id: selectedTransaction.student_id,
+            p_amount: amountToReturn,
+          });
 
-        if (balanceError) throw balanceError;
+        if (rpcError) throw rpcError;
+
+        const finalBalance = updatedBalance ?? (selectedTransaction.student.balance + amountToReturn);
 
         toast({
           title: '✅ Venta Anulada',
-          description: `Saldo devuelto: S/ ${amountToReturn.toFixed(2)}. Nuevo saldo: S/ ${newBalance.toFixed(2)}`,
+          description: `Saldo devuelto: S/ ${amountToReturn.toFixed(2)}. Nuevo saldo: S/ ${finalBalance.toFixed(2)}`,
         });
       } else {
         toast({

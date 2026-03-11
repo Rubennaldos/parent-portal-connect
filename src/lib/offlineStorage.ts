@@ -537,12 +537,12 @@ export async function syncOfflineTransactions(): Promise<{
         items: offlineTx.cart,
       });
 
-      // 6. Actualizar saldo si corresponde
+      // 6. Actualizar saldo ATÓMICAMENTE si corresponde
       if (offlineTx.client_mode === 'student' && offlineTx.student_id && shouldUseBalance) {
-        await supabase
-          .from('students')
-          .update({ balance: newBalance })
-          .eq('id', offlineTx.student_id);
+        await supabase.rpc('adjust_student_balance', {
+          p_student_id: offlineTx.student_id,
+          p_amount: -offlineTx.total,
+        });
       }
 
       // 7. Marcar como sincronizada
