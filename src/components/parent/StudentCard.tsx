@@ -13,7 +13,8 @@ import {
   Pencil,
   Clock,
   ShieldCheck,
-  ArrowRight
+  ArrowRight,
+  AlertCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -60,9 +61,10 @@ export function StudentCard({
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
   const prepaidBalance = isPrepaid ? student.balance : 0;
+  const hasKioskDebt = isPrepaid && prepaidBalance < 0;
   const displayBalance = Math.max(0, prepaidBalance);
   const isActivePrepaid = isPrepaid && displayBalance > 0;
-  const hasDebt = !isActivePrepaid ? totalDebt > 0 : false;
+  const hasDebt = hasKioskDebt || (!isActivePrepaid ? totalDebt > 0 : false);
 
   const [spentPeriod, setSpentPeriod] = useState(0);
 
@@ -179,31 +181,44 @@ export function StudentCard({
         {/* Financial info */}
         {!student.kiosk_disabled && (
           <div className={`rounded-lg p-3 border ${
-            hasDebt ? 'bg-red-50 border-red-200' : isActivePrepaid ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+            hasKioskDebt ? 'bg-red-50 border-red-200' : hasDebt ? 'bg-red-50 border-red-200' : isActivePrepaid ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
           }`}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
-                  {hasDebt ? 'Deuda Kiosco' : isActivePrepaid ? 'Saldo Kiosco' : 'Estado'}
+                  {hasKioskDebt ? 'Deuda Kiosco' : hasDebt ? 'Deuda Kiosco' : isActivePrepaid ? 'Saldo Kiosco' : 'Estado'}
                 </p>
                 <p className={`text-2xl font-bold mt-0.5 ${
-                  hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
+                  hasKioskDebt || hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
                 }`}>
-                  {hasDebt ? `S/ ${totalDebt.toFixed(2)}` : isActivePrepaid ? `S/ ${displayBalance.toFixed(2)}` : 'Al día'}
+                  {hasKioskDebt
+                    ? `- S/ ${Math.abs(prepaidBalance).toFixed(2)}`
+                    : hasDebt
+                    ? `S/ ${totalDebt.toFixed(2)}`
+                    : isActivePrepaid
+                    ? `S/ ${displayBalance.toFixed(2)}`
+                    : 'Al día'}
                 </p>
-                {isActivePrepaid && (
+                {hasKioskDebt && (
+                  <p className="text-[9px] text-red-500 mt-0.5">Recarga para cubrir la deuda primero</p>
+                )}
+                {isActivePrepaid && !hasKioskDebt && (
                   <p className="text-[9px] text-blue-400 mt-0.5">Solo para snacks y recreo</p>
                 )}
               </div>
               <div className={`p-2 rounded-lg ${
-                hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
+                hasKioskDebt || hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
               }`}>
-                {isActivePrepaid ? <CreditCard className="h-5 w-5 text-blue-500" /> : <Wallet className="h-5 w-5 text-gray-500" />}
+                {hasKioskDebt || hasDebt
+                  ? <AlertCircle className="h-5 w-5 text-red-500" />
+                  : isActivePrepaid
+                  ? <CreditCard className="h-5 w-5 text-blue-500" />
+                  : <Wallet className="h-5 w-5 text-gray-500" />}
               </div>
             </div>
 
-            {/* Balance bar for prepaid */}
-            {isActivePrepaid && (
+            {/* Balance bar for prepaid (only if positive) */}
+            {isActivePrepaid && !hasKioskDebt && (
               <div className="mt-2">
                 <div className="h-1.5 bg-blue-200 rounded-full overflow-hidden">
                   <div
@@ -287,10 +302,18 @@ export function StudentCard({
               onClick={onRecharge}
               variant="outline"
               size="sm"
-              className="w-full h-9 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+              className={`w-full h-9 text-xs ${
+                hasKioskDebt
+                  ? 'border-red-200 text-red-700 hover:bg-red-50 font-semibold'
+                  : 'border-blue-200 text-blue-700 hover:bg-blue-50'
+              }`}
             >
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              {displayBalance === 0 ? 'Cargar Saldo Kiosco' : 'Recargar Kiosco'}
+              {hasKioskDebt
+                ? `Recargar para cubrir deuda (S/ ${Math.abs(prepaidBalance).toFixed(2)})`
+                : displayBalance === 0
+                ? 'Cargar Saldo Kiosco'
+                : 'Recargar Kiosco'}
             </Button>
           )}
 

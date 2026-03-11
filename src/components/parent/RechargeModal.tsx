@@ -227,6 +227,10 @@ export function RechargeModal({
       toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
       return;
     }
+    if (requestType === 'recharge' && numAmount > 2000) {
+      toast({ title: 'Monto muy alto', description: 'El monto máximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.', variant: 'destructive' });
+      return;
+    }
 
     // ── Validar código principal obligatorio ──
     if (!referenceCode.trim()) {
@@ -357,9 +361,14 @@ export function RechargeModal({
         .eq('id', studentId)
         .single();
 
-      // ── Subir imagen principal ──
-      // Si falla el upload, se lanza un error y el insert NO ocurre (evita vouchers sin foto)
+      // ── PASO 1: Subir TODAS las imágenes primero (si falla alguna, no insertamos nada) ──
       const voucherUrl = await uploadVoucherImage(voucherFile, user.id);
+
+      const extraUrls: string[] = [];
+      for (const ev of extraVouchers) {
+        const evUrl = await uploadVoucherImage(ev.voucherFile!, user.id);
+        extraUrls.push(evUrl);
+      }
 
       const baseDescription = requestDescription || (
         requestType === 'lunch_payment' ? 'Pago de almuerzo' :
@@ -369,12 +378,11 @@ export function RechargeModal({
 
       const totalParts = 1 + extraVouchers.length;
 
-      // ── Nota: si es pago combinado, agregar info de todos los alumnos ──
       const effectiveNotes = isCombinedPayment
         ? `${notes.trim() ? notes.trim() + ' | ' : ''}Pago combinado: ${studentName}`
         : (notes.trim() || null);
 
-      // ── Insertar comprobante principal ──
+      // ── PASO 2: Insertar TODOS los registros (imágenes ya están subidas) ──
       const { error: insertError } = await supabase.from('recharge_requests').insert({
         student_id: studentId,
         parent_id: user.id,
@@ -392,12 +400,8 @@ export function RechargeModal({
       });
       if (insertError) throw insertError;
 
-      // ── Insertar comprobantes adicionales ──
       for (let i = 0; i < extraVouchers.length; i++) {
         const ev = extraVouchers[i];
-        // Si falla el upload del comprobante adicional, también se lanza error
-        const evVoucherUrl = await uploadVoucherImage(ev.voucherFile!, user.id);
-
         const { error: evError } = await supabase.from('recharge_requests').insert({
           student_id: studentId,
           parent_id: user.id,
@@ -405,7 +409,7 @@ export function RechargeModal({
           amount: parseFloat(ev.amount),
           payment_method: selectedMethod,
           reference_code: ev.referenceCode.trim(),
-          voucher_url: evVoucherUrl,
+          voucher_url: extraUrls[i],
           notes: effectiveNotes,
           status: 'pending',
           request_type: requestType,
