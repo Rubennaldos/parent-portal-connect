@@ -41,6 +41,14 @@ interface RechargeRecord {
   request_type: string;
 }
 
+interface BalanceSummary {
+  recargas: number;
+  compras_saldo: number;
+  devuelto: number;
+  saldo_calculado: number;
+  diferencia: number;
+}
+
 interface Props {
   schoolId: string | null; // null = admin general (ver todos)
   canViewAllSchools: boolean;
@@ -68,20 +76,50 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
   // ── Modal detalle recargas ──
   const [rechargeModalStudent, setRechargeModalStudent] = useState<Student | null>(null);
   const [rechargeRecords, setRechargeRecords] = useState<RechargeRecord[]>([]);
+  const [balanceSummary, setBalanceSummary] = useState<BalanceSummary | null>(null);
   const [loadingRecharges, setLoadingRecharges] = useState(false);
 
   const openRechargeDetail = useCallback(async (student: Student) => {
     setRechargeModalStudent(student);
     setLoadingRecharges(true);
+    setBalanceSummary(null);
     try {
-      const { data, error } = await supabase
-        .from('recharge_requests')
-        .select('id, amount, status, payment_method, reference_code, created_at, request_type')
-        .eq('student_id', student.id)
-        .order('created_at', { ascending: false })
-        .limit(30);
-      if (error) throw error;
-      setRechargeRecords((data || []) as RechargeRecord[]);
+      const [rechargeRes, txRes] = await Promise.all([
+        supabase
+          .from('recharge_requests')
+          .select('id, amount, status, payment_method, reference_code, created_at, request_type')
+          .eq('student_id', student.id)
+          .order('created_at', { ascending: false })
+          .limit(30),
+        supabase
+          .from('transactions')
+          .select('type, amount, payment_status, payment_method, is_deleted')
+          .eq('student_id', student.id),
+      ]);
+
+      if (rechargeRes.error) throw rechargeRes.error;
+      setRechargeRecords((rechargeRes.data || []) as RechargeRecord[]);
+
+      const txs = txRes.data || [];
+      const recargas = txs
+        .filter(t => t.type === 'recharge' && t.payment_status === 'paid')
+        .reduce((s, t) => s + t.amount, 0);
+      const compras_saldo = txs
+        .filter(t => t.type === 'purchase' && t.payment_status === 'paid' && !t.is_deleted
+          && (t.payment_method === 'saldo' || t.payment_method === null))
+        .reduce((s, t) => s + t.amount, 0);
+      const devuelto = txs
+        .filter(t => t.is_deleted)
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+      const saldo_calculado = recargas + compras_saldo + devuelto;
+
+      setBalanceSummary({
+        recargas,
+        compras_saldo,
+        devuelto,
+        saldo_calculado,
+        diferencia: student.balance - saldo_calculado,
+      });
     } catch (err) {
       console.error('Error cargando recargas:', err);
       setRechargeRecords([]);
@@ -536,20 +574,72 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
 
           {/* Resumen rápido */}
           {rechargeModalStudent && (
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
-                <p className="text-[10px] text-gray-500 uppercase">Saldo actual</p>
-                <p className="text-lg font-black text-blue-700">S/ {(rechargeModalStudent.balance || 0).toFixed(2)}</p>
+            <div className="space-y-3 mb-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
+                  <p className="text-[10px] text-gray-500 uppercase">Saldo sistema</p>
+                  <p className={cn('text-lg font-black', (rechargeModalStudent.balance || 0) < 0 ? 'text-red-600' : 'text-blue-700')}>
+                    S/ {(rechargeModalStudent.balance || 0).toFixed(2)}
+                  </p>
+                </div>
+                <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
+                  <p className="text-[10px] text-gray-500 uppercase">Total recargado</p>
+                  <p className="text-lg font-black text-green-700">
+                    S/ {rechargeRecords
+                      .filter(r => r.status === 'approved' && r.request_type === 'recharge')
+                      .reduce((s, r) => s + r.amount, 0)
+                      .toFixed(2)}
+                  </p>
+                </div>
               </div>
-              <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
-                <p className="text-[10px] text-gray-500 uppercase">Total recargado</p>
-                <p className="text-lg font-black text-green-700">
-                  S/ {rechargeRecords
-                    .filter(r => r.status === 'approved' && r.request_type === 'recharge')
-                    .reduce((s, r) => s + r.amount, 0)
-                    .toFixed(2)}
-                </p>
-              </div>
+
+              {/* Tablita de balance: sumas y restas */}
+              {balanceSummary && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-100 px-3 py-1.5">
+                    <p className="text-[10px] font-bold text-gray-600 uppercase">Balance detallado</p>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    <div className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-xs text-gray-600">+ Recargas aprobadas</span>
+                      <span className="text-xs font-bold text-green-700">S/ {balanceSummary.recargas.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between px-3 py-1.5">
+                      <span className="text-xs text-gray-600">− Gastado del saldo (kiosco)</span>
+                      <span className="text-xs font-bold text-red-600">S/ {Math.abs(balanceSummary.compras_saldo).toFixed(2)}</span>
+                    </div>
+                    {balanceSummary.devuelto > 0 && (
+                      <div className="flex items-center justify-between px-3 py-1.5">
+                        <span className="text-xs text-gray-600">+ Devuelto (anulaciones)</span>
+                        <span className="text-xs font-bold text-blue-600">S/ {balanceSummary.devuelto.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
+                      <span className="text-xs font-bold text-gray-800">= Saldo calculado</span>
+                      <span className={cn('text-sm font-black', balanceSummary.saldo_calculado < 0 ? 'text-red-600' : 'text-emerald-700')}>
+                        S/ {balanceSummary.saldo_calculado.toFixed(2)}
+                      </span>
+                    </div>
+                    {Math.abs(balanceSummary.diferencia) > 0.01 && (
+                      <div className={cn(
+                        'flex items-center justify-between px-3 py-2',
+                        balanceSummary.diferencia > 0 ? 'bg-amber-50' : 'bg-red-50'
+                      )}>
+                        <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3" />
+                          Diferencia
+                        </span>
+                        <span className={cn(
+                          'text-sm font-black',
+                          balanceSummary.diferencia > 0 ? 'text-amber-600' : 'text-red-600'
+                        )}>
+                          {balanceSummary.diferencia > 0 ? '+' : ''}S/ {balanceSummary.diferencia.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
