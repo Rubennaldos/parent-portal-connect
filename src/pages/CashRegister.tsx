@@ -24,6 +24,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { CashRegister, CashClosure, CashMovement, CashRegisterConfig } from '@/types/cashRegister';
 import CashDashboard from './CashRegister/CashDashboard';
+import CashIncomeReport from './CashRegister/CashIncomeReport';
 import CashMovements from './CashRegister/CashMovements';
 import CashClosureDialog from './CashRegister/CashClosureDialog';
 import CashHistoryDialog from './CashRegister/CashHistoryDialog';
@@ -322,9 +323,10 @@ export default function CashRegisterPage() {
 
           {/* Tabs principales */}
           <Tabs defaultValue="dashboard" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
               <TabsTrigger value="movements">Ingresos/Egresos</TabsTrigger>
+              <TabsTrigger value="income_report">Reporte Caja</TabsTrigger>
             </TabsList>
 
             <TabsContent value="dashboard">
@@ -347,6 +349,10 @@ export default function CashRegisterPage() {
                   loadCurrentRegister();
                 }}
               />
+            </TabsContent>
+
+            <TabsContent value="income_report">
+              <CashIncomeReport cashRegister={currentRegister} />
             </TabsContent>
           </Tabs>
         </>
