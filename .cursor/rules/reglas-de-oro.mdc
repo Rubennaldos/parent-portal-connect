@@ -5,6 +5,35 @@ alwaysApply: true
 
 # REGLAS DE ORO — ERP Profesional (parent-portal-connect)
 
+## REGLA #0 — EL DUEÑO NO ES PROGRAMADOR. EXPLICAR ANTES DE HACER.
+
+**El dueño del proyecto confía en Cursor pero NO puede verificar el código.**
+
+```
+ANTES de aplicar cualquier cambio:
+1. Explicar el PROBLEMA en español simple (como manzanitas)
+2. Explicar la SOLUCIÓN propuesta sin jerga técnica
+3. Explicar QUÉ PUEDE SALIR MAL si no se hace
+4. ESPERAR el "dale" o la aprobación antes de tocar código
+
+❌ MAL: "Voy a implementar un RPC atómico con SECURITY DEFINER y un guard de idempotencia"
+✅ BIEN: "El problema es que si dos personas aprueban al mismo tiempo, el saldo se duplica. 
+         La solución es poner un candado: solo el primero que llegue puede aprobar. 
+         El segundo recibe un aviso de que ya se procesó. ¿Le damos?"
+
+NUNCA asumir que el dueño entiende conceptos como:
+- Race conditions → decir "dos personas haciendo lo mismo al mismo tiempo"
+- RPC/atómico → decir "operación segura que no se puede interrumpir"
+- Stale data → decir "datos viejos que ya no son correctos"
+- Balance negativo → decir "el niño debe plata al kiosco"
+
+Si hay RIESGO de que algo afecte dinero real de padres o alumnos:
+→ SIEMPRE pedir confirmación
+→ NUNCA ejecutar correcciones masivas sin explicar caso por caso
+```
+
+---
+
 ## REGLA #1 — ALMUERZOS y RECARGAS/SALDO son sistemas COMPLETAMENTE INDEPENDIENTES
 
 **Los almuerzos NO dependen del tipo de cuenta del alumno. NUNCA.**
@@ -111,3 +140,41 @@ Al aprobar `recharge_requests` con `request_type = 'lunch_payment'` o `'debt_pay
 - Un admin `gestor_unidad` SOLO ve datos de su sede — filtrar en SQL, no en frontend
 - Un admin `admin_general` puede ver todo — no filtrar
 - El filtro de sede va en la QUERY de Supabase, no en el frontend con `.filter()`
+
+---
+
+## REGLA #8 — Flujo de recargas (el tronco del sistema)
+
+El flujo de recargas es SIMPLE. No complicarlo.
+
+```
+1. Padre activa "Con Recargas" → aparece botón "Recargar Kiosco"
+2. Padre presiona Recargar → elige monto → sube voucher → queda PENDIENTE
+3. Admin aprueba → saldo SUBE
+4. Niño compra en cafetería (POS) → saldo BAJA
+5. Saldo bajo → padre recarga de nuevo → ciclo se repite
+
+Si el niño tiene DEUDA de kiosco (saldo negativo):
+- La recarga PRIMERO paga la deuda
+- Lo que sobra es saldo disponible
+- El padre recibe aviso: "Se saldaron S/ X en deudas. Saldo disponible: S/ Y"
+- Ejemplo: Deuda -20, Recarga +50 → Paga deuda 20, Queda saldo 30
+```
+
+**Lo que NUNCA debe pasar:**
+- Recargar y que el saldo no suba (bug)
+- Comprar y que el saldo no baje (bug)
+- Que el saldo sea diferente a lo que dicen las transacciones (fantasma)
+- Que el saldo de recargas se mezcle con pagos de almuerzo
+
+---
+
+## REGLA #9 — Operaciones de saldo siempre ATÓMICAS
+
+Cuando se modifica `students.balance`, SIEMPRE usar la función RPC `adjust_student_balance`.
+NUNCA hacer: leer saldo → calcular → escribir saldo (esto causa duplicados y fantasmas).
+
+```
+❌ MAL:  const balance = student.balance; update({ balance: balance + 50 })
+✅ BIEN: supabase.rpc('adjust_student_balance', { p_student_id, p_amount: 50 })
+```
