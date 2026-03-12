@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
-import { useBillingSync } from '@/stores/billingSync';
+import { useBillingSync, useDebouncedSync } from '@/stores/billingSync';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -123,7 +123,7 @@ export const SalesList = () => {
   const { role, canViewAllSchools: canViewAllSchoolsFromHook } = useRole();
   const { toast } = useToast();
   const emitSync = useBillingSync((s) => s.emit);
-  const syncTransactions = useBillingSync((s) => s.channels.transactions);
+  const txSyncTs = useDebouncedSync('transactions', 600);
   
   // Permisos del módulo de ventas
   const [permissions, setPermissions] = useState({
@@ -137,6 +137,7 @@ export const SalesList = () => {
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const fetchTxRequestId = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -207,16 +208,12 @@ export const SalesList = () => {
     }
   }, [activeTab, selectedDate, selectedSchool, userSchoolId, permissions.loading, permissions.canView]);
 
-  // Auto-refresh cuando otro componente muta transacciones (VoucherApproval, BillingCollection, etc.)
-  const initialSyncTx = useRef(syncTransactions);
   useEffect(() => {
-    if (syncTransactions === initialSyncTx.current) return;
-    initialSyncTx.current = syncTransactions;
-    if (!permissions.loading && permissions.canView) {
+    if (txSyncTs > 0 && !permissions.loading && permissions.canView) {
       fetchTransactions();
       toast({ title: '🔄 Ventas actualizadas', description: 'Se detectaron cambios en transacciones.', duration: 3000 });
     }
-  }, [syncTransactions]);
+  }, [txSyncTs]);
 
   const checkPermissions = async () => {
     if (!user || !role) {
@@ -360,10 +357,9 @@ export const SalesList = () => {
   };
 
   const fetchTransactions = async () => {
+    const currentRequestId = ++fetchTxRequestId.current;
     try {
-      // 🔒 GUARD: Si el usuario NO puede ver todas las sedes, esperar a que se cargue su school_id
       if (!canViewAllSchools && !userSchoolId) {
-        console.log('⏳ Esperando school_id del usuario antes de cargar ventas...');
         setLoading(false);
         return;
       }
@@ -468,11 +464,10 @@ export const SalesList = () => {
         }
       }
       
-      console.log('✅ Ventas obtenidas:', data?.length || 0);
-      console.log('📊 Primera venta (ejemplo):', data?.[0]);
-      console.log('🏢 School data:', data?.[0]?.school);
+      if (currentRequestId !== fetchTxRequestId.current) return;
       setTransactions(data || []);
     } catch (error: any) {
+      if (currentRequestId !== fetchTxRequestId.current) return;
       console.error('Error fetching transactions:', error);
       toast({
         variant: 'destructive',
@@ -480,7 +475,7 @@ export const SalesList = () => {
         description: 'No se pudieron cargar las ventas',
       });
     } finally {
-      setLoading(false);
+      if (currentRequestId === fetchTxRequestId.current) setLoading(false);
     }
   };
 

@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
-import { useBillingSync } from '@/stores/billingSync';
+import { useDebouncedSync } from '@/stores/billingSync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -166,7 +166,7 @@ export const BillingDashboard = () => {
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
-  const syncDashboard = useBillingSync((s) => s.channels.dashboard);
+  const dashboardSyncTs = useDebouncedSync('dashboard', 800);
   const [loading, setLoading] = useState(true);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
@@ -189,16 +189,12 @@ export const BillingDashboard = () => {
     }
   }, [selectedSchool, userSchoolId, canViewAllSchools]);
 
-  // Auto-refresh cuando otro componente emite cambios en el canal 'dashboard'
-  const initialDashboardSync = useRef(syncDashboard);
   useEffect(() => {
-    if (syncDashboard === initialDashboardSync.current) return;
-    initialDashboardSync.current = syncDashboard;
-    if (userSchoolId || canViewAllSchools) {
+    if (dashboardSyncTs > 0 && (userSchoolId || canViewAllSchools)) {
       fetchDashboardStats();
       toast({ title: '🔄 Dashboard actualizado', description: 'Se detectaron cambios en cobranzas.', duration: 3000 });
     }
-  }, [syncDashboard]);
+  }, [dashboardSyncTs]);
 
   const fetchUserSchool = async () => {
     if (!user) return;

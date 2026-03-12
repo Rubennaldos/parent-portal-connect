@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
-import { useBillingSync } from '@/stores/billingSync';
+import { useBillingSync, useDebouncedSync } from '@/stores/billingSync';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { Button } from '@/components/ui/button';
@@ -191,7 +191,7 @@ const POS = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const emitSync = useBillingSync((s) => s.emit);
-  const syncBalances = useBillingSync((s) => s.channels.balances);
+  const balanceSyncTs = useDebouncedSync('balances', 500);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const nfcPosInputRef = useRef<HTMLInputElement>(null);
   // Estado NFC en el POS
@@ -1174,25 +1174,25 @@ const POS = () => {
     fetchStudentLimits(student);
   };
 
-  // Auto-refresh saldo cuando otro componente (VoucherApproval, BillingCollection) modifica balances
-  const initialSyncBalances = useRef(syncBalances);
+  const balanceFetchId = useRef(0);
   useEffect(() => {
-    if (syncBalances === initialSyncBalances.current) return;
-    initialSyncBalances.current = syncBalances;
-    if (selectedStudent) {
-      (async () => {
-        const { data } = await supabase
-          .from('students')
-          .select('balance, free_account, kiosk_disabled')
-          .eq('id', selectedStudent.id)
-          .single();
-        if (data) {
-          setSelectedStudent((prev) => prev ? { ...prev, ...data } : prev);
-          toast({ title: '🔄 Saldo actualizado', description: `${selectedStudent.full_name}: S/ ${data.balance.toFixed(2)}`, duration: 3000 });
-        }
-      })();
-    }
-  }, [syncBalances]);
+    if (balanceSyncTs <= 0 || !selectedStudent) return;
+    const reqId = ++balanceFetchId.current;
+    const studentId = selectedStudent.id;
+    const studentName = selectedStudent.full_name;
+    (async () => {
+      const { data } = await supabase
+        .from('students')
+        .select('balance, free_account, kiosk_disabled')
+        .eq('id', studentId)
+        .single();
+      if (reqId !== balanceFetchId.current) return;
+      if (data) {
+        setSelectedStudent((prev) => prev ? { ...prev, ...data } : prev);
+        toast({ title: '🔄 Saldo actualizado', description: `${studentName}: S/ ${data.balance.toFixed(2)}`, duration: 3000 });
+      }
+    })();
+  }, [balanceSyncTs]);
 
   const selectTeacher = (teacher: any) => {
     console.log('👨‍🏫 Profesor seleccionado:', teacher);
