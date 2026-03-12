@@ -251,10 +251,14 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
 
   // ── Datos para pago combinado ──
-  const hasCombinedPendingVoucher = debts.some(d =>
-    pendingDebtVoucherStudents.has(d.student_id) ||
-    d.pending_transactions.some(tx => voucherStatuses.get(tx.id)?.status === 'pending')
-  );
+  // Solo bloqueamos el pago combinado si TODAS las transacciones de TODOS los hijos
+  // ya están cubiertas por vouchers pendientes (no basta con que alguna lo esté)
+  const allCombinedTransactions = debts.flatMap(d => d.pending_transactions);
+  const combinedCoveredCount = allCombinedTransactions.filter(
+    tx => voucherStatuses.get(tx.id)?.status === 'pending'
+  ).length;
+  const hasCombinedPendingVoucher = allCombinedTransactions.length > 0 &&
+    combinedCoveredCount === allCombinedTransactions.length;
 
   const buildCombinedPaymentData = () => {
     const allTransactionIds: string[] = [];
@@ -460,17 +464,27 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                 <Send className="h-4 w-4 text-blue-600" />
                 <div>
                   <p className="text-xs font-semibold text-blue-800">Comprobante en revisión</p>
-                  <p className="text-[10px] text-blue-600">Ya tienes un pago pendiente de aprobación.</p>
+                  <p className="text-[10px] text-blue-600">Todas las deudas ya tienen un pago pendiente de aprobación.</p>
                 </div>
               </div>
             ) : (
-              <Button
-                onClick={handleCombinedPay}
-                className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 font-bold gap-2 text-base shadow-md"
-              >
-                <Receipt className="h-5 w-5" />
-                Pagar Todo Junto — S/ {(totalDebt || 0).toFixed(2)}
-              </Button>
+              <>
+                {combinedCoveredCount > 0 && (
+                  <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded px-3 py-1.5 mb-1">
+                    <Send className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                    <p className="text-[10px] text-blue-700">
+                      {combinedCoveredCount} de {allCombinedTransactions.length} compra(s) ya tienen comprobante en revisión.
+                    </p>
+                  </div>
+                )}
+                <Button
+                  onClick={handleCombinedPay}
+                  className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 font-bold gap-2 text-base shadow-md"
+                >
+                  <Receipt className="h-5 w-5" />
+                  Pagar Todo Junto — S/ {(totalDebt || 0).toFixed(2)}
+                </Button>
+              </>
             )}
           </CardContent>
         </Card>
@@ -478,13 +492,21 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
       {/* Deudas por Estudiante */}
       {debts.map((debt) => {
-        const hasPendingVoucher = pendingDebtVoucherStudents.has(debt.student_id);
         const allTxIds = debt.pending_transactions.map(t => t.id);
 
-        // Inicializar selección: por defecto todo seleccionado
+        // Transacciones YA cubiertas por un voucher pendiente (no se pueden volver a pagar)
+        const coveredByPendingVoucher = debt.pending_transactions
+          .filter(tx => voucherStatuses.get(tx.id)?.status === 'pending')
+          .map(t => t.id);
+        const hasSomeCovered = coveredByPendingVoucher.length > 0;
+        // Transacciones que NO están cubiertas y se pueden pagar ahora
+        const payableTxIds = allTxIds.filter(id => !coveredByPendingVoucher.includes(id));
+        const hasPayableItems = payableTxIds.length > 0;
+
+        // Inicializar selección: por defecto solo las pagables seleccionadas
         const selectedIds = selectedTxByStudent.has(debt.student_id)
           ? selectedTxByStudent.get(debt.student_id)!
-          : new Set(allTxIds);
+          : new Set(payableTxIds.length > 0 ? payableTxIds : allTxIds);
 
         const allSelected = selectedIds.size === allTxIds.length;
         const noneSelected = selectedIds.size === 0;
@@ -515,7 +537,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
               {/* ── Botón de Pagar ── */}
               <div className="mt-3 space-y-2">
-                {hasPendingVoucher ? (
+                {hasSomeCovered && !hasPayableItems ? (
+                  /* Todas las deudas ya están cubiertas por voucher pendiente */
                   <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
                     <Send className="h-4 w-4 text-blue-600" />
                     <div>
@@ -525,10 +548,19 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   </div>
                 ) : (
                   <>
-                    {/* Resumen de selección */}
+                    {/* Aviso informativo si hay algunas en revisión pero quedan pagables */}
+                    {hasSomeCovered && (
+                      <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
+                        <Send className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                        <p className="text-[10px] text-blue-700">
+                          {coveredByPendingVoucher.length} compra(s) ya tienen comprobante en revisión. Puedes pagar las restantes.
+                        </p>
+                      </div>
+                    )}
+                    {/* Resumen de selección — solo sobre ítems pagables */}
                     <div className="flex items-center justify-between text-xs px-1">
                       <button
-                        onClick={() => toggleAllTx(debt.student_id, allTxIds)}
+                        onClick={() => toggleAllTx(debt.student_id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
                         className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium"
                       >
                         {allSelected
@@ -538,7 +570,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                         {allSelected ? 'Deseleccionar todo' : 'Seleccionar todo'}
                       </button>
                       <span className="text-gray-500">
-                        {selectedIds.size} de {allTxIds.length} seleccionadas
+                        {selectedIds.size} de {payableTxIds.length || allTxIds.length} seleccionadas
                       </span>
                     </div>
                     <Button
@@ -562,24 +594,32 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   const isLunch = !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
                   const isSelected = selectedIds.has(transaction.id);
                   const vStatus = voucherStatuses.get(transaction.id);
+                  // Esta transacción específica ya está cubierta por un voucher pendiente
+                  const isCoveredByPending = coveredByPendingVoucher.includes(transaction.id);
 
                   return (
                     <div
                       key={transaction.id}
-                      className={`p-3 rounded-lg border bg-white transition-all cursor-pointer ${
-                        isSelected ? 'border-green-400 bg-green-50/40' : 'border-gray-200'
+                      className={`p-3 rounded-lg border bg-white transition-all ${
+                        isCoveredByPending
+                          ? 'border-blue-200 bg-blue-50/30 opacity-70'
+                          : `cursor-pointer ${isSelected ? 'border-green-400 bg-green-50/40' : 'border-gray-200'}`
                       }`}
-                      onClick={() => !hasPendingVoucher && toggleTransaction(debt.student_id, transaction.id, allTxIds)}
+                      onClick={() => !isCoveredByPending && toggleTransaction(debt.student_id, transaction.id, allTxIds)}
                     >
                       <div className="flex items-center gap-3">
-                        {/* Checkbox */}
-                        {!hasPendingVoucher && (
+                        {/* Checkbox — solo si no está cubierta por voucher pendiente */}
+                        {!isCoveredByPending ? (
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, allTxIds)}
                             onClick={(e) => e.stopPropagation()}
                             className="flex-shrink-0"
                           />
+                        ) : (
+                          <div className="h-4 w-4 flex-shrink-0 flex items-center justify-center">
+                            <Send className="h-3.5 w-3.5 text-blue-400" />
+                          </div>
                         )}
                         {isLunch
                           ? <UtensilsCrossed className="h-4 w-4 text-orange-400 flex-shrink-0" />
@@ -594,10 +634,17 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="text-sm sm:text-base font-bold text-red-600">S/ {(transaction.amount || 0).toFixed(2)}</p>
-                          <Badge variant="outline" className="text-[9px] sm:text-[10px] border-amber-300 text-amber-700">
-                            <Clock className="h-2.5 w-2.5 mr-0.5" />
-                            Pendiente
-                          </Badge>
+                          {isCoveredByPending ? (
+                            <Badge variant="outline" className="text-[9px] sm:text-[10px] border-blue-300 text-blue-700">
+                              <Send className="h-2.5 w-2.5 mr-0.5" />
+                              En revisión
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] sm:text-[10px] border-amber-300 text-amber-700">
+                              <Clock className="h-2.5 w-2.5 mr-0.5" />
+                              Pendiente
+                            </Badge>
+                          )}
                         </div>
                       </div>
 

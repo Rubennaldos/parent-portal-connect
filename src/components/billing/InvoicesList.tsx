@@ -74,7 +74,7 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM'));
+  const [filterDate, setFilterDate] = useState('');
   const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
   const [selectedSchool, setSelectedSchool] = useState(schoolIdFilter || '');
   const [totalPages, setTotalPages] = useState(1);
