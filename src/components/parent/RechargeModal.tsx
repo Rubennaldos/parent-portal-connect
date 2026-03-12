@@ -438,6 +438,7 @@ export function RechargeModal({
       setLoading(false);
       submittingRef.current = false;
     }
+  };
 
   // ── Copiar al portapapeles con feedback visual ──
   const handleCopy = (text: string, fieldKey: string) => {
