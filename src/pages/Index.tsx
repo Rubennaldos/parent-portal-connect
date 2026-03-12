@@ -202,7 +202,6 @@ const Index = () => {
   const fetchMaintenanceConfig = async (schoolIdOverride?: string) => {
     if (!user) return;
     try {
-      // Usar school_id del estado si ya fue cargado, sino hacer query
       let schoolId = schoolIdOverride || parentProfileData?.school_id;
 
       if (!schoolId) {
@@ -214,7 +213,12 @@ const Index = () => {
         schoolId = profile?.school_id;
       }
 
-      if (!schoolId) return;
+      if (!schoolId) {
+        console.warn('[Maintenance] No se encontró school_id para el padre');
+        return;
+      }
+
+      console.log('[Maintenance] Verificando mantenimiento para sede:', schoolId);
 
       const { data: configs, error } = await supabase
         .from('maintenance_config')
@@ -224,40 +228,50 @@ const Index = () => {
 
       if (error) throw error;
 
+      console.log('[Maintenance] Configs activas encontradas:', configs?.length || 0, configs);
+
       // Reset primero
-      setMaintenanceAlmuerzos(null);
-      setMaintenancePagos(null);
+      let newAlmuerzos: { title: string; message: string } | null = null;
+      let newPagos: { title: string; message: string } | null = null;
 
-      if (!configs || configs.length === 0) return;
+      if (configs && configs.length > 0) {
+        const userEmail = user.email?.toLowerCase() || '';
 
-      const userEmail = user.email?.toLowerCase() || '';
+        configs.forEach((cfg: any) => {
+          const isBypassed = (cfg.bypass_emails || []).some(
+            (e: string) => e.toLowerCase() === userEmail
+          );
+          if (isBypassed) {
+            console.log('[Maintenance] Bypass para', cfg.module_key, '- correo en lista');
+            return;
+          }
 
-      configs.forEach((cfg: any) => {
-        const isBypassed = (cfg.bypass_emails || []).some(
-          (e: string) => e.toLowerCase() === userEmail
-        );
-        if (isBypassed) return;
+          if (cfg.module_key === 'almuerzos_padres') {
+            newAlmuerzos = { title: cfg.title, message: cfg.message };
+          }
+          if (cfg.module_key === 'pagos_padres') {
+            newPagos = { title: cfg.title, message: cfg.message };
+          }
+        });
+      }
 
-        if (cfg.module_key === 'almuerzos_padres') {
-          setMaintenanceAlmuerzos({ title: cfg.title, message: cfg.message });
-        }
-        if (cfg.module_key === 'pagos_padres') {
-          setMaintenancePagos({ title: cfg.title, message: cfg.message });
-        }
-      });
+      setMaintenanceAlmuerzos(newAlmuerzos);
+      setMaintenancePagos(newPagos);
+      console.log('[Maintenance] Estado aplicado → almuerzos:', !!newAlmuerzos, ', pagos:', !!newPagos);
     } catch (e) {
-      console.error('Error checking maintenance mode:', e);
+      console.error('[Maintenance] Error:', e);
     }
   };
 
-  // Cargar estado de mantenimiento al montar
+  // Cargar estado de mantenimiento al montar y cada 30s como fallback
   useEffect(() => {
-    if (user) {
-      fetchMaintenanceConfig();
-    }
+    if (!user) return;
+    fetchMaintenanceConfig();
+    const interval = setInterval(() => fetchMaintenanceConfig(), 30000);
+    return () => clearInterval(interval);
   }, [user]);
 
-  // Re-verificar mantenimiento cuando se carga parentProfileData (ya tiene school_id)
+  // Re-verificar cuando se carga parentProfileData (school_id disponible)
   useEffect(() => {
     if (user && parentProfileData?.school_id) {
       fetchMaintenanceConfig(parentProfileData.school_id);
@@ -276,9 +290,9 @@ const Index = () => {
           event: '*',
           schema: 'public',
           table: 'maintenance_config',
-          filter: `school_id=eq.${parentProfileData.school_id}`,
         },
         () => {
+          console.log('[Maintenance] Realtime → cambio detectado, re-verificando...');
           fetchMaintenanceConfig(parentProfileData.school_id);
         }
       )
