@@ -23,6 +23,9 @@ import {
   CreditCard,
   Eye,
   School,
+  Globe,
+  Power,
+  PowerOff,
 } from 'lucide-react';
 
 // Módulos disponibles para poner en mantenimiento
@@ -63,6 +66,7 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
   const [configs, setConfigs] = useState<Record<string, MaintenanceConfigData>>({});
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState('');
+  const [togglingGlobal, setTogglingGlobal] = useState(false);
 
   // ── Si admin_general no tiene sede, permitir seleccionar una ──
   const [allSchools, setAllSchools] = useState<{ id: string; name: string }[]>([]);
@@ -135,11 +139,81 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
     }
   };
 
-  const handleToggle = (moduleKey: string, enabled: boolean) => {
+  const handleToggle = async (moduleKey: string, enabled: boolean) => {
+    if (!schoolId || !user) return;
     setConfigs((prev) => ({
       ...prev,
       [moduleKey]: { ...prev[moduleKey], enabled },
     }));
+
+    try {
+      const cfg = configs[moduleKey];
+      const { error } = await supabase
+        .from('maintenance_config')
+        .upsert({
+          school_id: schoolId,
+          module_key: moduleKey,
+          enabled,
+          title: cfg?.title || `Módulo en Mantenimiento`,
+          message: cfg?.message || 'Estamos trabajando para mejorar tu experiencia.',
+          bypass_emails: cfg?.bypass_emails || [],
+          updated_by: user.id,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'school_id,module_key' });
+
+      if (error) throw error;
+      toast({
+        title: enabled ? '🔧 Mantenimiento activado' : '✅ Módulo habilitado',
+        description: `${AVAILABLE_MODULES.find(m => m.key === moduleKey)?.label || moduleKey} ${enabled ? 'está ahora en mantenimiento' : 'ya está disponible para los padres'}.`,
+      });
+    } catch (e: any) {
+      setConfigs((prev) => ({
+        ...prev,
+        [moduleKey]: { ...prev[moduleKey], enabled: !enabled },
+      }));
+      toast({ variant: 'destructive', title: 'Error', description: e?.message });
+    }
+  };
+
+  const handleGlobalToggle = async (enabled: boolean) => {
+    if (!user || allSchools.length === 0) return;
+    setTogglingGlobal(true);
+    try {
+      const rows: any[] = [];
+      for (const school of allSchools) {
+        for (const mod of AVAILABLE_MODULES) {
+          rows.push({
+            school_id: school.id,
+            module_key: mod.key,
+            enabled,
+            title: configs[mod.key]?.title || `Módulo de ${mod.label.split(' (')[0]} en Mantenimiento`,
+            message: configs[mod.key]?.message || `Estamos preparando el módulo de ${mod.label.split(' (')[0].toLowerCase()} para ofrecerte la mejor experiencia.`,
+            bypass_emails: configs[mod.key]?.bypass_emails || [],
+            updated_by: user.id,
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      const { error } = await supabase
+        .from('maintenance_config')
+        .upsert(rows, { onConflict: 'school_id,module_key' });
+
+      if (error) throw error;
+
+      toast({
+        title: enabled ? '🔧 Mantenimiento GLOBAL activado' : '✅ Todas las sedes habilitadas',
+        description: enabled
+          ? `Se activó mantenimiento en ${allSchools.length} sedes para todos los módulos.`
+          : `Se desactivó mantenimiento en ${allSchools.length} sedes. Los padres ya pueden usar el sistema.`,
+      });
+
+      fetchConfigs();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error al aplicar globalmente', description: e?.message });
+    } finally {
+      setTogglingGlobal(false);
+    }
   };
 
   const handleFieldChange = (moduleKey: string, field: 'title' | 'message', value: string) => {
@@ -240,7 +314,7 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
 
         {/* Selector de sede para admin_general */}
         {!propSchoolId && allSchools.length > 0 && (
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 space-y-4">
             <div className="flex items-center gap-3">
               <School className="h-5 w-5 text-amber-700 shrink-0" />
               <Select
@@ -256,6 +330,37 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* Botones globales para TODAS las sedes */}
+            <div className="border-2 border-dashed border-red-300 rounded-xl p-4 bg-red-50/50 space-y-3">
+              <div className="flex items-center gap-2">
+                <Globe className="h-5 w-5 text-red-600" />
+                <span className="font-semibold text-red-800 text-sm">Control Global — Todas las sedes ({allSchools.length})</span>
+              </div>
+              <p className="text-xs text-red-600">
+                Estos botones activan o desactivan el mantenimiento en <strong>TODAS</strong> las sedes a la vez, para todos los módulos.
+              </p>
+              <div className="flex gap-3">
+                <Button
+                  variant="destructive"
+                  className="flex-1 h-11 gap-2"
+                  disabled={togglingGlobal}
+                  onClick={() => handleGlobalToggle(true)}
+                >
+                  {togglingGlobal ? <Loader2 className="h-4 w-4 animate-spin" /> : <PowerOff className="h-4 w-4" />}
+                  Activar Mantenimiento en TODAS
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 h-11 gap-2 border-green-500 text-green-700 hover:bg-green-50"
+                  disabled={togglingGlobal}
+                  onClick={() => handleGlobalToggle(false)}
+                >
+                  {togglingGlobal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+                  Desactivar Mantenimiento en TODAS
+                </Button>
+              </div>
             </div>
           </CardContent>
         )}
