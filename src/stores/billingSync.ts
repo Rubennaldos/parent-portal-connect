@@ -139,11 +139,12 @@ export function useDebouncedSync(
   channel: BillingChannel | BillingChannel[],
   delayMs = 600
 ): number {
-  const channels = Array.isArray(channel) ? channel : [channel];
-  const rawTimestamps = useBillingSync((s) =>
-    channels.map((c) => s.channels[c])
-  );
-  const maxRaw = Math.max(...rawTimestamps);
+  const channelList = Array.isArray(channel) ? channel : [channel];
+
+  // Selector estable: extraer los timestamps como valores primitivos separados
+  // para que Zustand no cree un array nuevo en cada render
+  const allChannels = useBillingSync((s) => s.channels);
+  const maxRaw = Math.max(...channelList.map((c) => allChannels[c]));
 
   const [debounced, setDebounced] = useState(0);
   const initialRef = useRef(maxRaw);

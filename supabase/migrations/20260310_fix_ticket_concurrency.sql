@@ -5,9 +5,27 @@
 -- Dos cajeros presionando "COBRAR" al mismo milisegundo podían obtener
 -- el mismo número de ticket.
 --
--- Solución: Advisory lock por user_id + FOR UPDATE en el SELECT.
+-- Solución:
+-- 1. Reparar duplicados existentes añadiendo sufijo -DUP-N
+-- 2. Advisory lock + FOR UPDATE en la función
+-- 3. UNIQUE index parcial en ticket_code
 -- =====================================================================
 
+-- PASO 1: Reparar tickets duplicados existentes
+-- Mantiene el original (el más antiguo) y renombra los demás
+WITH duplicates AS (
+  SELECT id, ticket_code,
+         ROW_NUMBER() OVER (PARTITION BY ticket_code ORDER BY created_at ASC) AS rn
+  FROM transactions
+  WHERE ticket_code IS NOT NULL
+)
+UPDATE transactions t
+SET ticket_code = d.ticket_code || '-DUP-' || d.rn
+FROM duplicates d
+WHERE t.id = d.id
+  AND d.rn > 1;
+
+-- PASO 2: Función blindada
 CREATE OR REPLACE FUNCTION get_next_ticket_number(p_user_id UUID)
 RETURNS TEXT AS $$
 DECLARE
@@ -45,8 +63,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Constraint UNIQUE en ticket_code para protección a nivel de datos
--- (solo donde no es null, permitiendo transacciones sin ticket)
+-- PASO 3: Índice único (ahora sin duplicados)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -59,4 +76,4 @@ BEGIN
   END IF;
 END $$;
 
-SELECT '✅ get_next_ticket_number blindado con advisory lock + FOR UPDATE + UNIQUE index' as status;
+SELECT '✅ Duplicados reparados + función blindada + UNIQUE index creado' as status;
