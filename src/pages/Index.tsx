@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDebouncedSync } from '@/stores/billingSync';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -86,6 +87,7 @@ const Index = () => {
   const { user, signOut } = useAuth();
   const { toast } = useToast();
   const { isChecking } = useOnboardingCheck();
+  const balanceSyncTs = useDebouncedSync('balances', 800);
   
   const [students, setStudents] = useState<Student[]>([]);
   const [studentDebts, setStudentDebts] = useState<Record<string, number>>({}); // 💰 Deudas por estudiante
@@ -149,12 +151,20 @@ const Index = () => {
     fetchPendingPaymentsCount();
   }, [user]);
 
-  // 🔴 Refrescar contador de pagos pendientes cada 30 segundos
   useEffect(() => {
     if (!user) return;
     const interval = setInterval(fetchPendingPaymentsCount, 30000);
     return () => clearInterval(interval);
   }, [user]);
+
+  // Auto-refresh saldos y deudas cuando admin aprueba recarga/voucher (Realtime)
+  useEffect(() => {
+    if (balanceSyncTs > 0 && user) {
+      fetchStudents();
+      fetchPendingPaymentsCount();
+      toast({ title: '🔄 Datos actualizados', description: 'El saldo de tus hijos se actualizó.', duration: 4000 });
+    }
+  }, [balanceSyncTs]);
 
   const fetchParentProfile = async () => {
     if (!user) return;

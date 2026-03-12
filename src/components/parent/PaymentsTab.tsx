@@ -6,6 +6,7 @@ import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useDebouncedSync } from '@/stores/billingSync';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { RechargeModal } from './RechargeModal';
@@ -44,6 +45,7 @@ interface PaymentsTabProps {
 
 export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const { toast } = useToast();
+  const voucherSyncTs = useDebouncedSync('vouchers', 800);
   const [loading, setLoading] = useState(true);
   const [debts, setDebts] = useState<StudentDebt[]>([]);
   const [voucherStatuses, setVoucherStatuses] = useState<Map<string, VoucherStatus>>(new Map());
@@ -96,12 +98,19 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     fetchDebts();
   }, [userId]);
 
-  // 🔄 Refrescar deudas cada vez que la pestaña se activa
   useEffect(() => {
     if (isActive) {
       fetchDebts();
     }
   }, [isActive]);
+
+  // Auto-refresh cuando admin aprueba/rechaza voucher (Realtime desde otra PC)
+  useEffect(() => {
+    if (voucherSyncTs > 0) {
+      fetchDebts();
+      toast({ title: '🔄 Carrito actualizado', description: 'Un administrador procesó tu comprobante.', duration: 4000 });
+    }
+  }, [voucherSyncTs]);
 
   const fetchDebts = async () => {
     try {

@@ -1,13 +1,16 @@
 import { create } from 'zustand';
+import { useEffect, useRef, useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 /**
  * Store de sincronización entre componentes de billing.
  *
- * - Cada canal representa un "dominio" de datos.
- * - Cuando un componente muta datos, llama a `emit(canal)`.
- * - Otros componentes observan el timestamp y refrescan.
- * - BroadcastChannel sincroniza entre pestañas del mismo navegador.
- * - Los listeners deben usar `useDebouncedSync()` para colapsar ráfagas.
+ * 3 capas de propagación:
+ * 1. Zustand in-memory  → misma pestaña, instantáneo
+ * 2. BroadcastChannel   → otras pestañas del mismo navegador
+ * 3. Supabase Realtime   → otras PCs/redes (Postgres CDC)
+ *
+ * Los listeners usan `useDebouncedSync()` para colapsar ráfagas.
  */
 
 export type BillingChannel =
@@ -19,8 +22,12 @@ export type BillingChannel =
 
 interface BillingSyncState {
   channels: Record<BillingChannel, number>;
+  /** Timestamp de la última emisión LOCAL (para filtrar auto-origen en Realtime) */
+  _lastLocalEmit: number;
   emit: (channel: BillingChannel | BillingChannel[]) => void;
 }
+
+// ─── BroadcastChannel (misma PC, distinta pestaña) ─────────────────────────
 
 const BROADCAST_KEY = 'billing-sync';
 let bc: BroadcastChannel | null = null;
@@ -28,12 +35,58 @@ try {
   if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
     bc = new BroadcastChannel(BROADCAST_KEY);
   }
-} catch {
-  // BroadcastChannel not supported (SSR, old browsers)
+} catch { /* not supported */ }
+
+// ─── Supabase Realtime CDC (distinta PC / red) ─────────────────────────────
+
+const SELF_ORIGIN_WINDOW_MS = 2500;
+
+const TABLE_TO_CHANNELS: Record<string, BillingChannel[]> = {
+  transactions:       ['transactions', 'debtors', 'dashboard'],
+  recharge_requests:  ['vouchers', 'debtors', 'balances', 'dashboard'],
+  students:           ['balances'],
+};
+
+function initRealtimeSubscription() {
+  if (!supabase) return;
+
+  const channel = supabase.channel('billing-cdc', {
+    config: { broadcast: { self: false } },
+  });
+
+  for (const table of Object.keys(TABLE_TO_CHANNELS)) {
+    channel.on(
+      'postgres_changes' as any,
+      { event: '*', schema: 'public', table },
+      (payload: any) => {
+        const state = useBillingSync.getState();
+        const now = Date.now();
+
+        // Skip if this tab just emitted recently (self-origin guard)
+        if (now - state._lastLocalEmit < SELF_ORIGIN_WINDOW_MS) return;
+
+        const targetChannels = TABLE_TO_CHANNELS[payload.table] || [];
+        if (targetChannels.length === 0) return;
+
+        const patch = Object.fromEntries(targetChannels.map((c) => [c, now]));
+        useBillingSync.setState((prev) => ({
+          channels: { ...prev.channels, ...patch },
+        }));
+      }
+    );
+  }
+
+  channel.subscribe((status: string) => {
+    if (status === 'SUBSCRIBED') {
+      console.log('[BillingSync] Realtime CDC activo — transactions, recharge_requests, students');
+    }
+  });
 }
 
+// ─── Store ──────────────────────────────────────────────────────────────────
+
 export const useBillingSync = create<BillingSyncState>((set) => {
-  // Listen for emissions from OTHER tabs
+  // Listen for BroadcastChannel from other tabs
   if (bc) {
     bc.onmessage = (event) => {
       const incoming = event.data as Partial<Record<BillingChannel, number>>;
@@ -53,6 +106,7 @@ export const useBillingSync = create<BillingSyncState>((set) => {
       balances: 0,
       dashboard: 0,
     },
+    _lastLocalEmit: 0,
     emit: (channel) => {
       const now = Date.now();
       const list = Array.isArray(channel) ? channel : [channel];
@@ -60,27 +114,27 @@ export const useBillingSync = create<BillingSyncState>((set) => {
 
       set((state) => ({
         channels: { ...state.channels, ...patch },
+        _lastLocalEmit: now,
       }));
 
-      // Broadcast to other tabs
+      // Layer 2: Broadcast to other tabs on same browser
       if (bc) {
         try { bc.postMessage(patch); } catch { /* tab closed */ }
       }
+      // Layer 3 (Realtime) propagates automatically via Postgres CDC
     },
   };
 });
 
-/**
- * Hook de debounce para listeners de sync.
- * Colapsa múltiples emisiones rápidas en un solo refetch.
- * Retorna un timestamp que solo cambia después del debounce.
- *
- * Uso:
- *   const debouncedTs = useDebouncedSync('debtors', 500);
- *   useEffect(() => { if (debouncedTs > 0) refetch(); }, [debouncedTs]);
- */
-import { useEffect, useRef, useState } from 'react';
+// Boot Realtime on first import
+initRealtimeSubscription();
 
+// ─── Debounced listener hook ────────────────────────────────────────────────
+
+/**
+ * Colapsa múltiples emisiones rápidas en un solo refetch.
+ * Retorna un timestamp > 0 solo cuando hay un cambio real (no en mount).
+ */
 export function useDebouncedSync(
   channel: BillingChannel | BillingChannel[],
   delayMs = 600
@@ -96,7 +150,6 @@ export function useDebouncedSync(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Skip initial mount
     if (maxRaw === initialRef.current) return;
 
     if (timerRef.current) clearTimeout(timerRef.current);
