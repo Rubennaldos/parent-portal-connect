@@ -332,35 +332,53 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
               </Select>
             </div>
 
-            {/* Botones globales para TODAS las sedes */}
-            <div className="border-2 border-dashed border-red-300 rounded-xl p-4 bg-red-50/50 space-y-3">
-              <div className="flex items-center gap-2">
-                <Globe className="h-5 w-5 text-red-600" />
-                <span className="font-semibold text-red-800 text-sm">Control Global — Todas las sedes ({allSchools.length})</span>
+            {/* Toggle global único para TODAS las sedes */}
+            <div className={`border-2 rounded-xl p-4 space-y-3 transition-colors ${
+              allSchools.length > 0 && configs[AVAILABLE_MODULES[0].key]?.enabled
+                ? 'border-red-400 bg-red-50'
+                : 'border-green-400 bg-green-50'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className={`h-5 w-5 ${
+                    configs[AVAILABLE_MODULES[0].key]?.enabled ? 'text-red-600' : 'text-green-600'
+                  }`} />
+                  <div>
+                    <span className={`font-semibold text-sm ${
+                      configs[AVAILABLE_MODULES[0].key]?.enabled ? 'text-red-800' : 'text-green-800'
+                    }`}>
+                      Control Global — {allSchools.length} sedes
+                    </span>
+                    <p className={`text-xs mt-0.5 ${
+                      configs[AVAILABLE_MODULES[0].key]?.enabled ? 'text-red-600' : 'text-green-600'
+                    }`}>
+                      {configs[AVAILABLE_MODULES[0].key]?.enabled
+                        ? '🔧 Mantenimiento ACTIVO en todas las sedes'
+                        : '✅ Todas las sedes operativas'}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant={configs[AVAILABLE_MODULES[0].key]?.enabled ? 'destructive' : 'outline'}
+                  className={`h-11 px-6 gap-2 font-semibold transition-all ${
+                    !configs[AVAILABLE_MODULES[0].key]?.enabled
+                      ? 'border-green-500 text-green-700 hover:bg-green-100'
+                      : ''
+                  }`}
+                  disabled={togglingGlobal}
+                  onClick={() => handleGlobalToggle(!configs[AVAILABLE_MODULES[0].key]?.enabled)}
+                >
+                  {togglingGlobal
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : configs[AVAILABLE_MODULES[0].key]?.enabled
+                      ? <><PowerOff className="h-4 w-4" /> Desactivar todo</>
+                      : <><Power className="h-4 w-4" /> Activar en todas</>
+                  }
+                </Button>
               </div>
-              <p className="text-xs text-red-600">
-                Estos botones activan o desactivan el mantenimiento en <strong>TODAS</strong> las sedes a la vez, para todos los módulos.
+              <p className="text-xs text-gray-500">
+                Activa o desactiva el mantenimiento en <strong>todas las sedes</strong> simultáneamente para todos los módulos.
               </p>
-              <div className="flex gap-3">
-                <Button
-                  variant="destructive"
-                  className="flex-1 h-11 gap-2"
-                  disabled={togglingGlobal}
-                  onClick={() => handleGlobalToggle(true)}
-                >
-                  {togglingGlobal ? <Loader2 className="h-4 w-4 animate-spin" /> : <PowerOff className="h-4 w-4" />}
-                  Activar Mantenimiento en TODAS
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1 h-11 gap-2 border-green-500 text-green-700 hover:bg-green-50"
-                  disabled={togglingGlobal}
-                  onClick={() => handleGlobalToggle(false)}
-                >
-                  {togglingGlobal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-                  Desactivar Mantenimiento en TODAS
-                </Button>
-              </div>
             </div>
           </CardContent>
         )}

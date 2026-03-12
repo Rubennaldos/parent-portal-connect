@@ -169,81 +169,74 @@ const Index = () => {
   const fetchParentProfile = async () => {
     if (!user) return;
     try {
-      // Obtener nombre del responsable de pago principal desde parent_profiles
-      const { data: parentProfileData, error: parentProfileError } = await supabase
+      // Siempre obtener school_id desde profiles (fuente de verdad)
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name, school_id')
+        .eq('id', user.id)
+        .single();
+
+      // Intentar obtener nombre/consent desde parent_profiles
+      const { data: parentData } = await supabase
         .from('parent_profiles')
         .select('full_name, photo_consent')
         .eq('user_id', user.id)
         .maybeSingle();
-      
-      // Si existe el nombre en parent_profiles, usarlo (prioridad)
-      if (parentProfileData && parentProfileData.full_name) {
-        setParentName(parentProfileData.full_name);
-        setParentProfileData(parentProfileData); // Guardar datos completos en el estado
-        
-        // Verificar consentimiento de fotos
-        if (parentProfileData.photo_consent === true) {
-          setPhotoConsentAccepted(true);
-          console.log('✅ Photo consent already accepted');
-        } else {
-          console.log('⚠️ Photo consent not found or not accepted');
-        }
-      } else {
-        // Fallback: obtener nombre del perfil básico
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('full_name, school_id')
-          .eq('id', user.id)
-          .single();
-        
-        if (profileData) {
-          if (profileData.full_name) {
-            setParentName(profileData.full_name);
-          }
-          setParentProfileData(profileData); // Guardar datos del perfil básico
-        }
-      }
+
+      // Combinar: school_id siempre de profiles, nombre preferido de parent_profiles
+      const combined = {
+        school_id: profileData?.school_id || null,
+        full_name: parentData?.full_name || profileData?.full_name || '',
+        photo_consent: parentData?.photo_consent || false,
+      };
+
+      setParentProfileData(combined);
+      if (combined.full_name) setParentName(combined.full_name);
+      if (combined.photo_consent) setPhotoConsentAccepted(true);
     } catch (e) {
       console.error("Error fetching parent profile:", e);
     }
   };
 
   // 🔧 Verificar modo mantenimiento para los módulos del padre
-  const fetchMaintenanceConfig = async () => {
+  const fetchMaintenanceConfig = async (schoolIdOverride?: string) => {
     if (!user) return;
     try {
-      // Obtener school_id del padre
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('school_id')
-        .eq('id', user.id)
-        .single();
+      // Usar school_id del estado si ya fue cargado, sino hacer query
+      let schoolId = schoolIdOverride || parentProfileData?.school_id;
 
-      if (!profile?.school_id) return;
+      if (!schoolId) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('school_id')
+          .eq('id', user.id)
+          .single();
+        schoolId = profile?.school_id;
+      }
 
-      // Obtener configs de mantenimiento para esa sede
+      if (!schoolId) return;
+
       const { data: configs, error } = await supabase
         .from('maintenance_config')
         .select('module_key, enabled, title, message, bypass_emails')
-        .eq('school_id', profile.school_id)
+        .eq('school_id', schoolId)
         .eq('enabled', true);
 
       if (error) throw error;
-      if (!configs || configs.length === 0) {
-        setMaintenanceAlmuerzos(null);
-        setMaintenancePagos(null);
-        return;
-      }
+
+      // Reset primero
+      setMaintenanceAlmuerzos(null);
+      setMaintenancePagos(null);
+
+      if (!configs || configs.length === 0) return;
 
       const userEmail = user.email?.toLowerCase() || '';
 
       configs.forEach((cfg: any) => {
-        // Si el correo del padre está en bypass → NO mostrar mantenimiento
         const isBypassed = (cfg.bypass_emails || []).some(
           (e: string) => e.toLowerCase() === userEmail
         );
-
-        if (isBypassed) return; // bypass → módulo normal
+        if (isBypassed) return;
 
         if (cfg.module_key === 'almuerzos_padres') {
           setMaintenanceAlmuerzos({ title: cfg.title, message: cfg.message });
@@ -263,6 +256,38 @@ const Index = () => {
       fetchMaintenanceConfig();
     }
   }, [user]);
+
+  // Re-verificar mantenimiento cuando se carga parentProfileData (ya tiene school_id)
+  useEffect(() => {
+    if (user && parentProfileData?.school_id) {
+      fetchMaintenanceConfig(parentProfileData.school_id);
+    }
+  }, [parentProfileData?.school_id]);
+
+  // Realtime: detectar cambios en maintenance_config para bloqueo instantáneo
+  useEffect(() => {
+    if (!user || !parentProfileData?.school_id) return;
+
+    const channel = supabase
+      .channel('parent-maintenance-watch')
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'maintenance_config',
+          filter: `school_id=eq.${parentProfileData.school_id}`,
+        },
+        () => {
+          fetchMaintenanceConfig(parentProfileData.school_id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, parentProfileData?.school_id]);
 
   const checkOnboardingStatus = async () => {
     if (!user) return;
