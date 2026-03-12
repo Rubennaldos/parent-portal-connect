@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import { useBillingSync } from '@/stores/billingSync';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -121,6 +122,8 @@ export const SalesList = () => {
   const { user } = useAuth();
   const { role, canViewAllSchools: canViewAllSchoolsFromHook } = useRole();
   const { toast } = useToast();
+  const emitSync = useBillingSync((s) => s.emit);
+  const syncTransactions = useBillingSync((s) => s.channels.transactions);
   
   // Permisos del módulo de ventas
   const [permissions, setPermissions] = useState({
@@ -202,7 +205,18 @@ export const SalesList = () => {
     if (!permissions.loading && permissions.canView) {
       fetchTransactions();
     }
-  }, [activeTab, selectedDate, selectedSchool, userSchoolId, permissions.loading, permissions.canView]); // ✅ Agregar userSchoolId
+  }, [activeTab, selectedDate, selectedSchool, userSchoolId, permissions.loading, permissions.canView]);
+
+  // Auto-refresh cuando otro componente muta transacciones (VoucherApproval, BillingCollection, etc.)
+  const initialSyncTx = useRef(syncTransactions);
+  useEffect(() => {
+    if (syncTransactions === initialSyncTx.current) return;
+    initialSyncTx.current = syncTransactions;
+    if (!permissions.loading && permissions.canView) {
+      fetchTransactions();
+      toast({ title: '🔄 Ventas actualizadas', description: 'Se detectaron cambios en transacciones.', duration: 3000 });
+    }
+  }, [syncTransactions]);
 
   const checkPermissions = async () => {
     if (!user || !role) {
@@ -730,6 +744,7 @@ export const SalesList = () => {
       setShowAnnul(false);
       setRefundMethod('');
       fetchTransactions();
+      emitSync(['debtors', 'balances', 'dashboard']);
     } catch (error: any) {
       console.error('Error annulling sale:', error);
       toast({

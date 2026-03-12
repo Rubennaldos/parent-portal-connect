@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
 import { useViewAsStore } from '@/stores/viewAsStore';
+import { useBillingSync } from '@/stores/billingSync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +108,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
+  const emitSync = useBillingSync((s) => s.emit);
+  const syncDebtors = useBillingSync((s) => s.channels.debtors);
+  const syncTransactions = useBillingSync((s) => s.channels.transactions);
 
   const isLunchTx = (t: any): boolean => {
     if (t.metadata?.lunch_order_id) return true;
@@ -304,6 +308,24 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       // esperando userSchoolId
     }
   }, [selectedSchool, userSchoolId, canViewAllSchools, untilDate]);
+
+  // Auto-refresh cuando otro componente muta datos (VoucherApproval, SalesList, etc.)
+  const initialSyncRef = useRef({ debtors: syncDebtors, transactions: syncTransactions });
+  useEffect(() => {
+    if (syncDebtors === initialSyncRef.current.debtors && syncTransactions === initialSyncRef.current.transactions) return;
+    const isDebtorsChanged = syncDebtors !== initialSyncRef.current.debtors;
+    const isTransactionsChanged = syncTransactions !== initialSyncRef.current.transactions;
+    initialSyncRef.current = { debtors: syncDebtors, transactions: syncTransactions };
+
+    if (isDebtorsChanged && activeTab === 'cobrar') {
+      fetchDebtors();
+      toast({ title: '🔄 Datos actualizados', description: 'La lista de deudores se actualizó automáticamente.', duration: 3000 });
+    }
+    if (isTransactionsChanged && activeTab === 'pagos') {
+      fetchPaidTransactions();
+      toast({ title: '🔄 Datos actualizados', description: 'Los pagos se actualizaron automáticamente.', duration: 3000 });
+    }
+  }, [syncDebtors, syncTransactions]);
 
   const fetchSchools = async () => {
     try {
@@ -1371,6 +1393,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       
       // Recargar deudores para actualizar la lista
       await fetchDebtors();
+      emitSync(['transactions', 'balances', 'dashboard', 'vouchers']);
     } catch (error: any) {
       console.error('Error registering payment:', error);
       toast({

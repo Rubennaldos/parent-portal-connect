@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
+import { useBillingSync } from '@/stores/billingSync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -74,6 +75,7 @@ export const VoucherApproval = () => {
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
+  const emitSync = useBillingSync((s) => s.emit);
 
   const [requests, setRequests] = useState<RechargeRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -714,6 +716,7 @@ export const VoucherApproval = () => {
       }
 
       fetchRequests();
+      emitSync(['debtors', 'transactions', 'balances', 'dashboard']);
     } catch (err: any) {
       console.error('Error al aprobar:', err);
       toast({ title: 'Error al aprobar', description: err.message, variant: 'destructive' });
@@ -812,6 +815,7 @@ export const VoucherApproval = () => {
 
       setShowRejectInput((prev) => ({ ...prev, [req.id]: false }));
       fetchRequests();
+      emitSync(['debtors', 'dashboard']);
     } catch (err: any) {
       toast({ title: 'Error al rechazar', description: err.message, variant: 'destructive' });
     } finally {
