@@ -102,6 +102,8 @@ export function RechargeModal({
   breakdownItems,
   combinedStudentIds,
 }: RechargeModalProps) {
+  const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
+
   const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -119,6 +121,7 @@ export function RechargeModal({
   const [voucherPreview, setVoucherPreview] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -221,6 +224,9 @@ export function RechargeModal({
 
   const handleSubmit = async () => {
     if (!user) return;
+    if (loading) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
 
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
@@ -430,8 +436,8 @@ export function RechargeModal({
       });
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
-  };
 
   // ── Copiar al portapapeles con feedback visual ──
   const handleCopy = (text: string, fieldKey: string) => {
@@ -1547,6 +1553,31 @@ export function RechargeModal({
       </Button>
     </div>
   );
+
+  if (RECHARGES_MAINTENANCE && requestType === 'recharge') {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-sm">
+          <div className="text-center space-y-4 py-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle className="h-8 w-8 text-amber-600" />
+            </div>
+            <h3 className="text-lg font-bold text-gray-900">Recargas en mantenimiento</h3>
+            <p className="text-sm text-gray-600">
+              El módulo de recargas está temporalmente suspendido mientras lo mejoramos.
+              Su saldo actual sigue activo para compras en el kiosco.
+            </p>
+            <p className="text-xs text-gray-500">
+              Para consultas: <strong>991 236 870</strong> (WhatsApp)
+            </p>
+            <Button onClick={onClose} className="w-full h-10 bg-amber-600 hover:bg-amber-700">
+              Entendido
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

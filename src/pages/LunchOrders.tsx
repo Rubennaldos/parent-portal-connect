@@ -432,6 +432,7 @@ export default function LunchOrders() {
               .from('transactions')
               .select('metadata, ticket_code, payment_status, payment_method, amount')
               .eq('type', 'purchase')
+              .eq('is_deleted', false)
               .neq('payment_status', 'cancelled')
               .not('metadata', 'is', null)
               .order('created_at', { ascending: false })

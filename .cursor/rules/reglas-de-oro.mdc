@@ -178,3 +178,28 @@ NUNCA hacer: leer saldo → calcular → escribir saldo (esto causa duplicados y
 ❌ MAL:  const balance = student.balance; update({ balance: balance + 50 })
 ✅ BIEN: supabase.rpc('adjust_student_balance', { p_student_id, p_amount: 50 })
 ```
+
+---
+
+## REGLA #10 — Flag de mantenimiento de recargas (RECHARGES_MAINTENANCE)
+
+Cuando `RECHARGES_MAINTENANCE = true` en StudentCard, RechargeModal y SpendingLimitsModal:
+
+```
+- NO se pueden hacer nuevas recargas (botón oculto, modal bloqueado)
+- NO se pueden configurar topes ni tipo de cuenta (botón oculto, modal bloqueado)
+- El saldo existente SIGUE funcionando en POS — los niños siguen comprando
+- Los almuerzos NO se ven afectados (como siempre, Regla #1)
+- Se muestra un banner informativo al padre con su saldo actual
+- Se muestra un modal con datos de contacto para devoluciones (991 236 870)
+
+Para REACTIVAR:
+1. Cambiar RECHARGES_MAINTENANCE = false en los 3 archivos
+2. Hacer deploy
+3. Verificar que los botones vuelvan a aparecer
+```
+
+**Archivos con el flag:**
+- `src/components/parent/StudentCard.tsx`
+- `src/components/parent/RechargeModal.tsx`
+- `src/components/parent/SpendingLimitsModal.tsx`

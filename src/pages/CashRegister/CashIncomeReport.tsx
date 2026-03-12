@@ -119,6 +119,7 @@ export default function CashIncomeReport({ cashRegister }: Props) {
         .select('id, created_at, amount, payment_method, payment_status, description, ticket_code, metadata, paid_with_mixed, cash_amount, card_amount, yape_amount')
         .eq('school_id', cashRegister.school_id)
         .in('type', ['purchase', 'recharge'])
+        .eq('is_deleted', false)
         .not('payment_status', 'eq', 'cancelled')
         .gte('created_at', `${dayStr}T00:00:00-05:00`)
         .lte('created_at', `${dayStr}T23:59:59-05:00`)

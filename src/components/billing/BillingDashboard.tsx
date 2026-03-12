@@ -236,7 +236,8 @@ export const BillingDashboard = () => {
             .from('transactions')
             .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
             .in('payment_status', ['pending', 'partial'])
-            .eq('type', 'purchase');
+            .eq('type', 'purchase')
+            .eq('is_deleted', false);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -260,6 +261,7 @@ export const BillingDashboard = () => {
             .select('metadata, created_at, description, student_id, teacher_id, manual_client_name')
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
+            .eq('is_deleted', false)
             .not('metadata->>lunch_order_id', 'is', null);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
@@ -272,6 +274,7 @@ export const BillingDashboard = () => {
             .select('amount, payment_method, created_at, school_id, schools(name)')
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
+            .eq('is_deleted', false)
             .gte('created_at', monthStart.toISOString());
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
@@ -572,6 +575,7 @@ export const BillingDashboard = () => {
             .from('transactions')
             .select('amount, metadata, created_at')
             .eq('payment_status', 'cancelled')
+            .eq('is_deleted', false)
             .eq('metadata->>requires_refund', 'true');
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);

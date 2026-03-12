@@ -468,7 +468,12 @@ export const VoucherApproval = () => {
             }
 
             // 🔑 PASO 3: Actualizar cada transacción con metadata mergeada
+            const successfullyUpdatedIds: string[] = [];
             for (const tx of (currentTxs || [])) {
+              if (tx.payment_status === 'paid') {
+                console.log(`⏭️ Tx ${tx.id} ya está pagada, saltando`);
+                continue;
+              }
               const { error: updateErr } = await supabase
                 .from('transactions')
                 .update({
@@ -476,13 +481,24 @@ export const VoucherApproval = () => {
                   payment_method: req.payment_method,
                   metadata: { ...(tx.metadata || {}), ...paymentMeta, last_payment_rejected: false },
                 })
-                .eq('id', tx.id);
+                .eq('id', tx.id)
+                .eq('payment_status', 'pending');
 
               if (updateErr) {
                 console.error(`❌ Error actualizando tx ${tx.id}:`, updateErr);
                 failedCount++;
+                // ROLLBACK: revertir transacciones ya marcadas como pagadas
+                if (successfullyUpdatedIds.length > 0) {
+                  console.warn(`⚠️ ROLLBACK: revirtiendo ${successfullyUpdatedIds.length} transacciones`);
+                  await supabase
+                    .from('transactions')
+                    .update({ payment_status: 'pending', payment_method: null })
+                    .in('id', successfullyUpdatedIds);
+                }
+                throw new Error(`Fallo al actualizar transacción ${tx.id}. Se revirtieron ${successfullyUpdatedIds.length} transacciones previas.`);
               } else {
                 updatedCount++;
+                successfullyUpdatedIds.push(tx.id);
               }
             }
           }
@@ -545,10 +561,32 @@ export const VoucherApproval = () => {
         }
       } else {
         // ── RECARGA DE SALDO ──
-        // El padre eligió explícitamente recargar → pasa automáticamente a modo "Con Recargas"
+        // Obtener school_id del estudiante si no viene en la request
+        let schoolId = req.school_id;
+        if (!schoolId) {
+          const { data: studentData } = await supabase
+            .from('students')
+            .select('school_id')
+            .eq('id', req.student_id)
+            .single();
+          schoolId = studentData?.school_id || null;
+        }
+
+        // 🔒 PASO 1: Sumar saldo PRIMERO (si falla, no queda transacción huérfana)
+        const { data: balanceAfterRecharge, error: rpcErr } = await supabase
+          .rpc('adjust_student_balance', {
+            p_student_id: req.student_id,
+            p_amount: req.amount,
+          });
+
+        if (rpcErr) throw rpcErr;
+
+        const currentBalance = balanceAfterRecharge ?? 0;
+
+        // 🔒 PASO 2: Insertar transacción DESPUÉS del balance
         const { error: txErr } = await supabase.from('transactions').insert({
           student_id: req.student_id,
-          school_id: req.school_id,
+          school_id: schoolId,
           type: 'recharge',
           amount: req.amount,
           description: `Recarga aprobada — ${METHOD_LABELS[req.payment_method] || req.payment_method}${req.reference_code ? ` (Ref: ${req.reference_code})` : ''}`,
@@ -564,18 +602,14 @@ export const VoucherApproval = () => {
           },
         });
 
-        if (txErr) throw txErr;
-
-        // 🔒 ATÓMICO: Sumar la recarga al saldo usando RPC (evita race conditions)
-        const { data: balanceAfterRecharge, error: rpcErr } = await supabase
-          .rpc('adjust_student_balance', {
+        if (txErr) {
+          // ROLLBACK: Revertir el saldo porque la transacción no se pudo crear
+          await supabase.rpc('adjust_student_balance', {
             p_student_id: req.student_id,
-            p_amount: req.amount,
+            p_amount: -req.amount,
           });
-
-        if (rpcErr) throw rpcErr;
-
-        const currentBalance = balanceAfterRecharge ?? 0;
+          throw txErr;
+        }
 
         // Activar modo "Con Recargas"
         await supabase
@@ -612,28 +646,56 @@ export const VoucherApproval = () => {
         }
 
         if (txsToSettle.length > 0) {
-          const { error: settleErr } = await supabase
-            .from('transactions')
-            .update({
-              payment_status: 'paid',
-              payment_method: 'saldo',
-            })
-            .in('id', txsToSettle)
-            .eq('payment_status', 'pending');
-
-          if (settleErr) {
-            console.error('❌ Error auto-saldando deudas:', settleErr);
-          } else {
-            console.log(`✅ Auto-saldado: ${txsToSettle.length} deuda(s) por S/ ${totalSaldado.toFixed(2)}`);
-          }
-
-          // Ajustar balance atómicamente por el monto saldado
+          // Primero descontar saldo (si falla, las deudas quedan pendientes = seguro)
           const { error: adjErr } = await supabase
             .rpc('adjust_student_balance', {
               p_student_id: req.student_id,
               p_amount: -totalSaldado,
             });
-          if (adjErr) console.error('❌ Error ajustando balance por auto-saldo:', adjErr);
+          
+          if (adjErr) {
+            console.error('❌ Error ajustando balance por auto-saldo:', adjErr);
+          } else {
+            // Solo si el descuento fue exitoso, marcar deudas como pagadas
+            // El .eq('payment_status', 'pending') evita marcar deudas ya saldadas por otra aprobación concurrente
+            const { data: settledRows, error: settleErr } = await supabase
+              .from('transactions')
+              .update({
+                payment_status: 'paid',
+                payment_method: 'saldo',
+              })
+              .in('id', txsToSettle)
+              .eq('payment_status', 'pending')
+              .select('id, amount');
+
+            if (settleErr) {
+              console.error('❌ Error auto-saldando deudas:', settleErr);
+              // Revertir el descuento completo porque no se pudieron marcar las deudas
+              await supabase.rpc('adjust_student_balance', {
+                p_student_id: req.student_id,
+                p_amount: totalSaldado,
+              });
+            } else {
+              // Verificar cuántas deudas se saldaron REALMENTE (protección contra race condition)
+              const realSettledAmount = (settledRows || []).reduce(
+                (sum: number, tx: any) => sum + Math.abs(tx.amount), 0
+              );
+              const overpaid = totalSaldado - realSettledAmount;
+
+              if (overpaid > 0.01) {
+                // Otra aprobación concurrente ya saldó algunas deudas → devolver el exceso
+                console.warn(`⚠️ Race condition detectada: se descontaron S/ ${totalSaldado} pero solo se saldaron S/ ${realSettledAmount}. Devolviendo S/ ${overpaid.toFixed(2)}`);
+                await supabase.rpc('adjust_student_balance', {
+                  p_student_id: req.student_id,
+                  p_amount: overpaid,
+                });
+                totalSaldado = realSettledAmount;
+              }
+
+              console.log(`✅ Auto-saldado: ${(settledRows || []).length} deuda(s) por S/ ${totalSaldado.toFixed(2)}`);
+            }
+          }
+
           finalBalance = currentBalance - totalSaldado;
         }
 
@@ -665,8 +727,7 @@ export const VoucherApproval = () => {
     const reason = rejectionReason[req.id]?.trim();
     setProcessingId(req.id);
     try {
-      // 1. Actualizar estado de la solicitud
-      const { error } = await supabase
+      const { data: rejectResult, error } = await supabase
         .from('recharge_requests')
         .update({
           status: 'rejected',
@@ -674,7 +735,19 @@ export const VoucherApproval = () => {
           approved_by: user.id,
           approved_at: new Date().toISOString(),
         })
-        .eq('id', req.id);
+        .eq('id', req.id)
+        .eq('status', 'pending')
+        .select('id');
+
+      if (!rejectResult || rejectResult.length === 0) {
+        toast({
+          title: 'Ya fue procesado',
+          description: 'Este comprobante ya fue aprobado o rechazado por otro administrador.',
+        });
+        fetchRequests();
+        setProcessingId(null);
+        return;
+      }
 
       if (error) throw error;
 

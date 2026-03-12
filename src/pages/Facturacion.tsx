@@ -41,8 +41,8 @@ const InvoiceSummary = () => {
         setStats({
           totalEmitido: rows.filter(r => r.sunat_status === 'accepted').reduce((s, r) => s + r.total_amount, 0),
           totalIGV:     rows.filter(r => r.sunat_status === 'accepted').reduce((s, r) => s + r.igv_amount, 0),
-          boletas:      rows.filter(r => r.invoice_type === 'boleta').length,
-          facturas:     rows.filter(r => r.invoice_type === 'factura').length,
+          boletas:      rows.filter(r => r.invoice_type === 'boleta' && r.sunat_status !== 'cancelled').length,
+          facturas:     rows.filter(r => r.invoice_type === 'factura' && r.sunat_status !== 'cancelled').length,
           notas:        rows.filter(r => r.invoice_type === 'nota_credito').length,
           aceptadas:    rows.filter(r => r.sunat_status === 'accepted').length,
           rechazadas:   rows.filter(r => r.sunat_status === 'rejected').length,

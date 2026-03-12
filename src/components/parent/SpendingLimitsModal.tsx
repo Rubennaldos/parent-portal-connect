@@ -102,11 +102,12 @@ export function SpendingLimitsModal({
       const todayStr = new Date().toISOString().split('T')[0];
       const { data: todayData } = await supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, metadata, is_deleted, payment_status')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .gte('created_at', todayStr);
-      // Excluir almuerzos del cálculo de topes
       const today = (todayData || [])
         .filter(t => !(t.metadata as any)?.lunch_order_id)
         .reduce((sum, t) => sum + Math.abs(t.amount), 0);
@@ -117,9 +118,11 @@ export function SpendingLimitsModal({
       startOfWeek.setHours(0, 0, 0, 0);
       const { data: weekData } = await supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, metadata, is_deleted, payment_status')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .gte('created_at', startOfWeek.toISOString());
       const week = (weekData || [])
         .filter(t => !(t.metadata as any)?.lunch_order_id)
@@ -131,9 +134,11 @@ export function SpendingLimitsModal({
       startOfMonth.setHours(0, 0, 0, 0);
       const { data: monthData } = await supabase
         .from('transactions')
-        .select('amount, metadata')
+        .select('amount, metadata, is_deleted, payment_status')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .gte('created_at', startOfMonth.toISOString());
       const month = (monthData || [])
         .filter(t => !(t.metadata as any)?.lunch_order_id)
@@ -206,11 +211,37 @@ export function SpendingLimitsModal({
   };
 
   const limitOptions = [
-    { value: 'none',    label: 'Sin tope',      icon: Infinity,     description: 'Compra libre (Recomendado)', color: 'text-emerald-500', spent: undefined },
+    { value: 'none',    label: 'Sin tope',      icon: Infinity,     description: 'Compra libre', color: 'text-emerald-500', spent: undefined },
     { value: 'daily',   label: 'Tope Diario',   icon: Calendar,     description: 'Control día a día',         color: 'text-blue-600',    spent: spentToday },
     { value: 'weekly',  label: 'Tope Semanal',  icon: CalendarDays, description: 'Control por semana',        color: 'text-purple-600',  spent: spentThisWeek },
     { value: 'monthly', label: 'Tope Mensual',  icon: TrendingUp,   description: 'Control por mes',           color: 'text-orange-600',  spent: spentThisMonth },
   ];
+
+  const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
+
+  if (RECHARGES_MAINTENANCE) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-sm">
+          <div className="text-center space-y-4 py-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle className="h-8 w-8 text-amber-600" />
+            </div>
+            <h3 className="text-lg font-bold text-gray-900">Configuración en mantenimiento</h3>
+            <p className="text-sm text-gray-600">
+              La configuración de topes y tipo de cuenta está temporalmente suspendida mientras mejoramos el sistema.
+            </p>
+            <p className="text-xs text-gray-500">
+              Para consultas: <strong>991 236 870</strong> (WhatsApp)
+            </p>
+            <Button onClick={() => onOpenChange(false)} className="w-full h-10 bg-amber-600 hover:bg-amber-700 text-white">
+              Entendido
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   if (loading) {
     return (
@@ -245,11 +276,11 @@ export function SpendingLimitsModal({
 
         <div className="space-y-5 px-4 sm:px-6 pb-6">
 
-          {/* ═══════════════ SECCIÓN 1: MÉTODO DE TRABAJO ═══════════════ */}
+          {/* ═══════════════ SECCIÓN 1: TIPO DE CUENTA ═══════════════ */}
           <div className="rounded-xl border-2 border-stone-200 bg-gradient-to-br from-stone-50/30 to-blue-50/10 p-4">
             <Label className="font-semibold text-[10px] sm:text-xs text-stone-700 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Wallet className="h-3.5 w-3.5" />
-              Método de Trabajo
+              Tipo de Cuenta
             </Label>
             <div className="grid grid-cols-2 gap-3">
               {/* Opción: Cuenta Libre */}
@@ -395,7 +426,7 @@ export function SpendingLimitsModal({
             )}
           </div>
 
-          {/* ── Kiosco ── */}
+          {/* ═══════════════ SECCIÓN 3: ACCESO AL KIOSCO ═══════════════ */}
           <div className={`rounded-xl border-2 p-4 transition-all ${
             kioskDisabled ? 'border-red-300 bg-red-50' : 'border-stone-200 bg-stone-50/50'
           }`}>

@@ -386,7 +386,7 @@ export const SalesList = () => {
           teacher:teacher_profiles(id, full_name),
           school:schools(id, name, code)
         `)
-        .eq('type', 'purchase') // ✅ VENTAS DEL POS (registradas como 'purchase' en BD)
+        .eq('type', 'purchase')
         .gte('created_at', startDate)
         .lte('created_at', endDate)
         .order('created_at', { ascending: false });
@@ -416,9 +416,9 @@ export const SalesList = () => {
 
       // Filtrar según pestaña
       if (activeTab === 'deleted') {
-        query = query.eq('payment_status', 'cancelled');
+        query = query.or('payment_status.eq.cancelled,is_deleted.eq.true');
       } else if (activeTab === 'today') {
-        query = query.neq('payment_status', 'cancelled');
+        query = query.eq('is_deleted', false).neq('payment_status', 'cancelled');
       }
 
       const { data, error } = await query;
@@ -838,7 +838,9 @@ export const SalesList = () => {
   });
 
   const getTotalSales = () => {
-    return filteredTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    return filteredTransactions
+      .filter(t => !t.is_deleted && t.payment_status !== 'cancelled')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
   };
 
   // Mostrar loading mientras verifica permisos
@@ -1231,7 +1233,7 @@ export const SalesList = () => {
                               </Button>
 
                               {/* Botón Reimprimir */}
-                              {permissions.canPrint && (
+                              {permissions.canPrint && t.payment_status !== 'cancelled' && !t.is_deleted && (
                                 <Button 
                                   variant="outline" 
                                   size="sm"

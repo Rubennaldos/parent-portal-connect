@@ -100,5 +100,5 @@ SELECT
   'V5 timezone fix aplicada' AS status,
   calculate_daily_totals(
     '8a0dbd73-0571-4db1-af5c-65f4948c4c98'::uuid,
-    CURRENT_DATE AT TIME ZONE 'America/Lima'
+    (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date
   ) AS resultado;

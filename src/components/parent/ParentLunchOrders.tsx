@@ -229,6 +229,8 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
           .from('transactions')
           .select('metadata, ticket_code, payment_status')
           .eq('type', 'purchase')
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled')
           .not('metadata', 'is', null);
 
         if (txData) {

@@ -528,9 +528,8 @@ const POS = () => {
           // Verificar si se puede hacer checkout
           const canProceed = 
             (clientMode === 'generic') || 
-            (clientMode === 'student' && selectedStudent && (
-              selectedStudent.free_account || selectedStudent.balance >= getTotal()
-            ));
+            (clientMode === 'student' && selectedStudent && canCheckout()) ||
+            (clientMode === 'teacher' && selectedTeacher);
           
           if (canProceed) {
             handleCheckoutClick();
@@ -950,8 +949,8 @@ const POS = () => {
       };
     }
 
-    // 1. Cuenta Libre
-    if (student.free_account) {
+    // 1. Cuenta Libre (free_account = true o null)
+    if (student.free_account !== false) {
       const balance = student.balance || 0;
       const limitText = student.daily_limit && student.daily_limit > 0 
         ? `Tope: S/ ${student.daily_limit.toFixed(2)}`
@@ -992,7 +991,9 @@ const POS = () => {
           .select('amount, metadata, created_at')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .gte('created_at', startOfMonth.toISOString());
+          .gte('created_at', startOfMonth.toISOString())
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled');
 
         const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
 
@@ -1084,7 +1085,9 @@ const POS = () => {
         .select('amount, metadata, created_at')
         .eq('student_id', student.id)
         .eq('type', 'purchase')
-        .gte('created_at', startOfMonth.toISOString());
+        .gte('created_at', startOfMonth.toISOString())
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled');
 
       const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
 
@@ -1427,30 +1430,13 @@ const POS = () => {
     if (!clientMode) return false;
     if (cart.length === 0) return false;
     
-    // Si es estudiante
     if (clientMode === 'student' && selectedStudent) {
-      // Cuenta libre (free_account = true o null) → siempre puede comprar
+      // Cuenta libre (free_account = true o null) → siempre puede comprar (genera deuda si no tiene saldo)
       if (selectedStudent.free_account !== false) {
         return true;
       }
-      // Tiene saldo suficiente → puede comprar
+      // Con Recargas (free_account = false) → REQUIERE saldo suficiente, nunca genera deuda
       if (selectedStudent.balance >= getTotal()) {
-        return true;
-      }
-      // ✅ Tiene tope configurado → puede comprar aunque no tenga saldo
-      // El tope actúa como crédito autorizado
-      const hasConfiguredLimit =
-        (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
-        (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
-        (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
-      if (hasConfiguredLimit) {
-        // Si ya tenemos los datos de topes cargados, verificar que la compra no exceda el restante
-        if (studentLimitsDetail.length > 0) {
-          const wouldExceedAnyLimit = studentLimitsDetail.some(
-            lim => lim.limit > 0 && lim.remaining < getTotal()
-          );
-          if (wouldExceedAnyLimit) return false; // bloquear: supera el tope disponible
-        }
         return true;
       }
       return false;
@@ -1735,13 +1721,17 @@ const POS = () => {
         // ══════════════════════════════════════════════════════════
         const { data: freshStudent, error: freshErr } = await supabase
           .from('students')
-          .select('balance, free_account')
+          .select('balance, free_account, kiosk_disabled')
           .eq('id', selectedStudent.id)
           .single();
 
         if (freshErr) {
           console.error('Error leyendo saldo fresco:', freshErr);
           throw new Error('No se pudo verificar el saldo del estudiante. Intenta de nuevo.');
+        }
+
+        if (freshStudent?.kiosk_disabled) {
+          throw new Error('Este alumno tiene el kiosco desactivado. Solo puede pedir almuerzos.');
         }
 
         const currentBalance = freshStudent?.balance ?? selectedStudent.balance;
@@ -1801,7 +1791,9 @@ const POS = () => {
             .select('amount, metadata, created_at')
             .eq('student_id', selectedStudent.id)
             .eq('type', 'purchase')
-            .gte('created_at', startOfMonth.toISOString());
+            .gte('created_at', startOfMonth.toISOString())
+            .eq('is_deleted', false)
+            .neq('payment_status', 'cancelled');
 
           const kioscoTx = (recentTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
 
@@ -1838,14 +1830,19 @@ const POS = () => {
         // ══════════════════════════════════════════════════════════
         const shouldUseBalance = currentBalance >= total;
 
-        // Alumno con tope también puede comprar a deuda (el tope ya fue verificado arriba)
-        const hasConfiguredLimitForCheckout =
-          (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
-          (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
-          (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
-        const canProceedAsDebt = isFreeAccount || hasConfiguredLimitForCheckout;
+        // Lógica de deuda: SOLO cuenta libre puede crear deuda.
+        // Con Recargas (free_account=false) NUNCA crea deuda — solo gasta saldo.
+        const canProceedAsDebt = isFreeAccount;
 
         if (!shouldUseBalance && !canProceedAsDebt) {
+          if (!isFreeAccount) {
+            throw new Error(
+              `💳 Saldo insuficiente.\n` +
+              `Saldo actual: S/ ${currentBalance.toFixed(2)}\n` +
+              `Total compra: S/ ${total.toFixed(2)}\n` +
+              `Recarga la cuenta para poder comprar.`
+            );
+          }
           throw new Error(
             `💳 Saldo insuficiente.\n` +
             `Saldo actual: S/ ${currentBalance.toFixed(2)}\n` +
@@ -1892,6 +1889,22 @@ const POS = () => {
           ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
           : 0;
 
+        // ══════════════════════════════════════════════════════════
+        // 💰 PASO 4a: Si hay que descontar saldo, hacerlo PRIMERO (antes de la transacción)
+        // ══════════════════════════════════════════════════════════
+        let actualNewBalance = newBalance;
+        if (shouldUseBalance) {
+          const { data: updatedBalance, error: rpcError } = await supabase
+            .rpc('adjust_student_balance', {
+              p_student_id: selectedStudent.id,
+              p_amount: -total,
+            });
+
+          if (rpcError) throw rpcError;
+          actualNewBalance = updatedBalance ?? newBalance;
+          console.log(`✅ Saldo descontado atómicamente: → S/ ${actualNewBalance.toFixed(2)}`);
+        }
+
         // Descripción clara
         const txDescription = shouldUseBalance
           ? `Compra POS (Saldo) - S/ ${total.toFixed(2)}`
@@ -1905,10 +1918,9 @@ const POS = () => {
             type: 'purchase',
             amount: -total,
             description: txDescription,
-            balance_after: newBalance,
+            balance_after: actualNewBalance,
             created_by: user?.id,
             ticket_code: ticketCode,
-            // SIMPLE: Si usó saldo → pagado. Si no → deuda pendiente
             payment_status: shouldUseBalance ? 'paid' : 'pending',
             payment_method: shouldUseBalance ? (paymentMethod || 'saldo') : null,
             metadata: studentPaymentDetails,
@@ -1922,6 +1934,13 @@ const POS = () => {
 
         if (transError) {
           console.error('❌ Error creando transacción:', transError);
+          if (shouldUseBalance) {
+            // Revertir el descuento de saldo si la transacción falla
+            await supabase.rpc('adjust_student_balance', {
+              p_student_id: selectedStudent.id,
+              p_amount: total,
+            });
+          }
           throw transError;
         }
         console.log('✅ Transacción creada:', transaction.id);
@@ -1968,28 +1987,15 @@ const POS = () => {
             items: salesItems,
           });
 
-        // ══════════════════════════════════════════════════════════
-        // 💰 PASO 5: Actualizar saldo ATÓMICAMENTE (solo si descontamos)
-        // ══════════════════════════════════════════════════════════
+        // Actualizar estado local con el saldo ya descontado
         if (shouldUseBalance) {
-          const { data: updatedBalance, error: rpcError } = await supabase
-            .rpc('adjust_student_balance', {
-              p_student_id: selectedStudent.id,
-              p_amount: -total,
-            });
-
-          if (rpcError) throw rpcError;
-          
-          const actualNewBalance = updatedBalance ?? newBalance;
-          console.log(`✅ Saldo actualizado atómicamente: → S/ ${actualNewBalance.toFixed(2)}`);
-          
           setSelectedStudent({
             ...selectedStudent,
             balance: actualNewBalance
           });
         }
 
-        ticketInfo.newBalance = newBalance;
+        ticketInfo.newBalance = actualNewBalance;
         ticketInfo.amountToDeduct = shouldUseBalance ? total : 0;
         ticketInfo.isFreeAccount = isFreeAccount;
         ticketInfo.paidFromBalance = shouldUseBalance;

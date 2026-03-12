@@ -126,6 +126,8 @@ export function SalesDashboard({ selectedSchool = 'all', canViewAllSchools }: Sa
           items:transaction_items(quantity, unit_price, product:products(name))
         `)
         .eq('type', 'sale')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString());
 

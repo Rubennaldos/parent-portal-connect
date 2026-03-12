@@ -109,6 +109,8 @@ export function MyLunchOrders({ teacherId }: MyLunchOrdersProps) {
             .from('transactions')
             .select('metadata, ticket_code')
             .eq('type', 'purchase')
+            .eq('is_deleted', false)
+            .neq('payment_status', 'cancelled')
             .not('metadata', 'is', null);
           
           if (txData) {

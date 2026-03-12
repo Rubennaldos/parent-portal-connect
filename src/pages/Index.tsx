@@ -19,7 +19,7 @@ import {
   AlertTriangle,
   Menu as MenuIcon,
   Home,
-  Wallet,
+  ShoppingCart,
   UtensilsCrossed,
   Calendar,
   CreditCard
@@ -32,7 +32,6 @@ import { AddStudentModal } from '@/components/AddStudentModal';
 import { UploadPhotoModal } from '@/components/UploadPhotoModal';
 import { StudentCard } from '@/components/parent/StudentCard';
 import { RechargeModal } from '@/components/parent/RechargeModal';
-import { PayDebtModal } from '@/components/parent/PayDebtModal';
 import { WeeklyMenuModal } from '@/components/parent/WeeklyMenuModal';
 import { VersionBadge } from '@/components/VersionBadge';
 import { FreeAccountWarningModal } from '@/components/parent/FreeAccountWarningModal';
@@ -118,7 +117,6 @@ const Index = () => {
   
   // Modales
   const [showRechargeModal, setShowRechargeModal] = useState(false);
-  const [showPayDebtModal, setShowPayDebtModal] = useState(false);
   const [showMenuModal, setShowMenuModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCalendarModal, setShowCalendarModal] = useState(false); // Nuevo
@@ -405,7 +403,8 @@ const Index = () => {
           .select('amount')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .eq('payment_status', 'pending');
+          .in('payment_status', ['pending', 'partial'])
+          .eq('is_deleted', false);
 
         const totalDebt = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
         debtsMap[student.id] = totalDebt;
@@ -463,7 +462,8 @@ const Index = () => {
         .select('id', { count: 'exact', head: true })
         .in('student_id', studentIds)
         .eq('type', 'purchase')
-        .eq('payment_status', 'pending');
+        .in('payment_status', ['pending', 'partial'])
+        .eq('is_deleted', false);
 
       if (!error) {
         setPendingPaymentsCount(count || 0);
@@ -473,56 +473,11 @@ const Index = () => {
     }
   };
 
-  const handleRecharge = async (amount: number, method: string) => {
-    if (!selectedStudent) return;
-    
-    try {
-      const { error: transError } = await supabase
-        .from('transactions')
-        .insert({
-          student_id: selectedStudent.id,
-          type: 'recharge',
-          amount: amount,
-          description: `Recarga vía ${method === 'yape' ? 'Yape' : method === 'plin' ? 'Plin' : method === 'card' ? 'Tarjeta' : 'Banco'}`,
-          created_by: user?.id,
-          payment_method: method,
-        });
-
-      if (transError) throw transError;
-
-      // 🔒 ATÓMICO: Sumar al saldo usando RPC (evita race conditions)
-      const { data: updatedBalance, error: rpcErr } = await supabase
-        .rpc('adjust_student_balance', {
-          p_student_id: selectedStudent.id,
-          p_amount: amount,
-        });
-
-      if (rpcErr) throw rpcErr;
-
-      // Activar modo "Con Recargas"
-      await supabase
-        .from('students')
-        .update({ free_account: false })
-        .eq('id', selectedStudent.id);
-
-      const finalBalance = updatedBalance ?? (selectedStudent.balance + amount);
-
-      toast({
-        title: '✅ ¡Recarga Exitosa!',
-        description: `Nuevo saldo: S/ ${finalBalance.toFixed(2)}`,
-      });
-
-      await fetchStudents();
-      
-    } catch (error: any) {
-      console.error('Error en recarga:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message || 'No se pudo completar la recarga',
-      });
-      throw error;
-    }
+  const handleRecharge = async (_amount: number, _method: string) => {
+    toast({
+      title: 'Usa el Carrito',
+      description: 'Las recargas se gestionan desde la pestaña Carrito.',
+    });
   };
 
   const openRechargeModal = (student: Student) => {
@@ -702,10 +657,10 @@ const Index = () => {
       </header>
 
       {/* 🔴 BANNER DE PAGOS PENDIENTES - Visible desde cualquier pestaña */}
-      {pendingPaymentsCount > 0 && activeTab !== 'pagos' && (
+      {pendingPaymentsCount > 0 && activeTab !== 'carrito' && (
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3 sm:pt-4">
           <div 
-            onClick={() => setActiveTab('pagos')}
+            onClick={() => setActiveTab('carrito')}
             className="cursor-pointer bg-gradient-to-r from-red-50 via-red-100 to-orange-50 border-2 border-red-300 rounded-xl p-3 sm:p-4 shadow-md hover:shadow-lg transition-all duration-300"
           >
             <div className="flex items-center gap-3">
@@ -714,16 +669,16 @@ const Index = () => {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm sm:text-base font-bold text-red-800">
-                  ⚠️ {pendingPaymentsCount === 1 ? 'Tienes 1 pedido pendiente de pago' : `Tienes ${pendingPaymentsCount} pedidos pendientes de pago`}
+                  {pendingPaymentsCount === 1 ? 'Tienes 1 pedido pendiente de pago' : `Tienes ${pendingPaymentsCount} pedidos pendientes de pago`}
                 </p>
                 <p className="text-[10px] sm:text-xs text-red-600 mt-0.5">
-                  Toca aquí para ir a <strong>Pagos</strong> y completar tu pago
+                  Toca aquí para ir al <strong>Carrito</strong> y completar tu pago
                 </p>
               </div>
               <div className="flex-shrink-0">
                 <div className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-sm">
-                  <CreditCard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Pagar ahora</span>
+                  <ShoppingCart className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Ir al Carrito</span>
                   <span className="sm:hidden">Pagar</span>
                 </div>
               </div>
@@ -731,6 +686,30 @@ const Index = () => {
           </div>
         </div>
       )}
+
+      {/* 🔧 BANNER GLOBAL DE MANTENIMIENTO DE RECARGAS - Visible para TODOS los padres */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3">
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-9 h-9 bg-amber-400 rounded-full flex items-center justify-center">
+              <span className="text-white text-lg font-black">!</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm sm:text-base font-bold text-amber-900">
+                El módulo de Recargas y Topes ha sido suspendido hasta próximo aviso
+              </p>
+              <p className="text-xs sm:text-sm text-amber-800 mt-1 leading-relaxed">
+                Está en proceso de mantenimiento para mejorarlo. Disculpe la molestia.
+                Si usted tiene saldo de recarga, <strong>su dinero se encuentra a salvo y será guardado</strong>.
+                No se planea que esta actualización tome más de <strong>3 días</strong>.
+              </p>
+              <p className="text-xs text-amber-700 mt-1.5">
+                Si desea la devolución, contacte al <strong>991 236 870</strong> por <strong>WhatsApp</strong> indicando su correo y solicitando la devolución.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Main Content - Padding responsivo */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
@@ -798,16 +777,16 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Pestaña Pagos */}
-        <div className={activeTab !== 'pagos' ? 'hidden' : ''}>
+        {/* Pestaña Carrito */}
+        <div className={activeTab !== 'carrito' ? 'hidden' : ''}>
           {user?.id && maintenancePagos ? (
-            /* 🔧 Módulo en mantenimiento */
+            /* Módulo en mantenimiento */
             <MaintenanceScreen
               title={maintenancePagos.title}
               message={maintenancePagos.message}
             />
           ) : user?.id ? (
-            <PaymentsTab userId={user.id} isActive={activeTab === 'pagos'} />
+            <PaymentsTab userId={user.id} isActive={activeTab === 'carrito'} />
           ) : null}
         </div>
 
@@ -841,6 +820,7 @@ const Index = () => {
                       userType="parent"
                       userId={user.id}
                       userSchoolId={parentProfileData.school_id || ''}
+                      onGoToCart={() => setActiveTab('carrito')}
                     />
                   )}
                 </TabsContent>
@@ -884,14 +864,6 @@ const Index = () => {
             accountType={selectedStudent.free_account !== false ? 'free' : 'prepaid'}
             onRecharge={handleRecharge}
             suggestedAmount={rechargeSuggestedAmount}
-          />
-
-          <PayDebtModal
-            isOpen={showPayDebtModal}
-            onClose={() => setShowPayDebtModal(false)}
-            studentName={selectedStudent.full_name}
-            studentId={selectedStudent.id}
-            onPaymentComplete={fetchStudents}
           />
 
           <UploadPhotoModal
@@ -1023,16 +995,15 @@ const Index = () => {
             </button>
 
             <button
-              onClick={() => setActiveTab('pagos')}
+              onClick={() => setActiveTab('carrito')}
               className={`relative flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
-                activeTab === 'pagos'
+                activeTab === 'carrito'
                   ? 'text-emerald-700 bg-emerald-50'
                   : pendingPaymentsCount > 0
                     ? 'text-red-500 hover:text-red-600 hover:bg-red-50/30'
                     : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
               }`}
             >
-              {/* 🔴 Indicador parpadeante de pagos pendientes */}
               {pendingPaymentsCount > 0 && (
                 <span className="absolute top-1.5 right-1/4 flex h-4 w-4 sm:h-5 sm:w-5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -1041,9 +1012,9 @@ const Index = () => {
                   </span>
                 </span>
               )}
-              <Wallet className={`h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1 ${pendingPaymentsCount > 0 && activeTab !== 'pagos' ? 'animate-bounce' : ''}`} />
-              <span className={`text-[10px] sm:text-xs font-normal tracking-wide ${pendingPaymentsCount > 0 && activeTab !== 'pagos' ? 'font-semibold text-red-600' : ''}`}>
-                Pagos
+              <ShoppingCart className={`h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1 ${pendingPaymentsCount > 0 && activeTab !== 'carrito' ? 'animate-bounce' : ''}`} />
+              <span className={`text-[10px] sm:text-xs font-normal tracking-wide ${pendingPaymentsCount > 0 && activeTab !== 'carrito' ? 'font-semibold text-red-600' : ''}`}>
+                Carrito
               </span>
             </button>
 

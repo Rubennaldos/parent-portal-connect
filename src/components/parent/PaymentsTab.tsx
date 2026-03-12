@@ -129,7 +129,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           .select('*')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
-          .eq('payment_status', 'pending')
+          .in('payment_status', ['pending', 'partial'])
+          .eq('is_deleted', false)
           .order('created_at', { ascending: false });
 
         if (transError) throw transError;
@@ -378,7 +379,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Cargando deudas...</p>
+          <p className="text-gray-500">Cargando carrito...</p>
         </div>
       </div>
     );
@@ -390,9 +391,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         <CardContent className="py-12">
           <div className="text-center">
             <Check className="h-16 w-16 text-emerald-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">¡Todo al día!</h3>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Carrito vacío</h3>
             <p className="text-gray-500">
-              No tienes deudas pendientes con el kiosco escolar.
+              No tienes pagos pendientes. Aquí aparecerán tus almuerzos y consumos por pagar.
             </p>
           </div>
         </CardContent>
@@ -419,7 +420,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         </CardContent>
       </Card>
 
-      {/* Resumen de Deuda Total */}
+      {/* Resumen del Carrito */}
       <Card className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
         <CardContent className="pt-6 pb-5">
           <div className="flex items-center gap-4">
@@ -427,10 +428,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               <AlertCircle className="h-8 w-8 text-amber-600" />
             </div>
             <div className="flex-1">
-              <p className="text-sm text-amber-700 font-semibold uppercase">Deuda Total Pendiente</p>
+              <p className="text-sm text-amber-700 font-semibold uppercase">Total Pendiente</p>
               <p className="text-4xl font-black text-amber-900">S/ {(totalDebt || 0).toFixed(2)}</p>
               <p className="text-xs text-amber-600 mt-1">
-                {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} compra(s) pendientes
+                {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} item(s) en el carrito
                 {debts.length >= 2 && ` de ${debts.length} alumnos`}
               </p>
             </div>

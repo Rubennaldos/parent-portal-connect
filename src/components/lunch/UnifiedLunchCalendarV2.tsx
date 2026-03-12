@@ -30,7 +30,6 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
-import { RechargeModal } from '@/components/parent/RechargeModal';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -50,6 +49,7 @@ interface UnifiedLunchCalendarV2Props {
   userType: 'teacher' | 'parent';
   userId: string;
   userSchoolId: string;
+  onGoToCart?: () => void;
 }
 
 interface LunchCategory {
@@ -186,7 +186,7 @@ const getPeruTodayStr = (): string => {
 // ==========================================
 // COMPONENT
 // ==========================================
-export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: UnifiedLunchCalendarV2Props) {
+export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToCart }: UnifiedLunchCalendarV2Props) {
   const { toast } = useToast();
 
   // Navigation
@@ -243,7 +243,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
 
   // Payment flow (parents only)
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [createdOrderIds, setCreatedOrderIds] = useState<string[]>([]);
   const [createdTransactionIds, setCreatedTransactionIds] = useState<string[]>([]);
   const [totalOrderAmount, setTotalOrderAmount] = useState(0);
@@ -457,11 +456,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
           parent_notes: o.parent_notes || null,
         }));
 
-        if (orders.length > 0 && userType === 'parent') {
+        if (orders.length > 0) {
           const { data: txData } = await supabase
             .from('transactions')
             .select('payment_status, metadata')
-            .eq('student_id', personId)
+            .eq(personField, personId)
+            .eq('is_deleted', false)
             .in('payment_status', ['pending', 'paid', 'cancelled', 'partial']);
 
           if (txData && txData.length > 0) {
@@ -2326,14 +2326,22 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
                     <Button
                       onClick={() => {
                         closeWizard();
-                        setTimeout(() => setShowPaymentModal(true), 300);
+                        if (onGoToCart) {
+                          setTotalOrderAmount(0);
+                          setCreatedOrderIds([]);
+                          setCreatedTransactionIds([]);
+                          setOrderDescriptions([]);
+                          totalOrderAmountRef.current = 0;
+                          setTimeout(() => onGoToCart(), 300);
+                        }
                       }}
                       variant="outline"
                       size="lg"
                       className="border-purple-300 text-purple-700 hover:bg-purple-50 w-full"
+                      disabled={!onGoToCart}
                     >
                       <CreditCardIcon className="h-5 w-5 mr-2" />
-                      Pagar ahora — S/ {totalOrderAmount.toFixed(2)}
+                      Ir al Carrito
                     </Button>
                   </>
                 ) : (
@@ -3369,10 +3377,20 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
             <Button
               size="sm"
               className="bg-white text-purple-700 hover:bg-purple-50 font-bold text-xs h-8 shadow"
-              onClick={() => setShowPaymentModal(true)}
+              onClick={() => {
+                if (onGoToCart) {
+                  setTotalOrderAmount(0);
+                  setCreatedOrderIds([]);
+                  setCreatedTransactionIds([]);
+                  setOrderDescriptions([]);
+                  totalOrderAmountRef.current = 0;
+                  onGoToCart();
+                }
+              }}
+              disabled={!onGoToCart}
             >
               <CreditCardIcon className="h-3.5 w-3.5 mr-1" />
-              Pagar ahora
+              Ir al Carrito
             </Button>
           </div>
         </div>
@@ -3507,33 +3525,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId }: Unifi
         </DialogContent>
       </Dialog>
 
-      {/* PAYMENT MODAL (parents only) */}
-      {userType === 'parent' && selectedStudent && (
-        <RechargeModal
-          isOpen={showPaymentModal}
-          onClose={() => {
-            setShowPaymentModal(false);
-            setCreatedOrderIds([]);
-            setCreatedTransactionIds([]);
-            setTotalOrderAmount(0);
-            totalOrderAmountRef.current = 0;
-            setOrderDescriptions([]);
-          }}
-          studentName={selectedStudent.full_name}
-          studentId={selectedStudent.id}
-          currentBalance={selectedStudent.balance || 0}
-          accountType={selectedStudent.free_account ? 'free' : 'prepaid'}
-          suggestedAmount={totalOrderAmount}
-          requestType="lunch_payment"
-          requestDescription={`Pago almuerzo: ${orderDescriptions.join(' | ')}`}
-          lunchOrderIds={createdOrderIds}
-          paidTransactionIds={createdTransactionIds.length > 0 ? createdTransactionIds : undefined}
-          onRecharge={async () => {
-            // El RechargeModal maneja todo internamente
-            toast({ title: '✅ Comprobante enviado', description: 'Tu pago será revisado por el administrador.' });
-          }}
-        />
-      )}
     </div>
   );
 }

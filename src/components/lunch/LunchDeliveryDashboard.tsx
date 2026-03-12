@@ -1664,6 +1664,8 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
           .select('metadata, ticket_code, type')
           .in('type', ['purchase', 'debit'])
           .eq('school_id', schoolId)
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled')
           .not('metadata', 'is', null);
 
         if (txData) {

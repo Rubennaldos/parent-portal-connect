@@ -98,6 +98,8 @@ export const BillingReports = () => {
           schools(name)
         `)
         .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .order('created_at', { ascending: false });
 
       // Filtros

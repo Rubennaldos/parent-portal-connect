@@ -82,7 +82,7 @@ export default function Teacher() {
         .select('amount, payment_status')
         .eq('teacher_id', teacherProfile.id)
         .eq('is_deleted', false)
-        .or('payment_status.eq.pending,payment_status.is.null');
+        .in('payment_status', ['pending', 'partial']);
 
       if (error) throw error;
 
@@ -129,7 +129,7 @@ export default function Teacher() {
         .eq('teacher_id', teacherProfile.id)
         .eq('type', 'purchase')
         .eq('is_deleted', false)
-        .or('payment_status.eq.pending,payment_status.is.null')
+        .in('payment_status', ['pending', 'partial'])
         .order('created_at', { ascending: false });
 
       if (pendingError) throw pendingError;

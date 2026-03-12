@@ -386,6 +386,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             .from('transactions')
             .select(`*, students(id, full_name, parent_id), teacher_profiles(id, full_name), schools(id, name)`)
             .eq('type', 'purchase')
+            .eq('is_deleted', false)
             .in('payment_status', ['pending', 'partial'])
             .order('created_at', { ascending: false })
             .limit(1000);
@@ -415,6 +416,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             .select(`id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)`)
             .in('status', ['confirmed', 'delivered'])
             .eq('is_cancelled', false)
+            .eq('payment_method', 'pagar_luego')
             .order('created_at', { ascending: false })
             .limit(1000);
           if (loCursor) lq = lq.lt('created_at', loCursor);
@@ -502,6 +504,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
+            .eq('is_deleted', false)
             .order('created_at', { ascending: false })
             .limit(1000);
           if (paidCursor) pq = pq.lt('created_at', paidCursor);
@@ -1824,7 +1827,8 @@ Agradecemos su pronta atención. 🙏`;
         .from('transactions')
         .select('id', { count: 'exact', head: true })
         .eq('type', 'purchase')
-        .eq('payment_status', 'paid');
+        .eq('payment_status', 'paid')
+        .eq('is_deleted', false);
 
       if (schoolIdFilter) countQuery = countQuery.eq('school_id', schoolIdFilter);
       if (untilDate) {
@@ -1851,6 +1855,7 @@ Agradecemos su pronta atención. 🙏`;
         `)
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
+        .eq('is_deleted', false)
         .order('created_at', { ascending: false })
         .range(from, to);
 

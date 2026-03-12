@@ -124,7 +124,7 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
       setAllTransactions(txs);
 
       const recargas = txs
-        .filter(t => t.type === 'recharge' && t.payment_status === 'paid')
+        .filter(t => t.type === 'recharge' && t.payment_status === 'paid' && !t.is_deleted)
         .reduce((s, t) => s + t.amount, 0);
       const compras_saldo = txs
         .filter(t => t.type === 'purchase' && t.payment_status === 'paid' && !t.is_deleted
@@ -217,6 +217,36 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
     const safeName = rechargeModalStudent.full_name.replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '').substring(0, 30);
     XLSX.writeFile(wb, `Estado_Cuenta_${safeName}.xlsx`);
   }, [rechargeModalStudent, allTransactions, balanceSummary]);
+
+  const downloadRechargesReport = useCallback(() => {
+    if (students.length === 0) return;
+
+    const rows = students.map((s) => {
+      const isPrepaid = s.free_account === false;
+      const limit = activeLimit(s);
+      return {
+        'Nombre del Alumno': s.full_name,
+        'Grado': s.grade || '',
+        'Sección': s.section || '',
+        'Padre/Madre': s.parent?.full_name || '',
+        'Email Padre': s.parent?.email || '',
+        'Tipo de Cuenta': isPrepaid ? 'Con Recargas' : 'Cuenta Libre',
+        'Saldo Actual (S/)': s.balance || 0,
+        'Kiosco': s.kiosk_disabled ? 'Desactivado' : 'Activo',
+        'Tipo Tope': limit ? limit.label : 'Sin tope',
+        'Monto Tope (S/)': limit ? limit.amount : '',
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = [30, 10, 10, 30, 30, 16, 16, 14, 16, 14];
+    ws['!cols'] = colWidths.map(w => ({ wch: w }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Recargas y Topes');
+    const date = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `Reporte_Recargas_Topes_${date}.xlsx`);
+  }, [students]);
 
   const load = async () => {
     setLoading(true);
@@ -336,7 +366,15 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
             {filtered.length} de {students.length} alumnos · {grouped.length} salones
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => downloadRechargesReport()}
+            className="h-8 gap-1.5 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+          >
+            <Download className="h-3.5 w-3.5" /> Reporte Recargas/Topes
+          </Button>
           <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5 text-xs">
             <RefreshCw className="h-3.5 w-3.5" /> Actualizar
           </Button>

@@ -295,6 +295,24 @@ const Cobranzas = () => {
           </div>
         </div>
 
+        {/* ── Banner mantenimiento recargas — visible para admins también ── */}
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-8 h-8 bg-amber-400 rounded-full flex items-center justify-center">
+              <span className="text-white text-base font-black">!</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-900">
+                El módulo de Recargas y Topes ha sido suspendido hasta próximo aviso
+              </p>
+              <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                En proceso de mantenimiento para mejorarlo. Los padres ya fueron notificados. El saldo existente de cada alumno sigue activo en el kiosco.
+                Para devoluciones: <strong>991 236 870</strong> (WhatsApp).
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Tabs Principal */}
         <Card>
           <CardContent className="p-2 sm:p-6">
