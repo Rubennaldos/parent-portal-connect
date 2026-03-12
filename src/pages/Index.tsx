@@ -169,13 +169,6 @@ const Index = () => {
   const fetchParentProfile = async () => {
     if (!user) return;
     try {
-      // Siempre obtener school_id desde profiles (fuente de verdad)
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('full_name, school_id')
-        .eq('id', user.id)
-        .single();
-
       // Intentar obtener nombre/consent desde parent_profiles
       const { data: parentData } = await supabase
         .from('parent_profiles')
@@ -183,10 +176,29 @@ const Index = () => {
         .eq('user_id', user.id)
         .maybeSingle();
 
-      // Combinar: school_id siempre de profiles, nombre preferido de parent_profiles
+      // Obtener school_id desde el primer estudiante activo del padre
+      const { data: studentData } = await supabase
+        .from('students')
+        .select('school_id')
+        .eq('parent_id', user.id)
+        .eq('is_active', true)
+        .limit(1)
+        .single();
+
+      // Fallback de nombre desde profiles
+      let fullName = parentData?.full_name || '';
+      if (!fullName) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        fullName = profileData?.full_name || '';
+      }
+
       const combined = {
-        school_id: profileData?.school_id || null,
-        full_name: parentData?.full_name || profileData?.full_name || '',
+        school_id: studentData?.school_id || null,
+        full_name: fullName,
         photo_consent: parentData?.photo_consent || false,
       };
 
@@ -202,19 +214,22 @@ const Index = () => {
   const fetchMaintenanceConfig = async (schoolIdOverride?: string) => {
     if (!user) return;
     try {
-      let schoolId = schoolIdOverride || parentProfileData?.school_id;
+      let schoolId = schoolIdOverride;
 
       if (!schoolId) {
-        const { data: profile } = await supabase
-          .from('profiles')
+        // El padre no tiene school_id en profiles → obtener de sus estudiantes
+        const { data: studentData } = await supabase
+          .from('students')
           .select('school_id')
-          .eq('id', user.id)
+          .eq('parent_id', user.id)
+          .eq('is_active', true)
+          .limit(1)
           .single();
-        schoolId = profile?.school_id;
+        schoolId = studentData?.school_id;
       }
 
       if (!schoolId) {
-        console.warn('[Maintenance] No se encontró school_id para el padre');
+        console.warn('[Maintenance] No se encontró school_id (padre sin estudiantes activos)');
         return;
       }
 
@@ -228,9 +243,8 @@ const Index = () => {
 
       if (error) throw error;
 
-      console.log('[Maintenance] Configs activas encontradas:', configs?.length || 0, configs);
+      console.log('[Maintenance] Configs activas encontradas:', configs?.length || 0);
 
-      // Reset primero
       let newAlmuerzos: { title: string; message: string } | null = null;
       let newPagos: { title: string; message: string } | null = null;
 
@@ -241,10 +255,7 @@ const Index = () => {
           const isBypassed = (cfg.bypass_emails || []).some(
             (e: string) => e.toLowerCase() === userEmail
           );
-          if (isBypassed) {
-            console.log('[Maintenance] Bypass para', cfg.module_key, '- correo en lista');
-            return;
-          }
+          if (isBypassed) return;
 
           if (cfg.module_key === 'almuerzos_padres') {
             newAlmuerzos = { title: cfg.title, message: cfg.message };
@@ -257,7 +268,6 @@ const Index = () => {
 
       setMaintenanceAlmuerzos(newAlmuerzos);
       setMaintenancePagos(newPagos);
-      console.log('[Maintenance] Estado aplicado → almuerzos:', !!newAlmuerzos, ', pagos:', !!newPagos);
     } catch (e) {
       console.error('[Maintenance] Error:', e);
     }
