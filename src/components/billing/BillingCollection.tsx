@@ -140,6 +140,11 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   // Búsqueda dedicada para pestaña Pagos
   const [paidSearchTerm, setPaidSearchTerm] = useState('');
+  // Filtros dedicados para pestaña Pagos Realizados
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [paidDateFrom, setPaidDateFrom] = useState(todayStr);
+  const [paidDateTo, setPaidDateTo] = useState(todayStr);
+  const [paidStatusFilter, setPaidStatusFilter] = useState<string>('paid');
 
   // Modal guía de pago
   const [showPaymentGuide, setShowPaymentGuide] = useState(false);
@@ -1841,19 +1846,27 @@ Agradecemos su pronta atención. 🙏`;
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
+      // Construir filtro de estado
+      const statusFilter = paidStatusFilter || 'paid';
+
       // Primero contar el total (query liviana)
       let countQuery = supabase
         .from('transactions')
         .select('id', { count: 'exact', head: true })
         .eq('type', 'purchase')
-        .eq('payment_status', 'paid')
-        .eq('is_deleted', false);
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled');
+
+      if (statusFilter !== 'all') {
+        countQuery = countQuery.eq('payment_status', statusFilter);
+      }
 
       if (schoolIdFilter) countQuery = countQuery.eq('school_id', schoolIdFilter);
-      if (untilDate) {
-        const localDate = new Date(untilDate);
-        localDate.setHours(23, 59, 59, 999);
-        countQuery = countQuery.lte('created_at', localDate.toISOString());
+      if (paidDateFrom) {
+        countQuery = countQuery.gte('created_at', `${paidDateFrom}T00:00:00`);
+      }
+      if (paidDateTo) {
+        countQuery = countQuery.lte('created_at', `${paidDateTo}T23:59:59`);
       }
 
       const { count } = await countQuery;
@@ -1873,16 +1886,21 @@ Agradecemos su pronta atención. 🙏`;
           schools(id, name)
         `)
         .eq('type', 'purchase')
-        .eq('payment_status', 'paid')
         .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
         .order('created_at', { ascending: false })
         .range(from, to);
 
+      if (statusFilter !== 'all') {
+        query = query.eq('payment_status', statusFilter);
+      }
+
       if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
-      if (untilDate) {
-        const localDate = new Date(untilDate);
-        localDate.setHours(23, 59, 59, 999);
-        query = query.lte('created_at', localDate.toISOString());
+      if (paidDateFrom) {
+        query = query.gte('created_at', `${paidDateFrom}T00:00:00`);
+      }
+      if (paidDateTo) {
+        query = query.lte('created_at', `${paidDateTo}T23:59:59`);
       }
 
       const { data, error } = await query;
@@ -1980,7 +1998,7 @@ Agradecemos su pronta atención. 🙏`;
     if (activeTab === 'config' && userSchoolId) {
       fetchSchoolConfig();
     }
-  }, [activeTab, selectedSchool, untilDate, canViewAllSchools, userSchoolId, paidPage]);
+  }, [activeTab, selectedSchool, canViewAllSchools, userSchoolId, paidPage, paidDateFrom, paidDateTo, paidStatusFilter]);
 
   // Cargar configuración de sede (se llama al montar y al entrar al tab config)
   const fetchSchoolConfig = async (schoolId?: string) => {
@@ -2978,23 +2996,111 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
             {activeTab === 'pagos' && (
             <div className="mt-0">
-              {/* 🔍 Buscador inteligente para pestaña Pagos */}
+              {/* Filtros dedicados para pestaña Pagos */}
               <Card className="mb-4">
-                <CardContent className="p-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                    <Input
-                      placeholder="Buscar por nombre, sede, ticket, descripción..."
-                      value={paidSearchTerm}
-                      onChange={(e) => setPaidSearchTerm(e.target.value)}
-                      className="pl-10"
-                    />
+                <CardContent className="p-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    {/* Fecha Desde */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Desde</Label>
+                      <Input
+                        type="date"
+                        value={paidDateFrom}
+                        onChange={(e) => { setPaidDateFrom(e.target.value); setPaidPage(1); }}
+                      />
+                    </div>
+                    {/* Fecha Hasta */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Hasta</Label>
+                      <Input
+                        type="date"
+                        value={paidDateTo}
+                        onChange={(e) => { setPaidDateTo(e.target.value); setPaidPage(1); }}
+                      />
+                    </div>
+                    {/* Estado */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Estado</Label>
+                      <select
+                        value={paidStatusFilter}
+                        onChange={(e) => { setPaidStatusFilter(e.target.value); setPaidPage(1); }}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        <option value="paid">Pagados</option>
+                        <option value="pending">Pendientes</option>
+                        <option value="partial">Parciales</option>
+                        <option value="all">Todos</option>
+                      </select>
+                    </div>
+                    {/* Buscador */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Buscar</Label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="Nombre, ticket, sede..."
+                          value={paidSearchTerm}
+                          onChange={(e) => setPaidSearchTerm(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                    </div>
+                    {/* Accesos rápidos */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Rápido</Label>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => {
+                            const today = new Date().toISOString().split('T')[0];
+                            setPaidDateFrom(today);
+                            setPaidDateTo(today);
+                            setPaidPage(1);
+                          }}
+                        >
+                          Hoy
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => {
+                            const now = new Date();
+                            const monday = new Date(now);
+                            monday.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1));
+                            setPaidDateFrom(monday.toISOString().split('T')[0]);
+                            setPaidDateTo(now.toISOString().split('T')[0]);
+                            setPaidPage(1);
+                          }}
+                        >
+                          Semana
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => {
+                            const now = new Date();
+                            const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+                            setPaidDateFrom(firstDay.toISOString().split('T')[0]);
+                            setPaidDateTo(now.toISOString().split('T')[0]);
+                            setPaidPage(1);
+                          }}
+                        >
+                          Mes
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                  {paidSearchTerm && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {filteredPaidTransactions.length} resultado(s) para "{paidSearchTerm}"
-                    </p>
-                  )}
+                  {/* Resumen rápido */}
+                  <div className="flex items-center gap-3 mt-3 text-sm text-gray-600">
+                    <span className="font-medium">{paidTotalCount} registros encontrados</span>
+                    {paidSearchTerm && (
+                      <span>• {filteredPaidTransactions.length} coinciden con "{paidSearchTerm}"</span>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 
@@ -3039,7 +3145,12 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     const schoolName = transaction.schools?.name || 'Sin sede';
 
                     return (
-                      <Card key={transaction.id} className="hover:shadow-lg transition-shadow border-l-4 border-l-green-500">
+                      <Card key={transaction.id} className={`hover:shadow-lg transition-shadow border-l-4 ${
+                        transaction.payment_status === 'paid' ? 'border-l-green-500' :
+                        transaction.payment_status === 'pending' ? 'border-l-red-500' :
+                        transaction.payment_status === 'partial' ? 'border-l-yellow-500' :
+                        'border-l-gray-300'
+                      }`}>
                         <CardContent className="p-5">
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
@@ -3060,9 +3171,21 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                     📝 Sin Cuenta
                                   </Badge>
                                 )}
-                                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                  ✅ Pagado
-                                </Badge>
+                                {transaction.payment_status === 'paid' && (
+                                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                    ✅ Pagado
+                                  </Badge>
+                                )}
+                                {transaction.payment_status === 'pending' && (
+                                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                    ⏳ Pendiente
+                                  </Badge>
+                                )}
+                                {transaction.payment_status === 'partial' && (
+                                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                                    🔸 Parcial
+                                  </Badge>
+                                )}
                               </div>
                               
                               <div className="inline-flex items-center gap-2 text-sm font-semibold text-blue-700 mt-1 bg-blue-50 px-2 py-1 rounded-md mb-3">
