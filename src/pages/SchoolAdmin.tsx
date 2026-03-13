@@ -12,6 +12,7 @@ import { CreateSupplyRequestModal } from '@/components/school-admin/CreateSupply
 import { GradesManagement } from '@/components/school-admin/GradesManagement';
 import { NFCCardsManager } from '@/components/admin/NFCCardsManager';
 import { MaintenanceConfig } from '@/components/school-admin/MaintenanceConfig';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 interface SupplyRequest {
   id: string;
@@ -28,6 +29,7 @@ const SchoolAdmin = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
+  const maintenance = useMaintenanceGuard('admin_sede_admin', userSchoolId);
   const [myRequests, setMyRequests] = useState<SupplyRequest[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -111,6 +113,23 @@ const SchoolAdmin = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#8B4513] mx-auto"></div>
           <p className="mt-4 text-slate-600">Cargando administración de sede...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
         </div>
       </div>
     );
