@@ -1398,6 +1398,20 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         }
       }
 
+      // 3. ACTUALIZAR balance del alumno: sumar el monto cobrado (aliviar la deuda)
+      // El balance es negativo cuando hay deuda; cobrar lo lleva de vuelta a 0
+      const studentId = currentDebtor.client_type === 'student' ? currentDebtor.id : null;
+      if (studentId) {
+        const { error: balanceError } = await supabase.rpc('adjust_student_balance', {
+          p_student_id: studentId,
+          p_amount: finalPaidAmount, // positivo = aumenta balance (cubre la deuda)
+        });
+        if (balanceError) {
+          console.error('⚠️ [BillingCollection] Balance no actualizado tras cobro:', balanceError);
+          // No lanzar error — el pago ya quedó registrado, el balance se puede corregir con auditoría
+        }
+      }
+
       const methodLabel = useSplitPayment && paymentBreakdown.length > 1
         ? paymentBreakdown.map(p => `${p.method} S/${p.amount.toFixed(2)}`).join(' + ')
         : finalPaymentMethod;
