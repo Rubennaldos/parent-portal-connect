@@ -49,12 +49,13 @@ export const BillingReports = () => {
   const [payments, setPayments] = useState<PaymentHistory[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   
-  // Filtros
+  // Filtros — por defecto hoy
+  const today = new Date().toISOString().split('T')[0];
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(today);
 
   const canViewAllSchools = role === 'admin_general';
 
@@ -80,9 +81,7 @@ export const BillingReports = () => {
   const fetchPayments = async () => {
     try {
       setLoading(true);
-      console.log('📊 [BillingReports] Iniciando fetchPayments...');
 
-      // CONSULTAR TRANSACTIONS (todas las deudas y pagos)
       let query = supabase
         .from('transactions')
         .select(`
@@ -90,28 +89,33 @@ export const BillingReports = () => {
           created_at,
           amount,
           type,
+          description,
           payment_status,
           payment_method,
           student_id,
           school_id,
+          ticket_code,
+          registered_by,
           students(full_name, parent_id),
           schools(name)
         `)
         .eq('type', 'purchase')
         .eq('is_deleted', false)
         .neq('payment_status', 'cancelled')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(200);
 
-      // Filtros
-      if (!canViewAllSchools || selectedSchool !== 'all') {
-        const schoolId = selectedSchool !== 'all' ? selectedSchool : await getUserSchoolId();
+      // Filtro de sede: admin_general puede ver todas, resto solo su sede
+      if (selectedSchool !== 'all') {
+        query = query.eq('school_id', selectedSchool);
+      } else if (!canViewAllSchools) {
+        const schoolId = await getUserSchoolId();
         if (schoolId) {
           query = query.eq('school_id', schoolId);
         }
       }
 
       if (selectedStatus !== 'all') {
-        // Mapear los status: completed -> paid, pending -> pending, partial -> partial
         if (selectedStatus === 'completed') {
           query = query.eq('payment_status', 'paid');
         } else {
@@ -131,45 +135,78 @@ export const BillingReports = () => {
 
       if (error) throw error;
 
-      console.log('📊 [BillingReports] Transacciones encontradas:', transactions?.length);
-
-      // Obtener IDs de padres para buscar sus nombres
+      // Obtener nombres de padres
       const parentIds = [...new Set(transactions?.map((t: any) => t.students?.parent_id).filter(Boolean))];
       
-      const { data: parentsData } = await supabase
-        .from('parent_profiles')
-        .select('user_id, full_name')
-        .in('user_id', parentIds);
-      
-      const parentsMap = new Map();
-      parentsData?.forEach((p: any) => {
-        parentsMap.set(p.user_id, p.full_name);
-      });
+      let parentsMap = new Map();
+      if (parentIds.length > 0) {
+        const { data: parentsData } = await supabase
+          .from('parent_profiles')
+          .select('user_id, full_name')
+          .in('user_id', parentIds);
+        
+        parentsData?.forEach((p: any) => {
+          parentsMap.set(p.user_id, p.full_name);
+        });
+      }
 
-      // Mapear transacciones a formato de PaymentHistory
+      // Obtener nombres de quién registró (profiles)
+      const registeredByIds = [...new Set(transactions?.map((t: any) => t.registered_by).filter(Boolean))];
+      let registeredByMap = new Map();
+      if (registeredByIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .in('id', registeredByIds);
+        
+        profilesData?.forEach((p: any) => {
+          registeredByMap.set(p.id, { name: p.full_name || 'Sin nombre', role: p.role });
+        });
+
+        // También buscar en parent_profiles por si fue un padre
+        const { data: parentRegistrars } = await supabase
+          .from('parent_profiles')
+          .select('user_id, full_name')
+          .in('user_id', registeredByIds);
+        
+        parentRegistrars?.forEach((p: any) => {
+          if (p.full_name && !registeredByMap.get(p.user_id)?.name) {
+            registeredByMap.set(p.user_id, { name: p.full_name, role: 'parent' });
+          } else if (p.full_name) {
+            const existing = registeredByMap.get(p.user_id);
+            if (existing?.role === 'parent') {
+              registeredByMap.set(p.user_id, { ...existing, name: p.full_name });
+            }
+          }
+        });
+      }
+
       const mappedPayments: PaymentHistory[] = (transactions || []).map((transaction: any) => {
         const amount = Math.abs(transaction.amount);
         const isPaid = transaction.payment_status === 'paid';
-        const isPartial = transaction.payment_status === 'partial';
         
+        const registrar = registeredByMap.get(transaction.registered_by);
+        const registrarLabel = registrar
+          ? `${registrar.name}${registrar.role === 'parent' ? ' (Padre)' : ''}`
+          : '';
+
         return {
           id: transaction.id,
           created_at: transaction.created_at,
           paid_at: isPaid ? transaction.created_at : '',
-          student_name: transaction.students?.full_name || 'Sin nombre',
-          parent_name: parentsMap.get(transaction.students?.parent_id) || 'Sin padre',
+          student_name: transaction.students?.full_name || 'Cliente Genérico',
+          parent_name: parentsMap.get(transaction.students?.parent_id) || registrarLabel || 'Sin registrar',
           school_name: transaction.schools?.name || 'Sin sede',
-          period_name: 'Cuenta Libre', // Por ahora sin períodos
+          period_name: transaction.description || 'Compra',
           total_amount: amount,
-          paid_amount: isPaid ? amount : (isPartial ? amount * 0.5 : 0), // Simulación
-          pending_amount: isPaid ? 0 : (isPartial ? amount * 0.5 : amount),
+          paid_amount: isPaid ? amount : 0,
+          pending_amount: isPaid ? 0 : amount,
           payment_method: transaction.payment_method || 'cuenta_libre',
           status: transaction.payment_status === 'paid' ? 'completed' : transaction.payment_status,
-          document_type: 'ticket',
+          document_type: transaction.ticket_code || 'Sin ticket',
         };
       });
 
-      console.log('📊 [BillingReports] Pagos mapeados:', mappedPayments.length);
       setPayments(mappedPayments);
     } catch (error) {
       console.error('Error fetching payments:', error);
@@ -355,46 +392,63 @@ export const BillingReports = () => {
         </Card>
       ) : (
         <Card>
-          <CardHeader>
-            <CardTitle>Historial de Pagos</CardTitle>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Historial de Pagos — {filteredPayments.length} registros</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
               {filteredPayments.map((payment) => (
                 <div
                   key={payment.id}
-                  className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border"
                 >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
                       <h3 className="font-semibold">{payment.student_name}</h3>
                       {getStatusBadge(payment.status)}
-                      <Badge variant="outline" className="text-xs">
-                        {payment.document_type}
-                      </Badge>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-gray-600">
-                      <div>Padre: {payment.parent_name}</div>
-                      <div>Período: {payment.period_name}</div>
-                      {canViewAllSchools && (
-                        <div className="flex items-center gap-1">
-                          <Building2 className="h-3 w-3" />
-                          {payment.school_name}
-                        </div>
-                      )}
-                      <div>
-                        {format(new Date(payment.created_at), 'dd MMM yyyy', { locale: es })}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right ml-4">
                     <p className="text-lg font-bold text-green-600">
-                      S/ {payment.paid_amount.toFixed(2)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      de S/ {payment.total_amount.toFixed(2)}
+                      S/ {payment.total_amount.toFixed(2)}
                     </p>
                   </div>
+
+                  {canViewAllSchools && (
+                    <div className="flex items-center gap-1 text-xs text-blue-600 mb-2">
+                      <Building2 className="h-3 w-3" />
+                      {payment.school_name}
+                    </div>
+                  )}
+
+                  <div className="bg-white rounded-lg p-3 mb-2 border-l-4 border-blue-400">
+                    <p className="text-xs text-gray-500">Detalle de Consumo:</p>
+                    <p className="font-medium text-sm">{payment.period_name}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-600">
+                    <div>
+                      <span className="text-gray-400">Fecha de pago:</span><br />
+                      <span className="font-medium">{format(new Date(payment.created_at), 'dd/MM/yyyy', { locale: es })}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Hora de pago:</span><br />
+                      <span className="font-medium">{format(new Date(payment.created_at), 'HH:mm', { locale: es })}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Método de pago:</span><br />
+                      <span className="font-medium capitalize">{payment.payment_method.replace(/_/g, ' ')}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">N° de ticket:</span><br />
+                      <span className="font-medium text-amber-700">{payment.document_type}</span>
+                    </div>
+                  </div>
+
+                  {payment.parent_name && (
+                    <div className="mt-2 text-xs text-gray-500">
+                      <span className="text-gray-400">Registrado por:</span>{' '}
+                      <span className="font-medium">{payment.parent_name}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
