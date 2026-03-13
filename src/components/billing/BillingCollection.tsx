@@ -135,12 +135,17 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   const fetchDebtorsRequestId = useRef(0);
   const fetchPaidRequestId = useRef(0);
-  const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>('cobrar');
+  const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>(section || 'cobrar');
 
   // Sincronizar con la sección controlada desde el padre (Cobranzas.tsx)
   useEffect(() => {
-    if (section) setActiveTab(section);
-  }, [section]);
+    if (section) {
+      setActiveTab(section);
+      if (section === 'pagos' && canViewAllSchools) {
+        setSelectedSchool('all');
+      }
+    }
+  }, [section, canViewAllSchools]);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
@@ -2377,7 +2382,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
   return (
     <div className="space-y-6">
-      {/* Alerta de API SUNAT no conectado */}
+      {/* Alerta de API SUNAT no conectado — solo en pestañas relevantes */}
+      {activeTab !== 'pagos' && (
       <Alert className="bg-amber-50 border-amber-200">
         <AlertTriangle className="h-5 w-5 text-amber-600" />
         <AlertDescription className="text-amber-900">
@@ -2387,6 +2393,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
           Pr�ximamente se habilitar� la facturaci�n electr�nica oficial.
         </AlertDescription>
       </Alert>
+      )}
 
       {/* Filtros principales — solo visibles en pestaña Cobrar */}
       {activeTab !== 'pagos' && activeTab !== 'config' && (
@@ -3010,7 +3017,23 @@ Si tienes dudas, comunícate con la administración de tu sede.
               {/* Filtros dedicados para pestaña Pagos */}
               <Card className="mb-4">
                 <CardContent className="p-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    {/* Sede — visible para admin_general */}
+                    {canViewAllSchools && (
+                      <div className="space-y-1">
+                        <Label className="text-xs text-gray-500">Sede</Label>
+                        <select
+                          value={selectedSchool}
+                          onChange={(e) => { setSelectedSchool(e.target.value); setPaidPage(1); }}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        >
+                          <option value="all">Todas las sedes</option>
+                          {schools.map((school) => (
+                            <option key={school.id} value={school.id}>{school.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     {/* Fecha Desde */}
                     <div className="space-y-1">
                       <Label className="text-xs text-gray-500">Desde</Label>
