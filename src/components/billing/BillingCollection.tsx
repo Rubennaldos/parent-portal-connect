@@ -2512,12 +2512,14 @@ Si tienes dudas, comunícate con la administración de tu sede.
       </Card>
       )}
 
-      {activeTab !== 'pagos' && activeTab !== 'config' && loading ? (
+      {activeTab !== 'pagos' && activeTab !== 'config' && loading && (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-red-600" />
           <p className="ml-3 text-gray-600">Cargando deudores...</p>
         </div>
-      ) : activeTab !== 'pagos' && activeTab !== 'config' && (
+      )}
+
+      {activeTab !== 'pagos' && activeTab !== 'config' && !loading && (
         <>
           {/* Acciones masivas */}
           {filteredDebtors.length > 0 && (
@@ -2564,6 +2566,9 @@ Si tienes dudas, comunícate con la administración de tu sede.
               </CardContent>
             </Card>
           )}
+
+        </>
+      )}
 
           {/* Pestañas: Cobrar / Pagos Realizados / Configuración + botón Guía - Sin Radix */}
           <div className="w-full">
@@ -3591,8 +3596,6 @@ Si tienes dudas, comunícate con la administración de tu sede.
             </div>
             )}
           </div>
-        </>
-      )}
 
       {/* Modal Guía de Pago */}
       <Dialog open={showPaymentGuide} onOpenChange={setShowPaymentGuide}>
