@@ -600,14 +600,32 @@ const POS = () => {
   useEffect(() => {
     const checkCash = async () => {
       if (!userSchoolId) return;
-      // Si estamos offline, no bloquear con el guard de caja
       if (!navigator.onLine) {
         setCashGuardLoading(false);
-        setPosOpenRegister({ id: 'offline-mode', status: 'open' }); // simular caja abierta
+        setPosOpenRegister({ id: 'offline-mode', status: 'open' });
         return;
       }
       setCashGuardLoading(true);
       try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Primero verificar en cash_sessions (sistema v2)
+        const { data: v2Session } = await supabase
+          .from('cash_sessions')
+          .select('*')
+          .eq('school_id', userSchoolId)
+          .eq('session_date', today)
+          .eq('status', 'open')
+          .maybeSingle();
+
+        if (v2Session) {
+          setPosOpenRegister(v2Session);
+          setPosHasUnclosed(false);
+          setPosPreviousUnclosed(null);
+          return;
+        }
+
+        // Fallback: verificar en cash_registers (sistema legacy)
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
@@ -651,7 +669,6 @@ const POS = () => {
           }
         }
 
-        // Último cierre para referencia
         const { data: lastClosure } = await supabase
           .from('cash_closures')
           .select('actual_final')

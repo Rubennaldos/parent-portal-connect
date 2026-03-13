@@ -37,6 +37,7 @@ import SchoolAdmin from "./pages/SchoolAdmin";
 import AccessControl from "./pages/AccessControl";
 import CombosPromotions from "./pages/CombosPromotions";
 import CashRegisterPage from "./pages/CashRegister";
+import CashRegisterV2Page from "./pages/CashRegisterV2";
 import Facturacion from "./pages/Facturacion";
 import NotFound from "./pages/NotFound";
 
@@ -254,9 +255,19 @@ const App = () => (
               }
             />
             
-            {/* Cierre de Caja - Basado en permisos dinámicos */}
+            {/* Cierre de Caja v2 - Flujo diario renovado */}
             <Route
               path="/cash-register"
+              element={
+                <PermissionProtectedRoute moduleCode="cash_register">
+                  <CashRegisterV2Page />
+                </PermissionProtectedRoute>
+              }
+            />
+            
+            {/* Cierre de Caja Legacy (acceso temporal) */}
+            <Route
+              path="/cash-register-legacy"
               element={
                 <PermissionProtectedRoute moduleCode="cash_register">
                   <CashRegisterPage />
