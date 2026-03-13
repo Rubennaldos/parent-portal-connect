@@ -21,11 +21,11 @@ import {
   Mail,
   UtensilsCrossed,
   CreditCard,
-  Eye,
   School,
   Globe,
   Power,
   PowerOff,
+  Clock,
 } from 'lucide-react';
 
 // Módulos disponibles para poner en mantenimiento
@@ -35,12 +35,49 @@ const AVAILABLE_MODULES = [
     label: 'Almuerzos (Portal Padres)',
     icon: UtensilsCrossed,
     description: 'Módulo de pedidos de almuerzos para padres de familia',
+    group: 'padres',
   },
   {
     key: 'pagos_padres',
     label: 'Pagos (Portal Padres)',
     icon: CreditCard,
     description: 'Módulo de pagos y recargas para padres de familia',
+    group: 'padres',
+  },
+  {
+    key: 'pos_admin',
+    label: 'Punto de Venta (POS)',
+    icon: CreditCard,
+    description: 'Módulo de caja y ventas para operadores',
+    group: 'admin',
+  },
+  {
+    key: 'cobranzas_admin',
+    label: 'Cobranzas',
+    icon: CreditCard,
+    description: 'Módulo de gestión de cobros y deudas',
+    group: 'admin',
+  },
+  {
+    key: 'comedor_admin',
+    label: 'Comedor / Cocina',
+    icon: UtensilsCrossed,
+    description: 'Módulo de preparación y entrega de almuerzos',
+    group: 'admin',
+  },
+  {
+    key: 'ventas_admin',
+    label: 'Ventas / Historial',
+    icon: CreditCard,
+    description: 'Módulo de historial y reportes de ventas',
+    group: 'admin',
+  },
+  {
+    key: 'caja_admin',
+    label: 'Cierre de Caja',
+    icon: CreditCard,
+    description: 'Módulo de apertura y cierre de caja',
+    group: 'admin',
   },
 ];
 
@@ -52,6 +89,8 @@ interface MaintenanceConfigData {
   title: string;
   message: string;
   bypass_emails: string[];
+  schedule_start: string | null;
+  schedule_end: string | null;
 }
 
 interface Props {
@@ -113,8 +152,10 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
           module_key: mod.key,
           enabled: false,
           title: `Módulo de ${mod.label.split(' (')[0]} en Mantenimiento`,
-          message: `Estamos preparando el módulo de ${mod.label.split(' (')[0].toLowerCase()} para ofrecerte la mejor experiencia. Pronto podrás realizar tus pedidos. ¡Gracias por tu paciencia!`,
+          message: `Estamos preparando el módulo de ${mod.label.split(' (')[0].toLowerCase()} para ofrecerte la mejor experiencia. ¡Gracias por tu paciencia!`,
           bypass_emails: [],
+          schedule_start: null,
+          schedule_end: null,
         };
       });
 
@@ -128,6 +169,8 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
           title: row.title,
           message: row.message,
           bypass_emails: row.bypass_emails || [],
+          schedule_start: row.schedule_start || null,
+          schedule_end: row.schedule_end || null,
         };
       });
 
@@ -223,6 +266,13 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
     }));
   };
 
+  const handleScheduleChange = (moduleKey: string, field: 'schedule_start' | 'schedule_end', value: string | null) => {
+    setConfigs((prev) => ({
+      ...prev,
+      [moduleKey]: { ...prev[moduleKey], [field]: value },
+    }));
+  };
+
   const handleAddEmail = (moduleKey: string) => {
     const email = newEmail.trim().toLowerCase();
     if (!email || !email.includes('@')) {
@@ -267,6 +317,8 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
           title: cfg.title,
           message: cfg.message,
           bypass_emails: cfg.bypass_emails,
+          schedule_start: cfg.schedule_start || null,
+          schedule_end: cfg.schedule_end || null,
           updated_by: user.id,
           updated_at: new Date().toISOString(),
         };
@@ -385,185 +437,221 @@ export function MaintenanceConfig({ schoolId: propSchoolId }: Props) {
       </Card>
 
       {/* Módulos por Mantenimiento */}
-      <Card className="border-2 shadow-lg">
-        <CardHeader className="bg-gradient-to-r from-gray-50 to-slate-50 border-b-2">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Wrench className="h-5 w-5 text-amber-600" />
-            Modo Mantenimiento por Módulo
-          </CardTitle>
-          <CardDescription>
-            💡 Activa el mantenimiento de un módulo para que los padres no puedan usarlo temporalmente. Agrega correos de <strong>prueba / bypass</strong> para que esos usuarios sí puedan ver el módulo aunque esté en mantenimiento.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-4 space-y-4">
-          {AVAILABLE_MODULES.map((mod) => {
-            const cfg = configs[mod.key];
-            const Icon = mod.icon;
-            const isExpanded = expandedModule === mod.key;
+      {(['padres', 'admin'] as const).map((group) => {
+        const groupModules = AVAILABLE_MODULES.filter(m => m.group === group);
+        const groupLabel = group === 'padres' ? 'Portal de Padres' : 'Módulos de Administración';
+        const groupDesc = group === 'padres'
+          ? 'Controla qué módulos del portal de padres están disponibles.'
+          : 'Controla qué módulos de administración están disponibles. Solo el Admin General puede acceder cuando están en mantenimiento.';
 
-            return (
-              <div key={mod.key} className="border-2 rounded-xl overflow-hidden transition-all">
-                {/* Módulo Header */}
-                <div
-                  className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${
-                    cfg?.enabled
-                      ? 'bg-amber-50 border-amber-300'
-                      : 'bg-white hover:bg-gray-50'
-                  }`}
-                  onClick={() => setExpandedModule(isExpanded ? null : mod.key)}
-                >
-                  <div className="flex items-center gap-3">
-                    <Icon className="h-5 w-5 text-gray-600" />
-                    <span className="font-semibold text-gray-900">{mod.label}</span>
-                    {cfg?.enabled && (
-                      <Badge className="bg-amber-100 text-amber-800 border border-amber-300">
-                        <Wrench className="h-3 w-3 mr-1" />
-                        En Mantenimiento
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-500">
-                      {cfg?.enabled ? 'Desactivar' : 'Activar'}
-                    </span>
-                    <Switch
-                      checked={cfg?.enabled || false}
-                      onCheckedChange={(checked) => {
-                        handleToggle(mod.key, checked);
-                        if (checked && !isExpanded) setExpandedModule(mod.key);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                </div>
+        return (
+          <Card key={group} className="border-2 shadow-lg">
+            <CardHeader className={`border-b-2 ${group === 'admin' ? 'bg-gradient-to-r from-red-50 to-orange-50' : 'bg-gradient-to-r from-gray-50 to-slate-50'}`}>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Wrench className={`h-5 w-5 ${group === 'admin' ? 'text-red-600' : 'text-amber-600'}`} />
+                {groupLabel}
+              </CardTitle>
+              <CardDescription>{groupDesc}</CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 space-y-4">
+              {groupModules.map((mod) => {
+                const cfg = configs[mod.key];
+                const Icon = mod.icon;
+                const isExpanded = expandedModule === mod.key;
 
-                {/* Módulo Expandido */}
-                {isExpanded && (
-                  <div className="border-t-2 p-4 bg-white space-y-5">
-                    <div className="flex items-center gap-2 text-amber-700 font-semibold">
-                      <Wrench className="h-4 w-4" />
-                      Editar: {mod.label}
-                    </div>
-
-                    {/* Título */}
-                    <div className="space-y-1">
-                      <Label className="text-sm font-medium text-gray-700">Título que ven los padres</Label>
-                      <Input
-                        value={cfg?.title || ''}
-                        onChange={(e) => handleFieldChange(mod.key, 'title', e.target.value)}
-                        placeholder="Módulo en Mantenimiento"
-                        className="border-2"
-                      />
-                    </div>
-
-                    {/* Mensaje */}
-                    <div className="space-y-1">
-                      <Label className="text-sm font-medium text-gray-700">Mensaje para los padres</Label>
-                      <Textarea
-                        value={cfg?.message || ''}
-                        onChange={(e) => handleFieldChange(mod.key, 'message', e.target.value)}
-                        placeholder="Estamos trabajando para mejorar..."
-                        rows={3}
-                        className="border-2"
-                      />
-                    </div>
-
-                    {/* Bypass Emails */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-green-600" />
-                        <Label className="text-sm font-medium text-gray-700">
-                          Correos que ven el módulo aunque esté en mantenimiento (bypass)
-                        </Label>
+                return (
+                  <div key={mod.key} className="border-2 rounded-xl overflow-hidden transition-all">
+                    {/* Módulo Header */}
+                    <div
+                      className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${
+                        cfg?.enabled
+                          ? group === 'admin' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'
+                          : 'bg-white hover:bg-gray-50'
+                      }`}
+                      onClick={() => setExpandedModule(isExpanded ? null : mod.key)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon className="h-5 w-5 text-gray-600" />
+                        <span className="font-semibold text-gray-900">{mod.label}</span>
+                        {cfg?.enabled && (
+                          <Badge className={`${group === 'admin' ? 'bg-red-100 text-red-800 border-red-300' : 'bg-amber-100 text-amber-800 border-amber-300'} border`}>
+                            <Wrench className="h-3 w-3 mr-1" />
+                            En Mantenimiento
+                          </Badge>
+                        )}
+                        {cfg?.schedule_start && cfg?.schedule_end && (
+                          <Badge variant="outline" className="text-xs border-blue-300 text-blue-700">
+                            {cfg.schedule_start.slice(0, 5)} — {cfg.schedule_end.slice(0, 5)}
+                          </Badge>
+                        )}
                       </div>
-
-                      {/* Lista de emails */}
-                      {cfg?.bypass_emails?.length === 0 ? (
-                        <p className="text-xs text-amber-600 italic">Sin correos bypass</p>
-                      ) : (
-                        <div className="flex flex-wrap gap-2">
-                          {cfg?.bypass_emails?.map((email) => (
-                            <Badge
-                              key={email}
-                              variant="secondary"
-                              className="bg-green-50 text-green-700 border border-green-200 pl-2 pr-1 py-1 text-xs"
-                            >
-                              <Mail className="h-3 w-3 mr-1" />
-                              {email}
-                              <button
-                                onClick={() => handleRemoveEmail(mod.key, email)}
-                                className="ml-1 p-0.5 rounded-full hover:bg-red-100 transition-colors"
-                              >
-                                <X className="h-3 w-3 text-red-500" />
-                              </button>
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Agregar email */}
-                      <div className="flex gap-2">
-                        <Input
-                          value={newEmail}
-                          onChange={(e) => setNewEmail(e.target.value)}
-                          placeholder="correo@ejemplo.com"
-                          className="border-2 flex-1"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddEmail(mod.key);
-                            }
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500">
+                          {cfg?.enabled ? 'Desactivar' : 'Activar'}
+                        </span>
+                        <Switch
+                          checked={cfg?.enabled || false}
+                          onCheckedChange={(checked) => {
+                            handleToggle(mod.key, checked);
+                            if (checked && !isExpanded) setExpandedModule(mod.key);
                           }}
+                          onClick={(e) => e.stopPropagation()}
                         />
-                        <Button
-                          variant="outline"
-                          onClick={() => handleAddEmail(mod.key)}
-                          className="shrink-0"
-                        >
-                          <Plus className="h-4 w-4 mr-1" />
-                          Agregar
-                        </Button>
                       </div>
-                      <p className="text-xs text-gray-400">
-                        Estos correos pueden ver y usar el módulo aunque esté en mantenimiento. Ideal para pruebas.
-                      </p>
                     </div>
 
-                    {/* Warning si está activo */}
-                    {cfg?.enabled && (
-                      <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 flex items-start gap-2">
-                        <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                        <p className="text-sm text-red-700">
-                          <strong>⚠️ Mantenimiento ACTIVO:</strong> Los padres que no estén en la lista bypass verán la pantalla de mantenimiento en lugar del módulo.
-                        </p>
+                    {/* Módulo Expandido */}
+                    {isExpanded && (
+                      <div className="border-t-2 p-4 bg-white space-y-5">
+                        <div className="flex items-center gap-2 text-amber-700 font-semibold">
+                          <Wrench className="h-4 w-4" />
+                          Editar: {mod.label}
+                        </div>
+
+                        {/* Título */}
+                        <div className="space-y-1">
+                          <Label className="text-sm font-medium text-gray-700">Título que ven los usuarios</Label>
+                          <Input
+                            value={cfg?.title || ''}
+                            onChange={(e) => handleFieldChange(mod.key, 'title', e.target.value)}
+                            placeholder="Módulo en Mantenimiento"
+                            className="border-2"
+                          />
+                        </div>
+
+                        {/* Mensaje */}
+                        <div className="space-y-1">
+                          <Label className="text-sm font-medium text-gray-700">Mensaje</Label>
+                          <Textarea
+                            value={cfg?.message || ''}
+                            onChange={(e) => handleFieldChange(mod.key, 'message', e.target.value)}
+                            placeholder="Estamos trabajando para mejorar..."
+                            rows={3}
+                            className="border-2"
+                          />
+                        </div>
+
+                        {/* Horario Automático */}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-4 w-4 text-blue-600" />
+                            <Label className="text-sm font-medium text-gray-700">
+                              Horario automático (opcional)
+                            </Label>
+                          </div>
+                          <p className="text-xs text-gray-400">
+                            Si configuras un horario, el mantenimiento se activa y desactiva automáticamente todos los días en ese rango (hora de Lima).
+                          </p>
+                          <div className="flex gap-3 items-center">
+                            <div className="flex-1">
+                              <Label className="text-xs text-gray-500">Inicio</Label>
+                              <Input
+                                type="time"
+                                value={cfg?.schedule_start || ''}
+                                onChange={(e) => handleScheduleChange(mod.key, 'schedule_start', e.target.value || null)}
+                                className="border-2"
+                              />
+                            </div>
+                            <span className="text-gray-400 mt-5">a</span>
+                            <div className="flex-1">
+                              <Label className="text-xs text-gray-500">Fin</Label>
+                              <Input
+                                type="time"
+                                value={cfg?.schedule_end || ''}
+                                onChange={(e) => handleScheduleChange(mod.key, 'schedule_end', e.target.value || null)}
+                                className="border-2"
+                              />
+                            </div>
+                            {(cfg?.schedule_start || cfg?.schedule_end) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-5 text-red-500 hover:text-red-700"
+                                onClick={() => {
+                                  handleScheduleChange(mod.key, 'schedule_start', null);
+                                  handleScheduleChange(mod.key, 'schedule_end', null);
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Bypass Emails */}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4 text-green-600" />
+                            <Label className="text-sm font-medium text-gray-700">
+                              Correos bypass (ven el módulo aunque esté en mantenimiento)
+                            </Label>
+                          </div>
+
+                          {cfg?.bypass_emails?.length === 0 ? (
+                            <p className="text-xs text-amber-600 italic">Sin correos bypass</p>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {cfg?.bypass_emails?.map((email) => (
+                                <Badge
+                                  key={email}
+                                  variant="secondary"
+                                  className="bg-green-50 text-green-700 border border-green-200 pl-2 pr-1 py-1 text-xs"
+                                >
+                                  <Mail className="h-3 w-3 mr-1" />
+                                  {email}
+                                  <button
+                                    onClick={() => handleRemoveEmail(mod.key, email)}
+                                    className="ml-1 p-0.5 rounded-full hover:bg-red-100 transition-colors"
+                                  >
+                                    <X className="h-3 w-3 text-red-500" />
+                                  </button>
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex gap-2">
+                            <Input
+                              value={newEmail}
+                              onChange={(e) => setNewEmail(e.target.value)}
+                              placeholder="correo@ejemplo.com"
+                              className="border-2 flex-1"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddEmail(mod.key);
+                                }
+                              }}
+                            />
+                            <Button
+                              variant="outline"
+                              onClick={() => handleAddEmail(mod.key)}
+                              className="shrink-0"
+                            >
+                              <Plus className="h-4 w-4 mr-1" />
+                              Agregar
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Warning si está activo */}
+                        {cfg?.enabled && (
+                          <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                            <p className="text-sm text-red-700">
+                              <strong>Mantenimiento ACTIVO:</strong> Los usuarios {group === 'padres' ? 'padres' : 'de sede (excepto Admin General)'} verán la pantalla de mantenimiento.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
-
-                    {/* Preview */}
-                    <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3 text-gray-500 text-xs font-semibold uppercase">
-                        <Eye className="h-4 w-4" />
-                        Vista previa (lo que verán los padres)
-                      </div>
-                      <div className="bg-white rounded-xl p-6 text-center space-y-3 shadow-sm border">
-                        <div className="w-16 h-16 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
-                          <Wrench className="h-8 w-8 text-amber-600" />
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-900">
-                          🔧 {cfg?.title || 'Módulo en Mantenimiento'}
-                        </h3>
-                        <p className="text-gray-500 text-sm max-w-md mx-auto">
-                          {cfg?.message || 'Estamos trabajando para mejorar tu experiencia.'}
-                        </p>
-                      </div>
-                    </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
+                );
+              })}
+            </CardContent>
+          </Card>
+        );
+      })}
 
       {/* Botón Guardar */}
       <Button

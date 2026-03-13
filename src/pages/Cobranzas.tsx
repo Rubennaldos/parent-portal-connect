@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useUserProfile } from '@/hooks/useUserProfile';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,6 +51,7 @@ const Cobranzas = () => {
   const { user, signOut } = useAuth();
   const { role } = useRole();
   const { full_name } = useUserProfile();
+  const maintenance = useMaintenanceGuard('cobranzas_admin');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [permissions, setPermissions] = useState<TabPermissions>({
     dashboard: false,
@@ -216,6 +218,23 @@ const Cobranzas = () => {
       console.error('Error al contar vouchers:', err);
     }
   };
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertCircle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

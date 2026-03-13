@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useRole } from '@/hooks/useRole';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import {
@@ -314,6 +315,7 @@ const Comedor = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDate, setSelectedDate] = useState(getPeruTodayStr());
   const [schoolId, setSchoolId] = useState<string | null>(null);
+  const maintenance = useMaintenanceGuard('comedor_admin', schoolId);
   const [schoolName, setSchoolName] = useState('');
   const [allSchools, setAllSchools] = useState<{ id: string; name: string }[]>([]);
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState('all');
@@ -573,6 +575,23 @@ const Comedor = () => {
   // ══════════════════════════════════════
   // RENDER
   // ══════════════════════════════════════
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 print:bg-white">
 
