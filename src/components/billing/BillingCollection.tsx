@@ -152,9 +152,15 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [paidSearchTerm, setPaidSearchTerm] = useState('');
   // Filtros dedicados para pestaña Pagos Realizados
   const todayStr = new Date().toISOString().split('T')[0];
-  const [paidDateFrom, setPaidDateFrom] = useState(todayStr);
+  const mondayDate = (() => {
+    const now = new Date();
+    const d = new Date(now);
+    d.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1));
+    return d.toISOString().split('T')[0];
+  })();
+  const [paidDateFrom, setPaidDateFrom] = useState(mondayDate);
   const [paidDateTo, setPaidDateTo] = useState(todayStr);
-  const [paidStatusFilter, setPaidStatusFilter] = useState<string>('paid');
+  const [paidStatusFilter, setPaidStatusFilter] = useState<string>('all');
 
   // Modal guía de pago
   const [showPaymentGuide, setShowPaymentGuide] = useState(false);
@@ -2011,7 +2017,7 @@ Agradecemos su pronta atención. 🙏`;
 
   // Cargar pagos realizados cuando cambia la pestaña o la página
   useEffect(() => {
-    if (activeTab === 'pagos' && (canViewAllSchools || userSchoolId)) {
+    if (activeTab === 'pagos') {
       fetchPaidTransactions(paidPage);
     }
     if (activeTab === 'config' && userSchoolId) {
@@ -3065,10 +3071,10 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         onChange={(e) => { setPaidStatusFilter(e.target.value); setPaidPage(1); }}
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
+                        <option value="all">Todos</option>
                         <option value="paid">Pagados</option>
                         <option value="pending">Pendientes</option>
                         <option value="partial">Parciales</option>
-                        <option value="all">Todos</option>
                       </select>
                     </div>
                     {/* Buscador */}
