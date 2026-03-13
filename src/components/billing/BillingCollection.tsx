@@ -138,14 +138,12 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>(section || 'cobrar');
 
   // Sincronizar con la sección controlada desde el padre (Cobranzas.tsx)
+  // NOTA: canViewAllSchools se usa más abajo en otro useEffect
   useEffect(() => {
     if (section) {
       setActiveTab(section);
-      if (section === 'pagos' && canViewAllSchools) {
-        setSelectedSchool('all');
-      }
     }
-  }, [section, canViewAllSchools]);
+  }, [section]);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
@@ -213,6 +211,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [generatingExport, setGeneratingExport] = useState(false);
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
   const [canCollect, setCanCollect] = useState(false);
+
+  // Resetear sede a 'all' cuando entra a Reportes como admin_general
+  useEffect(() => {
+    if (section === 'pagos' && canViewAllSchools) {
+      setSelectedSchool('all');
+    }
+  }, [section, canViewAllSchools]);
 
   // Paginación - tab Cobrar (deudores)
   const DEBTORS_PER_PAGE = 20;
