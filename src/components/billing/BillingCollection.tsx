@@ -104,6 +104,13 @@ interface Debtor {
 
 
 
+/** Normaliza texto: minúsculas + sin tildes para búsqueda inteligente */
+const normalize = (str: string) =>
+  str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
 export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 'config' } = {}) => {
   const { user } = useAuth();
   const { role } = useRole();
@@ -992,11 +999,11 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   const filteredDebtors = debtors.filter(debtor => {
     if (!searchTerm) return true;
-    const search = searchTerm.toLowerCase();
+    const search = normalize(searchTerm);
     return (
-      debtor.client_name.toLowerCase().includes(search) ||
-      debtor.parent_name?.toLowerCase().includes(search) ||
-      debtor.parent_email?.toLowerCase().includes(search)
+      normalize(debtor.client_name).includes(search) ||
+      normalize(debtor.parent_name || '').includes(search) ||
+      normalize(debtor.parent_email || '').includes(search)
     );
   });
 
@@ -1010,22 +1017,24 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   // ✅ Filtrar pagos realizados por término de búsqueda dedicado (pestaña Pagos)
   const filteredPaidTransactions = paidTransactions.filter(transaction => {
     if (!paidSearchTerm) return true;
-    const search = paidSearchTerm.toLowerCase();
-    
-    const clientName = transaction.students?.full_name || 
-                       transaction.teacher_profiles?.full_name || 
-                       transaction.manual_client_name || 
+    const search = normalize(paidSearchTerm);
+
+    const clientName = transaction.students?.full_name ||
+                       transaction.teacher_profiles?.full_name ||
+                       transaction.manual_client_name ||
                        '';
     const schoolName = transaction.schools?.name || '';
     const creatorName = transaction.created_by_profile?.full_name || '';
-    
+    const creatorEmail = transaction.created_by_profile?.email || '';
+
     return (
-      clientName.toLowerCase().includes(search) ||
-      schoolName.toLowerCase().includes(search) ||
-      creatorName.toLowerCase().includes(search) ||
-      transaction.description?.toLowerCase().includes(search) ||
-      transaction.ticket_code?.toLowerCase().includes(search) ||
-      transaction.operation_number?.toLowerCase().includes(search)
+      normalize(clientName).includes(search) ||
+      normalize(schoolName).includes(search) ||
+      normalize(creatorName).includes(search) ||
+      normalize(creatorEmail).includes(search) ||
+      normalize(transaction.description || '').includes(search) ||
+      normalize(transaction.ticket_code || '').includes(search) ||
+      normalize(transaction.operation_number || '').includes(search)
     );
   });
 
@@ -2379,7 +2388,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
         </AlertDescription>
       </Alert>
 
-      {/* Filtros */}
+      {/* Filtros principales — solo visibles en pestaña Cobrar */}
+      {activeTab !== 'pagos' && activeTab !== 'config' && (
       <Card>
         <CardContent className="p-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2478,13 +2488,14 @@ Si tienes dudas, comunícate con la administración de tu sede.
           </div>
         </CardContent>
       </Card>
+      )}
 
-      {loading ? (
+      {activeTab !== 'pagos' && activeTab !== 'config' && loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-red-600" />
           <p className="ml-3 text-gray-600">Cargando deudores...</p>
         </div>
-      ) : (
+      ) : activeTab !== 'pagos' && activeTab !== 'config' && (
         <>
           {/* Acciones masivas */}
           {filteredDebtors.length > 0 && (
