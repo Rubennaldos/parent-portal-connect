@@ -20,8 +20,10 @@ import {
   UtensilsCrossed,
   Eye,
   Tag,
-  ShoppingCart
+  ShoppingCart,
+  AlertTriangle,
 } from 'lucide-react';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -121,6 +123,7 @@ const LunchCalendar = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
+  const maintenance = useMaintenanceGuard('almuerzos_admin');
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [schools, setSchools] = useState<School[]>([]);
@@ -155,6 +158,23 @@ const LunchCalendar = () => {
   const [wizardCategoryId, setWizardCategoryId] = useState<string | null>(null);
   const [wizardTargetType, setWizardTargetType] = useState<'students' | 'teachers' | 'both' | null>(null);
   const [wizardCategoryName, setWizardCategoryName] = useState<string | null>(null);
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Cargar permisos y datos del usuario
   useEffect(() => {

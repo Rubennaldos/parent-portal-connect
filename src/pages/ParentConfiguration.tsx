@@ -8,13 +8,14 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle } from 'lucide-react';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -89,6 +90,7 @@ const ParentConfiguration = () => {
   const { user } = useAuth();
   const { role, canViewAllSchools: canViewAllSchoolsHook } = useRole();
   const navigate = useNavigate();
+  const maintenance = useMaintenanceGuard('config_padres_admin');
   
   const [loading, setLoading] = useState(true);
   const [parents, setParents] = useState<ParentProfile[]>([]);
@@ -850,6 +852,23 @@ const ParentConfiguration = () => {
     
     return matchesSearch && matchesSchool;
   });
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

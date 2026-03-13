@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 interface Module {
   id: string;
@@ -82,6 +83,7 @@ const Dashboard = () => {
   const { user, signOut } = useAuth();
   const { role, isStaff } = useRole();
   const { full_name } = useUserProfile();
+  const maintenance = useMaintenanceGuard('dashboard_admin');
   const navigate = useNavigate();
   const { toast } = useToast();
   const [modules, setModules] = useState<Module[]>([]);
@@ -90,6 +92,23 @@ const Dashboard = () => {
   const [forcingUpdate, setForcingUpdate] = useState(false);
   const [cancellationAlerts, setCancellationAlerts] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/auth')}>
+            Volver al Inicio
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (user && role) {

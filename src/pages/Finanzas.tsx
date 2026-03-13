@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useToast } from '@/hooks/use-toast';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import   {
   DollarSign,
@@ -28,6 +29,7 @@ import   {
   Eye,
   Clock,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   ArrowUpRight,
   ArrowDownRight,
@@ -72,6 +74,7 @@ export default function Finanzas() {
   const { full_name } = useUserProfile();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const maintenance = useMaintenanceGuard('finanzas_admin');
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(true);
@@ -91,6 +94,23 @@ export default function Finanzas() {
   const [schools, setSchools] = useState<any[]>([]);
   const [selectedSaleDetails, setSelectedSaleDetails] = useState<Sale | null>(null);
   const [dailySales, setDailySales] = useState<{ date: string; sales: number; amount: number; transactions: Sale[] }[]>([]);
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     fetchSchools();

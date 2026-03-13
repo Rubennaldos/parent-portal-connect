@@ -23,6 +23,7 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ProcessRequestModal } from '@/components/logistics/ProcessRequestModal';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 interface InventoryItem {
   id: string;
@@ -58,6 +59,7 @@ const Logistics = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const maintenance = useMaintenanceGuard('logistica_admin');
   const [loading, setLoading] = useState(true);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>([]);
@@ -182,6 +184,23 @@ const Logistics = () => {
     const matchesCategory = selectedCategory === 'all' || item.category.name === selectedCategory;
     return matchesSearch && matchesCategory;
   });
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

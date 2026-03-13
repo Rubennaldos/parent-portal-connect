@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { PriceMatrix } from '@/components/products/PriceMatrix';
 import { BulkProductUpload } from '@/components/products/BulkProductUpload';
 import { CombosPromotionsManager } from '@/components/products/CombosPromotionsManager';
@@ -60,6 +61,7 @@ const Products = () => {
   const { role } = useRole();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const maintenance = useMaintenanceGuard('productos_admin');
   
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
@@ -922,6 +924,23 @@ const Products = () => {
   // El wizard tiene 4 pasos para admin_general (incluye selección de sedes)
   // y 3 pasos para otros admins (la sede se asigna automáticamente)
   const totalWizardSteps = isAdminGeneral ? 4 : 3;
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -30,6 +30,7 @@ import {
 
 // Módulos disponibles para poner en mantenimiento
 const AVAILABLE_MODULES = [
+  // ── Portal de Padres ──
   {
     key: 'almuerzos_padres',
     label: 'Almuerzos (Portal Padres)',
@@ -44,6 +45,7 @@ const AVAILABLE_MODULES = [
     description: 'Módulo de pagos y recargas para padres de familia',
     group: 'padres',
   },
+  // ── Módulos de Administración ──
   {
     key: 'pos_admin',
     label: 'Punto de Venta (POS)',
@@ -77,6 +79,62 @@ const AVAILABLE_MODULES = [
     label: 'Cierre de Caja',
     icon: CreditCard,
     description: 'Módulo de apertura y cierre de caja',
+    group: 'admin',
+  },
+  {
+    key: 'almuerzos_admin',
+    label: 'Calendario Almuerzos (Admin)',
+    icon: UtensilsCrossed,
+    description: 'Gestión del calendario y menús de almuerzos',
+    group: 'admin',
+  },
+  {
+    key: 'config_padres_admin',
+    label: 'Configuración de Padres',
+    icon: CreditCard,
+    description: 'Gestión de cuentas y datos de padres de familia',
+    group: 'admin',
+  },
+  {
+    key: 'productos_admin',
+    label: 'Productos',
+    icon: CreditCard,
+    description: 'Catálogo de productos del kiosco',
+    group: 'admin',
+  },
+  {
+    key: 'logistica_admin',
+    label: 'Logística / Almacén',
+    icon: CreditCard,
+    description: 'Gestión de inventario y almacén',
+    group: 'admin',
+  },
+  {
+    key: 'promociones_admin',
+    label: 'Combos y Promociones',
+    icon: CreditCard,
+    description: 'Gestión de combos y ofertas',
+    group: 'admin',
+  },
+  {
+    key: 'facturacion_admin',
+    label: 'Facturación Electrónica',
+    icon: CreditCard,
+    description: 'Emisión de boletas y facturas SUNAT',
+    group: 'admin',
+  },
+  {
+    key: 'finanzas_admin',
+    label: 'Finanzas / Tesorería',
+    icon: CreditCard,
+    description: 'Reportes financieros y tesorería',
+    group: 'admin',
+  },
+  {
+    key: 'dashboard_admin',
+    label: 'Dashboard (Panel Principal)',
+    icon: CreditCard,
+    description: 'Panel principal de módulos',
     group: 'admin',
   },
 ];

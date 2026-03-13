@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,11 +16,13 @@ import {
   Download, 
   Send,
   AlertCircle,
+  AlertTriangle,
   CheckCircle,
   Clock,
   History,
   ArrowLeft
 } from 'lucide-react';
+import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { CashRegister, CashClosure, CashMovement, CashRegisterConfig } from '@/types/cashRegister';
@@ -35,6 +38,8 @@ import { toast } from 'sonner';
 
 export default function CashRegisterPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const maintenance = useMaintenanceGuard('caja_admin');
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
@@ -47,6 +52,23 @@ export default function CashRegisterPage() {
   const [lastClosedAmount, setLastClosedAmount] = useState<number | null>(null);
   const [hasUnclosedPrevious, setHasUnclosedPrevious] = useState(false);
   const [previousUnclosed, setPreviousUnclosed] = useState<any | null>(null);
+
+  if (maintenance.blocked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-6">
+          <div className="w-20 h-20 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <AlertTriangle className="h-10 w-10 text-red-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">{maintenance.title}</h1>
+          <p className="text-gray-600">{maintenance.message}</p>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Cargar perfil del usuario
   useEffect(() => {
