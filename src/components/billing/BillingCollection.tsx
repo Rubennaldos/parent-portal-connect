@@ -1871,8 +1871,9 @@ Agradecemos su pronta atención. 🙏`;
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
-      // Construir filtro de estado
-      const statusFilter = paidStatusFilter || 'paid';
+      const statusFilter = paidStatusFilter || 'all';
+
+      console.log('📊 [Reportes] fetchPaidTransactions ejecutando:', { page, schoolIdFilter, statusFilter, paidDateFrom, paidDateTo, canViewAllSchools, selectedSchool, userSchoolId });
 
       // Primero contar el total (query liviana)
       let countQuery = supabase
@@ -1895,6 +1896,7 @@ Agradecemos su pronta atención. 🙏`;
       }
 
       const { count } = await countQuery;
+      console.log('📊 [Reportes] count result:', count);
       if (currentPaidRequestId !== fetchPaidRequestId.current) return;
       setPaidTotalCount(count || 0);
 
@@ -2017,7 +2019,9 @@ Agradecemos su pronta atención. 🙏`;
 
   // Cargar pagos realizados cuando cambia la pestaña o la página
   useEffect(() => {
+    console.log('📊 [Reportes] useEffect disparado:', { activeTab, selectedSchool, canViewAllSchools, userSchoolId, paidPage, paidDateFrom, paidDateTo, paidStatusFilter });
     if (activeTab === 'pagos') {
+      console.log('📊 [Reportes] Llamando fetchPaidTransactions...');
       fetchPaidTransactions(paidPage);
     }
     if (activeTab === 'config' && userSchoolId) {
