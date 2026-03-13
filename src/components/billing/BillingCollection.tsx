@@ -69,6 +69,7 @@ import 'jspdf-autotable';
 import { generateBillingPDF } from '@/utils/pdfGenerator';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { BillingReportsTab } from './reports/BillingReportsTab';
+import { TransactionAuditTimeline } from './reports/TransactionAuditTimeline';
 
 interface School {
   id: string;
@@ -4061,6 +4062,12 @@ Si tienes dudas, comunícate con la administración de tu sede.
                       </div>
                     </div>
                   </div>
+
+
+                  {/* Historial de Auditoría — solo visible para admin_general */}
+                  {canViewAllSchools && (
+                    <TransactionAuditTimeline transactionId={selectedTransaction.id} />
+                  )}
 
                   {/* Bot�n PDF */}
                   {isPaid ? (
