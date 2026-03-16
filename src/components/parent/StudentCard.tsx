@@ -353,8 +353,8 @@ export function StudentCard({
           </div>
         )}
 
-        {/* Limit info - visible para TODAS las cuentas con tope configurado */}
-        {limitType !== 'none' && (
+        {/* Limit info - OCULTO durante mantenimiento (topes desactivados) */}
+        {limitType !== 'none' && !RECHARGES_MAINTENANCE && (
           <div className="rounded-lg p-3 border border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-1.5">
@@ -383,11 +383,16 @@ export function StudentCard({
         {/* Status badges (compact row) */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {isPrepaid ? (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-300 text-gray-600 bg-gray-50">Modo: Recargas</Badge>
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-300 text-gray-600 bg-gray-50">
+              Modo: Recargas
+            </Badge>
           ) : (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-green-200 text-green-600 bg-green-50">Cuenta Libre</Badge>
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-200 text-gray-500 bg-gray-50">
+              Sin recargas activas
+            </Badge>
           )}
-          {limitType !== 'none' && !student.kiosk_disabled && (
+          {/* Badge de tope SOLO cuando el módulo está activo */}
+          {limitType !== 'none' && !student.kiosk_disabled && !RECHARGES_MAINTENANCE && (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-purple-200 text-purple-600 bg-purple-50">Tope {getLimitLabel()}</Badge>
           )}
           {student.kiosk_disabled && (
