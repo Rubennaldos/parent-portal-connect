@@ -24,8 +24,10 @@ import {
   UtensilsCrossed,
   ShoppingBag,
   Settings,
+  Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
 
 interface Student {
   id: string;
@@ -56,6 +58,7 @@ interface StudentCardProps {
   onOpenSettings: () => void;
   onPhotoClick: () => void;
   onEdit?: () => void;
+  onUpdate?: () => void;
 }
 
 export function StudentCard({
@@ -70,8 +73,10 @@ export function StudentCard({
   onOpenSettings,
   onPhotoClick,
   onEdit,
+  onUpdate,
 }: StudentCardProps) {
-  const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
+  const RECHARGES_MAINTENANCE = true;
+  const { toast } = useToast();
 
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
@@ -81,6 +86,36 @@ export function StudentCard({
   const [selectedAccountType, setSelectedAccountType] = useState<'free' | 'prepaid'>(
     isFreeAccount ? 'free' : 'prepaid'
   );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveAccountConfig = async () => {
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ free_account: selectedAccountType === 'free' })
+        .eq('id', student.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Configuración actualizada',
+        description: selectedAccountType === 'free'
+          ? 'La cuenta cambió a Cuenta Libre.'
+          : 'La cuenta cambió a Con Recargas.',
+      });
+      setShowAccountConfig(false);
+      onUpdate?.();
+    } catch (err: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error al guardar',
+        description: err?.message || 'No se pudo actualizar la cuenta. Intenta de nuevo.',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
   const prepaidBalance = isPrepaid ? student.balance : 0;
   const hasKioskDebt = isPrepaid && prepaidBalance < 0;
   const displayBalance = Math.max(0, prepaidBalance);
@@ -523,15 +558,17 @@ export function StudentCard({
           <Button
             size="sm"
             className="flex-1 h-8 text-xs bg-gray-700 hover:bg-gray-800 text-white"
-            onClick={() => {
-              console.log('[AccountConfig] Guardar:', {
-                studentId: student.id,
-                accountType: selectedAccountType,
-              });
-              setShowAccountConfig(false);
-            }}
+            disabled={isSaving}
+            onClick={handleSaveAccountConfig}
           >
-            Guardar
+            {isSaving ? (
+              <>
+                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                Guardando...
+              </>
+            ) : (
+              'Guardar'
+            )}
           </Button>
         </div>
       </DialogContent>
