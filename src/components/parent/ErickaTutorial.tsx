@@ -466,8 +466,13 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
     setStepsEnabled(false); // Limpiar cualquier Steps previo
     setPhase('flow-running');
 
-    // Delay para que React monte el nuevo Steps limpio
-    setTimeout(() => setStepsEnabled(true), 400);
+    // Ejecutar beforeShow del primer paso (si existe) antes de mostrar Intro.js
+    const firstStep = steps[0] as StepDef | undefined;
+    const initDelay = firstStep?.beforeShow
+      ? firstStep.beforeShow().then(() => 200)
+      : Promise.resolve(400);
+
+    initDelay.then(() => setStepsEnabled(true));
   }, [onSetActiveTab]);
 
   // ── Cierre / finalización ────────────────────────────────────────────────────
@@ -494,12 +499,14 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
     markDone();
   }, [markDone]);
 
-  // ── Cambio de paso: ejecutar beforeShow antes de que Intro.js busque el elemento ──
-  // onBeforeChange acepta Promise<void | false> en intro.js-react.
-  // Si el paso tiene beforeShow, esperamos a que el DOM esté listo antes de continuar.
-  const handleBeforeChange = useCallback(async (nextIndex: number) => {
+  // ── Cambio de paso: ejecutar beforeShow ANTES de que Intro.js cambie ──
+  // La librería llama onBeforeChange con el índice del paso ACTUAL.
+  // El paso siguiente es currentStepIndex + 1.
+  const handleBeforeChange = useCallback(async (currentStepIndex: number) => {
     const steps = phase === 'flow-running' ? flowSteps : WELCOME_STEPS_PLAIN;
-    if (!steps || nextIndex < 0 || nextIndex >= steps.length) return;
+    if (!steps || steps.length === 0) return;
+    const nextIndex = currentStepIndex + 1;
+    if (nextIndex < 0 || nextIndex >= steps.length) return;
     const step = steps[nextIndex] as StepDef | undefined;
     if (!step?.beforeShow) return;
     await step.beforeShow();
@@ -515,7 +522,7 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
       <style>{INTRO_CSS}</style>
 
       {/* ── Steps de Intro.js ── */}
-      {stepsEnabled && (phase === 'welcome' || phase === 'flow-running') && (
+      {stepsEnabled && (phase === 'welcome' || phase === 'flow-running') && currentSteps.length > 0 && (
         <Steps
           ref={introRef}
           enabled={stepsEnabled}
