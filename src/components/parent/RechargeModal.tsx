@@ -191,15 +191,47 @@ export function RechargeModal({
     reader.readAsDataURL(file);
   };
 
+  // ── Helper: comprimir imagen antes de subir ──
+  // Reduce fotos de celular (4-8 MB) a menos de 500 KB para evitar timeouts en red móvil
+  const compressImage = async (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const MAX_WIDTH = 1200;
+        const MAX_HEIGHT = 1200;
+        let { width, height } = img;
+        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+          const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => resolve(blob || file),
+          'image/jpeg',
+          0.75
+        );
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  };
+
   // ── Helper: subir imagen a storage ──
   // ⚠️ LANZA error si falla — así el insert no se hace sin foto
   const uploadVoucherImage = async (file: File, userId: string): Promise<string> => {
-    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const compressed = await compressImage(file);
+    const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
     const fileName = `${userId}/${safeName}`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('vouchers')
-      .upload(fileName, file, { upsert: false });
+      .upload(fileName, compressed, { upsert: false, contentType: 'image/jpeg' });
     if (uploadError) {
       console.error('Error al subir imagen del voucher:', uploadError.message);
       throw new Error(`No se pudo subir la foto del comprobante: ${uploadError.message}. Verifica tu conexión e intenta nuevamente.`);
@@ -337,29 +369,8 @@ export function RechargeModal({
         }
       }
 
-      // Prevenir doble envío para debt_payment con transaction IDs
-      if (requestType === 'debt_payment' && paidTransactionIds && paidTransactionIds.length > 0) {
-        const checkStudentIds = isCombinedPayment ? combinedStudentIds! : [studentId];
-        const { data: existingDebt } = await supabase
-          .from('recharge_requests')
-          .select('id, status')
-          .eq('parent_id', user.id)
-          .eq('request_type', 'debt_payment')
-          .eq('status', 'pending')
-          .in('student_id', checkStudentIds);
-
-        if (existingDebt && existingDebt.length > 0) {
-          toast({
-            variant: 'destructive',
-            title: '⚠️ Comprobante ya enviado',
-            description: isCombinedPayment
-              ? 'Ya tienes un comprobante pendiente de revisión para uno de los alumnos incluidos.'
-              : 'Ya tienes un comprobante pendiente de revisión para este alumno.',
-          });
-          setLoading(false);
-          return;
-        }
-      }
+      // Nota: debt_payment permite múltiples envíos (pagos en partes / diferencias)
+      // No se bloquea aquí — el admin verá todos los comprobantes y los conciliará
 
       const { data: student } = await supabase
         .from('students')

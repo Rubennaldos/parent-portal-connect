@@ -94,7 +94,7 @@ export const VoucherApproval = () => {
   const [allSchools, setAllSchools] = useState<{ id: string; name: string }[]>([]);
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('all');
 
-  const canViewAll = role === 'admin_general';
+  const canViewAll = role === 'admin_general' || role === 'supervisor_red';
 
   useEffect(() => {
     fetchUserSchool();

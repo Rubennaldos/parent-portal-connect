@@ -540,15 +540,15 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       cashPaymentMethod !== 'pagar_luego';
 
     if (isImmediatePayment && schoolId) {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
+      // Usar hora Lima para evitar desfase de fecha (UTC vs America/Lima)
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
       const { data: openReg } = await supabase
-        .from('cash_registers')
+        .from('cash_sessions')
         .select('id')
         .eq('school_id', schoolId)
         .eq('status', 'open')
-        .gte('opened_at', todayStart.toISOString())
+        .eq('session_date', today)
         .limit(1)
         .maybeSingle();
 
@@ -561,7 +561,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             'Ve al módulo de Cierre de Caja y declara el monto inicial.',
         });
         setLoading(false);
-        isSubmittingRef.current = false; // 🔓 Liberar lock en salida temprana
+        isSubmittingRef.current = false;
         return;
       }
     }

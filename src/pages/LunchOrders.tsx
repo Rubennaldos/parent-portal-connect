@@ -425,27 +425,49 @@ export default function LunchOrders() {
         }
         
         // 🎫💰 Batch: obtener ticket_codes + payment_status + amount para modo rango
+        // Filtrar por person IDs de los pedidos (no traer toda la escuela)
         if (data && data.length > 0) {
           try {
             const orderIds = data.map(o => o.id);
-            const { data: txData } = await supabase
-              .from('transactions')
-              .select('metadata, ticket_code, payment_status, payment_method, amount')
-              .eq('type', 'purchase')
-              .eq('is_deleted', false)
-              .neq('payment_status', 'cancelled')
-              .not('metadata', 'is', null)
-              .order('created_at', { ascending: false })
-              .limit(5000); // 🔧 Evitar límite por defecto de 1000 que ocultaba tickets
-            
-            if (txData) {
+            const orderIdSet = new Set(orderIds);
+            const studentIds = [...new Set(data.filter((o: any) => o.student_id).map((o: any) => o.student_id))] as string[];
+            const teacherIds = [...new Set(data.filter((o: any) => o.teacher_id).map((o: any) => o.teacher_id))] as string[];
+
+            let allTxData: any[] = [];
+
+            if (studentIds.length > 0) {
+              const { data: studentTxs } = await supabase
+                .from('transactions')
+                .select('metadata, ticket_code, payment_status, payment_method, amount')
+                .eq('type', 'purchase')
+                .eq('is_deleted', false)
+                .neq('payment_status', 'cancelled')
+                .not('metadata', 'is', null)
+                .in('student_id', studentIds)
+                .order('created_at', { ascending: false });
+              if (studentTxs) allTxData = allTxData.concat(studentTxs);
+            }
+            if (teacherIds.length > 0) {
+              const { data: teacherTxs } = await supabase
+                .from('transactions')
+                .select('metadata, ticket_code, payment_status, payment_method, amount')
+                .eq('type', 'purchase')
+                .eq('is_deleted', false)
+                .neq('payment_status', 'cancelled')
+                .not('metadata', 'is', null)
+                .in('teacher_id', teacherIds)
+                .order('created_at', { ascending: false });
+              if (teacherTxs) allTxData = allTxData.concat(teacherTxs);
+            }
+
+            if (allTxData.length > 0) {
               const ticketMap = new Map<string, string>();
               const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
               const amountMap = new Map<string, number>();
               const sourceMap = new Map<string, string>();
-              txData.forEach((tx: any) => {
+              allTxData.forEach((tx: any) => {
                 const lunchOrderId = tx.metadata?.lunch_order_id;
-                if (lunchOrderId && orderIds.includes(lunchOrderId)) {
+                if (lunchOrderId && orderIdSet.has(lunchOrderId)) {
                   if (tx.ticket_code) {
                     ticketMap.set(lunchOrderId, tx.ticket_code);
                   }
@@ -456,11 +478,9 @@ export default function LunchOrders() {
                       method: tx.payment_method 
                     });
                   }
-                  // Guardar el monto de la transacción (valor absoluto)
                   if (tx.amount) {
                     amountMap.set(lunchOrderId, Math.abs(tx.amount));
                   }
-                  // Guardar el source de la transacción
                   if (tx.metadata?.source) {
                     sourceMap.set(lunchOrderId, tx.metadata.source);
                   }
@@ -478,7 +498,6 @@ export default function LunchOrders() {
                 if (sourceMap.has(order.id)) {
                   order._tx_source = sourceMap.get(order.id);
                 }
-                // 💰 Si final_price es 0 o null, usar el monto de la transacción
                 if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
                   order.final_price = amountMap.get(order.id);
                 }
@@ -576,38 +595,56 @@ export default function LunchOrders() {
       }
       
       // 🎫💰 Batch: obtener ticket_codes + payment_status + amount de transacciones asociadas a estos pedidos
+      // Filtrar por person IDs de los pedidos (no traer toda la escuela)
       if (data && data.length > 0) {
         try {
           const orderIds = data.map(o => o.id);
-          // Filtrar por school_id para performance (no buscar transacciones de otras sedes)
-          let txQuery = supabase
-            .from('transactions')
-            .select('metadata, ticket_code, payment_status, payment_method, amount')
-            .eq('type', 'purchase')
-            .neq('payment_status', 'cancelled')
-            .not('metadata', 'is', null);
-          
-          if (adminSchoolId) {
-            txQuery = txQuery.eq('school_id', adminSchoolId);
+          const orderIdSet = new Set(orderIds);
+          const studentIds = [...new Set(data.filter((o: any) => o.student_id).map((o: any) => o.student_id))] as string[];
+          const teacherIds = [...new Set(data.filter((o: any) => o.teacher_id).map((o: any) => o.teacher_id))] as string[];
+
+          let allTxData: any[] = [];
+
+          if (studentIds.length > 0) {
+            let q = supabase
+              .from('transactions')
+              .select('metadata, ticket_code, payment_status, payment_method, amount')
+              .eq('type', 'purchase')
+              .eq('is_deleted', false)
+              .neq('payment_status', 'cancelled')
+              .not('metadata', 'is', null)
+              .in('student_id', studentIds)
+              .order('created_at', { ascending: false });
+            if (adminSchoolId) q = q.eq('school_id', adminSchoolId);
+            const { data: studentTxs } = await q;
+            if (studentTxs) allTxData = allTxData.concat(studentTxs);
+          }
+          if (teacherIds.length > 0) {
+            let q = supabase
+              .from('transactions')
+              .select('metadata, ticket_code, payment_status, payment_method, amount')
+              .eq('type', 'purchase')
+              .eq('is_deleted', false)
+              .neq('payment_status', 'cancelled')
+              .not('metadata', 'is', null)
+              .in('teacher_id', teacherIds)
+              .order('created_at', { ascending: false });
+            if (adminSchoolId) q = q.eq('school_id', adminSchoolId);
+            const { data: teacherTxs } = await q;
+            if (teacherTxs) allTxData = allTxData.concat(teacherTxs);
           }
 
-          const { data: txData } = await txQuery
-            .order('created_at', { ascending: false })
-            .limit(5000);
-          
-          if (txData) {
+          if (allTxData.length > 0) {
             const ticketMap = new Map<string, string>();
             const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
             const amountMap = new Map<string, number>();
             const sourceMap = new Map<string, string>();
-            txData.forEach((tx: any) => {
+            allTxData.forEach((tx: any) => {
               const lunchOrderId = tx.metadata?.lunch_order_id;
-              if (lunchOrderId && orderIds.includes(lunchOrderId)) {
+              if (lunchOrderId && orderIdSet.has(lunchOrderId)) {
                 if (tx.ticket_code) {
                   ticketMap.set(lunchOrderId, tx.ticket_code);
                 }
-                // Usar la transacción más reciente (ya viene ordenado por created_at DESC)
-                // Solo guardar la primera que encontremos para cada order
                 if (!paymentStatusMap.has(lunchOrderId)) {
                   paymentStatusMap.set(lunchOrderId, { 
                     status: tx.payment_status, 
@@ -634,7 +671,6 @@ export default function LunchOrders() {
               if (sourceMap.has(order.id)) {
                 order._tx_source = sourceMap.get(order.id);
               }
-              // 💰 Si final_price es 0 o null, usar el monto de la transacción
               if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
                 order.final_price = amountMap.get(order.id);
               }

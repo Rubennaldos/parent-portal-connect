@@ -374,12 +374,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       return (
         <div className="mt-1.5 bg-red-50 border border-red-200 rounded px-2 py-1">
           <div className="flex items-center gap-1.5 text-red-700">
-            <XCircle className="h-3 w-3" />
-            <span className="text-[10px] sm:text-xs font-semibold">Pago rechazado</span>
+            <XCircle className="h-3 w-3 flex-shrink-0" />
+            <span className="text-[10px] sm:text-xs font-semibold">Pago rechazado:</span>
+            <span className="text-[10px] sm:text-xs text-red-600">{reason}</span>
           </div>
-          <p className="text-[10px] text-red-600 mt-0.5 ml-[18px]">
-            Motivo: {reason}. Puedes enviar un nuevo comprobante.
-          </p>
         </div>
       );
     }

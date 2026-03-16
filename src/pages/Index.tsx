@@ -90,7 +90,7 @@ const Index = () => {
   const balanceSyncTs = useDebouncedSync('balances', 800);
   
   const [students, setStudents] = useState<Student[]>([]);
-  const [studentDebts, setStudentDebts] = useState<Record<string, number>>({}); // 💰 Deudas por estudiante
+  const [studentDebts, setStudentDebts] = useState<Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }>>({}); // 💰 Deudas por estudiante
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
   const [pendingRechargesMap, setPendingRechargesMap] = useState<Record<string, number>>({}); // ⏳ Recargas pendientes por estudiante
   const [loading, setLoading] = useState(true);
@@ -452,24 +452,29 @@ const Index = () => {
     
     for (const student of studentsData) {
       if (student.free_account === false) {
-        debtsMap[student.id] = 0;
+        debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
         continue;
       }
 
       try {
         const { data: transactions } = await supabase
           .from('transactions')
-          .select('amount')
+          .select('amount, metadata')
           .eq('student_id', student.id)
           .eq('type', 'purchase')
           .in('payment_status', ['pending', 'partial'])
           .eq('is_deleted', false);
 
-        const totalDebt = transactions?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-        debtsMap[student.id] = totalDebt;
+        const lunchDebt = transactions
+          ?.filter(t => (t.metadata as any)?.lunch_order_id)
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+        const kioskDebt = transactions
+          ?.filter(t => !(t.metadata as any)?.lunch_order_id)
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
+        debtsMap[student.id] = { lunchDebt, kioskDebt, totalDebt: lunchDebt + kioskDebt };
       } catch (error) {
         console.error(`Error calculating debt for student ${student.id}:`, error);
-        debtsMap[student.id] = 0;
+        debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
       }
     }
     
@@ -809,7 +814,9 @@ const Index = () => {
                     <StudentCard
                       key={student.id}
                       student={student}
-                      totalDebt={studentDebts[student.id] || 0} // 💰 Pasar deuda calculada con delay
+                      totalDebt={studentDebts[student.id]?.totalDebt || 0}
+                      lunchDebt={studentDebts[student.id]?.lunchDebt || 0}
+                      kioskDebt={studentDebts[student.id]?.kioskDebt || 0}
                       pendingRechargeAmount={pendingRechargesMap[student.id] || 0} // ⏳ Recarga pendiente
                       onRecharge={() => openRechargeModal(student)}
                       onViewHistory={() => openHistoryModal(student)}

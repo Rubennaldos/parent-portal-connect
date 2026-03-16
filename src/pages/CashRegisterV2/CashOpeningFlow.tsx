@@ -4,9 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Loader2, DollarSign, Wallet } from 'lucide-react';
+import { Loader2, DollarSign, Wallet, CheckCircle2 } from 'lucide-react';
 import type { CashSession } from '@/types/cashRegisterV2';
 
 interface Props {
@@ -19,17 +17,14 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 
-  const [initialCash, setInitialCash] = useState<string>('0');
-  const [initialYape, setInitialYape] = useState<string>('0');
-  const [initialPlin, setInitialPlin] = useState<string>('0');
-  const [initialOther, setInitialOther] = useState<string>('0');
-
   const handleOpen = async () => {
     if (!user) return;
     setLoading(true);
 
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // EC-TZ: usar hora Lima para que el cajero abra la caja del día correcto
+      // new Date().toISOString() retorna UTC — a las 8 PM Lima ya sería el día siguiente
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
       const { data, error } = await supabase
         .from('cash_sessions')
@@ -37,10 +32,11 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
           school_id: schoolId,
           session_date: today,
           opened_by: user.id,
-          initial_cash: parseFloat(initialCash) || 0,
-          initial_yape: parseFloat(initialYape) || 0,
-          initial_plin: parseFloat(initialPlin) || 0,
-          initial_other: parseFloat(initialOther) || 0,
+          // Apertura siempre en S/ 0.00 — política del negocio
+          initial_cash: 0,
+          initial_yape: 0,
+          initial_plin: 0,
+          initial_other: 0,
         })
         .select()
         .single();
@@ -53,7 +49,7 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
         throw error;
       }
 
-      toast({ title: '✅ Caja abierta', description: 'La caja del día ha sido abierta exitosamente.' });
+      toast({ title: '✅ Caja abierta', description: 'La caja del día ha sido abierta en S/ 0.00.' });
       onOpened(data);
     } catch (err: any) {
       console.error('[CashOpeningFlow] Error:', err);
@@ -62,8 +58,6 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
       setLoading(false);
     }
   };
-
-  const total = (parseFloat(initialCash) || 0) + (parseFloat(initialYape) || 0) + (parseFloat(initialPlin) || 0) + (parseFloat(initialOther) || 0);
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-4">
@@ -74,78 +68,23 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
           </div>
           <CardTitle className="text-2xl">Apertura de Caja</CardTitle>
           <p className="text-sm text-gray-500 mt-1">
-            Cuenta físicamente el efectivo y los balances digitales e ingresa los montos iniciales.
+            La caja abre con S/ 0.00. Todos los ingresos del día se registrarán durante la jornada.
           </p>
         </CardHeader>
         <CardContent className="p-6 space-y-5">
-          {/* Efectivo */}
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-2 font-semibold">
-              💵 Efectivo Inicial (S/)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={initialCash}
-              onChange={(e) => setInitialCash(e.target.value)}
-              className="text-lg h-12"
-              placeholder="0.00"
-            />
+          {/* Monto inicial fijo */}
+          <div className="bg-blue-50 rounded-xl p-6 text-center border-2 border-blue-200 space-y-2">
+            <p className="text-sm text-blue-600 font-semibold uppercase tracking-wide">Monto Inicial de Caja</p>
+            <p className="text-5xl font-black text-blue-800">S/ 0.00</p>
+            <div className="flex items-center justify-center gap-1.5 text-green-600 mt-2">
+              <CheckCircle2 className="h-4 w-4" />
+              <span className="text-xs font-medium">Apertura estandarizada en cero</span>
+            </div>
           </div>
 
-          {/* Yape */}
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-2 font-semibold">
-              📱 Balance Yape (S/)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={initialYape}
-              onChange={(e) => setInitialYape(e.target.value)}
-              className="h-10"
-              placeholder="0.00"
-            />
-          </div>
-
-          {/* Plin */}
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-2 font-semibold">
-              📲 Balance Plin (S/)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={initialPlin}
-              onChange={(e) => setInitialPlin(e.target.value)}
-              className="h-10"
-              placeholder="0.00"
-            />
-          </div>
-
-          {/* Otros */}
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-2 font-semibold">
-              🏦 Otros Digitales (S/)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={initialOther}
-              onChange={(e) => setInitialOther(e.target.value)}
-              className="h-10"
-              placeholder="0.00"
-            />
-          </div>
-
-          {/* Total */}
-          <div className="bg-blue-50 rounded-lg p-4 text-center border border-blue-200">
-            <p className="text-sm text-blue-600 font-medium">Total Inicial Declarado</p>
-            <p className="text-3xl font-bold text-blue-800">S/ {total.toFixed(2)}</p>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 leading-relaxed">
+            <strong>¿Por qué S/ 0.00?</strong> La política de caja establece apertura en cero. Cualquier ingreso
+            (ventas POS, cobros, pagos de padres) se registrará durante el día con su medio de pago y motivo.
           </div>
 
           <Button

@@ -79,7 +79,7 @@ const Cobranzas = () => {
       setLoading(true);
       console.log('🔍 Verificando permisos de Cobranzas para rol:', role);
 
-      // Supervisor Red: SOLO pestaña Cobrar, nada más
+      // Supervisor Red: puede ver Cobrar + Vouchers para aprobar recargas
       if (role === 'supervisor_red') {
         setPermissions({
           dashboard: false,
@@ -87,13 +87,14 @@ const Cobranzas = () => {
           reports: false,
           statistics: false,
           config: false,
-          vouchers: false,
+          vouchers: true,
           pagos_realizados: false,
           config_sede: false,
           comprobantes: false,
           config_sunat: false,
         });
         setActiveTab('collect');
+        fetchPendingVouchers();
         setLoading(false);
         return;
       }

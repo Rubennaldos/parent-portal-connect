@@ -1779,88 +1779,6 @@ const POS = () => {
         const isFreeAccount = freshStudent?.free_account !== false; // true o null = cuenta libre
 
         // ══════════════════════════════════════════════════════════
-        // 🔒 PASO 2: Verificar topes de consumo
-        // ══════════════════════════════════════════════════════════
-        const { data: limitCheck, error: limitError } = await supabase
-          .rpc('check_student_spending_limit', {
-            p_student_id: selectedStudent.id,
-            p_amount: total
-          });
-
-        if (limitError) {
-          console.error('Error checking spending limit:', limitError);
-          // 🔴 CRÍTICO: Si la función RPC falla, BLOQUEAR la venta
-          // Antes se ignoraba y la venta pasaba sin verificar topes
-          throw new Error(
-            '⚠️ No se pudo verificar el tope de gasto.\n' +
-            'Intente de nuevo. Si el problema persiste, contacte al administrador.'
-          );
-        } else if (limitCheck && limitCheck.length > 0 && !limitCheck[0].can_purchase) {
-          const limitInfo = limitCheck[0];
-          const limitTypeText = limitInfo.limit_type === 'daily' ? 'diario' : 
-                               limitInfo.limit_type === 'weekly' ? 'semanal' : 'mensual';
-          throw new Error(
-            `⚠️ Límite ${limitTypeText} excedido.\n` +
-            `Gastado: S/ ${limitInfo.current_spent?.toFixed(2) || '0.00'}\n` +
-            `Límite: S/ ${limitInfo.limit_amount?.toFixed(2) || '0.00'}\n` +
-            `No se puede procesar esta compra de S/ ${total.toFixed(2)}`
-          );
-        }
-
-        // ══════════════════════════════════════════════════════════
-        // 🔒 PASO 2B: Verificar TODOS los topes configurados (backup)
-        //    La función RPC solo verifica el limit_type activo.
-        //    Aquí verificamos daily + weekly + monthly si tienen valor > 0
-        // ══════════════════════════════════════════════════════════
-        const allLimitsToCheck = [
-          { type: 'daily', limit: selectedStudent.daily_limit || 0, label: 'diario' },
-          { type: 'weekly', limit: selectedStudent.weekly_limit || 0, label: 'semanal' },
-          { type: 'monthly', limit: selectedStudent.monthly_limit || 0, label: 'mensual' },
-        ].filter(l => l.limit > 0);
-
-        if (allLimitsToCheck.length > 0) {
-          const now = new Date();
-          const todayStr = now.toISOString().split('T')[0];
-          const startOfWeek = new Date(now);
-          startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-          startOfWeek.setHours(0, 0, 0, 0);
-          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-          startOfMonth.setHours(0, 0, 0, 0);
-
-          const { data: recentTx } = await supabase
-            .from('transactions')
-            .select('amount, metadata, created_at')
-            .eq('student_id', selectedStudent.id)
-            .eq('type', 'purchase')
-            .gte('created_at', startOfMonth.toISOString())
-            .eq('is_deleted', false)
-            .neq('payment_status', 'cancelled');
-
-          const kioscoTx = (recentTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
-
-          for (const lim of allLimitsToCheck) {
-            let spent = 0;
-            if (lim.type === 'daily') {
-              spent = kioscoTx.filter(t => t.created_at >= todayStr).reduce((s, t) => s + Math.abs(t.amount), 0);
-            } else if (lim.type === 'weekly') {
-              spent = kioscoTx.filter(t => t.created_at >= startOfWeek.toISOString()).reduce((s, t) => s + Math.abs(t.amount), 0);
-            } else {
-              spent = kioscoTx.reduce((s, t) => s + Math.abs(t.amount), 0);
-            }
-
-            if ((spent + total) > lim.limit) {
-              throw new Error(
-                `⚠️ Límite ${lim.label} excedido.\n` +
-                `Gastado: S/ ${spent.toFixed(2)}\n` +
-                `Límite: S/ ${lim.limit.toFixed(2)}\n` +
-                `Restante: S/ ${Math.max(0, lim.limit - spent).toFixed(2)}\n` +
-                `No se puede procesar esta compra de S/ ${total.toFixed(2)}`
-              );
-            }
-          }
-        }
-
-        // ══════════════════════════════════════════════════════════
         // 💰 PASO 3: Decidir cómo cobrar — LÓGICA:
         //
         //   ¿Tiene saldo >= total?
@@ -2349,16 +2267,28 @@ const POS = () => {
         onOpened={() => {
           setPosHasUnclosed(false);
           setPosPreviousUnclosed(null);
-          // Recargar estado de caja
+          // Recargar estado de caja — buscar primero en V2 (cash_sessions), luego legacy
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
           supabase
-            .from('cash_registers')
+            .from('cash_sessions')
             .select('*')
             .eq('school_id', userSchoolId)
+            .eq('session_date', today)
             .eq('status', 'open')
-            .order('opened_at', { ascending: false })
-            .limit(1)
             .maybeSingle()
-            .then(({ data }) => setPosOpenRegister(data));
+            .then(({ data: v2 }) => {
+              if (v2) { setPosOpenRegister(v2); return; }
+              // Fallback legacy
+              supabase
+                .from('cash_registers')
+                .select('*')
+                .eq('school_id', userSchoolId)
+                .eq('status', 'open')
+                .order('opened_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+                .then(({ data }) => setPosOpenRegister(data));
+            });
         }}
       />
     )}

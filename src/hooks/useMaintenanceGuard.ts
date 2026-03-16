@@ -64,8 +64,9 @@ export function useMaintenanceGuard(moduleKey: string, schoolId?: string | null)
 
       let isActive = config.enabled;
 
-      // Auto-schedule: si hay horario programado, verificar si estamos dentro del rango
-      if (config.schedule_start && config.schedule_end) {
+      // Auto-schedule: solo aplica si el toggle principal está habilitado
+      // Si enabled=false, el mantenimiento está apagado sin importar el horario
+      if (isActive && config.schedule_start && config.schedule_end) {
         const now = new Date();
         const tz = config.schedule_timezone || 'America/Lima';
         const localTime = now.toLocaleTimeString('en-GB', { timeZone: tz, hour12: false });

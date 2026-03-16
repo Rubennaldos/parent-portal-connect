@@ -29,8 +29,6 @@ export function CashOpeningModal({
   const [step, setStep] = useState<'unclosed_warning' | 'admin_password' | 'declaration'>(
     hasUnclosedPrevious ? 'unclosed_warning' : 'declaration'
   );
-  const [amount, setAmount] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [closingPrevious, setClosingPrevious] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
@@ -121,31 +119,43 @@ export function CashOpeningModal({
 
   const handleOpen = async () => {
     if (isSubmittingRef.current) return;
-    const val = parseFloat(amount);
-    if (isNaN(val) || val < 0) {
-      toast.error('Ingresa un monto válido (puede ser S/ 0.00)');
-      return;
-    }
-    if (!confirmed) {
-      toast.error('Confirma que el monto es correcto');
-      return;
-    }
-
     isSubmittingRef.current = true;
     setLoading(true);
     try {
+      // Usar hora Lima para la fecha de sesión
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+
+      // Verificar que no exista ya una sesión abierta hoy (doble clic / doble envío)
+      const { data: existing } = await supabase
+        .from('cash_sessions')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('session_date', today)
+        .maybeSingle();
+
+      if (existing) {
+        // Ya existe — simplemente notificar y continuar
+        toast.success('✅ Caja ya estaba abierta para hoy');
+        onOpened();
+        return;
+      }
+
       const { error } = await supabase
-        .from('cash_registers')
+        .from('cash_sessions')
         .insert({
           school_id: schoolId,
+          session_date: today,
           opened_by: user?.id,
-          initial_amount: val,
+          initial_cash: 0,
+          initial_yape: 0,
+          initial_plin: 0,
+          initial_other: 0,
           status: 'open',
         });
 
       if (error) throw error;
 
-      toast.success(`✅ Caja abierta con S/ ${val.toFixed(2)}`);
+      toast.success('✅ Caja abierta — ¡Buena jornada!');
       onOpened();
     } catch (error: any) {
       isSubmittingRef.current = false;
@@ -278,9 +288,6 @@ export function CashOpeningModal({
   }
 
   // ─── PANTALLA: DECLARACIÓN DE APERTURA ─────────────────────────────
-  const val = parseFloat(amount);
-  const isValidAmount = !isNaN(val) && val >= 0;
-
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -299,53 +306,23 @@ export function CashOpeningModal({
         <div className="p-6 space-y-5">
           <div className="text-center">
             <p className="text-gray-700 font-medium text-lg">
-              ¿Cuánto efectivo tienes en caja ahora mismo?
+              ¿Listo para iniciar la jornada?
             </p>
             <p className="text-gray-500 text-sm mt-1">
-              Cuenta el dinero físico e ingresa el monto exacto
+              Al confirmar, la caja quedará abierta y podrás registrar ventas.
             </p>
           </div>
 
-          {/* Input de monto */}
-          <div>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">
-                S/
-              </span>
-              <Input
-                type="number"
-                step="0.50"
-                min="0"
-                value={amount}
-                onChange={(e) => { setAmount(e.target.value); setConfirmed(false); }}
-                placeholder="0.00"
-                className="h-16 text-3xl font-black text-center pl-12 border-2 border-emerald-300 focus:border-emerald-500"
-                autoFocus
-              />
+          {lastClosedAmount != null && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center text-sm text-emerald-800">
+              💰 Último cierre registrado: <strong>S/ {lastClosedAmount.toFixed(2)}</strong>
             </div>
-          </div>
-
-          {/* Checkbox de confirmación */}
-          {isValidAmount && amount !== '' && (
-            <label className="flex items-start gap-3 cursor-pointer bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                className="mt-1 h-4 w-4 accent-emerald-600"
-              />
-              <span className="text-sm text-emerald-800">
-                Confirmo que tengo{' '}
-                <strong className="text-xl">S/ {val.toFixed(2)}</strong>{' '}
-                en efectivo en caja al iniciar la jornada del día de hoy.
-              </span>
-            </label>
           )}
 
           {/* Botón principal */}
           <Button
             onClick={handleOpen}
-            disabled={!isValidAmount || !confirmed || loading || amount === ''}
+            disabled={loading}
             className="w-full h-14 text-lg font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40"
           >
             {loading ? (
@@ -359,8 +336,7 @@ export function CashOpeningModal({
           </Button>
 
           <p className="text-xs text-gray-400 text-center">
-            Este monto quedará registrado. Al cierre del día se comparará
-            con el efectivo real para detectar diferencias.
+            El monto de apertura se gestiona desde el módulo de Cierre de Caja.
           </p>
         </div>
       </div>

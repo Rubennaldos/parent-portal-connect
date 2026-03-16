@@ -151,10 +151,7 @@ CREATE POLICY "cash_reconciliations_insert" ON cash_reconciliations FOR INSERT
 
 -- ─── 4. TRANSFERENCIAS A TESORERÍA (Cadena de Custodia) ─────────────────────
 
-CError: Failed to run sql query: ERROR: 42710: policy "cash_manual_entries_select" for table "cash_manual_entries" already exists
-
-
-REATE TABLE IF NOT EXISTS public.treasury_transfers (
+CREATE TABLE IF NOT EXISTS public.treasury_transfers (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   cash_session_id  UUID NOT NULL REFERENCES cash_sessions(id) ON DELETE CASCADE,
   school_id        UUID NOT NULL REFERENCES schools(id),

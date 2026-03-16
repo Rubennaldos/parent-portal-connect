@@ -19,6 +19,11 @@ import {
   Wrench,
   Phone,
   Info,
+  ChevronDown,
+  ChevronUp,
+  UtensilsCrossed,
+  ShoppingBag,
+  Settings,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -42,6 +47,8 @@ interface Student {
 interface StudentCardProps {
   student: Student;
   totalDebt?: number;
+  lunchDebt?: number;
+  kioskDebt?: number;
   pendingRechargeAmount?: number;
   onRecharge: () => void;
   onViewHistory: () => void;
@@ -54,6 +61,8 @@ interface StudentCardProps {
 export function StudentCard({
   student,
   totalDebt = 0,
+  lunchDebt = 0,
+  kioskDebt = 0,
   pendingRechargeAmount = 0,
   onRecharge,
   onViewHistory,
@@ -67,11 +76,18 @@ export function StudentCard({
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
   const [showMaintenanceInfo, setShowMaintenanceInfo] = useState(false);
+  const [showDebtDetail, setShowDebtDetail] = useState(false);
+  const [showAccountConfig, setShowAccountConfig] = useState(false);
+  const [selectedAccountType, setSelectedAccountType] = useState<'free' | 'prepaid'>(
+    isFreeAccount ? 'free' : 'prepaid'
+  );
   const prepaidBalance = isPrepaid ? student.balance : 0;
   const hasKioskDebt = isPrepaid && prepaidBalance < 0;
   const displayBalance = Math.max(0, prepaidBalance);
   const isActivePrepaid = isPrepaid && displayBalance > 0;
-  const hasDebt = hasKioskDebt || (!isActivePrepaid ? totalDebt > 0 : false);
+  // hasDebt = hay deuda de almuerzo (independiente del saldo del kiosco)
+  const hasLunchDebt = lunchDebt > 0;
+  const hasDebt = hasKioskDebt || hasLunchDebt;
 
   const [spentPeriod, setSpentPeriod] = useState(0);
 
@@ -130,6 +146,7 @@ export function StudentCard({
   };
 
   return (
+    <>
     <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
       {/* Top accent */}
       <div className={`h-1 ${hasDebt ? 'bg-red-400' : 'bg-gray-200'}`} />
@@ -163,6 +180,13 @@ export function StudentCard({
                   <Pencil className="h-3 w-3 text-gray-400" />
                 </button>
               )}
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowAccountConfig(true); }}
+                className="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition-colors"
+                title="Configuración de cuenta"
+              >
+                <Settings className="h-3.5 w-3.5 text-gray-500 hover:text-gray-700 transition-colors" />
+              </button>
             </div>
             {student.school?.name && (
               <p className="text-xs text-gray-500 mt-0.5">{student.school.name}</p>
@@ -189,41 +213,83 @@ export function StudentCard({
         {/* Financial info */}
         {!student.kiosk_disabled && (
           <div className={`rounded-lg p-3 border ${
-            hasKioskDebt ? 'bg-red-50 border-red-200' : hasDebt ? 'bg-red-50 border-red-200' : isActivePrepaid ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+            hasDebt ? 'bg-red-50 border-red-200' : isActivePrepaid ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
           }`}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
-                  {hasKioskDebt ? 'Deuda Kiosco' : hasDebt ? 'Deuda Kiosco' : isActivePrepaid ? 'Saldo Kiosco' : 'Estado'}
+                  {hasDebt
+                    ? hasKioskDebt && hasLunchDebt
+                      ? 'Deuda Total'
+                      : hasLunchDebt
+                      ? 'Deuda Almuerzos'
+                      : 'Deuda Kiosco'
+                    : isActivePrepaid
+                    ? 'Saldo Kiosco'
+                    : 'Estado'}
                 </p>
                 <p className={`text-2xl font-bold mt-0.5 ${
-                  hasKioskDebt || hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
+                  hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
                 }`}>
-                  {hasKioskDebt
-                    ? `- S/ ${Math.abs(prepaidBalance).toFixed(2)}`
-                    : hasDebt
-                    ? `S/ ${totalDebt.toFixed(2)}`
+                  {hasDebt
+                    ? `S/ ${(lunchDebt + (hasKioskDebt ? Math.abs(prepaidBalance) : 0)).toFixed(2)}`
                     : isActivePrepaid
                     ? `S/ ${displayBalance.toFixed(2)}`
                     : 'Al día'}
                 </p>
-                {hasKioskDebt && (
-                  <p className="text-[9px] text-red-500 mt-0.5">Recarga para cubrir la deuda primero</p>
+                {hasDebt && (
+                  <button
+                    onClick={() => setShowDebtDetail(v => !v)}
+                    className="flex items-center gap-1 text-[10px] text-red-500 mt-1 hover:text-red-700 font-medium"
+                  >
+                    {showDebtDetail ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    Ver desglose
+                  </button>
                 )}
                 {isActivePrepaid && !hasKioskDebt && (
                   <p className="text-[9px] text-blue-400 mt-0.5">Solo para snacks y recreo</p>
                 )}
               </div>
               <div className={`p-2 rounded-lg ${
-                hasKioskDebt || hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
+                hasDebt ? 'bg-red-100' : isActivePrepaid ? 'bg-blue-100' : 'bg-green-100'
               }`}>
-                {hasKioskDebt || hasDebt
+                {hasDebt
                   ? <AlertCircle className="h-5 w-5 text-red-500" />
                   : isActivePrepaid
                   ? <CreditCard className="h-5 w-5 text-blue-500" />
                   : <Wallet className="h-5 w-5 text-gray-500" />}
               </div>
             </div>
+
+            {/* Desglose de deuda (expandible) */}
+            {hasDebt && showDebtDetail && (
+              <div className="mt-2 pt-2 border-t border-red-200 space-y-1.5">
+                {hasKioskDebt && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <ShoppingBag className="h-3 w-3 text-red-400" />
+                      <span className="text-[10px] text-red-700">Deuda Kiosco</span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-red-700">S/ {Math.abs(prepaidBalance).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasLunchDebt && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <UtensilsCrossed className="h-3 w-3 text-red-400" />
+                      <span className="text-[10px] text-red-700">Deuda Almuerzos</span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-red-700">S/ {lunchDebt.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-red-200">
+                  <span className="text-[10px] font-bold text-red-800">Total</span>
+                  <span className="text-[10px] font-bold text-red-800">
+                    S/ {(lunchDebt + (hasKioskDebt ? Math.abs(prepaidBalance) : 0)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Balance bar for prepaid (only if positive) */}
             {isActivePrepaid && !hasKioskDebt && (
@@ -374,56 +440,152 @@ export function StudentCard({
           </div>
         </div>
 
-        {/* Modal informativo de mantenimiento */}
-        <Dialog open={showMaintenanceInfo} onOpenChange={setShowMaintenanceInfo}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-lg">
-                <Wrench className="h-5 w-5 text-amber-600" />
-                Mantenimiento del módulo de Recargas
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-2">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                <p className="text-sm text-green-800 font-semibold">
-                  Su dinero se encuentra a salvo
-                </p>
-                <p className="text-xs text-green-700 mt-1 leading-relaxed">
-                  El saldo de su hijo/a será guardado y estará disponible una vez finalice el mantenimiento. No se planea que esta actualización tome más de tres días.
-                </p>
-              </div>
-
-              {isPrepaid && displayBalance > 0 && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <p className="text-xs text-blue-700">
-                    Saldo actual: <strong className="text-blue-900 text-sm">S/ {displayBalance.toFixed(2)}</strong>
-                  </p>
-                  <p className="text-[10px] text-blue-600 mt-0.5">
-                    Este saldo sigue activo para compras en el kiosco.
-                  </p>
-                </div>
-              )}
-
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                <p className="text-xs text-gray-700 font-semibold flex items-center gap-1.5">
-                  <Phone className="h-3.5 w-3.5" />
-                  ¿Desea la devolución?
-                </p>
-                <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
-                  Contacte al <strong>991 236 870</strong> con el área de sistemas indicando su correo y pidiendo la devolución. Por <strong>WhatsApp</strong> únicamente.
-                </p>
-              </div>
-
-              <Button
-                onClick={() => setShowMaintenanceInfo(false)}
-                className="w-full h-10 bg-amber-600 hover:bg-amber-700 text-white font-semibold"
-              >
-                Entendido
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </CardContent>
     </Card>
+
+    {/* ── Modales fuera de Card para evitar conflictos de z-index/portal ── */}
+
+    {/* Modal configuración de cuenta */}
+    <Dialog open={showAccountConfig} onOpenChange={setShowAccountConfig}>
+      <DialogContent className="max-w-xs p-4">
+        <DialogHeader className="pb-2">
+          <DialogTitle className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <Settings className="h-4 w-4 text-gray-400" />
+            Configuración de cuenta
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          {/* Opción A: Cuenta Libre */}
+          <button
+            type="button"
+            onClick={() => setSelectedAccountType('free')}
+            className={`w-full text-left rounded-lg border p-3 transition-colors ${
+              selectedAccountType === 'free'
+                ? 'border-gray-400 bg-gray-100'
+                : 'border-gray-200 bg-white hover:bg-gray-50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700">Cuenta Libre</span>
+              <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${
+                selectedAccountType === 'free'
+                  ? 'border-gray-500 bg-gray-500'
+                  : 'border-gray-300'
+              }`} />
+            </div>
+            <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+              Consumo sin límite diario. Se paga lo consumido.
+            </p>
+          </button>
+
+          {/* Opción B: Cuenta con Recargas */}
+          <button
+            type="button"
+            disabled={hasDebt}
+            onClick={() => !hasDebt && setSelectedAccountType('prepaid')}
+            className={`w-full text-left rounded-lg border p-3 transition-colors ${
+              hasDebt
+                ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
+                : selectedAccountType === 'prepaid'
+                ? 'border-gray-400 bg-gray-100'
+                : 'border-gray-200 bg-white hover:bg-gray-50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700">Cuenta con Recargas</span>
+              <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${
+                selectedAccountType === 'prepaid' && !hasDebt
+                  ? 'border-gray-500 bg-gray-500'
+                  : 'border-gray-300'
+              }`} />
+            </div>
+            <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+              Consumo limitado al saldo previo.
+            </p>
+            {hasDebt && (
+              <p className="text-[10px] text-red-400 mt-1 leading-snug">
+                Debe liquidar su deuda actual para cambiar a recargas.
+              </p>
+            )}
+          </button>
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1 h-8 text-xs text-gray-500"
+            onClick={() => setShowAccountConfig(false)}
+          >
+            Cancelar
+          </Button>
+          <Button
+            size="sm"
+            className="flex-1 h-8 text-xs bg-gray-700 hover:bg-gray-800 text-white"
+            onClick={() => {
+              console.log('[AccountConfig] Guardar:', {
+                studentId: student.id,
+                accountType: selectedAccountType,
+              });
+              setShowAccountConfig(false);
+            }}
+          >
+            Guardar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Modal informativo de mantenimiento */}
+    <Dialog open={showMaintenanceInfo} onOpenChange={setShowMaintenanceInfo}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg">
+            <Wrench className="h-5 w-5 text-amber-600" />
+            Mantenimiento del módulo de Recargas
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+            <p className="text-sm text-green-800 font-semibold">
+              Su dinero se encuentra a salvo
+            </p>
+            <p className="text-xs text-green-700 mt-1 leading-relaxed">
+              El saldo de su hijo/a será guardado y estará disponible una vez finalice el mantenimiento. No se planea que esta actualización tome más de tres días.
+            </p>
+          </div>
+
+          {isPrepaid && displayBalance > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-xs text-blue-700">
+                Saldo actual: <strong className="text-blue-900 text-sm">S/ {displayBalance.toFixed(2)}</strong>
+              </p>
+              <p className="text-[10px] text-blue-600 mt-0.5">
+                Este saldo sigue activo para compras en el kiosco.
+              </p>
+            </div>
+          )}
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-700 font-semibold flex items-center gap-1.5">
+              <Phone className="h-3.5 w-3.5" />
+              ¿Desea la devolución?
+            </p>
+            <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+              Contacte al <strong>991 236 870</strong> con el área de sistemas indicando su correo y pidiendo la devolución. Por <strong>WhatsApp</strong> únicamente.
+            </p>
+          </div>
+
+          <Button
+            onClick={() => setShowMaintenanceInfo(false)}
+            className="w-full h-10 bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+          >
+            Entendido
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  </>
   );
 }

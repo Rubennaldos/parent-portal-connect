@@ -20,11 +20,13 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -49,6 +51,9 @@ const normalize = (str: string) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+
+const isUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 const todayStr = () => new Date().toISOString().split('T')[0];
 
@@ -113,6 +118,172 @@ export const BillingReportsTab = ({
 
       const from = (page - 1) * ITEMS_PER_PAGE;
       const to = from + ITEMS_PER_PAGE - 1;
+      const normalizedSearch = normalize(searchTerm.trim());
+
+      const applySharedFilters = (q: any) => {
+        let query = q;
+        if (statusFilter !== 'all') query = query.eq('payment_status', statusFilter);
+        if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
+        if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`);
+        if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`);
+        return query;
+      };
+
+      // ✅ Búsqueda server-side: filtrar por nombre/ticket/descripción en BD
+      // Usamos or() con ilike para buscar en student name, teacher name, description, ticket
+      if (normalizedSearch) {
+        const searchPattern = `%${searchTerm.trim()}%`;
+
+        // 1. Buscar IDs de estudiantes que coinciden
+        const { data: matchStudents } = await supabase
+          .from('students')
+          .select('id')
+          .ilike('full_name', searchPattern);
+
+        // 2. Buscar IDs de profesores que coinciden
+        const { data: matchTeachers } = await supabase
+          .from('teacher_profiles')
+          .select('id')
+          .ilike('full_name', searchPattern);
+
+        if (requestId !== fetchRequestId.current) return;
+
+        const studentIds = (matchStudents || []).map((s: any) => s.id);
+        const teacherIds = (matchTeachers || []).map((t: any) => t.id);
+
+        // 3. Construir filtro OR: por student_id, teacher_id, description, ticket_code
+        const orParts: string[] = [];
+        if (studentIds.length > 0) orParts.push(`student_id.in.(${studentIds.join(',')})`);
+        if (teacherIds.length > 0) orParts.push(`teacher_id.in.(${teacherIds.join(',')})`);
+        orParts.push(`description.ilike.${searchPattern}`);
+        orParts.push(`ticket_code.ilike.${searchPattern}`);
+        orParts.push(`manual_client_name.ilike.${searchPattern}`);
+
+        const orFilter = orParts.join(',');
+
+        // Count
+        let countQ = supabase
+          .from('transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('type', 'purchase')
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled')
+          .or(orFilter);
+
+        countQ = applySharedFilters(countQ);
+        const { count } = await countQ;
+        if (requestId !== fetchRequestId.current) return;
+        setTotalCount(count || 0);
+
+        // Data (paginated)
+        let dataQ = supabase
+          .from('transactions')
+          .select(`
+            *,
+            students(id, full_name, parent_id),
+            teacher_profiles(id, full_name),
+            schools(id, name)
+          `)
+          .eq('type', 'purchase')
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled')
+          .or(orFilter)
+          .order('created_at', { ascending: false })
+          .range(from, to);
+
+        dataQ = applySharedFilters(dataQ);
+        const { data, error } = await dataQ;
+        if (error) throw error;
+        if (requestId !== fetchRequestId.current) return;
+
+        // Filtrar pedidos cancelados
+        const lunchOrderIds = (data || [])
+          .map((t: any) => t.metadata?.lunch_order_id)
+          .filter(Boolean);
+
+        let cancelledOrderIds = new Set<string>();
+        let existingLunchOrderIds = new Set<string>();
+
+        if (lunchOrderIds.length > 0) {
+          const uniqueIds = [...new Set<string>(lunchOrderIds)];
+          const allExisting: any[] = [];
+          const CHUNK = 200;
+          for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+            const batch = uniqueIds.slice(i, i + CHUNK);
+            const { data: bd } = await supabase
+              .from('lunch_orders')
+              .select('id, is_cancelled')
+              .in('id', batch);
+            if (bd) allExisting.push(...bd);
+          }
+          cancelledOrderIds = new Set(
+            allExisting.filter((o: any) => o.is_cancelled).map((o: any) => o.id)
+          );
+          existingLunchOrderIds = new Set(allExisting.map((o: any) => o.id));
+        }
+
+        const validTx = (data || []).filter((t: any) => {
+          if (t.metadata?.lunch_order_id) {
+            if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
+            if (!existingLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
+          }
+          return true;
+        });
+
+        // Enriquecer con created_by
+        const userIds = [
+          ...new Set(
+            validTx
+              .map((t: any) => t.created_by)
+              .filter((v: any) => typeof v === 'string' && isUuid(v))
+          ),
+        ];
+        const createdByMap = new Map<string, any>();
+
+        if (userIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
+            .in('id', userIds);
+
+          profiles?.forEach((p: any) => {
+            createdByMap.set(p.id, { ...p, school_name: p.schools?.name || null });
+          });
+
+          const { data: teacherProfiles } = await supabase
+            .from('teacher_profiles')
+            .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
+            .in('id', userIds);
+
+          teacherProfiles?.forEach((tp: any) => {
+            const existing = createdByMap.get(tp.id);
+            if (existing) {
+              createdByMap.set(tp.id, {
+                ...existing,
+                teacher_school_name: tp.schools?.name || null,
+                teacher_school_id: tp.school_id_1,
+              });
+            } else {
+              createdByMap.set(tp.id, {
+                id: tp.id,
+                full_name: tp.full_name,
+                role: 'teacher',
+                school_id: tp.school_id_1,
+                school_name: tp.schools?.name || null,
+              });
+            }
+          });
+        }
+
+        const enriched = validTx.map((t: any) => ({
+          ...t,
+          created_by_profile: createdByMap.get(t.created_by) || null,
+        }));
+
+        if (requestId !== fetchRequestId.current) return;
+        setTransactions(enriched);
+        return;
+      }
 
       // 1. Contar total (query liviana, sin datos)
       let countQ = supabase
@@ -122,10 +293,7 @@ export const BillingReportsTab = ({
         .eq('is_deleted', false)
         .neq('payment_status', 'cancelled');
 
-      if (statusFilter !== 'all') countQ = countQ.eq('payment_status', statusFilter);
-      if (schoolIdFilter) countQ = countQ.eq('school_id', schoolIdFilter);
-      if (dateFrom) countQ = countQ.gte('created_at', `${dateFrom}T00:00:00`);
-      if (dateTo) countQ = countQ.lte('created_at', `${dateTo}T23:59:59`);
+      countQ = applySharedFilters(countQ);
 
       const { count } = await countQ;
       if (requestId !== fetchRequestId.current) return;
@@ -146,10 +314,7 @@ export const BillingReportsTab = ({
         .order('created_at', { ascending: false })
         .range(from, to);
 
-      if (statusFilter !== 'all') dataQ = dataQ.eq('payment_status', statusFilter);
-      if (schoolIdFilter) dataQ = dataQ.eq('school_id', schoolIdFilter);
-      if (dateFrom) dataQ = dataQ.gte('created_at', `${dateFrom}T00:00:00`);
-      if (dateTo) dataQ = dataQ.lte('created_at', `${dateTo}T23:59:59`);
+      dataQ = applySharedFilters(dataQ);
 
       const { data, error } = await dataQ;
       if (error) throw error;
@@ -190,7 +355,13 @@ export const BillingReportsTab = ({
       });
 
       // 4. Enriquecer con datos del creador
-      const userIds = [...new Set(validTx.map((t: any) => t.created_by).filter(Boolean))];
+      const userIds = [
+        ...new Set(
+          validTx
+            .map((t: any) => t.created_by)
+            .filter((v: any) => typeof v === 'string' && isUuid(v))
+        ),
+      ];
       const createdByMap = new Map<string, any>();
 
       if (userIds.length > 0) {
@@ -255,7 +426,7 @@ export const BillingReportsTab = ({
     setCurrentPage(1);
     fetchTransactions(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSchool, dateFrom, dateTo, statusFilter, userSchoolId, canViewAllSchools]);
+  }, [selectedSchool, dateFrom, dateTo, statusFilter, searchTerm, userSchoolId, canViewAllSchools]);
 
   // Re-fetch cuando cambia la página (sin resetear)
   useEffect(() => {
@@ -454,6 +625,125 @@ export const BillingReportsTab = ({
     }
   };
 
+  // ── Exportar a Excel ───────────────────────────────────────────────────────
+
+  const exportToExcel = async () => {
+    // Necesitamos TODOS los registros filtrados, no solo la página actual
+    // Hacemos un fetch sin paginación con los mismos filtros activos
+    toast({ title: '⏳ Preparando Excel...', description: 'Obteniendo todos los registros filtrados.' });
+
+    try {
+      const schoolIdFilter =
+        !canViewAllSchools || selectedSchool !== 'all'
+          ? selectedSchool !== 'all' ? selectedSchool : userSchoolId
+          : null;
+
+      let query = supabase
+        .from('transactions')
+        .select(`*, students(id, full_name), teacher_profiles(id, full_name), schools(id, name)`)
+        .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
+        .order('created_at', { ascending: false })
+        .limit(5000);
+
+      if (statusFilter !== 'all') query = query.eq('payment_status', statusFilter);
+      if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
+      if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`);
+      if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`);
+
+      const { data: allData, error } = await query;
+      if (error) throw error;
+
+      const rows = (allData || []);
+
+      // ── Datos del encabezado ──
+      const ahora = new Date();
+      const fechaReporte = format(ahora, "dd/MM/yyyy 'a las' HH:mm", { locale: es });
+      const quienExporto = user?.email || 'Desconocido';
+      const rangoFechas = `Del ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy", { locale: es })} al ${format(new Date(dateTo + 'T00:00:00'), "dd/MM/yyyy", { locale: es })}`;
+      const estadoLabel = statusFilter === 'all' ? 'Todos' : statusFilter === 'paid' ? 'Pagados' : statusFilter === 'pending' ? 'Pendientes' : 'Parciales';
+      const montoTotal = rows.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+
+      // ── Construir filas de datos ──
+      const dataRows = rows.map((t) => {
+        const nombreMenor = t.students?.full_name || t.teacher_profiles?.full_name || t.manual_client_name || 'Sin nombre';
+        const deuda = Math.abs(t.amount || 0);
+        const observaciones = t.description || '';
+        const comprobante = t.ticket_code || t.operation_number || '';
+        const fechaComp = t.created_at ? format(new Date(t.created_at), 'dd/MM/yyyy', { locale: es }) : '';
+        const mes = t.created_at ? format(new Date(t.created_at), 'MMMM yyyy', { locale: es }) : '';
+
+        return {
+          'Nombre y Apellidos del Menor': nombreMenor,
+          'Deuda (S/)': deuda,
+          'Observaciones': observaciones,
+          'Comprobante (N° Ticket)': comprobante,
+          'Fecha del Comprobante': fechaComp,
+          'Mes': mes,
+          'Estado': '',          // lo llena la dueña
+          'Método de Pago': '',  // lo llena la dueña
+          'Forma de Pago': '',   // lo llena la dueña
+          'Porque (Motivo)': t.metadata?.rejection_reason || '',
+        };
+      });
+
+      // ── Crear libro Excel ──
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([]);
+
+      // Fila 1: Título principal
+      XLSX.utils.sheet_add_aoa(ws, [['REPORTE DE DEUDAS — PORTAL DE PADRES']], { origin: 'A1' });
+      // Fila 2: Rango de fechas
+      XLSX.utils.sheet_add_aoa(ws, [[rangoFechas]], { origin: 'A2' });
+      // Fila 3: Monto total
+      XLSX.utils.sheet_add_aoa(ws, [[`Monto Total: S/ ${montoTotal.toFixed(2)}   |   Estado filtrado: ${estadoLabel}   |   Total registros: ${rows.length}`]], { origin: 'A3' });
+      // Fila 4: Generado por
+      XLSX.utils.sheet_add_aoa(ws, [[`Generado el: ${fechaReporte}   |   Por: ${quienExporto}`]], { origin: 'A4' });
+      // Fila 5: en blanco
+      XLSX.utils.sheet_add_aoa(ws, [['']], { origin: 'A5' });
+      // Fila 6: Encabezados de columnas
+      const headers = Object.keys(dataRows[0] || {});
+      XLSX.utils.sheet_add_aoa(ws, [headers], { origin: 'A6' });
+      // Fila 7 en adelante: datos
+      XLSX.utils.sheet_add_json(ws, dataRows, { origin: 'A7', skipHeader: true });
+
+      // ── Estilos de ancho de columnas ──
+      ws['!cols'] = [
+        { wch: 35 }, // Nombre
+        { wch: 12 }, // Deuda
+        { wch: 45 }, // Observaciones
+        { wch: 20 }, // Comprobante
+        { wch: 20 }, // Fecha comp
+        { wch: 14 }, // Mes
+        { wch: 14 }, // Estado (vacío)
+        { wch: 16 }, // Método de pago (vacío)
+        { wch: 16 }, // Forma de pago (vacío)
+        { wch: 30 }, // Porque
+      ];
+
+      // Fusionar celdas del título (A1 a J1)
+      const lastCol = String.fromCharCode(64 + headers.length);
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: headers.length - 1 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: headers.length - 1 } },
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Reporte Deudas');
+
+      // ── Nombre del archivo ──
+      const nombreArchivo = `Reporte_Deudas_${dateFrom}_al_${dateTo}.xlsx`;
+      XLSX.writeFile(wb, nombreArchivo);
+
+      toast({ title: '✅ Excel generado', description: `${rows.length} registros exportados correctamente.` });
+    } catch (err) {
+      console.error('Error exportando Excel:', err);
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo generar el Excel. Intenta de nuevo.' });
+    }
+  };
+
   // ── Filtro local de búsqueda (solo sobre la página actual) ─────────────────
 
   const filtered = transactions.filter((t) => {
@@ -575,11 +865,21 @@ export const BillingReportsTab = ({
           </div>
 
           {/* Resumen rápido */}
-          <div className="flex items-center gap-3 mt-3 text-sm text-gray-600">
-            <span className="font-medium">{totalCount} registros encontrados</span>
-            {searchTerm && (
-              <span>• {filtered.length} coinciden con "{searchTerm}"</span>
-            )}
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <div className="flex items-center gap-3 text-sm text-gray-600">
+              <span className="font-medium">{totalCount} registros encontrados</span>
+              {searchTerm && (
+                <span>• {totalCount} coinciden con "{searchTerm}"</span>
+              )}
+            </div>
+            <Button
+              onClick={exportToExcel}
+              className="bg-green-600 hover:bg-green-700 text-white gap-2 text-sm font-semibold"
+              size="sm"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Exportar Excel
+            </Button>
           </div>
         </CardContent>
       </Card>

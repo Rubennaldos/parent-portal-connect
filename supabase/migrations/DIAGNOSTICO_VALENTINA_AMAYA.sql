@@ -1,48 +1,91 @@
--- =========================================================
--- DIAGNÓSTICO COMPLETO: Valentina Amaya Segura Castro
--- =========================================================
+-- DIAGNÓSTICO: ¿Valentina Amaya Segura Castro tiene transacciones por sus almuerzos?
 
--- PASO 1: Ver datos actuales del alumno
-SELECT
-  s.id            AS student_id,
-  s.full_name,
-  s.balance       AS saldo_actual,
-  s.free_account  AS cuenta_libre,
-  sch.name        AS colegio
-FROM students s
-LEFT JOIN schools sch ON s.school_id = sch.id
-WHERE s.full_name ILIKE '%Valentina Amaya%';
+-- Paso 1: Datos del alumno
+SELECT id, full_name, balance, free_account, is_active, school_id
+FROM students
+WHERE full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR full_name ILIKE '%Valentina%Segura%Castro%';
 
+-- Paso 2: Pedidos de almuerzo recientes
+SELECT 
+  lo.id AS orden_id,
+  lo.order_date,
+  lo.status,
+  lo.is_cancelled,
+  lo.student_id,
+  lo.created_at,
+  lo.final_price,
+  lo.category_id
+FROM lunch_orders lo
+JOIN students s ON lo.student_id = s.id
+WHERE (s.full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR s.full_name ILIKE '%Valentina%Segura%Castro%')
+  AND lo.is_cancelled = false
+ORDER BY lo.order_date DESC
+LIMIT 20;
 
--- PASO 2: Ver TODAS sus transacciones (recargas + compras) ordenadas por fecha
-SELECT
-  t.created_at            AS fecha,
-  t.type                  AS tipo,
-  t.amount                AS monto,
-  t.balance_after         AS saldo_despues,
-  t.payment_status        AS estado_pago,
-  t.payment_method        AS metodo_pago,
-  t.description           AS descripcion,
-  t.ticket_code           AS ticket
+-- Paso 3: Transacciones con lunch_order_id (almuerzos)
+SELECT 
+  t.id AS tx_id,
+  t.student_id,
+  t.amount,
+  t.payment_status,
+  t.is_deleted,
+  t.type,
+  t.description,
+  t.created_at,
+  t.metadata->>'lunch_order_id' AS lunch_order_id
 FROM transactions t
-INNER JOIN students s ON t.student_id = s.id
-WHERE s.full_name ILIKE '%Valentina Amaya%'
-ORDER BY t.created_at ASC;
+JOIN students s ON t.student_id = s.id
+WHERE (s.full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR s.full_name ILIKE '%Valentina%Segura%Castro%')
+  AND t.metadata->>'lunch_order_id' IS NOT NULL
+ORDER BY t.created_at DESC
+LIMIT 20;
 
-
--- PASO 3: Ver las compras de ayer (03 de marzo 2026) específicamente
-SELECT
-  t.created_at            AS fecha_hora,
-  ABS(t.amount)           AS monto_compra,
-  t.payment_status        AS estado,
-  t.payment_method        AS metodo,
-  t.description           AS descripcion,
-  t.balance_after         AS saldo_registrado_despues,
-  t.ticket_code           AS ticket
+-- Paso 4: TODAS las transacciones pendientes (lo que debería aparecer en el Carrito)
+SELECT 
+  t.id AS tx_id,
+  t.student_id,
+  t.amount,
+  t.payment_status,
+  t.is_deleted,
+  t.type,
+  t.description,
+  t.ticket_code,
+  t.created_at,
+  t.metadata->>'lunch_order_id' AS lunch_order_id,
+  CASE 
+    WHEN t.metadata->>'lunch_order_id' IS NOT NULL THEN 'ALMUERZO'
+    ELSE 'KIOSCO'
+  END AS origen
 FROM transactions t
-INNER JOIN students s ON t.student_id = s.id
-WHERE s.full_name ILIKE '%Valentina Amaya%'
+JOIN students s ON t.student_id = s.id
+WHERE (s.full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR s.full_name ILIKE '%Valentina%Segura%Castro%')
   AND t.type = 'purchase'
-  AND t.created_at >= '2026-03-03 00:00:00+00'
-  AND t.created_at <  '2026-03-05 00:00:00+00'
-ORDER BY t.created_at ASC;
+  AND t.payment_status IN ('pending', 'partial')
+  AND t.is_deleted = false
+ORDER BY t.created_at DESC;
+
+-- Paso 5: Contar pedidos VS transacciones (¿hay huérfanos?)
+SELECT
+  'Pedidos activos' AS concepto,
+  COUNT(*) AS cantidad
+FROM lunch_orders lo
+JOIN students s ON lo.student_id = s.id
+WHERE (s.full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR s.full_name ILIKE '%Valentina%Segura%Castro%')
+  AND lo.is_cancelled = false
+
+UNION ALL
+
+SELECT
+  'Transacciones de almuerzo' AS concepto,
+  COUNT(*) AS cantidad
+FROM transactions t
+JOIN students s ON t.student_id = s.id
+WHERE (s.full_name ILIKE '%Valentina%Amaya%Segura%'
+   OR s.full_name ILIKE '%Valentina%Segura%Castro%')
+  AND t.metadata->>'lunch_order_id' IS NOT NULL
+  AND t.is_deleted = false;

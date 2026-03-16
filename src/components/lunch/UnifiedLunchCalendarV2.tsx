@@ -61,6 +61,8 @@ interface LunchCategory {
   price: number | null;
   target_type: 'students' | 'teachers' | 'both';
   menu_mode?: 'standard' | 'configurable';
+  // Compatibilidad con datos antiguos
+  is_configurable?: boolean;
 }
 
 interface ConfigPlateGroup {
@@ -234,6 +236,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   // ── Plato Configurable ──
   const [configPlateGroups, setConfigPlateGroups] = useState<ConfigPlateGroup[]>([]);
   const [configSelections, setConfigSelections] = useState<Array<{ group_name: string; selected: string }>>([]);
+  const [loadingConfigPlateOptions, setLoadingConfigPlateOptions] = useState(false);
 
   // View existing orders modal
   const [viewOrdersModal, setViewOrdersModal] = useState(false);
@@ -287,6 +290,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const expandedSectionRef = useRef<HTMLDivElement>(null);
   // Prevents stale fetch responses from overwriting newer data (race condition guard)
   const fetchGenerationRef = useRef(0);
+  // Prevents stale configurable-options responses from overwriting current category options
+  const configurableLoadRequestRef = useRef(0);
   // Mirror ref so the inline-order useEffect always reads the latest totalOrderAmount
   const totalOrderAmountRef = useRef(0);
 
@@ -678,6 +683,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   // Handle category card tap (inline ordering)
   const handleCategoryCardTap = async (category: LunchCategory) => {
     if (!selectedDay) return;
+    const dayToOrder = selectedDay;
 
     // If already expanded, collapse
     if (expandedCategoryId === category.id && isInlineOrdering) {
@@ -688,7 +694,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
 
     // Check for existing orders
-    const dayOrders = existingOrders.filter(o => o.date === selectedDay && !o.is_cancelled);
+    const dayOrders = existingOrders.filter(o => o.date === dayToOrder && !o.is_cancelled);
     const hasOrderForCategory = dayOrders.some(o => o.categoryId === category.id);
     if (hasOrderForCategory) {
       toast({ title: '⚠️ Ya tienes pedido', description: `Ya pediste "${category.name}" para este día. Toca el día para ver/cancelar.` });
@@ -696,7 +702,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
 
     // Check deadline
-    const validation = canOrderForDate(selectedDay);
+    const validation = canOrderForDate(dayToOrder);
     if (!validation.canOrder) {
       toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: validation.reason });
       return;
@@ -707,7 +713,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     setIsInlineOrdering(true);
 
     // Setup wizard state
-    setWizardDates([selectedDay]);
+    setWizardDates([dayToOrder]);
     setWizardCurrentIndex(0);
     setCreatedOrderIds([]);
     setCreatedTransactionIds([]);
@@ -725,7 +731,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     setOrdersCreated(0);
 
     // handleCategorySelect sets wizardStep and loads data
-    await handleCategorySelect(category);
+    await handleCategorySelect(category, dayToOrder);
   };
 
   // Handle direct menu tap (skip category step - go straight to menu/confirm)
@@ -1035,15 +1041,26 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
   };
 
-  const handleCategorySelect = async (category: LunchCategory) => {
+  const handleCategorySelect = async (category: LunchCategory, explicitDateStr?: string) => {
     setSelectedCategory(category);
+    // Invalidate any previous in-flight configurable options request
+    configurableLoadRequestRef.current += 1;
+    setLoadingConfigPlateOptions(false);
     // Resetear flag de cambio manual — el usuario ya eligió, para los días siguientes
     // el auto-select puede funcionar normalmente
     if (skipAutoSelect) setSkipAutoSelect(false);
 
     // ── Plato Configurable: flujo especial ──
     if (category.menu_mode === 'configurable') {
-      const currentDateStr = wizardDates[wizardCurrentIndex];
+      const currentDateStr = explicitDateStr || wizardDates[wizardCurrentIndex];
+      if (!currentDateStr) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Fecha no disponible',
+          description: 'No se pudo identificar el día para cargar las opciones del menú.',
+        });
+        return;
+      }
       const dayMenus = menus.get(currentDateStr) || [];
       const categoryMenus = dayMenus.filter(m => m.category_id === category.id);
       
@@ -1070,7 +1087,15 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
 
     // ── Categoría estándar: flujo normal ──
-    const currentDateStr = wizardDates[wizardCurrentIndex];
+    const currentDateStr = explicitDateStr || wizardDates[wizardCurrentIndex];
+    if (!currentDateStr) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Fecha no disponible',
+        description: 'No se pudo identificar el día para cargar el menú.',
+      });
+      return;
+    }
     const dayMenus = menus.get(currentDateStr) || [];
     const categoryMenus = dayMenus.filter(m => m.category_id === category.id);
 
@@ -1089,12 +1114,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
   // ── Cargar opciones configurables de la categoría ──
   const loadConfigurableGroups = async (categoryId: string) => {
+    const requestId = ++configurableLoadRequestRef.current;
+    setLoadingConfigPlateOptions(true);
+
     try {
       const { data: groups } = await supabase
         .from('configurable_plate_groups')
         .select('id, name, is_required, max_selections')
         .eq('category_id', categoryId)
         .order('display_order', { ascending: true });
+
+      if (requestId !== configurableLoadRequestRef.current) return;
 
       if (!groups || groups.length === 0) {
         setConfigPlateGroups([]);
@@ -1109,6 +1139,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
         .in('group_id', groupIds)
         .eq('is_active', true)
         .order('display_order', { ascending: true });
+
+      if (requestId !== configurableLoadRequestRef.current) return;
 
       const fullGroups: ConfigPlateGroup[] = groups.map(g => ({
         ...g,
@@ -1125,8 +1157,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       })));
     } catch (err) {
       console.error('Error loading configurable groups:', err);
+      if (requestId !== configurableLoadRequestRef.current) return;
       setConfigPlateGroups([]);
       setConfigSelections([]);
+    } finally {
+      if (requestId === configurableLoadRequestRef.current) {
+        setLoadingConfigPlateOptions(false);
+      }
     }
   };
 
@@ -1867,7 +1904,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           const isExpanded = expandedCategoryId === category.id && isInlineOrdering;
           const hasOrderForThis = dayOrders.some(o => o.categoryId === category.id);
           const canOrderNow = dayData.canOrder && !hasOrderForThis;
-          const isConfigurable = category.is_configurable;
+          // Fuente principal: menu_mode. Fallback para registros antiguos.
+          const isConfigurable = category.menu_mode === 'configurable' || category.is_configurable === true;
 
           return (
             <div key={category.id} className="space-y-2">
@@ -1960,7 +1998,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                         <span className="text-xs font-bold text-amber-700">🍽️ Arma tu plato</span>
                         <span className="text-[10px] text-gray-400">Elige tus opciones y toca Confirmar</span>
                       </div>
-                      {configPlateGroups.map((group) => {
+                      {loadingConfigPlateOptions ? (
+                        <div className="flex items-center justify-center gap-2 py-4 text-amber-700">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="text-xs font-medium">Cargando opciones del menú...</span>
+                        </div>
+                      ) : configPlateGroups.length === 0 ? (
+                        <div className="text-center py-4 text-gray-500">
+                          <AlertCircle className="h-7 w-7 mx-auto mb-1.5 opacity-50" />
+                          <p className="text-xs">No se han configurado opciones para este plato</p>
+                        </div>
+                      ) : configPlateGroups.map((group) => {
                         const currentSelection = configSelections.find(s => s.group_name === group.name);
                         const isMultiSelect = (group.max_selections || 1) > 1;
                         const selectedItems = currentSelection?.selected ? currentSelection.selected.split(', ').filter(Boolean) : [];
@@ -2046,7 +2094,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                         size="sm"
                         onClick={() => setWizardStep('confirm')}
                         className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm h-10"
-                        disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                        disabled={
+                          loadingConfigPlateOptions ||
+                          configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)
+                        }
                       >
                         Confirmar opciones →
                       </Button>
@@ -2487,7 +2538,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                       </CardContent>
                     </Card>
 
-                    {configPlateGroups.length === 0 ? (
+                    {loadingConfigPlateOptions ? (
+                      <div className="flex items-center justify-center gap-2 py-6 text-amber-700">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span className="text-sm font-medium">Cargando opciones del menú...</span>
+                      </div>
+                    ) : configPlateGroups.length === 0 ? (
                       <div className="text-center py-6 text-gray-500">
                         <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
                         <p className="text-sm">No se han configurado opciones para este plato</p>
@@ -2901,7 +2957,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                     <Button
                       onClick={() => setWizardStep('confirm')}
                       className="bg-amber-600 hover:bg-amber-700"
-                      disabled={configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)}
+                      disabled={
+                        loadingConfigPlateOptions ||
+                        configPlateGroups.some(g => g.is_required && !configSelections.find(s => s.group_name === g.name)?.selected)
+                      }
                     >
                       Continuar →
                     </Button>
