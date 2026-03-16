@@ -101,6 +101,7 @@ const Index = () => {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [showTutorialManual, setShowTutorialManual] = useState(false);
   const [tutorialManualKey, setTutorialManualKey] = useState(0);
+  const [tutorialModuleEnabled, setTutorialModuleEnabled] = useState(false);
   // Estado para la navegación por pestañas
   const [activeTab, setActiveTab] = useState(() => {
     // Restaurar la pestaña guardada al recargar
@@ -251,6 +252,7 @@ const Index = () => {
 
       let newAlmuerzos: { title: string; message: string } | null = null;
       let newPagos: { title: string; message: string } | null = null;
+      let newTutorialEnabled = false;
 
       if (configs && configs.length > 0) {
         const userEmail = user.email?.toLowerCase() || '';
@@ -267,11 +269,15 @@ const Index = () => {
           if (cfg.module_key === 'pagos_padres') {
             newPagos = { title: cfg.title, message: cfg.message };
           }
+          if (cfg.module_key === 'tutorial_padres') {
+            newTutorialEnabled = true;
+          }
         });
       }
 
       setMaintenanceAlmuerzos(newAlmuerzos);
       setMaintenancePagos(newPagos);
+      setTutorialModuleEnabled(newTutorialEnabled);
     } catch (e) {
       console.error('[Maintenance] Error:', e);
     }
@@ -715,19 +721,21 @@ const Index = () => {
             
             {/* Nombre usuario - Hidden en móvil, visible en tablet+ */}
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
-              {/* Botón Tutorial — visible en cualquier tamaño */}
-              <button
-                onClick={() => {
-                  localStorage.removeItem('ericka_tutorial_completed');
-                  setTutorialManualKey(k => k + 1);
-                  setShowTutorialManual(true);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold transition-all duration-200 shadow-sm hover:shadow"
-                title="Ver tutorial guiado de Ericka"
-              >
-                <BookOpen className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Tutorial</span>
-              </button>
+              {/* Botón Tutorial — solo visible si el módulo está activado para esta sede */}
+              {tutorialModuleEnabled && (
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('ericka_tutorial_completed');
+                    setTutorialManualKey(k => k + 1);
+                    setShowTutorialManual(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold transition-all duration-200 shadow-sm hover:shadow"
+                  title="Ver tutorial guiado de Ericka"
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Tutorial</span>
+                </button>
+              )}
               <div className="hidden md:block text-right">
                 <p className="text-[11px] font-medium text-stone-400 uppercase tracking-wider">Bienvenido</p>
                 <p className="text-sm font-medium text-stone-700">{parentName || 'Padre de Familia'}</p>

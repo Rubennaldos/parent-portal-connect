@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Steps } from 'intro.js-react';
-import 'intro.js/introjs.css';
 import { supabase } from '@/lib/supabase';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -12,16 +10,13 @@ type TutorialFlow = 'cuenta' | 'almuerzo' | 'pagos' | null;
 type TutorialPhase = 'welcome' | 'flow-menu' | 'flow-running' | 'done';
 
 interface StepDef {
-  element: string;
-  intro: string;
-  position?: string;
-  tooltipClass?: string;
-  highlightClass?: string;
-  /**
-   * Acción que se ejecuta ANTES de que Intro.js muestre este paso.
-   * Usado para cambiar pestañas o abrir modales antes de buscar el elemento.
-   * El callback debe devolver una Promise que resuelva cuando el DOM esté listo.
-   */
+  /** Selector CSS del elemento a resaltar. Si no existe, se usa overlay genérico. */
+  element?: string;
+  /** Texto HTML del tooltip */
+  text: string;
+  /** Posición preferida del tooltip respecto al elemento */
+  position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
+  /** Acción a ejecutar ANTES de mostrar este paso (cambiar pestaña, esperar modal, etc.) */
   beforeShow?: () => Promise<void>;
 }
 
@@ -29,9 +24,7 @@ interface ErickaTutorialProps {
   userId?: string;
   schoolId?: string;
   onSetActiveTab?: (tab: string) => void;
-  /** Si es true, abre el tutorial directamente sin verificar localStorage */
   forceShow?: boolean;
-  /** Callback cuando el tutorial se cierra (para desmontarlo desde el padre) */
   onClose?: () => void;
 }
 
@@ -40,37 +33,18 @@ function waitForElement(selector: string, timeoutMs = 3000): Promise<Element | n
   return new Promise((resolve) => {
     const el = document.querySelector(selector);
     if (el) return resolve(el);
-
     const observer = new MutationObserver(() => {
       const found = document.querySelector(selector);
-      if (found) {
-        observer.disconnect();
-        resolve(found);
-      }
+      if (found) { observer.disconnect(); resolve(found); }
     });
     observer.observe(document.body, { childList: true, subtree: true });
-
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(null);
-    }, timeoutMs);
+    setTimeout(() => { observer.disconnect(); resolve(null); }, timeoutMs);
   });
 }
 
-// ─── Helper: tooltip HTML con foto de Ericka ─────────────────────────────────
-function tip(text: string, pos: 'right' | 'left' | 'center' = 'right'): string {
-  const dir = pos === 'left' ? 'row-reverse' : 'row';
-  return `
-    <div style="display:flex;flex-direction:${dir};align-items:flex-end;gap:10px;max-width:300px;">
-      <img src="${ERICKA_IMG}" alt="Ericka"
-        style="width:72px;height:auto;flex-shrink:0;border-radius:8px;
-               object-fit:cover;object-position:top center;" />
-      <div style="background:#fff;border:2px solid #10b981;border-radius:12px;
-                  padding:10px 12px;font-size:13px;line-height:1.5;color:#111;
-                  box-shadow:0 2px 10px rgba(0,0,0,0.1);">
-        ${text}
-      </div>
-    </div>`;
+// ─── Helper: tooltip con Ericka ──────────────────────────────────────────────
+function tip(text: string): string {
+  return text;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -80,71 +54,43 @@ function buildFlujoCuenta(onSetActiveTab?: (tab: string) => void): StepDef[] {
   return [
     {
       element: '#nav-tab-alumnos',
-      intro: tip(
-        `<strong>Paso 1/6</strong> — Lo primero es ir a la sección "Mis Hijos". ` +
-        `¡Toca el botón de inicio en el menú de abajo! 👇`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 1/6</strong> — Lo primero es ir a la sección <strong>"Mis Hijos"</strong>. ¡Toca el botón de inicio en el menú de abajo! 👇`),
       position: 'top',
-      beforeShow: async () => {
-        onSetActiveTab?.('alumnos');
-        await new Promise(r => setTimeout(r, 300));
-      },
-    },
-    {
-      element: '.student-card-tutorial',
-      intro: tip(
-        `<strong>Paso 2/6</strong> — Aquí ves la tarjeta de tu hijo con toda su información. ` +
-        `¿Ves el ícono de engranaje ⚙️ al lado de su nombre? Ese es el que necesitamos.`,
-        'right'
-      ),
-      position: 'bottom',
       beforeShow: async () => {
         onSetActiveTab?.('alumnos');
         await new Promise(r => setTimeout(r, 400));
       },
     },
     {
+      element: '.student-card-tutorial',
+      text: tip(`<strong>Paso 2/6</strong> — Aquí ves la tarjeta de tu hijo. ¿Ves el ícono de engranaje ⚙️ al lado de su nombre? Ese es el que necesitamos.`),
+      position: 'bottom',
+      beforeShow: async () => {
+        onSetActiveTab?.('alumnos');
+        await new Promise(r => setTimeout(r, 500));
+      },
+    },
+    {
       element: '[id^="student-settings-btn-"]',
-      intro: tip(
-        `<strong>Paso 3/6</strong> — ¡Ese engranaje ⚙️ es el que necesitas! ` +
-        `Presiona el engranaje para abrir la <strong>Configuración de Cuenta</strong>.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 3/6</strong> — ¡Ese engranaje ⚙️ es el que necesitas! Presiona el engranaje para abrir la <strong>Configuración de Cuenta</strong>.`),
       position: 'bottom',
     },
     {
       element: '#account-type-prepaid-btn',
-      intro: tip(
-        `<strong>Paso 4/6</strong> — Aquí eliges entre dos modos:<br/>` +
-        `• <strong>Cuenta Libre</strong>: tu hijo consume y paga después.<br/>` +
-        `• <strong>Cuenta con Recargas</strong>: primero recargas, luego él gasta.<br/><br/>` +
-        `Selecciona <strong>"Cuenta con Recargas"</strong> si quieres controlar el saldo.`,
-        'left'
-      ),
-      position: 'right',
+      text: tip(`<strong>Paso 4/6</strong> — Aquí eliges entre:<br/>• <strong>Cuenta Libre</strong>: tu hijo consume y paga después.<br/>• <strong>Cuenta con Recargas</strong>: primero recargas, luego él gasta.<br/><br/>Selecciona <strong>"Cuenta con Recargas"</strong> para controlar el saldo.`),
+      position: 'bottom',
       beforeShow: async () => {
-        // El modal se abre al hacer clic en el engranaje manualmente.
-        // Esperamos a que el dialog aparezca en el DOM.
-        await waitForElement('#account-type-prepaid-btn', 3000);
+        await waitForElement('#account-type-prepaid-btn', 4000);
       },
     },
     {
       element: '#account-config-save-btn',
-      intro: tip(
-        `<strong>Paso 5/6</strong> — ¡Perfecto! Ahora presiona <strong>"Guardar"</strong> ` +
-        `para que el cambio quede registrado en el sistema.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 5/6</strong> — ¡Perfecto! Ahora presiona <strong>"Guardar"</strong> para que el cambio quede registrado.`),
       position: 'top',
     },
     {
       element: '.student-card-tutorial',
-      intro: tip(
-        `<strong>Paso 6/6</strong> — ¡Listo! Tu hijo ahora está en <strong>Modo Recargas</strong>. 🎉<br/><br/>` +
-        `Cuando el módulo de recargas vuelva de mantenimiento, podrás cargarle saldo desde aquí mismo.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 6/6</strong> — ¡Listo! Tu hijo ahora está en <strong>Modo Recargas</strong>. 🎉<br/><br/>Cuando el módulo vuelva de mantenimiento, podrás cargarle saldo desde aquí mismo.`),
       position: 'bottom',
       beforeShow: async () => {
         await new Promise(r => setTimeout(r, 300));
@@ -160,11 +106,7 @@ function buildFlujoAlmuerzo(onSetActiveTab?: (tab: string) => void): StepDef[] {
   return [
     {
       element: '#nav-tab-almuerzos',
-      intro: tip(
-        `<strong>Paso 1/10</strong> — Para pedir el almuerzo de tu hijo, toca el ` +
-        `menú <strong>"Almuerzos"</strong> aquí abajo. 🍽️`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 1/10</strong> — Para pedir el almuerzo, toca el menú <strong>"Almuerzos"</strong> aquí abajo. 🍽️`),
       position: 'top',
       beforeShow: async () => {
         onSetActiveTab?.('alumnos');
@@ -173,25 +115,16 @@ function buildFlujoAlmuerzo(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#lunch-subtab-hacer-pedido',
-      intro: tip(
-        `<strong>Paso 2/10</strong> — Estás en <strong>"Hacer Pedido"</strong>. ` +
-        `¡Aquí es donde se hace la magia! 🌟<br/>` +
-        `También tienes la pestaña "Mis Pedidos" para ver los que ya hiciste.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 2/10</strong> — Estás en <strong>"Hacer Pedido"</strong>. ¡Aquí es donde se hace la magia! 🌟 También tienes "Mis Pedidos" para ver los que ya hiciste.`),
       position: 'bottom',
       beforeShow: async () => {
         onSetActiveTab?.('almuerzos');
-        await waitForElement('#lunch-subtab-hacer-pedido', 2000);
+        await waitForElement('#lunch-subtab-hacer-pedido', 2500);
       },
     },
     {
       element: '#lunch-student-selector',
-      intro: tip(
-        `<strong>Paso 3/10</strong> — Primero elige a cuál de tus hijos le ` +
-        `quieres pedir el almuerzo. Si tienes varios, aparecerán botones para cada uno. 👦👧`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 3/10</strong> — Primero elige a cuál de tus hijos le quieres pedir el almuerzo. Si tienes varios, aparecerán botones para cada uno. 👦👧`),
       position: 'bottom',
       beforeShow: async () => {
         await waitForElement('#lunch-student-selector', 2000);
@@ -199,12 +132,7 @@ function buildFlujoAlmuerzo(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#lunch-calendar-header',
-      intro: tip(
-        `<strong>Paso 4/10</strong> — Este es el <strong>calendario del mes</strong>. ` +
-        `Las flechas ← → te permiten moverte entre meses.<br/>` +
-        `Desliza los días para ver cuáles tienen menú disponible.`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 4/10</strong> — Este es el <strong>calendario del mes</strong>. Las flechas ← → te permiten moverte entre meses.`),
       position: 'bottom',
       beforeShow: async () => {
         await waitForElement('#lunch-calendar-header', 2000);
@@ -212,69 +140,38 @@ function buildFlujoAlmuerzo(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#lunch-calendar-header',
-      intro: tip(
-        `<strong>Paso 5/10</strong> — Los días con un círculo de color tienen ` +
-        `<strong>menú disponible</strong> para pedir. ` +
-        `Verde = ya pedido. Morado = disponible. Gris = sin menú.<br/>` +
-        `¡Toca cualquier día morado para pedirlo! 👆`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 5/10</strong> — Los días con círculo de color tienen <strong>menú disponible</strong>. Verde = ya pedido. Morado = disponible. Gris = sin menú. ¡Toca cualquier día morado! 👆`),
       position: 'bottom',
     },
     {
       element: '#lunch-calendar-header',
-      intro: tip(
-        `<strong>Paso 6/10</strong> — Al tocar un día con menú, verás las ` +
-        `<strong>categorías disponibles</strong> (ej: Menú Escolar, Vegano, etc.).<br/>` +
-        `Selecciona la que prefiera tu hijo.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 6/10</strong> — Al tocar un día con menú, verás las <strong>categorías disponibles</strong> (Menú Escolar, Vegano, etc.). Selecciona la que prefiera tu hijo.`),
       position: 'bottom',
     },
     {
       element: '#lunch-wizard-confirm-btn',
-      intro: tip(
-        `<strong>Paso 7/10</strong> — Ya casi terminamos. ` +
-        `Revisa tu pedido: la fecha, el menú y la cantidad.<br/>` +
-        `Si todo está bien, presiona <strong>Confirmar</strong>. ✅`,
-        'left'
-      ),
+      text: tip(`<strong>Paso 7/10</strong> — Revisa tu pedido: fecha, menú y cantidad. Si todo está bien, presiona <strong>Confirmar</strong>. ✅`),
       position: 'top',
       beforeShow: async () => {
-        await waitForElement('#lunch-wizard-confirm-btn', 2000);
+        await waitForElement('#lunch-wizard-confirm-btn', 3000);
       },
     },
     {
       element: '#lunch-wizard-done-goto-cart',
-      intro: tip(
-        `<strong>Paso 8/10</strong> — ¡Pedido creado! 🎉<br/>` +
-        `Ahora tienes que pagar. El botón <strong>"Ir al Carrito"</strong> te lleva ` +
-        `a donde puedes pagar con Yape, Plin o transferencia.`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 8/10</strong> — ¡Pedido creado! 🎉 Ahora tienes que pagar. El botón <strong>"Ir al Carrito"</strong> te lleva a donde puedes pagar con Yape, Plin o transferencia.`),
       position: 'top',
       beforeShow: async () => {
-        await waitForElement('#lunch-wizard-done-goto-cart', 2000);
+        await waitForElement('#lunch-wizard-done-goto-cart', 3000);
       },
     },
     {
       element: '#nav-tab-carrito',
-      intro: tip(
-        `<strong>Paso 9/10</strong> — También puedes ir al <strong>Carrito</strong> ` +
-        `desde el menú de abajo en cualquier momento.<br/>` +
-        `Si hay pagos pendientes, verás un número rojo que rebota. 🔴`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 9/10</strong> — También puedes ir al <strong>Carrito</strong> desde el menú de abajo en cualquier momento. Si hay pagos pendientes, verás un número rojo que rebota. 🔴`),
       position: 'top',
     },
     {
       element: '#nav-tab-almuerzos',
-      intro: tip(
-        `<strong>Paso 10/10</strong> — ¡Eso es todo! 🎊<br/>` +
-        `Vuelve a <strong>Almuerzos → Mis Pedidos</strong> cuando quieras ` +
-        `ver todos tus pedidos y su estado.<br/><br/>¿Fácil, verdad?`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 10/10</strong> — ¡Eso es todo! 🎊 Vuelve a <strong>Almuerzos → Mis Pedidos</strong> para ver todos tus pedidos y su estado. ¿Fácil, verdad?`),
       position: 'top',
     },
   ];
@@ -287,12 +184,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
   return [
     {
       element: '#nav-tab-carrito',
-      intro: tip(
-        `<strong>Paso 1/8</strong> — Para pagar tus deudas pendientes, toca el ` +
-        `ícono del <strong>Carrito</strong> aquí abajo.<br/>` +
-        `Si hay deudas, verás un número rojo que rebota. 🔴`,
-        'center'
-      ),
+      text: tip(`<strong>Paso 1/8</strong> — Para pagar tus deudas, toca el ícono del <strong>Carrito</strong> aquí abajo. Si hay deudas, verás un número rojo que rebota. 🔴`),
       position: 'top',
       beforeShow: async () => {
         onSetActiveTab?.('alumnos');
@@ -301,13 +193,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#cart-how-to-pay-card',
-      intro: tip(
-        `<strong>Paso 2/8</strong> — ¡Importante! Puedes pagar de dos formas:<br/>` +
-        `• Yendo a pagar en caja del colegio.<br/>` +
-        `• Enviando un comprobante de <strong>Yape, Plin o transferencia</strong> ` +
-        `directamente desde aquí. 📱`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 2/8</strong> — ¡Importante! Puedes pagar de dos formas:<br/>• Yendo a pagar en caja del colegio.<br/>• Enviando un comprobante de <strong>Yape, Plin o transferencia</strong> desde aquí. 📱`),
       position: 'bottom',
       beforeShow: async () => {
         onSetActiveTab?.('carrito');
@@ -316,11 +202,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#cart-total-pending-card',
-      intro: tip(
-        `<strong>Paso 3/8</strong> — Aquí ves el <strong>total que debes</strong>.<br/>` +
-        `Cada línea debajo es una compra o almuerzo pendiente de pago.`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 3/8</strong> — Aquí ves el <strong>total que debes</strong>. Cada línea debajo es una compra o almuerzo pendiente de pago.`),
       position: 'bottom',
       beforeShow: async () => {
         await waitForElement('#cart-total-pending-card', 2000);
@@ -328,12 +210,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#cart-student-debt-card',
-      intro: tip(
-        `<strong>Paso 4/8</strong> — Esta sección muestra las deudas por hijo. ` +
-        `Puedes <strong>seleccionar qué compras pagar ahora</strong> y cuáles dejar ` +
-        `para después. Muy flexible. 👌`,
-        'left'
-      ),
+      text: tip(`<strong>Paso 4/8</strong> — Esta sección muestra las deudas por hijo. Puedes <strong>seleccionar qué compras pagar ahora</strong> y cuáles dejar para después. Muy flexible. 👌`),
       position: 'right',
       beforeShow: async () => {
         await waitForElement('#cart-student-debt-card', 2000);
@@ -341,11 +218,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#cart-pay-selected-btn',
-      intro: tip(
-        `<strong>Paso 5/8</strong> — Cuando tengas seleccionadas las compras ` +
-        `que quieres pagar, presiona este <strong>botón verde</strong>. 💚`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 5/8</strong> — Cuando tengas seleccionadas las compras que quieres pagar, presiona este <strong>botón verde</strong>. 💚`),
       position: 'top',
       beforeShow: async () => {
         await waitForElement('#cart-pay-selected-btn', 2000);
@@ -353,25 +226,15 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#recharge-modal-amount',
-      intro: tip(
-        `<strong>Paso 6/8</strong> — Se abrirá una ventana con el ` +
-        `<strong>monto calculado automáticamente</strong>. Revísalo para confirmar ` +
-        `que es correcto. 🔢`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 6/8</strong> — Se abrirá una ventana con el <strong>monto calculado automáticamente</strong>. Revísalo para confirmar que es correcto. 🔢`),
       position: 'bottom',
       beforeShow: async () => {
-        await waitForElement('#recharge-modal-amount', 3000);
+        await waitForElement('#recharge-modal-amount', 4000);
       },
     },
     {
       element: '#recharge-modal-upload-btn',
-      intro: tip(
-        `<strong>Paso 7/8</strong> — Aquí subes la foto o captura de tu ` +
-        `comprobante de pago (Yape, Plin, transferencia o voucher de caja). 📸<br/>` +
-        `Es <strong>obligatorio</strong> para que el admin pueda verificarlo.`,
-        'left'
-      ),
+      text: tip(`<strong>Paso 7/8</strong> — Aquí subes la foto de tu comprobante (Yape, Plin, transferencia o voucher de caja). 📸 Es <strong>obligatorio</strong> para que el admin pueda verificarlo.`),
       position: 'top',
       beforeShow: async () => {
         await waitForElement('#recharge-modal-upload-btn', 2000);
@@ -379,12 +242,7 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
     },
     {
       element: '#recharge-modal-submit-btn',
-      intro: tip(
-        `<strong>Paso 8/8</strong> — ¡Último paso! Presiona <strong>"Enviar comprobante"</strong>.<br/>` +
-        `El administrador lo revisará y, en cuanto lo apruebe, ` +
-        `la deuda desaparece del carrito automáticamente. ✅`,
-        'right'
-      ),
+      text: tip(`<strong>Paso 8/8</strong> — ¡Último paso! Presiona <strong>"Enviar comprobante"</strong>. El admin lo revisará y, en cuanto lo apruebe, la deuda desaparece automáticamente. ✅`),
       position: 'top',
       beforeShow: async () => {
         await waitForElement('#recharge-modal-submit-btn', 2000);
@@ -394,206 +252,230 @@ function buildFlujoPagos(onSetActiveTab?: (tab: string) => void): StepDef[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMPONENTE PRINCIPAL
+// PASOS DE BIENVENIDA
 // ═══════════════════════════════════════════════════════════════════════════════
-export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = false, onClose }: ErickaTutorialProps) {
-  const [phase, setPhase] = useState<TutorialPhase>('welcome');
-  const [enabled, setEnabled] = useState(false);
-  const [stepsEnabled, setStepsEnabled] = useState(false);
-  const [activeFlow, setActiveFlow] = useState<TutorialFlow>(null);
-  const [flowSteps, setFlowSteps] = useState<StepDef[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const introRef = useRef<any>(null);
-
-  // ── Verificar si el tutorial debe mostrarse ───────────────────────────────
-  const checkShouldShow = useCallback(async () => {
-    try {
-      // Si forceShow es true (botón del header), siempre mostrar
-      if (forceShow) {
-        setEnabled(true);
-        setPhase('welcome');
-        setLoading(false);
-        setTimeout(() => setStepsEnabled(true), 400);
-        return;
-      }
-
-      // Verificar localStorage primero (evita flash innecesario)
-      const done = localStorage.getItem(LS_KEY);
-
-      // Verificar override del admin solo si tenemos schoolId
-      let tutorialForced = false;
-      if (schoolId) {
-        const { data } = await supabase
-          .from('maintenance_config')
-          .select('enabled')
-          .eq('school_id', schoolId)
-          .eq('module_key', 'tutorial_padres')
-          .maybeSingle();
-        tutorialForced = data?.enabled === true;
-      }
-
-      if (tutorialForced || !done) {
-        setEnabled(true);
-        setPhase('welcome');
-        // Delay para que el DOM esté completamente pintado
-        setTimeout(() => setStepsEnabled(true), 1200);
-      } else {
-        setEnabled(false);
-      }
-    } catch {
-      // Ante cualquier error, no bloquear la experiencia
-    } finally {
-      setLoading(false);
-    }
-  }, [schoolId, forceShow]);
-
-  useEffect(() => {
-    checkShouldShow();
-  }, [checkShouldShow]);
-
-  // ── Selección de flujo ──────────────────────────────────────────────────────
-  const handleFlowSelect = useCallback((flow: TutorialFlow) => {
-    if (!flow) return;
-
-    let steps: StepDef[] = [];
-    if (flow === 'cuenta')   steps = buildFlujoCuenta(onSetActiveTab);
-    if (flow === 'almuerzo') steps = buildFlujoAlmuerzo(onSetActiveTab);
-    if (flow === 'pagos')    steps = buildFlujoPagos(onSetActiveTab);
-
-    setActiveFlow(flow);
-    setFlowSteps(steps);
-    setStepsEnabled(false); // Limpiar cualquier Steps previo
-    setPhase('flow-running');
-
-    // Ejecutar beforeShow del primer paso (si existe) antes de mostrar Intro.js
-    const firstStep = steps[0] as StepDef | undefined;
-    const initDelay = firstStep?.beforeShow
-      ? firstStep.beforeShow().then(() => 200)
-      : Promise.resolve(400);
-
-    initDelay.then(() => setStepsEnabled(true));
-  }, [onSetActiveTab]);
-
-  // ── Cierre / finalización ────────────────────────────────────────────────────
-  const markDone = useCallback(() => {
-    localStorage.setItem(LS_KEY, '1');
-    setStepsEnabled(false);
-    setEnabled(false);
-    setPhase('done');
-    onClose?.();
-  }, [onClose]);
-
-  const handleSkipAll = useCallback(() => markDone(), [markDone]);
-  const handleComplete = useCallback(() => {
-    if (phase === 'welcome') {
-      // Primero deshabilitar Steps, LUEGO mostrar el menú
-      setStepsEnabled(false);
-      setTimeout(() => setPhase('flow-menu'), 100);
-    } else {
-      markDone();
-    }
-  }, [phase, markDone]);
-
-  const handleExit = useCallback(() => {
-    markDone();
-  }, [markDone]);
-
-  // ── Cambio de paso: ejecutar beforeShow ANTES de que Intro.js cambie ──
-  // La librería llama onBeforeChange con el índice del paso ACTUAL.
-  // El paso siguiente es currentStepIndex + 1.
-  const handleBeforeChange = useCallback(async (currentStepIndex: number) => {
-    const steps = phase === 'flow-running' ? flowSteps : WELCOME_STEPS_PLAIN;
-    if (!steps || steps.length === 0) return;
-    const nextIndex = currentStepIndex + 1;
-    if (nextIndex < 0 || nextIndex >= steps.length) return;
-    const step = steps[nextIndex] as StepDef | undefined;
-    if (!step?.beforeShow) return;
-    await step.beforeShow();
-  }, [phase, flowSteps]);
-
-  if (loading || !enabled) return null;
-
-  const currentSteps = phase === 'flow-running' ? flowSteps : WELCOME_STEPS_PLAIN;
-
-  return (
-    <>
-      {/* ── Estilos globales de Intro.js personalizados ── */}
-      <style>{INTRO_CSS}</style>
-
-      {/* ── Steps de Intro.js ── */}
-      {stepsEnabled && (phase === 'welcome' || phase === 'flow-running') && currentSteps.length > 0 && (
-        <Steps
-          ref={introRef}
-          enabled={stepsEnabled}
-          steps={currentSteps}
-          initialStep={0}
-          onExit={handleExit}
-          onComplete={handleComplete}
-          onBeforeChange={handleBeforeChange}
-          options={{
-            nextLabel: 'Siguiente →',
-            prevLabel: '← Atrás',
-            skipLabel: 'Omitir',
-            doneLabel: phase === 'welcome' ? '¡Elegir flujo!' : '¡Listo! 🎉',
-            showBullets: true,
-            showProgress: false,
-            exitOnOverlayClick: false,
-            exitOnEsc: true,
-            scrollToElement: true,
-            disableInteraction: false,
-            overlayOpacity: 0.6,
-          }}
-        />
-      )}
-
-      {/* ── Menú de selección de flujo (Escena 2) ── */}
-      {phase === 'flow-menu' && (
-        <FlowMenuOverlay
-          onSelect={handleFlowSelect}
-          onSkip={handleSkipAll}
-        />
-      )}
-    </>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PASOS DE BIENVENIDA (Escena 1) — versión plana (sin beforeShow)
-// ═══════════════════════════════════════════════════════════════════════════════
-const WELCOME_STEPS_PLAIN: StepDef[] = [
+const WELCOME_STEPS: StepDef[] = [
   {
-    // Apuntamos al header (siempre existe) pero le quitamos el highlight
-    // para que parezca un overlay de pantalla completa
     element: 'header',
-    intro: tip(
-      `¡Bienvenido al sistema de <strong>Lima Café 28</strong><br/>
-       del St George's College - Sede Miraflores! 👋<br/><br/>
-       Mi nombre es <strong>Ericka Orrego</strong> y mi número es el
-       <a href="https://wa.me/51932020912" target="_blank"
-          style="color:#10b981;font-weight:bold;text-decoration:underline;">
-         +51 932 020 912
-       </a>. ¡Presiona si quieres chatear conmigo!`,
-      'right'
-    ),
-    tooltipClass: 'ericka-tooltip-welcome',
-    highlightClass: 'ericka-no-highlight',
+    text: `¡Bienvenido al sistema de <strong>Lima Café 28</strong> del St George's College - Sede Miraflores! 👋<br/><br/>Mi nombre es <strong>Ericka Orrego</strong> y mi número es el <a href="https://wa.me/51932020912" target="_blank" style="color:#10b981;font-weight:bold;">+51 932 020 912</a>. ¡Presiona si quieres chatear conmigo!`,
     position: 'bottom',
   },
   {
     element: '#bottom-nav-bar',
-    intro: tip(
-      `En el menú de abajo tienes las <strong>secciones principales</strong>.<br/><br/>
-       Presiona <strong>"¡Elegir flujo!"</strong> y te enseño paso a paso
-       cómo usar cada parte del sistema. 👇`,
-      'center'
-    ),
+    text: `En el menú de abajo tienes las <strong>secciones principales</strong>.<br/><br/>Presiona <strong>"¡Elegir flujo!"</strong> y te enseño paso a paso cómo usar cada parte del sistema. 👇`,
     position: 'top',
   },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OVERLAY DE SELECCIÓN DE FLUJO
+// TOOLTIP COMPONENT — Tooltip flotante posicionado sobre el elemento
+// ═══════════════════════════════════════════════════════════════════════════════
+interface TooltipProps {
+  step: StepDef;
+  stepIndex: number;
+  totalSteps: number;
+  onNext: () => void;
+  onPrev: () => void;
+  onSkip: () => void;
+  isFirst: boolean;
+  isLast: boolean;
+  doneLabel?: string;
+  loading: boolean;
+}
+
+function ErickaTooltip({ step, stepIndex, totalSteps, onNext, onPrev, onSkip, isFirst, isLast, doneLabel, loading }: TooltipProps) {
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0, placement: 'bottom' as string });
+  const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
+
+  // Calcular posición del tooltip relativa al elemento target
+  useEffect(() => {
+    if (!step.element) {
+      // Sin elemento: centrar en pantalla
+      setPos({ top: window.innerHeight / 2 - 120, left: window.innerWidth / 2 - 170, placement: 'center' });
+      setTargetRect(null);
+      return;
+    }
+
+    const el = document.querySelector(step.element);
+    if (!el) {
+      setPos({ top: window.innerHeight / 2 - 120, left: window.innerWidth / 2 - 170, placement: 'center' });
+      setTargetRect(null);
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    setTargetRect(rect);
+    const TW = 340; // tooltip width approx
+    const TH = 200; // tooltip height approx
+    const GAP = 14;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let placement = step.position || 'bottom';
+    let top = 0;
+    let left = 0;
+
+    if (placement === 'top') {
+      top = rect.top - TH - GAP;
+      left = rect.left + rect.width / 2 - TW / 2;
+      if (top < 10) placement = 'bottom';
+    }
+    if (placement === 'bottom') {
+      top = rect.bottom + GAP;
+      left = rect.left + rect.width / 2 - TW / 2;
+    }
+    if (placement === 'left') {
+      top = rect.top + rect.height / 2 - TH / 2;
+      left = rect.left - TW - GAP;
+      if (left < 10) placement = 'right';
+    }
+    if (placement === 'right') {
+      top = rect.top + rect.height / 2 - TH / 2;
+      left = rect.right + GAP;
+    }
+    if (placement === 'center') {
+      top = vh / 2 - TH / 2;
+      left = vw / 2 - TW / 2;
+    }
+
+    // Clamp dentro de la pantalla
+    left = Math.max(8, Math.min(left, vw - TW - 8));
+    top = Math.max(60, Math.min(top, vh - TH - 8));
+
+    setPos({ top, left, placement });
+  }, [step]);
+
+  return (
+    <>
+      {/* Overlay oscuro */}
+      <div
+        style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          zIndex: 99990,
+        }}
+        onClick={onSkip}
+      />
+
+      {/* Recuadro de highlight alrededor del elemento */}
+      {targetRect && (
+        <div
+          style={{
+            position: 'fixed',
+            top: targetRect.top - 4,
+            left: targetRect.left - 4,
+            width: targetRect.width + 8,
+            height: targetRect.height + 8,
+            border: '3px solid #10b981',
+            borderRadius: '10px',
+            boxShadow: '0 0 0 4px rgba(16,185,129,0.25)',
+            zIndex: 99991,
+            pointerEvents: 'none',
+            transition: 'all 0.3s ease',
+          }}
+        />
+      )}
+
+      {/* Tooltip flotante */}
+      <div
+        ref={tooltipRef}
+        style={{
+          position: 'fixed',
+          top: pos.top,
+          left: pos.left,
+          width: 340,
+          zIndex: 99999,
+          background: '#fff',
+          border: '2px solid #10b981',
+          borderRadius: '16px',
+          padding: '16px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+          transition: 'all 0.25s ease',
+        }}
+      >
+        {/* Botón omitir */}
+        <button
+          onClick={onSkip}
+          style={{
+            position: 'absolute', top: 10, right: 12,
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: '11px', color: '#9ca3af', fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          Omitir
+        </button>
+
+        {/* Ericka + texto */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', marginBottom: '14px' }}>
+          <img
+            src={ERICKA_IMG}
+            alt="Ericka"
+            style={{
+              width: 64, height: 'auto', flexShrink: 0,
+              borderRadius: '10px', objectFit: 'cover', objectPosition: 'top center',
+            }}
+          />
+          <div
+            style={{ fontSize: '13px', lineHeight: 1.55, color: '#111', flex: 1 }}
+            dangerouslySetInnerHTML={{ __html: step.text }}
+          />
+        </div>
+
+        {/* Bullets de progreso */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginBottom: '12px' }}>
+          {Array.from({ length: totalSteps }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: i === stepIndex ? 20 : 8,
+                height: 8,
+                borderRadius: 4,
+                background: i === stepIndex ? '#10b981' : '#d1fae5',
+                transition: 'all 0.3s',
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Botones de navegación */}
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          {!isFirst && (
+            <button
+              onClick={onPrev}
+              disabled={loading}
+              style={{
+                padding: '8px 16px', borderRadius: '8px',
+                border: '1.5px solid #d1d5db', background: '#f9fafb',
+                color: '#374151', fontSize: '13px', fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              ← Atrás
+            </button>
+          )}
+          <button
+            onClick={onNext}
+            disabled={loading}
+            style={{
+              padding: '8px 20px', borderRadius: '8px',
+              border: 'none', background: loading ? '#6ee7b7' : '#10b981',
+              color: '#fff', fontSize: '13px', fontWeight: 700,
+              cursor: loading ? 'wait' : 'pointer',
+              minWidth: 90,
+            }}
+          >
+            {loading ? '...' : isLast ? (doneLabel || '¡Listo! 🎉') : 'Siguiente →'}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OVERLAY MENÚ DE FLUJOS
 // ═══════════════════════════════════════════════════════════════════════════════
 function FlowMenuOverlay({
   onSelect,
@@ -620,170 +502,220 @@ function FlowMenuOverlay({
           border: '2px solid #10b981',
         }}
       >
-        {/* Ericka + pregunta */}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', marginBottom: '20px' }}>
           <img
             src={ERICKA_IMG} alt="Ericka Orrego"
             style={{
-              width: '90px', height: 'auto', borderRadius: '10px',
-              objectFit: 'cover', objectPosition: 'top center', flexShrink: 0,
+              width: 72, height: 'auto', flexShrink: 0,
+              borderRadius: '12px', objectFit: 'cover', objectPosition: 'top center',
             }}
           />
           <div>
-            <p style={{ fontSize: '15px', fontWeight: 700, color: '#065f46', marginBottom: '4px' }}>
-              ¿Qué quieres hacer hoy?
+            <p style={{ fontWeight: 700, fontSize: '16px', color: '#065f46', marginBottom: '4px' }}>
+              ¿Qué quieres aprender hoy?
             </p>
-            <p style={{ fontSize: '12px', color: '#6b7280', lineHeight: 1.4 }}>
-              Elige un flujo y te explico paso a paso.
+            <p style={{ fontSize: '13px', color: '#6b7280' }}>
+              Elige un flujo y te guío paso a paso.
             </p>
           </div>
         </div>
 
-        {/* Botones de flujo */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <FlowButton
-            onClick={() => onSelect('cuenta')}
-            borderColor="#d1fae5" hoverColor="#10b981" bg="#f0fdf4"
-            emoji="⚙️" title="Configurar mi cuenta"
-            subtitle="Pasar de cuenta libre a modo recargas"
-            titleColor="#065f46"
-          />
-          <FlowButton
-            onClick={() => onSelect('almuerzo')}
-            borderColor="#fde68a" hoverColor="#f59e0b" bg="#fffbeb"
-            emoji="🍽️" title="Pedir el almuerzo de mi hijo"
-            subtitle="Elegir fecha, categoría y confirmar"
-            titleColor="#78350f"
-          />
-          <FlowButton
-            onClick={() => onSelect('pagos')}
-            borderColor="#bfdbfe" hoverColor="#3b82f6" bg="#eff6ff"
-            emoji="💳" title="Hacer un pago"
-            subtitle="Enviar comprobante de deuda pendiente"
-            titleColor="#1e3a8a"
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+          {[
+            { flow: 'cuenta' as TutorialFlow, label: '⚙️  Configurar cuenta de mi hijo', desc: '6 pasos' },
+            { flow: 'almuerzo' as TutorialFlow, label: '🍽️  Hacer un pedido de almuerzo', desc: '10 pasos' },
+            { flow: 'pagos' as TutorialFlow, label: '💳  Pagar deudas pendientes', desc: '8 pasos' },
+          ].map(({ flow, label, desc }) => (
+            <button
+              key={flow}
+              onClick={() => onSelect(flow)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px',
+                background: '#f0fdf4', border: '2px solid #10b981',
+                borderRadius: '12px', cursor: 'pointer',
+                fontSize: '14px', fontWeight: 600, color: '#065f46',
+                textAlign: 'left', transition: 'all 0.2s',
+              }}
+            >
+              <span>{label}</span>
+              <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 400 }}>{desc}</span>
+            </button>
+          ))}
         </div>
 
         <button
           onClick={onSkip}
           style={{
-            marginTop: '16px', width: '100%', padding: '8px',
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            fontSize: '12px', color: '#9ca3af', textDecoration: 'underline',
+            width: '100%', padding: '10px',
+            background: 'none', border: '1.5px solid #e5e7eb',
+            borderRadius: '10px', cursor: 'pointer',
+            fontSize: '13px', color: '#9ca3af', fontWeight: 600,
           }}
         >
-          Omitir tutorial y explorar solo
+          No por ahora
         </button>
       </div>
     </div>
   );
 }
 
-// ─── Botón de flujo reutilizable ──────────────────────────────────────────────
-function FlowButton({
-  onClick, borderColor, hoverColor, bg,
-  emoji, title, subtitle, titleColor,
-}: {
-  onClick: () => void;
-  borderColor: string; hoverColor: string; bg: string;
-  emoji: string; title: string; subtitle: string; titleColor: string;
-}) {
-  const [hovered, setHovered] = useState(false);
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════════════════
+export function ErickaTutorial({ schoolId, onSetActiveTab, forceShow = false, onClose }: ErickaTutorialProps) {
+  const [phase, setPhase] = useState<TutorialPhase>('welcome');
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [stepLoading, setStepLoading] = useState(false);
+
+  const [currentSteps, setCurrentSteps] = useState<StepDef[]>([]);
+  const [stepIndex, setStepIndex] = useState(0);
+
+  // ── Verificar si el tutorial debe mostrarse ─────────────────────────────────
+  const checkShouldShow = useCallback(async () => {
+    try {
+      if (forceShow) {
+        setEnabled(true);
+        setPhase('welcome');
+        setCurrentSteps(WELCOME_STEPS);
+        setStepIndex(0);
+        setLoading(false);
+        return;
+      }
+
+      const done = localStorage.getItem(LS_KEY);
+      let tutorialForced = false;
+
+      if (schoolId) {
+        const { data } = await supabase
+          .from('maintenance_config')
+          .select('enabled')
+          .eq('school_id', schoolId)
+          .eq('module_key', 'tutorial_padres')
+          .maybeSingle();
+        tutorialForced = data?.enabled === true;
+      }
+
+      if (tutorialForced || !done) {
+        setEnabled(true);
+        setPhase('welcome');
+        setCurrentSteps(WELCOME_STEPS);
+        setStepIndex(0);
+      } else {
+        setEnabled(false);
+      }
+    } catch {
+      setEnabled(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [schoolId, forceShow]);
+
+  useEffect(() => {
+    checkShouldShow();
+  }, [checkShouldShow]);
+
+  // ── Navegar a un paso (ejecuta beforeShow si existe) ────────────────────────
+  const goToStep = useCallback(async (steps: StepDef[], index: number) => {
+    const step = steps[index];
+    if (!step) return;
+
+    if (step.beforeShow) {
+      setStepLoading(true);
+      try {
+        await step.beforeShow();
+      } catch { /* ignorar errores de DOM */ }
+      setStepLoading(false);
+    }
+
+    // Scroll al elemento si existe
+    const el = step.element ? document.querySelector(step.element) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    setStepIndex(index);
+  }, []);
+
+  // ── Siguiente paso ───────────────────────────────────────────────────────────
+  const handleNext = useCallback(async () => {
+    if (phase === 'welcome') {
+      const isLast = stepIndex === currentSteps.length - 1;
+      if (isLast) {
+        // Ir al menú de flujos
+        setPhase('flow-menu');
+        return;
+      }
+      await goToStep(currentSteps, stepIndex + 1);
+      return;
+    }
+
+    if (phase === 'flow-running') {
+      const isLast = stepIndex === currentSteps.length - 1;
+      if (isLast) {
+        markDone();
+        return;
+      }
+      await goToStep(currentSteps, stepIndex + 1);
+    }
+  }, [phase, stepIndex, currentSteps, goToStep]); // eslint-disable-line
+
+  // ── Paso anterior ────────────────────────────────────────────────────────────
+  const handlePrev = useCallback(async () => {
+    if (stepIndex > 0) {
+      await goToStep(currentSteps, stepIndex - 1);
+    }
+  }, [stepIndex, currentSteps, goToStep]);
+
+  // ── Selección de flujo ───────────────────────────────────────────────────────
+  const handleFlowSelect = useCallback(async (flow: TutorialFlow) => {
+    if (!flow) return;
+
+    let steps: StepDef[] = [];
+    if (flow === 'cuenta')   steps = buildFlujoCuenta(onSetActiveTab);
+    if (flow === 'almuerzo') steps = buildFlujoAlmuerzo(onSetActiveTab);
+    if (flow === 'pagos')    steps = buildFlujoPagos(onSetActiveTab);
+
+    setCurrentSteps(steps);
+    setPhase('flow-running');
+    await goToStep(steps, 0);
+  }, [onSetActiveTab, goToStep]);
+
+  // ── Cierre ───────────────────────────────────────────────────────────────────
+  const markDone = useCallback(() => {
+    localStorage.setItem(LS_KEY, '1');
+    setEnabled(false);
+    setPhase('done');
+    onClose?.();
+  }, [onClose]);
+
+  if (loading || !enabled) return null;
+
+  const totalSteps = currentSteps.length;
+  const currentStep = currentSteps[stepIndex];
+
   return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        padding: '12px 16px', borderRadius: '12px', cursor: 'pointer',
-        textAlign: 'left', transition: 'all 0.15s', background: bg,
-        border: `2px solid ${hovered ? hoverColor : borderColor}`,
-        transform: hovered ? 'translateY(-1px)' : 'none',
-        boxShadow: hovered ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
-      }}
-    >
-      <p style={{ fontSize: '14px', fontWeight: 700, color: titleColor, margin: 0 }}>
-        {emoji} {title}
-      </p>
-      <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>
-        {subtitle}
-      </p>
-    </button>
+    <>
+      {phase === 'flow-menu' && (
+        <FlowMenuOverlay onSelect={handleFlowSelect} onSkip={markDone} />
+      )}
+
+      {(phase === 'welcome' || phase === 'flow-running') && currentStep && (
+        <ErickaTooltip
+          step={currentStep}
+          stepIndex={stepIndex}
+          totalSteps={totalSteps}
+          onNext={handleNext}
+          onPrev={handlePrev}
+          onSkip={markDone}
+          isFirst={stepIndex === 0}
+          isLast={stepIndex === totalSteps - 1}
+          doneLabel={phase === 'welcome' ? '¡Elegir flujo! →' : '¡Listo! 🎉'}
+          loading={stepLoading}
+        />
+      )}
+    </>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ESTILOS GLOBALES DE INTRO.JS
-// ═══════════════════════════════════════════════════════════════════════════════
-const INTRO_CSS = `
-  /* Ocultar título nativo */
-  .introjs-tooltip .introjs-tooltip-title { display: none !important; }
-
-  /* Tooltip container */
-  .introjs-tooltip {
-    max-width: 390px !important;
-    padding: 16px !important;
-    border-radius: 16px !important;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.18) !important;
-    border: 2px solid #10b981 !important;
-    font-family: inherit !important;
-  }
-
-  /* Texto del tooltip */
-  .introjs-tooltiptext {
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-
-  /* Botón Siguiente */
-  .introjs-nextbutton {
-    background: #10b981 !important;
-    border-color: #10b981 !important;
-    color: #fff !important;
-    border-radius: 8px !important;
-    font-weight: 700 !important;
-    padding: 8px 18px !important;
-    text-shadow: none !important;
-    box-shadow: 0 2px 6px rgba(16,185,129,0.35) !important;
-  }
-  .introjs-nextbutton:hover { background: #059669 !important; border-color: #059669 !important; }
-
-  /* Botón Atrás */
-  .introjs-prevbutton {
-    color: #374151 !important;
-    border-color: #d1d5db !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    padding: 8px 14px !important;
-  }
-
-  /* Botón Omitir */
-  .introjs-skipbutton { color: #9ca3af !important; font-size: 12px !important; }
-
-  /* Highlight verde esmeralda */
-  .introjs-helperLayer {
-    border: 3px solid #10b981 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 0 0 9999px rgba(0,0,0,0.58) !important;
-  }
-
-  /* Paso bienvenida: sin highlight — solo overlay oscuro */
-  .ericka-no-highlight .introjs-helperLayer {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-  }
-
-  /* Bullets de progreso */
-  .introjs-bullets ul li a { background: #d1d5db !important; border-radius: 6px !important; }
-  .introjs-bullets ul li a.active { background: #10b981 !important; width: 16px !important; }
-
-  /* Overlay */
-  .introjs-overlay { background: rgba(0,0,0,0.6) !important; }
-
-  /* Flecha del tooltip */
-  .introjs-arrow.top { border-bottom-color: #10b981 !important; }
-  .introjs-arrow.bottom { border-top-color: #10b981 !important; }
-  .introjs-arrow.left { border-right-color: #10b981 !important; }
-  .introjs-arrow.right { border-left-color: #10b981 !important; }
-`;
