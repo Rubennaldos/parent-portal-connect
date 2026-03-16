@@ -23,7 +23,8 @@ import {
   ShoppingCart,
   UtensilsCrossed,
   Calendar,
-  CreditCard
+  CreditCard,
+  BookOpen
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -51,6 +52,7 @@ import { ParentDataForm } from '@/components/parent/ParentDataForm';
 import { EditStudentModal } from '@/components/parent/EditStudentModal';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 import { MaintenanceScreen } from '@/components/parent/MaintenanceScreen';
+import { ErickaTutorial } from '@/components/parent/ErickaTutorial';
 
 interface Student {
   id: string;
@@ -97,6 +99,8 @@ const Index = () => {
   const [parentName, setParentName] = useState<string>('');
   const [parentProfileData, setParentProfileData] = useState<any>(null); // 👤 Datos del perfil del padre
   const [showAddStudent, setShowAddStudent] = useState(false);
+  const [showTutorialManual, setShowTutorialManual] = useState(false);
+  const [tutorialManualKey, setTutorialManualKey] = useState(0);
   // Estado para la navegación por pestañas
   const [activeTab, setActiveTab] = useState(() => {
     // Restaurar la pestaña guardada al recargar
@@ -224,7 +228,7 @@ const Index = () => {
           .eq('parent_id', user.id)
           .eq('is_active', true)
           .limit(1)
-          .single();
+          .maybeSingle();
         schoolId = studentData?.school_id;
       }
 
@@ -364,12 +368,16 @@ const Index = () => {
   const handleOnboardingComplete = async (kioskDisabled: boolean = false) => {
     if (!user) return;
     try {
+      // Guardar que completó el onboarding Y la preferencia elegida
       await supabase
         .from('profiles')
-        .update({ free_account_onboarding_completed: true })
+        .update({
+          free_account_onboarding_completed: true,
+          kiosk_preference: kioskDisabled ? 'lunch_only' : 'full',
+        })
         .eq('id', user.id);
 
-      // Si el padre eligió desactivar la cuenta del kiosco, actualizar todos sus hijos
+      // Si el padre ya tiene hijos (caso de reconexión), aplicar la preferencia
       if (kioskDisabled) {
         const { data: myStudents } = await supabase
           .from('students')
@@ -707,6 +715,19 @@ const Index = () => {
             
             {/* Nombre usuario - Hidden en móvil, visible en tablet+ */}
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
+              {/* Botón Tutorial — visible en cualquier tamaño */}
+              <button
+                onClick={() => {
+                  localStorage.removeItem('ericka_tutorial_completed');
+                  setTutorialManualKey(k => k + 1);
+                  setShowTutorialManual(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold transition-all duration-200 shadow-sm hover:shadow"
+                title="Ver tutorial guiado de Ericka"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Tutorial</span>
+              </button>
               <div className="hidden md:block text-right">
                 <p className="text-[11px] font-medium text-stone-400 uppercase tracking-wider">Bienvenido</p>
                 <p className="text-sm font-medium text-stone-700">{parentName || 'Padre de Familia'}</p>
@@ -869,11 +890,11 @@ const Index = () => {
               {/* Sub-pestañas para Almuerzos */}
               <Tabs defaultValue="hacer-pedido" className="w-full">
                 <TabsList className="grid w-full grid-cols-2 h-auto">
-                  <TabsTrigger value="hacer-pedido" className="text-xs sm:text-sm py-2 sm:py-3">
+                  <TabsTrigger id="lunch-subtab-hacer-pedido" value="hacer-pedido" className="text-xs sm:text-sm py-2 sm:py-3">
                     <UtensilsCrossed className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
                     Hacer Pedido
                   </TabsTrigger>
-                  <TabsTrigger value="mis-pedidos" className="text-xs sm:text-sm py-2 sm:py-3">
+                  <TabsTrigger id="lunch-subtab-mis-pedidos" value="mis-pedidos" className="text-xs sm:text-sm py-2 sm:py-3">
                     <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
                     Mis Pedidos
                   </TabsTrigger>
@@ -1035,6 +1056,7 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-1 sm:px-2">
           <div className="grid grid-cols-4 gap-0.5 sm:gap-1">
             <button
+              id="nav-tab-alumnos"
               onClick={() => setActiveTab('alumnos')}
               className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
                 activeTab === 'alumnos'
@@ -1047,6 +1069,7 @@ const Index = () => {
             </button>
 
             <button
+              id="nav-tab-almuerzos"
               onClick={() => {
                 setActiveTab('almuerzos');
               }}
@@ -1061,6 +1084,7 @@ const Index = () => {
             </button>
 
             <button
+              id="nav-tab-carrito"
               onClick={() => setActiveTab('carrito')}
               className={`relative flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
                 activeTab === 'carrito'
@@ -1085,6 +1109,7 @@ const Index = () => {
             </button>
 
             <button
+              id="nav-tab-mas"
               onClick={() => setActiveTab('mas')}
               className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
                 activeTab === 'mas'
@@ -1129,6 +1154,28 @@ const Index = () => {
         onAccept={(kioskDisabled) => handleOnboardingComplete(kioskDisabled)}
         parentName={parentName || 'Padre de Familia'}
       />
+
+      {/* Tutorial guiado con Ericka — solo visible para padres */}
+      {!showParentDataForm && !showOnboarding && user && (
+        <ErickaTutorial
+          userId={user?.id}
+          schoolId={parentProfileData?.school_id || undefined}
+          onSetActiveTab={setActiveTab}
+          key={`tutorial-${user?.id}`}
+        />
+      )}
+
+      {/* Tutorial manual — activado con el botón del header */}
+      {showTutorialManual && user && (
+        <ErickaTutorial
+          userId={user?.id}
+          schoolId={parentProfileData?.school_id || undefined}
+          onSetActiveTab={setActiveTab}
+          forceShow={true}
+          onClose={() => setShowTutorialManual(false)}
+          key={`tutorial-manual-${tutorialManualKey}`}
+        />
+      )}
     </div>
   );
 };

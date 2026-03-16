@@ -176,6 +176,18 @@ export const BillingDashboard = () => {
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
   const requestIdRef = useRef(0);
 
+  // Helpers de fecha
+  const todayDateStr = () => new Date().toISOString().split('T')[0];
+  const mondayDateStr = (base?: string) => {
+    const d = base ? new Date(base + 'T12:00:00') : new Date();
+    const day = d.getDay();
+    d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
+    return d.toISOString().split('T')[0];
+  };
+
+  const [dateFrom, setDateFrom] = useState<string>(mondayDateStr());
+  const [dateTo, setDateTo] = useState<string>(todayDateStr());
+
   const canViewAllSchools = role === 'admin_general';
 
   useEffect(() => {
@@ -187,7 +199,7 @@ export const BillingDashboard = () => {
     if (userSchoolId || canViewAllSchools) {
       fetchDashboardStats();
     }
-  }, [selectedSchool, userSchoolId, canViewAllSchools]);
+  }, [selectedSchool, dateFrom, dateTo, userSchoolId, canViewAllSchools]);
 
   useEffect(() => {
     if (dashboardSyncTs > 0 && (userSchoolId || canViewAllSchools)) {
@@ -278,7 +290,7 @@ export const BillingDashboard = () => {
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 4. Cobros del mes (paid)
+        // 4. Cobros del período seleccionado (dateFrom → dateTo) + del mes actual para eficiencia
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
@@ -286,7 +298,7 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .gte('created_at', monthStart.toISOString());
+            .gte('created_at', monthStart.toISOString()); // traer todo el mes para eficiencia
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -510,13 +522,19 @@ export const BillingDashboard = () => {
       let totalCollectedMonth = 0;
       const paymentMethods = { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 };
 
+      // Período seleccionado por el filtro de fechas
+      const periodFrom = new Date(dateFrom + 'T00:00:00');
+      const periodTo = new Date(dateTo + 'T23:59:59');
+
       paidData?.forEach((t: any) => {
         const amt = Math.abs(t.amount || 0);
         const txDate = t.created_at.split('T')[0];
         totalCollectedMonth += amt;
         if (txDate === today) totalCollectedToday += amt;
         if (txDate === yesterday) collectedYesterday += amt;
-        if (new Date(t.created_at) >= weekStart) totalCollectedWeek += amt;
+        // "Esta semana" ahora usa el período seleccionado
+        const txTime = new Date(t.created_at);
+        if (txTime >= periodFrom && txTime <= periodTo) totalCollectedWeek += amt;
 
         const method = (t.payment_method || 'efectivo').toLowerCase();
         if (method.includes('yape')) paymentMethods.yape += amt;
@@ -781,38 +799,64 @@ export const BillingDashboard = () => {
   return (
     <div className="space-y-6">
       {/* ===== HEADER CON FILTROS ===== */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          {canViewAllSchools && schools.length > 1 && (
-            <div className="flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-red-600" />
-              <select
-                value={selectedSchool}
-                onChange={(e) => setSelectedSchool(e.target.value)}
-                className="bg-white flex h-10 rounded-md border border-input px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="all">Todas las Sedes</option>
-                {schools.map((school) => (
-                  <option key={school.id} value={school.id}>
-                    {school.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+      <div className="space-y-3">
+
+        {/* Fila 1: Sede + Actualizar */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {canViewAllSchools && schools.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-red-600" />
+                <select
+                  value={selectedSchool}
+                  onChange={(e) => setSelectedSchool(e.target.value)}
+                  className="bg-white flex h-10 rounded-md border border-input px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="all">Todas las Sedes</option>
+                  {schools.map((school) => (
+                    <option key={school.id} value={school.id}>
+                      {school.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => fetchDashboardStats()}
+            className="text-xs gap-1"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Actualizar
+            <span className="text-gray-400 ml-1">
+              {lastRefresh.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </Button>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => fetchDashboardStats()}
-          className="text-xs gap-1"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Actualizar
-          <span className="text-gray-400 ml-1">
-            {lastRefresh.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        </Button>
+
+        {/* Fila 2: Rango de fechas */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500">Desde</p>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500">Hasta</p>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+        </div>
       </div>
 
       {/* ===== FILTRO CATEGORÍA: ALMUERZO / CAFETERÍA / TOTAL ===== */}
@@ -888,12 +932,20 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Esta Semana */}
+        {/* Esta Semana → ahora muestra el período filtrado */}
         <Card className="border-l-4 border-blue-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
               <Calendar className="h-3.5 w-3.5 text-blue-500" />
-              Esta Semana
+              {(() => {
+                const from = new Date(dateFrom + 'T12:00:00');
+                const to = new Date(dateTo + 'T12:00:00');
+                const sameMonth = from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear();
+                const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000);
+                if (diffDays <= 7) return `Semana ${from.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}–${to.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}`;
+                if (sameMonth) return from.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+                return `${from.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })} – ${to.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}`;
+              })()}
             </CardTitle>
           </CardHeader>
           <CardContent>

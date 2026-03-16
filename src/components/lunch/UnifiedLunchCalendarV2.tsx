@@ -3035,6 +3035,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                 </Button>
                 {wizardStep === 'confirm' && (
                   <Button
+                    id="lunch-wizard-confirm-btn"
                     onClick={handleConfirmOrder}
                     disabled={submitting}
                     className="bg-purple-600 hover:bg-purple-700"
@@ -3293,7 +3294,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     <div className="space-y-3">
       {/* STUDENT SELECTOR (parents only) */}
       {userType === 'parent' && students.length > 0 && (
-        <Card className={cn(wizardStep !== 'idle' && !isInlineOrdering && "opacity-60")}>
+        <Card id="lunch-student-selector" className={cn(wizardStep !== 'idle' && !isInlineOrdering && "opacity-60")}>
           <CardContent className="p-3">
             <p className="text-xs font-medium text-gray-500 mb-2">
               {wizardStep !== 'idle' && !isInlineOrdering
@@ -3355,7 +3356,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       })()}
 
       {/* DAY CAROUSEL + MONTH NAV (sticky para que siempre sea visible) */}
-      <Card className="overflow-hidden sticky top-0 z-20 shadow-md">
+      <Card id="lunch-calendar-header" className="overflow-hidden sticky top-0 z-20 shadow-md">
         <CardHeader className="pb-2 pt-3 px-3">
           <div className="flex items-center justify-between">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
@@ -3434,6 +3435,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
               Ignorar
             </Button>
             <Button
+              id="lunch-wizard-done-goto-cart"
               size="sm"
               className="bg-white text-purple-700 hover:bg-purple-50 font-bold text-xs h-8 shadow"
               onClick={() => {

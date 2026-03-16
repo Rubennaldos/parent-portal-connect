@@ -32,6 +32,7 @@ import { BillingNubefactConfig } from '@/components/billing/BillingNubefactConfi
 import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
 import { VoucherApproval } from '@/components/billing/VoucherApproval';
 import { InvoicesList } from '@/components/billing/InvoicesList';
+import { BillingReportsTab } from '@/components/billing/reports/BillingReportsTab';
 
 interface TabPermissions {
   dashboard: boolean;
@@ -67,6 +68,25 @@ const Cobranzas = () => {
   });
   const [pendingVouchers, setPendingVouchers] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [reportSchools, setReportSchools] = useState<{ id: string; name: string }[]>([]);
+  const [reportUserSchoolId, setReportUserSchoolId] = useState<string | null>(null);
+  const canViewAllSchools = role === 'admin_general' || role === 'supervisor_red';
+
+  useEffect(() => {
+    if (activeTab === 'reports') loadReportSchools();
+  }, [activeTab]);
+
+  const loadReportSchools = async () => {
+    if (!user) return;
+    if (canViewAllSchools) {
+      const { data } = await supabase.from('schools').select('id, name').order('name');
+      setReportSchools(data || []);
+      setReportUserSchoolId(null);
+    } else {
+      const { data } = await supabase.from('profiles').select('school_id').eq('id', user.id).single();
+      setReportUserSchoolId(data?.school_id || null);
+    }
+  };
 
   useEffect(() => {
     checkPermissions();
@@ -602,6 +622,17 @@ const Cobranzas = () => {
               {activeTab === 'vouchers' && permissions.vouchers && (
                 <div className="mt-4 sm:mt-6">
                   <VoucherApproval />
+                </div>
+              )}
+
+              {/* Reportes Tab — con filtros + exportar Excel */}
+              {activeTab === 'reports' && permissions.reports && (
+                <div className="mt-4 sm:mt-6">
+                  <BillingReportsTab
+                    schools={reportSchools}
+                    userSchoolId={reportUserSchoolId}
+                    canViewAllSchools={canViewAllSchools}
+                  />
                 </div>
               )}
 

@@ -204,6 +204,16 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
     setIsSubmitting(true);
 
     try {
+      // Leer la preferencia de kiosco del perfil del padre
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('kiosk_preference')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      // Si eligió "solo almuerzos" en el onboarding, el hijo nace con kiosco desactivado
+      const kioskDisabledForNewStudent = profileData?.kiosk_preference === 'lunch_only';
+
       // Obtener los nombres de nivel y aula para campos legacy
       const selectedLevel = levels.find(l => l.id === formData.level_id);
       const selectedClassroom = classrooms.find(c => c.id === formData.classroom_id);
@@ -222,6 +232,7 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
           school_id: formData.school_id,
           is_active: true,
           free_account: true,
+          kiosk_disabled: kioskDisabledForNewStudent,
         });
 
       if (error) throw error;

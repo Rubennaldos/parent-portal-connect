@@ -26,6 +26,7 @@ import {
   Power,
   PowerOff,
   Clock,
+  BookOpen,
 } from 'lucide-react';
 
 // Módulos disponibles para poner en mantenimiento
@@ -43,6 +44,13 @@ const AVAILABLE_MODULES = [
     label: 'Pagos (Portal Padres)',
     icon: CreditCard,
     description: 'Módulo de pagos y recargas para padres de familia',
+    group: 'padres',
+  },
+  {
+    key: 'tutorial_padres',
+    label: 'Tutorial Guiado — Ericka (Portal Padres)',
+    icon: BookOpen,
+    description: 'Activa para que todos los padres vean el tutorial de Ericka aunque ya lo hayan visto antes.',
     group: 'padres',
   },
   // ── Módulos de Administración (nombres exactos del Dashboard) ──

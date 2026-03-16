@@ -415,7 +415,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   return (
     <div className="space-y-6">
       {/* 💳 AVISO: Cómo pagar */}
-      <Card className="border-2 border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50">
+      <Card id="cart-how-to-pay-card" className="border-2 border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50">
         <CardContent className="pt-5 pb-4">
           <div className="flex items-start gap-3">
             <div className="p-2.5 bg-blue-100 rounded-full flex-shrink-0">
@@ -432,7 +432,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       </Card>
 
       {/* Resumen del Carrito */}
-      <Card className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
+      <Card id="cart-total-pending-card" className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
         <CardContent className="pt-6 pb-5">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-amber-100 rounded-full">
@@ -522,7 +522,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           .reduce((sum, tx) => sum + tx.amount, 0);
 
         return (
-          <Card key={debt.student_id} className="border-2">
+          <Card key={debt.student_id} id={debt.student_id === debts[0]?.student_id ? 'cart-student-debt-card' : undefined} className="border-2">
             <CardHeader className="bg-gradient-to-r from-blue-50 to-purple-50 pb-3">
               <div className="flex items-center gap-4">
                 {debt.student_photo && (
@@ -581,6 +581,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                       </span>
                     </div>
                     <Button
+                      id="cart-pay-selected-btn"
                       onClick={() => handlePayDebt(debt)}
                       disabled={noneSelected}
                       className="w-full h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 text-sm shadow-md disabled:opacity-50"

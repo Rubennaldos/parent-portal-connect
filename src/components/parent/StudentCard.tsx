@@ -183,7 +183,7 @@ export function StudentCard({
 
   return (
     <>
-    <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
+    <Card className="student-card-tutorial overflow-hidden border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
       {/* Top accent */}
       <div className={`h-1 ${hasDebt ? 'bg-red-400' : 'bg-gray-200'}`} />
 
@@ -217,6 +217,7 @@ export function StudentCard({
                 </button>
               )}
               <button
+                id={`student-settings-btn-${student.id}`}
                 onClick={(e) => { e.stopPropagation(); setShowAccountConfig(true); }}
                 className="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition-colors"
                 title="Configuración de cuenta"
@@ -555,6 +556,7 @@ export function StudentCard({
 
           {/* Opción B: Cuenta con Recargas */}
           <button
+            id="account-type-prepaid-btn"
             type="button"
             disabled={hasDebt}
             onClick={() => !hasDebt && setSelectedAccountType('prepaid')}
@@ -599,6 +601,7 @@ export function StudentCard({
             Cancelar
           </Button>
           <Button
+            id="account-config-save-btn"
             size="sm"
             className="flex-1 h-8 text-xs bg-gray-700 hover:bg-gray-800 text-white"
             disabled={isSaving}

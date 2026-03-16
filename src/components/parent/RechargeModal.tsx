@@ -562,6 +562,7 @@ export function RechargeModal({
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-lg">S/</span>
           <Input
+            id="recharge-modal-amount"
             type="number"
             placeholder="0.00"
             value={amount}
@@ -906,6 +907,7 @@ export function RechargeModal({
         ) : (
           <>
             <button
+              id="recharge-modal-upload-btn"
               onClick={() => fileInputRef.current?.click()}
               className="w-full h-28 border-2 border-dashed border-red-400 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-red-500 hover:bg-red-100 transition-all text-red-500"
             >
@@ -1057,6 +1059,7 @@ export function RechargeModal({
       <div className="flex gap-2">
         <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">← Atrás</Button>
         <Button
+          id="recharge-modal-submit-btn"
           onClick={handleSubmit}
           disabled={
             loading ||

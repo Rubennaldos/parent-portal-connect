@@ -628,8 +628,6 @@ export const BillingReportsTab = ({
   // ── Exportar a Excel ───────────────────────────────────────────────────────
 
   const exportToExcel = async () => {
-    // Necesitamos TODOS los registros filtrados, no solo la página actual
-    // Hacemos un fetch sin paginación con los mismos filtros activos
     toast({ title: '⏳ Preparando Excel...', description: 'Obteniendo todos los registros filtrados.' });
 
     try {
@@ -638,24 +636,48 @@ export const BillingReportsTab = ({
           ? selectedSchool !== 'all' ? selectedSchool : userSchoolId
           : null;
 
-      let query = supabase
-        .from('transactions')
-        .select(`*, students(id, full_name), teacher_profiles(id, full_name), schools(id, name)`)
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .limit(5000);
+      const applyFilters = (q: any) => {
+        if (statusFilter !== 'all') q = q.eq('payment_status', statusFilter);
+        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
+        if (dateFrom) q = q.gte('created_at', `${dateFrom}T00:00:00`);
+        if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59`);
+        return q;
+      };
 
-      if (statusFilter !== 'all') query = query.eq('payment_status', statusFilter);
-      if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
-      if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`);
-      if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`);
+      // Traer TODOS los registros con paginación de 1000 en 1000
+      // (Supabase limita a 1000 por query por defecto)
+      const PAGE_SIZE = 1000;
+      let allData: any[] = [];
+      let from = 0;
+      let keepFetching = true;
 
-      const { data: allData, error } = await query;
-      if (error) throw error;
+      while (keepFetching) {
+        let q = supabase
+          .from('transactions')
+          .select(`*, students(id, full_name), teacher_profiles(id, full_name), schools(id, name)`)
+          .eq('type', 'purchase')
+          .eq('is_deleted', false)
+          .neq('payment_status', 'cancelled')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
 
-      const rows = (allData || []);
+        q = applyFilters(q);
+        const { data, error } = await q;
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          keepFetching = false;
+        } else {
+          allData = [...allData, ...data];
+          if (data.length < PAGE_SIZE) {
+            keepFetching = false; // última página
+          } else {
+            from += PAGE_SIZE;
+          }
+        }
+      }
+
+      const rows = allData;
 
       // ── Datos del encabezado ──
       const ahora = new Date();
@@ -766,9 +788,167 @@ export const BillingReportsTab = ({
     <div className="mt-0">
       {/* ── Filtros ── */}
       <Card className="mb-4">
-        <CardContent className="p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {/* Sede — solo admin_general */}
+        <CardContent className="p-3 sm:p-4">
+
+          {/* Fila 1: Navegador de semana y mes */}
+          <div className="mb-3 grid grid-cols-2 gap-2">
+
+            {/* --- Semana con flechas --- */}
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500 block">Semana</Label>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline" size="icon"
+                  className="h-10 w-9 shrink-0"
+                  onClick={() => {
+                    // retroceder 7 días desde el dateFrom actual
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    const mon = new Date(base);
+                    mon.setDate(base.getDate() - base.getDay() + (base.getDay() === 0 ? -6 : 1) - 7);
+                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+                    setDateFrom(mon.toISOString().split('T')[0]);
+                    setDateTo(sun.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                  title="Semana anterior"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 h-10 text-xs font-medium px-1 text-center leading-tight"
+                  onClick={() => {
+                    // semana actual (lunes a domingo)
+                    const now = new Date();
+                    const mon = new Date(now);
+                    mon.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1));
+                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+                    setDateFrom(mon.toISOString().split('T')[0]);
+                    setDateTo(sun.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                >
+                  {(() => {
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    const mon = new Date(base);
+                    mon.setDate(base.getDate() - base.getDay() + (base.getDay() === 0 ? -6 : 1));
+                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+                    const fmt = (d: Date) => d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' });
+                    return `${fmt(mon)} – ${fmt(sun)}`;
+                  })()}
+                </Button>
+                <Button
+                  variant="outline" size="icon"
+                  className="h-10 w-9 shrink-0"
+                  onClick={() => {
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    const mon = new Date(base);
+                    mon.setDate(base.getDate() - base.getDay() + (base.getDay() === 0 ? -6 : 1) + 7);
+                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+                    setDateFrom(mon.toISOString().split('T')[0]);
+                    setDateTo(sun.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                  title="Semana siguiente"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            {/* --- Mes con flechas --- */}
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500 block">Mes</Label>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline" size="icon"
+                  className="h-10 w-9 shrink-0"
+                  onClick={() => {
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    const prev = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+                    const last = new Date(prev.getFullYear(), prev.getMonth() + 1, 0);
+                    setDateFrom(prev.toISOString().split('T')[0]);
+                    setDateTo(last.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                  title="Mes anterior"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 h-10 text-xs font-medium px-1 text-center leading-tight capitalize"
+                  onClick={() => {
+                    const now = new Date();
+                    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                    setDateFrom(first.toISOString().split('T')[0]);
+                    setDateTo(last.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                >
+                  {(() => {
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    return base.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+                  })()}
+                </Button>
+                <Button
+                  variant="outline" size="icon"
+                  className="h-10 w-9 shrink-0"
+                  onClick={() => {
+                    const base = dateFrom ? new Date(dateFrom + 'T12:00:00') : new Date();
+                    const next = new Date(base.getFullYear(), base.getMonth() + 1, 1);
+                    const last = new Date(next.getFullYear(), next.getMonth() + 1, 0);
+                    setDateFrom(next.toISOString().split('T')[0]);
+                    setDateTo(last.toISOString().split('T')[0]);
+                    setCurrentPage(1);
+                  }}
+                  title="Mes siguiente"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Fila 2: Desde / Hasta */}
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500">Desde</Label>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
+                className="text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500">Hasta</Label>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
+                className="text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Fila 3: Estado + Sede (si admin) */}
+          <div className={`grid gap-2 mb-3 ${canViewAllSchools ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500">Estado</Label>
+              <select
+                value={statusFilter}
+                onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="all">Todos</option>
+                <option value="paid">Pagados</option>
+                <option value="pending">Pendientes</option>
+                <option value="partial">Parciales</option>
+              </select>
+            </div>
             {canViewAllSchools && (
               <div className="space-y-1">
                 <Label className="text-xs text-gray-500">Sede</Label>
@@ -784,103 +964,37 @@ export const BillingReportsTab = ({
                 </select>
               </div>
             )}
+          </div>
 
-            {/* Desde */}
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Desde</Label>
+          {/* Fila 4: Buscar */}
+          <div className="space-y-1 mb-3">
+            <Label className="text-xs text-gray-500">Buscar</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
+                placeholder="Nombre, ticket, sede..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 text-sm"
               />
-            </div>
-
-            {/* Hasta */}
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Hasta</Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
-              />
-            </div>
-
-            {/* Estado */}
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Estado</Label>
-              <select
-                value={statusFilter}
-                onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                <option value="all">Todos</option>
-                <option value="paid">Pagados</option>
-                <option value="pending">Pendientes</option>
-                <option value="partial">Parciales</option>
-              </select>
-            </div>
-
-            {/* Buscar */}
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Buscar</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Nombre, ticket, sede..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            {/* Accesos rápidos */}
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Rápido</Label>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline" size="sm" className="flex-1 text-xs"
-                  onClick={() => { const t = todayStr(); setDateFrom(t); setDateTo(t); setCurrentPage(1); }}
-                >
-                  Hoy
-                </Button>
-                <Button
-                  variant="outline" size="sm" className="flex-1 text-xs"
-                  onClick={() => { setDateFrom(mondayStr()); setDateTo(todayStr()); setCurrentPage(1); }}
-                >
-                  Semana
-                </Button>
-                <Button
-                  variant="outline" size="sm" className="flex-1 text-xs"
-                  onClick={() => {
-                    const now = new Date();
-                    const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-                    setDateFrom(first); setDateTo(todayStr()); setCurrentPage(1);
-                  }}
-                >
-                  Mes
-                </Button>
-              </div>
             </div>
           </div>
 
-          {/* Resumen rápido */}
-          <div className="flex items-center justify-between gap-3 mt-3">
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <span className="font-medium">{totalCount} registros encontrados</span>
-              {searchTerm && (
-                <span>• {totalCount} coinciden con "{searchTerm}"</span>
-              )}
-            </div>
+          {/* Fila 5: Resumen + Exportar */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-2 border-t border-gray-100">
+            <span className="text-sm text-gray-600 font-medium">
+              {totalCount} registros encontrados
+            </span>
             <Button
               onClick={exportToExcel}
-              className="bg-green-600 hover:bg-green-700 text-white gap-2 text-sm font-semibold"
+              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white gap-2 text-sm font-semibold"
               size="sm"
             >
               <FileSpreadsheet className="h-4 w-4" />
               Exportar Excel
             </Button>
           </div>
+
         </CardContent>
       </Card>
 
