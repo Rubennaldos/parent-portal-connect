@@ -25,6 +25,7 @@ import {
   ShoppingBag,
   Settings,
   Loader2,
+  CheckCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -87,6 +88,7 @@ export function StudentCard({
     isFreeAccount ? 'free' : 'prepaid'
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [showSuccessAnim, setShowSuccessAnim] = useState(false);
 
   const handleSaveAccountConfig = async () => {
     setIsSaving(true);
@@ -98,14 +100,13 @@ export function StudentCard({
 
       if (error) throw error;
 
-      toast({
-        title: 'Configuración actualizada',
-        description: selectedAccountType === 'free'
-          ? 'La cuenta cambió a Cuenta Libre.'
-          : 'La cuenta cambió a Con Recargas.',
-      });
-      setShowAccountConfig(false);
-      onUpdate?.();
+      // Mostrar animación de éxito 2 segundos, luego cerrar
+      setShowSuccessAnim(true);
+      setTimeout(() => {
+        setShowAccountConfig(false);
+        setShowSuccessAnim(false);
+        onUpdate?.();
+      }, 2000);
     } catch (err: any) {
       toast({
         variant: 'destructive',
@@ -381,8 +382,8 @@ export function StudentCard({
 
         {/* Status badges (compact row) */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {isActivePrepaid ? (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-blue-200 text-blue-600 bg-blue-50">Con Recargas</Badge>
+          {isPrepaid ? (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-300 text-gray-600 bg-gray-50">Modo: Recargas</Badge>
           ) : (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-green-200 text-green-600 bg-green-50">Cuenta Libre</Badge>
           )}
@@ -393,6 +394,24 @@ export function StudentCard({
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-orange-200 text-orange-600 bg-orange-50">Solo Almuerzo</Badge>
           )}
         </div>
+
+        {/* Info Modo Recargas (solo informativo, sin botón de recarga) */}
+        {isPrepaid && !student.kiosk_disabled && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
+                Monto recargado
+              </span>
+              <CreditCard className="h-3.5 w-3.5 text-gray-400" />
+            </div>
+            <p className="text-base font-semibold text-gray-700 mt-0.5">
+              S/ {Math.max(0, student.balance ?? 0).toFixed(2)}
+            </p>
+            <p className="text-[9px] text-gray-400 mt-0.5">
+              Solo para compras en el kiosco (snacks y recreo)
+            </p>
+          </div>
+        )}
 
         {/* Nota aclaratoria recargas vs almuerzos */}
         {isPrepaid && !student.kiosk_disabled && !RECHARGES_MAINTENANCE && (
@@ -491,6 +510,21 @@ export function StudentCard({
         </DialogHeader>
 
         <div className="space-y-2">
+          {/* ── Vista de éxito ── */}
+          {showSuccessAnim ? (
+            <div className="flex flex-col items-center justify-center py-6 gap-3">
+              <CheckCircle className="w-12 h-12 text-green-500 animate-bounce" />
+              <p className="text-sm font-medium text-gray-700 text-center">
+                {selectedAccountType === 'free'
+                  ? '¡Cuenta Libre Activada!'
+                  : '¡Modo Recargas Activado!'}
+              </p>
+              <p className="text-[10px] text-gray-400 text-center">
+                Cerrando en un momento...
+              </p>
+            </div>
+          ) : (
+            <>
           {/* Opción A: Cuenta Libre */}
           <button
             type="button"
@@ -544,8 +578,12 @@ export function StudentCard({
               </p>
             )}
           </button>
+            </>
+          )}
         </div>
 
+        {/* Botones: solo visibles cuando NO está en animación de éxito */}
+        {!showSuccessAnim && (
         <div className="flex gap-2 pt-2">
           <Button
             variant="ghost"
@@ -571,6 +609,7 @@ export function StudentCard({
             )}
           </Button>
         </div>
+        )}
       </DialogContent>
     </Dialog>
 
