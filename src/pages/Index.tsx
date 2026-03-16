@@ -1052,7 +1052,7 @@ const Index = () => {
       />
 
       {/* Navegación Inferior Fija - Optimizada para móvil */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-stone-200/50 shadow-lg z-50">
+      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-stone-200/50 shadow-lg z-50">
         <div className="max-w-7xl mx-auto px-1 sm:px-2">
           <div className="grid grid-cols-4 gap-0.5 sm:gap-1">
             <button

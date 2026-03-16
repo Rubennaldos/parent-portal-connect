@@ -463,10 +463,11 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
 
     setActiveFlow(flow);
     setFlowSteps(steps);
+    setStepsEnabled(false); // Limpiar cualquier Steps previo
     setPhase('flow-running');
 
-    // Pequeño delay para que React actualice el estado antes de arrancar Steps
-    setTimeout(() => setStepsEnabled(true), 300);
+    // Delay para que React monte el nuevo Steps limpio
+    setTimeout(() => setStepsEnabled(true), 400);
   }, [onSetActiveTab]);
 
   // ── Cierre / finalización ────────────────────────────────────────────────────
@@ -481,8 +482,9 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
   const handleSkipAll = useCallback(() => markDone(), [markDone]);
   const handleComplete = useCallback(() => {
     if (phase === 'welcome') {
+      // Primero deshabilitar Steps, LUEGO mostrar el menú
       setStepsEnabled(false);
-      setPhase('flow-menu');
+      setTimeout(() => setPhase('flow-menu'), 100);
     } else {
       markDone();
     }
@@ -496,11 +498,11 @@ export function ErickaTutorial({ userId, schoolId, onSetActiveTab, forceShow = f
   // onBeforeChange acepta Promise<void | false> en intro.js-react.
   // Si el paso tiene beforeShow, esperamos a que el DOM esté listo antes de continuar.
   const handleBeforeChange = useCallback(async (nextIndex: number) => {
-    const steps = phase === 'welcome' ? WELCOME_STEPS_PLAIN : flowSteps;
+    const steps = phase === 'flow-running' ? flowSteps : WELCOME_STEPS_PLAIN;
+    if (!steps || nextIndex < 0 || nextIndex >= steps.length) return;
     const step = steps[nextIndex] as StepDef | undefined;
-    if (!step?.beforeShow) return; // Sin acción → Intro.js avanza normalmente
+    if (!step?.beforeShow) return;
     await step.beforeShow();
-    // Después de beforeShow, Intro.js continúa automáticamente
   }, [phase, flowSteps]);
 
   if (loading || !enabled) return null;
@@ -572,7 +574,7 @@ const WELCOME_STEPS_PLAIN: StepDef[] = [
     position: 'bottom',
   },
   {
-    element: 'nav.fixed',
+    element: '#bottom-nav-bar',
     intro: tip(
       `En el menú de abajo tienes las <strong>secciones principales</strong>.<br/><br/>
        Presiona <strong>"¡Elegir flujo!"</strong> y te enseño paso a paso
