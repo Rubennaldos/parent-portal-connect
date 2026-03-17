@@ -771,6 +771,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     setMenuModifierGroups([]);
     setSelectedModifiers([]);
     setModifierFavorites([]);
+    setConfigPlateGroups([]);
+    setConfigSelections([]);
     setParentNotes('');
     setShowNotesField(false);
     setBulkPreselectedCategory(null);
