@@ -111,20 +111,61 @@ export function UsersManagement() {
   });
 
   useEffect(() => {
-    fetchUsers();
+    fetchUsers('', 'all');
   }, []);
 
-  const fetchUsers = async () => {
+  // Búsqueda con debounce: cuando cambia el término o el filtro de rol, re-consulta Supabase
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchUsers(searchTerm, roleFilter);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchTerm, roleFilter]);
+
+  const fetchUsers = async (search: string, role: string) => {
     setLoading(true);
     try {
-      // Obtener perfiles con email y nombre (quienes no están aquí no aparecen en la lista)
-      const { data: profiles, error: profilesError } = await supabase
+      const term = search.trim();
+
+      // Construir query base con filtros en Supabase (evita traer miles de filas)
+      let q = supabase
         .from('profiles')
         .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
         .order('email')
-        .range(0, 4999);
+        .limit(200);
 
+      if (role !== 'all') q = q.eq('role', role);
+
+      if (term) {
+        // Buscar por email o nombre directamente en la base de datos
+        q = q.or(`email.ilike.%${term}%,full_name.ilike.%${term}%`);
+      }
+
+      const { data: profiles, error: profilesError } = await q;
       if (profilesError) throw profilesError;
+
+      // Si hay término de búsqueda y no encontró nada por email/nombre,
+      // buscar por nombre de hijo (student)
+      let extraParentIds: string[] = [];
+      if (term && (!profiles || profiles.length === 0)) {
+        const { data: matchingStudents } = await supabase
+          .from('students')
+          .select('parent_id')
+          .ilike('full_name', `%${term}%`)
+          .not('parent_id', 'is', null)
+          .limit(50);
+        extraParentIds = [...new Set((matchingStudents || []).map((s: any) => s.parent_id).filter(Boolean))];
+      }
+
+      // Si encontramos padres por nombre de hijo, traer sus perfiles
+      let allProfiles = profiles || [];
+      if (extraParentIds.length > 0) {
+        const { data: extraProfiles } = await supabase
+          .from('profiles')
+          .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
+          .in('id', extraParentIds);
+        allProfiles = [...allProfiles, ...(extraProfiles || [])];
+      }
 
       // Obtener schools
       const { data: schools } = await supabase
@@ -134,22 +175,20 @@ export function UsersManagement() {
       const schoolsMap = new Map(schools?.map(s => [s.id, s]) || []);
 
       // Para padres, obtener school_id desde parent_profiles
-      const parentIds = profiles?.filter(p => p.role === 'parent').map(p => p.id) || [];
+      const parentIds = allProfiles.filter(p => p.role === 'parent').map(p => p.id);
       let parentSchoolsMap = new Map();
 
       if (parentIds.length > 0) {
         const { data: parentProfiles } = await supabase
           .from('parent_profiles')
           .select('user_id, school_id')
-          .in('user_id', parentIds)
-          .range(0, 4999);
+          .in('user_id', parentIds);
 
         parentSchoolsMap = new Map(parentProfiles?.map(pp => [pp.user_id, pp.school_id]) || []);
       }
 
       // Crear usuarios con datos reales
-      let usersWithData = (profiles || []).map((profile) => {
-        // Para padres, usar school_id de parent_profiles (puede ser null → SIN SEDE)
+      let usersWithData = allProfiles.map((profile) => {
         const schoolId = profile.role === 'parent'
           ? parentSchoolsMap.get(profile.id)
           : profile.school_id;
@@ -170,14 +209,14 @@ export function UsersManagement() {
         };
       });
 
-      // Para padres: cargar hijos desde students (así se ve aunque tengan SIN SEDE)
+      // Para padres: cargar hijos desde students
       if (parentIds.length > 0) {
         const { data: studentsData } = await supabase
           .from('students')
           .select('parent_id, full_name, grade, section, school_id')
           .in('parent_id', parentIds)
           .eq('is_active', true)
-          .range(0, 4999);
+          .limit(500);
         const byParent = new Map<string, UserWithProfile['children']>();
         (studentsData || []).forEach((s: any) => {
           if (!s.parent_id) return;
@@ -193,18 +232,23 @@ export function UsersManagement() {
 
       setUsers(usersWithData as UserWithProfile[]);
 
-      // Calcular estadísticas
-      const statsCopy = {
-        total: profiles?.length || 0,
-        superadmin: profiles?.filter(p => p.role === 'superadmin').length || 0,
-        admin_general: profiles?.filter(p => p.role === 'admin_general').length || 0,
-        supervisor_red: profiles?.filter(p => p.role === 'supervisor_red').length || 0,
-        gestor_unidad: profiles?.filter(p => p.role === 'gestor_unidad').length || 0,
-        operador_caja: profiles?.filter(p => p.role === 'operador_caja').length || 0,
-        operador_cocina: profiles?.filter(p => p.role === 'operador_cocina').length || 0,
-        parent: profiles?.filter(p => p.role === 'parent').length || 0,
-      };
-      setStats(statsCopy);
+      // Calcular estadísticas solo cuando no hay filtro activo
+      if (!term && role === 'all') {
+        const { data: statsData } = await supabase
+          .from('profiles')
+          .select('role');
+        const all = statsData || [];
+        setStats({
+          total: all.length,
+          superadmin: all.filter(p => p.role === 'superadmin').length,
+          admin_general: all.filter(p => p.role === 'admin_general').length,
+          supervisor_red: all.filter(p => p.role === 'supervisor_red').length,
+          gestor_unidad: all.filter(p => p.role === 'gestor_unidad').length,
+          operador_caja: all.filter(p => p.role === 'operador_caja').length,
+          operador_cocina: all.filter(p => p.role === 'operador_cocina').length,
+          parent: all.filter(p => p.role === 'parent').length,
+        });
+      }
 
     } catch (error: any) {
       console.error('Error fetching users:', error);
@@ -236,7 +280,7 @@ export function UsersManagement() {
 
       setEditingUser(null);
       setEditingRole('');
-      fetchUsers();
+      fetchUsers(searchTerm, roleFilter);
     } catch (error: any) {
       console.error('Error updating role:', error);
       toast({
@@ -265,7 +309,7 @@ export function UsersManagement() {
       });
 
       setDeletingUser(null);
-      fetchUsers();
+      fetchUsers(searchTerm, roleFilter);
     } catch (error: any) {
       console.error('Error deleting user:', error);
       toast({
@@ -315,15 +359,8 @@ export function UsersManagement() {
     setNewPassword(password);
   };
 
-  const filteredUsers = users.filter(user => {
-    const term = searchTerm.toLowerCase().trim();
-    const matchesSearch = !term
-      || user.email?.toLowerCase().includes(term)
-      || user.profile?.full_name?.toLowerCase().includes(term)
-      || user.children?.some(c => c.full_name?.toLowerCase().includes(term));
-    const matchesRole = roleFilter === 'all' || user.profile?.role === roleFilter;
-    return matchesSearch && matchesRole;
-  });
+  // La búsqueda y filtro se hacen directamente en Supabase (via fetchUsers con debounce)
+  const filteredUsers = users;
 
   const getRoleBadge = (role: string) => {
     const badges: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -431,7 +468,7 @@ export function UsersManagement() {
                 <CreateAdminSimple 
                   onSuccess={() => {
                     setShowCreateDialog(false);
-                    fetchUsers();
+                    fetchUsers(searchTerm, roleFilter);
                   }}
                   onCancel={() => setShowCreateDialog(false)}
                 />
