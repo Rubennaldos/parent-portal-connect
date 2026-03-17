@@ -677,7 +677,17 @@ export const BillingReportsTab = ({
         }
       }
 
-      const rows = allData;
+      // ── Filtrar en memoria por búsqueda (igual que la pantalla) ──
+      const searchNorm = normalize(searchTerm.trim());
+      const rows = searchNorm
+        ? allData.filter((t) =>
+            normalize(t.students?.full_name || t.teacher_profiles?.full_name || t.manual_client_name || '').includes(searchNorm) ||
+            normalize(t.schools?.name || '').includes(searchNorm) ||
+            normalize(t.description || '').includes(searchNorm) ||
+            normalize(t.ticket_code || '').includes(searchNorm) ||
+            normalize(t.operation_number || '').includes(searchNorm)
+          )
+        : allData;
 
       // ── Datos del encabezado ──
       const ahora = new Date();
@@ -685,6 +695,7 @@ export const BillingReportsTab = ({
       const quienExporto = user?.email || 'Desconocido';
       const rangoFechas = `Del ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy", { locale: es })} al ${format(new Date(dateTo + 'T00:00:00'), "dd/MM/yyyy", { locale: es })}`;
       const estadoLabel = statusFilter === 'all' ? 'Todos' : statusFilter === 'paid' ? 'Pagados' : statusFilter === 'pending' ? 'Pendientes' : 'Parciales';
+      const busquedaLabel = searchTerm.trim() ? ` | Búsqueda: "${searchTerm.trim()}"` : '';
       const montoTotal = rows.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
 
       // ── Construir filas de datos ──
@@ -719,7 +730,7 @@ export const BillingReportsTab = ({
       // Fila 2: Rango de fechas
       XLSX.utils.sheet_add_aoa(ws, [[rangoFechas]], { origin: 'A2' });
       // Fila 3: Monto total
-      XLSX.utils.sheet_add_aoa(ws, [[`Monto Total: S/ ${montoTotal.toFixed(2)}   |   Estado filtrado: ${estadoLabel}   |   Total registros: ${rows.length}`]], { origin: 'A3' });
+      XLSX.utils.sheet_add_aoa(ws, [[`Monto Total: S/ ${montoTotal.toFixed(2)}   |   Estado filtrado: ${estadoLabel}${busquedaLabel}   |   Total registros: ${rows.length}`]], { origin: 'A3' });
       // Fila 4: Generado por
       XLSX.utils.sheet_add_aoa(ws, [[`Generado el: ${fechaReporte}   |   Por: ${quienExporto}`]], { origin: 'A4' });
       // Fila 5: en blanco
@@ -756,10 +767,12 @@ export const BillingReportsTab = ({
       XLSX.utils.book_append_sheet(wb, ws, 'Reporte Deudas');
 
       // ── Nombre del archivo ──
-      const nombreArchivo = `Reporte_Deudas_${dateFrom}_al_${dateTo}.xlsx`;
+      const sufijoBusqueda = searchTerm.trim() ? `_${searchTerm.trim().replace(/\s+/g, '_')}` : '';
+      const nombreArchivo = `Reporte_Deudas_${dateFrom}_al_${dateTo}${sufijoBusqueda}.xlsx`;
       XLSX.writeFile(wb, nombreArchivo);
 
-      toast({ title: '✅ Excel generado', description: `${rows.length} registros exportados correctamente.` });
+      const msgBusqueda = searchTerm.trim() ? ` · Filtrado por: "${searchTerm.trim()}"` : '';
+      toast({ title: '✅ Excel generado', description: `${rows.length} registros exportados correctamente.${msgBusqueda}` });
     } catch (err) {
       console.error('Error exportando Excel:', err);
       toast({ variant: 'destructive', title: 'Error', description: 'No se pudo generar el Excel. Intenta de nuevo.' });
