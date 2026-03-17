@@ -715,6 +715,7 @@ export const BillingReportsTab = ({
           'Fecha del Comprobante': fechaComp,
           'Mes': mes,
           'Estado': '',          // lo llena la dueña
+          'Estado del Sistema': t.payment_status === 'paid' ? 'Pagado' : t.payment_status === 'pending' ? 'Pendiente' : t.payment_status === 'partial' ? 'Parcial' : t.payment_status || '',
           'Método de Pago': '',  // lo llena la dueña
           'Forma de Pago': '',   // lo llena la dueña
           'Porque (Motivo)': t.metadata?.rejection_reason || '',
@@ -749,7 +750,8 @@ export const BillingReportsTab = ({
         { wch: 20 }, // Comprobante
         { wch: 20 }, // Fecha comp
         { wch: 14 }, // Mes
-        { wch: 14 }, // Estado (vacío)
+        { wch: 14 }, // Estado (vacío - lo llena la dueña)
+        { wch: 18 }, // Estado del Sistema (automático)
         { wch: 16 }, // Método de pago (vacío)
         { wch: 16 }, // Forma de pago (vacío)
         { wch: 30 }, // Porque
