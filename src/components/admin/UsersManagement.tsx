@@ -121,7 +121,8 @@ export function UsersManagement() {
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
-        .order('email');
+        .order('email')
+        .range(0, 4999);
 
       if (profilesError) throw profilesError;
 
@@ -140,7 +141,8 @@ export function UsersManagement() {
         const { data: parentProfiles } = await supabase
           .from('parent_profiles')
           .select('user_id, school_id')
-          .in('user_id', parentIds);
+          .in('user_id', parentIds)
+          .range(0, 4999);
 
         parentSchoolsMap = new Map(parentProfiles?.map(pp => [pp.user_id, pp.school_id]) || []);
       }
@@ -174,7 +176,8 @@ export function UsersManagement() {
           .from('students')
           .select('parent_id, full_name, grade, section, school_id')
           .in('parent_id', parentIds)
-          .eq('is_active', true);
+          .eq('is_active', true)
+          .range(0, 4999);
         const byParent = new Map<string, UserWithProfile['children']>();
         (studentsData || []).forEach((s: any) => {
           if (!s.parent_id) return;
