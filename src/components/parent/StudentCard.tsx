@@ -125,61 +125,12 @@ export function StudentCard({
   const hasLunchDebt = lunchDebt > 0;
   const hasDebt = hasKioskDebt || hasLunchDebt;
 
-  const [spentPeriod, setSpentPeriod] = useState(0);
+  const [spentPeriod] = useState(0);
 
-  const limitType = student.limit_type || 'none';
-  const currentLimit = limitType === 'daily' ? student.daily_limit
-    : limitType === 'weekly' ? student.weekly_limit
-    : limitType === 'monthly' ? student.monthly_limit
-    : 0;
-  const limitRemaining = Math.max(0, currentLimit - spentPeriod);
-
-  useEffect(() => {
-    if (student.id && (limitType !== 'none' || isPrepaid)) {
-      fetchSpentInPeriod();
-    }
-  }, [student.id, limitType, isPrepaid]);
-
-  const fetchSpentInPeriod = async () => {
-    try {
-      let startDate: string;
-      const now = new Date();
-
-      if (limitType === 'daily') {
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      } else if (limitType === 'weekly') {
-        const start = new Date(now);
-        start.setDate(start.getDate() - start.getDay());
-        start.setHours(0, 0, 0, 0);
-        startDate = start.toISOString();
-      } else {
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        startDate = start.toISOString();
-      }
-
-      const { data } = await supabase
-        .from('transactions')
-        .select('amount, metadata')
-        .eq('student_id', student.id)
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled')
-        .gte('created_at', startDate);
-
-      const kioscoOnly = data?.filter(t => !(t.metadata as any)?.lunch_order_id) || [];
-      const total = kioscoOnly.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-      setSpentPeriod(total);
-    } catch (err) {
-      console.error('Error fetching spent:', err);
-    }
-  };
-
-  const getLimitLabel = () => {
-    if (limitType === 'daily') return 'Diario';
-    if (limitType === 'weekly') return 'Semanal';
-    if (limitType === 'monthly') return 'Mensual';
-    return '';
-  };
+  // Topes desactivados — variables mantenidas solo para que el UI condicional no falle
+  const limitType = 'none';
+  const currentLimit = 0;
+  const limitRemaining = 0;
 
   return (
     <>

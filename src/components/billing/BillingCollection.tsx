@@ -89,6 +89,8 @@ interface Debtor {
   id: string; // student_id, teacher_id, o 'manual_' + nombre
   client_name: string; // Nombre del deudor (alumno, profesor, o cliente manual)
   client_type: 'student' | 'teacher' | 'manual'; // Tipo de cliente
+  student_grade?: string; // Grado del alumno (solo estudiantes)
+  student_section?: string; // Sección del alumno (solo estudiantes)
   parent_id?: string; // Solo para estudiantes
   parent_name?: string; // Solo para estudiantes
   parent_phone?: string; // Solo para estudiantes
@@ -432,7 +434,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         while (true) {
           let tq = supabase
             .from('transactions')
-            .select(`*, students(id, full_name, parent_id), teacher_profiles(id, full_name), schools(id, name)`)
+            .select(`*, students(id, full_name, parent_id, grade, section), teacher_profiles(id, full_name), schools(id, name)`)
             .eq('type', 'purchase')
             .eq('is_deleted', false)
             .in('payment_status', ['pending', 'partial'])
@@ -916,6 +918,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             id: clientId,
             client_name: clientName,
             client_type: clientType,
+            student_grade: clientType === 'student' ? (transaction.students?.grade || '') : undefined,
+            student_section: clientType === 'student' ? (transaction.students?.section || '') : undefined,
             parent_id: parentData?.user_id || '',
             parent_name: parentData?.full_name || '',
             parent_phone: parentData?.phone_1 || '',
@@ -2743,8 +2747,13 @@ Si tienes dudas, comunícate con la administración de tu sede.
                           {/* Header con nombre y monto */}
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
                                 <h3 className="font-bold text-xl text-gray-900">{debtor.client_name}</h3>
+                                {debtor.client_type === 'student' && (debtor.student_grade || debtor.student_section) && (
+                                  <span className="text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
+                                    {[debtor.student_grade, debtor.student_section].filter(Boolean).join(' - ')}
+                                  </span>
+                                )}
                                 {debtor.client_type === 'teacher' && (
                                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
                                     👨‍🏫 Profesor
@@ -3290,10 +3299,15 @@ Si tienes dudas, comunícate con la administración de tu sede.
               <div className="mt-3 p-4 bg-blue-50 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
                   <div className="font-semibold text-gray-900">
-                    {currentDebtor?.client_type === 'student' && '👨‍🎓 Estudiante: '}
-                    {currentDebtor?.client_type === 'teacher' && '👨‍🏫 Profesor: '}
-                    {currentDebtor?.client_type === 'manual' && '📝 Cliente: '}
-                    {currentDebtor?.client_name}
+                  {currentDebtor?.client_type === 'student' && '👨‍🎓 Estudiante: '}
+                  {currentDebtor?.client_type === 'teacher' && '👨‍🏫 Profesor: '}
+                  {currentDebtor?.client_type === 'manual' && '📝 Cliente: '}
+                  {currentDebtor?.client_name}
+                  {currentDebtor?.client_type === 'student' && (currentDebtor.student_grade || currentDebtor.student_section) && (
+                    <span className="ml-2 text-sm font-normal text-blue-600">
+                      ({[currentDebtor.student_grade, currentDebtor.student_section].filter(Boolean).join(' - ')})
+                    </span>
+                  )}
                   </div>
                 </div>
                 {currentDebtor?.client_type === 'student' && currentDebtor.parent_name && (

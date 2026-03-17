@@ -96,7 +96,10 @@ function aggregateOrders(orders: RawOrder[]): PrepCategory[] {
   const map = new Map<string, PrepCategory>();
 
   for (const o of orders) {
-    const key = o.menu_id || o.category_id || 'sin-cat';
+    // Clave única: menu_id si existe, o category_id + plato principal para no mezclar menús distintos
+    const key = o.menu_id
+      ? o.menu_id
+      : `${o.category_id || 'sin-cat'}__${(o.menu_main_course || '').toLowerCase().trim()}`;
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -121,7 +124,9 @@ function aggregateOrders(orders: RawOrder[]): PrepCategory[] {
     cat.total += qty;
 
     // ── Selecciones de plato configurable (PROTEÍNAS, GUARNICIONES, etc.) ──
-    const configSels = o.configurable_selections || [];
+    const configSels = (o.configurable_selections || []).filter(
+      (sel: any) => sel.group_name && sel.selected && String(sel.selected).trim() !== ''
+    );
     if (configSels.length > 0) {
       for (const sel of configSels) {
         if (!sel.group_name || !sel.selected) continue;

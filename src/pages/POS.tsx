@@ -107,10 +107,6 @@ interface Student {
   school_id?: string;
   free_account?: boolean;
   kiosk_disabled?: boolean;
-  limit_type?: 'none' | 'daily' | 'weekly' | 'monthly';
-  daily_limit?: number;
-  weekly_limit?: number;
-  monthly_limit?: number;
 }
 
 interface Product {
@@ -122,16 +118,6 @@ interface Product {
   category: string;
   image_url?: string | null;
   active?: boolean;
-}
-
-interface LimitDetail {
-  type: 'daily' | 'weekly' | 'monthly';
-  label: string;
-  limit: number;
-  spent: number;
-  remaining: number;
-  renewalText: string;
-  isActive: boolean; // true if this is the enforced limit_type
 }
 
 interface CartItem {
@@ -237,9 +223,6 @@ const POS = () => {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [showTeacherResults, setShowTeacherResults] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false); // Para ampliar foto del estudiante
-  const [studentLimitsDetail, setStudentLimitsDetail] = useState<LimitDetail[]>([]);
-  const [loadingLimits, setLoadingLimits] = useState(false);
-
   // Estados de productos
   const [productSearch, setProductSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
@@ -251,8 +234,6 @@ const POS = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [insufficientBalance, setInsufficientBalance] = useState(false);
-
-  // Estados de pago mejorados (Cliente Genérico)
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null); // 'efectivo', 'yape_qr', 'yape_numero', 'plin_qr', 'plin_numero', 'tarjeta', 'transferencia', 'mixto'
   const [yapeNumber, setYapeNumber] = useState('');
   const [plinNumber, setPlinNumber] = useState('');
@@ -835,7 +816,7 @@ const POS = () => {
       // Construir la consulta base
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, school_id')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`);
       
@@ -974,110 +955,28 @@ const POS = () => {
     // 1. Cuenta Libre (free_account = true o null)
     if (student.free_account !== false) {
       const balance = student.balance || 0;
-      const limitText = student.daily_limit && student.daily_limit > 0 
-        ? `Tope: S/ ${student.daily_limit.toFixed(2)}`
-        : 'Sin tope';
-      
-      // Si tiene saldo de recarga, mostrarlo para que el cajero sepa
-      const balanceText = balance > 0 
-        ? ` | 💰 Saldo: S/ ${balance.toFixed(2)}`
-        : '';
-      
+      const balanceText = balance > 0 ? ` | 💰 Saldo: S/ ${balance.toFixed(2)}` : '';
       return {
         canPurchase: true,
-        statusText: `✨ Libre - ${limitText}${balanceText}`,
+        statusText: `✨ Cuenta Libre${balanceText}`,
         statusColor: 'text-emerald-600'
       };
     }
 
-    // 2. Con Recargas (sin cuenta libre)
+    // 2. Con Recargas (free_account = false)
     const balance = student.balance || 0;
 
-    // 3. Con Topes activos — verificar TODOS los topes con valor > 0
-    // ⚠️ IMPORTANTE: Verificar topes ANTES de bloquear por saldo,
-    //    porque un alumno con tope puede comprar a crédito aunque tenga saldo 0
-    const hasAnyLimit = (student.daily_limit || 0) > 0 || (student.weekly_limit || 0) > 0 || (student.monthly_limit || 0) > 0;
-    if (hasAnyLimit) {
-      try {
-        const now = new Date();
-        const todayStr = now.toISOString().split('T')[0];
-        const startOfWeek = new Date(now);
-        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-        startOfWeek.setHours(0, 0, 0, 0);
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        startOfMonth.setHours(0, 0, 0, 0);
-
-        // Una sola consulta para todo el mes (incluye día y semana)
-        const { data: monthTx } = await supabase
-          .from('transactions')
-          .select('amount, metadata, created_at')
-          .eq('student_id', student.id)
-          .eq('type', 'purchase')
-          .gte('created_at', startOfMonth.toISOString())
-          .eq('is_deleted', false)
-          .neq('payment_status', 'cancelled');
-
-        const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
-
-        const spentToday = kioscoTx.filter(t => t.created_at >= todayStr).reduce((s, t) => s + Math.abs(t.amount), 0);
-        const spentWeek = kioscoTx.filter(t => t.created_at >= startOfWeek.toISOString()).reduce((s, t) => s + Math.abs(t.amount), 0);
-        const spentMonth = kioscoTx.reduce((s, t) => s + Math.abs(t.amount), 0);
-
-        // Construir resumen de topes
-        const parts: string[] = [];
-        let anyExceeded = false;
-        let lowestRemaining = Infinity;
-        let lowestPeriod = '';
-
-        if ((student.daily_limit || 0) > 0) {
-          const rem = student.daily_limit! - spentToday;
-          if (rem <= 0) { anyExceeded = true; lowestPeriod = 'Diario'; }
-          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Diario'; }
-          parts.push(`D: S/${Math.max(0, rem).toFixed(0)}/${student.daily_limit!.toFixed(0)}`);
-        }
-        if ((student.weekly_limit || 0) > 0) {
-          const rem = student.weekly_limit! - spentWeek;
-          if (rem <= 0 && !anyExceeded) { anyExceeded = true; lowestPeriod = 'Semanal'; }
-          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Semanal'; }
-          parts.push(`S: S/${Math.max(0, rem).toFixed(0)}/${student.weekly_limit!.toFixed(0)}`);
-        }
-        if ((student.monthly_limit || 0) > 0) {
-          const rem = student.monthly_limit! - spentMonth;
-          if (rem <= 0 && !anyExceeded) { anyExceeded = true; lowestPeriod = 'Mensual'; }
-          if (rem < lowestRemaining) { lowestRemaining = rem; lowestPeriod = 'Mensual'; }
-          parts.push(`M: S/${Math.max(0, rem).toFixed(0)}/${student.monthly_limit!.toFixed(0)}`);
-        }
-
-        if (anyExceeded) {
-          return {
-            canPurchase: false,
-            statusText: `🚫 Tope ${lowestPeriod} Alcanzado`,
-            statusColor: 'text-red-600',
-            reason: `Topes: ${parts.join(' · ')}`
-          };
-        }
-
-        return {
-          canPurchase: true,
-          statusText: `📊 ${parts.join(' · ')}`,
-          statusColor: lowestRemaining < (student.daily_limit || student.weekly_limit || student.monthly_limit || 0) * 0.3 ? 'text-orange-600' : 'text-blue-600'
-        };
-      } catch (error) {
-        console.error('Error calculating limits:', error);
-      }
-    }
-
-    // 4. Sin topes y sin saldo → bloquear
+    // 3. Sin saldo → bloquear
     if (balance <= 0) {
       return {
         canPurchase: false,
         statusText: '💳 Sin Saldo - S/ 0.00',
         statusColor: 'text-red-600',
-        reason: 'Sin saldo disponible'
+        reason: 'Sin saldo disponible. El padre debe recargar.'
       };
     }
 
-    // 5. Sin límites pero con saldo (default)
+    // 4. Con saldo
     return {
       canPurchase: true,
       statusText: `💰 Saldo: S/ ${balance.toFixed(2)}`,
@@ -1085,112 +984,12 @@ const POS = () => {
     };
   };
 
-  // ═══════════════════════════════════════════════════════════════════
-  // 📊 Obtener TODOS los topes del alumno (diario, semanal, mensual)
-  // ═══════════════════════════════════════════════════════════════════
-  const fetchStudentLimits = async (student: Student) => {
-    setLoadingLimits(true);
-    try {
-      const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
-
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      startOfMonth.setHours(0, 0, 0, 0);
-
-      // Traer TODAS las transacciones del mes (incluye diarias y semanales)
-      const { data: monthTx } = await supabase
-        .from('transactions')
-        .select('amount, metadata, created_at')
-        .eq('student_id', student.id)
-        .eq('type', 'purchase')
-        .gte('created_at', startOfMonth.toISOString())
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled');
-
-      const kioscoTx = (monthTx || []).filter(t => !(t.metadata as any)?.lunch_order_id);
-
-      const spentToday = kioscoTx
-        .filter(t => t.created_at >= todayStr)
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-      const spentWeek = kioscoTx
-        .filter(t => t.created_at >= startOfWeek.toISOString())
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-      const spentMonth = kioscoTx
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-      // Calcular fechas de renovación
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowStr = `Mañana ${tomorrow.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' })} a las 00:00`;
-
-      const nextMonday = new Date(now);
-      nextMonday.setDate(nextMonday.getDate() + (7 - nextMonday.getDay()) % 7 || 7);
-      const nextMondayStr = `Lunes ${nextMonday.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })}`;
-
-      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-      const nextMonthStr = `1 de ${nextMonth.toLocaleDateString('es-PE', { month: 'long' })}`;
-
-      const limits: LimitDetail[] = [];
-      const activeType = student.limit_type || 'none';
-
-      // Agregar cada tope que tenga valor > 0
-      if ((student.daily_limit || 0) > 0) {
-        const lim = student.daily_limit!;
-        limits.push({
-          type: 'daily',
-          label: 'Diario',
-          limit: lim,
-          spent: spentToday,
-          remaining: Math.max(0, lim - spentToday),
-          renewalText: tomorrowStr,
-          isActive: activeType === 'daily',
-        });
-      }
-      if ((student.weekly_limit || 0) > 0) {
-        const lim = student.weekly_limit!;
-        limits.push({
-          type: 'weekly',
-          label: 'Semanal',
-          limit: lim,
-          spent: spentWeek,
-          remaining: Math.max(0, lim - spentWeek),
-          renewalText: nextMondayStr,
-          isActive: activeType === 'weekly',
-        });
-      }
-      if ((student.monthly_limit || 0) > 0) {
-        const lim = student.monthly_limit!;
-        limits.push({
-          type: 'monthly',
-          label: 'Mensual',
-          limit: lim,
-          spent: spentMonth,
-          remaining: Math.max(0, lim - spentMonth),
-          renewalText: nextMonthStr,
-          isActive: activeType === 'monthly',
-        });
-      }
-
-      setStudentLimitsDetail(limits);
-    } catch (err) {
-      console.error('Error fetching student limits:', err);
-      setStudentLimitsDetail([]);
-    } finally {
-      setLoadingLimits(false);
-    }
-  };
+  // ─────────────────────────────────────────────────────────────────
 
   const selectStudent = (student: Student) => {
     setSelectedStudent(student);
     setStudentSearch(student.full_name);
     setShowStudentResults(false);
-    fetchStudentLimits(student);
   };
 
   const balanceFetchId = useRef(0);
@@ -1259,7 +1058,6 @@ const POS = () => {
     setPlinNumber('');
     setTransactionCode('');
     setRequiresInvoice(false);
-    setStudentLimitsDetail([]);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
 
@@ -1335,10 +1133,6 @@ const POS = () => {
                 student_balance: student.balance,
                 student_free_account: student.free_account,
                 student_kiosk_disabled: student.kiosk_disabled,
-                student_limit_type: student.limit_type,
-                student_daily_limit: student.daily_limit,
-                student_weekly_limit: student.weekly_limit,
-                student_monthly_limit: student.monthly_limit,
                 student_school_id: student.school_id,
                 card_number: cachedCard.card_number,
                 is_active: true,
@@ -1378,17 +1172,10 @@ const POS = () => {
           school_id: holder.student_school_id,
           free_account: holder.student_free_account,
           kiosk_disabled: holder.student_kiosk_disabled,
-          limit_type: holder.student_limit_type as any,
-          daily_limit: holder.student_daily_limit,
-          weekly_limit: holder.student_weekly_limit,
-          monthly_limit: holder.student_monthly_limit,
         };
         setClientMode('student');
         selectStudent(student);
-        const hasLim = (student.daily_limit && student.daily_limit > 0) || (student.weekly_limit && student.weekly_limit > 0) || (student.monthly_limit && student.monthly_limit > 0);
-        const nfcInfo = hasLim 
-          ? `${student.grade} - ${student.section} · Tope diario: S/ ${(student.daily_limit || student.weekly_limit || student.monthly_limit || 0).toFixed(2)}`
-          : `${student.grade} - ${student.section} · Saldo: S/ ${student.balance.toFixed(2)}`;
+        const nfcInfo = `${student.grade} - ${student.section} · Saldo: S/ ${student.balance.toFixed(2)}`;
         const offlineTag = !isOnline ? ' (offline)' : '';
         toast({ title: `👋 ¡Hola, ${student.full_name}!${offlineTag}`, description: nfcInfo });
       } else if (holder.holder_type === 'teacher') {
@@ -1467,34 +1254,34 @@ const POS = () => {
     return cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   };
 
-  const canCheckout = () => {
-    if (!clientMode) return false;
-    if (cart.length === 0) return false;
-    
-    if (clientMode === 'student' && selectedStudent) {
+  /**
+   * Razón por la que NO se puede cobrar (null = sí se puede cobrar).
+   * Se usa para mostrar el mensaje de error encima del botón COBRAR.
+   */
+  const checkoutBlockReason = (): string | null => {
+    if (!clientMode) return 'Selecciona un tipo de cliente para continuar.';
+    if (cart.length === 0) return 'El carrito está vacío.';
+
+    if (clientMode === 'student') {
+      if (!selectedStudent) return 'Selecciona un alumno para continuar.';
       // Cuenta libre (free_account = true o null) → siempre puede comprar (genera deuda si no tiene saldo)
-      if (selectedStudent.free_account !== false) {
-        return true;
-      }
-      // Con Recargas (free_account = false) → REQUIERE saldo suficiente, nunca genera deuda
-      if (selectedStudent.balance >= getTotal()) {
-        return true;
-      }
-      return false;
+      if (selectedStudent.free_account !== false) return null;
+      // Con Recargas (free_account = false) → necesita saldo suficiente
+      if (selectedStudent.balance >= getTotal()) return null;
+      return `Saldo insuficiente (S/ ${selectedStudent.balance.toFixed(2)}). El alumno necesita recargar para poder comprar.`;
     }
-    
-    // Si es profesor (siempre cuenta libre, sin límites)
-    if (clientMode === 'teacher' && selectedTeacher) {
-      return true;
+
+    if (clientMode === 'teacher') {
+      if (!selectedTeacher) return 'Selecciona un profesor para continuar.';
+      return null;
     }
-    
-    // Si es cliente genérico, permitir (el documento se elige en el modal de pago)
-    if (clientMode === 'generic') {
-      return true;
-    }
-    
-    return false;
+
+    if (clientMode === 'generic') return null;
+
+    return null;
   };
+
+  const canCheckout = () => checkoutBlockReason() === null;
 
   const handleCheckoutClick = () => {
     if (!canCheckout()) return;
@@ -1644,7 +1431,6 @@ const POS = () => {
       balance_before: selectedStudent?.balance,
       should_use_balance: selectedStudent ? (selectedStudent.balance >= total) : false,
       is_free_account: selectedStudent?.free_account,
-      has_configured_limit: !!(selectedStudent?.daily_limit || selectedStudent?.weekly_limit || selectedStudent?.monthly_limit),
       temp_ticket_code: tempTicket,
     };
 
@@ -1783,7 +1569,7 @@ const POS = () => {
         //
         //   ¿Tiene saldo >= total?
         //     SÍ → Descontar del saldo (sea cuenta libre o no)
-        //     NO → ¿Es cuenta libre O tiene tope configurado?
+        //     NO → ¿Es cuenta libre?
         //           SÍ → Crear deuda (pending)
         //           NO → Saldo insuficiente (bloquear)
         // ══════════════════════════════════════════════════════════
@@ -2221,15 +2007,11 @@ const POS = () => {
   // Verificar saldo insuficiente en useEffect
   useEffect(() => {
     if (!selectedStudent) { setInsufficientBalance(false); return; }
-    const isFree = selectedStudent.free_account !== false; // null o true = cuenta libre
-    const hasLimit =
-      (selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
-      (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
-      (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0);
-    // Solo mostrar error si: NO es cuenta libre, NO tiene tope, y saldo no alcanza
-    const insufficient = !isFree && !hasLimit && (selectedStudent.balance < getTotal());
+    const isFree = selectedStudent.free_account !== false;
+    // Solo mostrar error si: NO es cuenta libre y saldo no alcanza
+    const insufficient = !isFree && (selectedStudent.balance < getTotal());
     setInsufficientBalance(!!insufficient);
-  }, [selectedStudent, cart]); // ✅ Dependencia en 'cart' en lugar de 'total'
+  }, [selectedStudent, cart]);
 
   // ─── GUARD: Bloquear POS si no hay caja abierta ─────────────────
   const needsCashDeclaration =
@@ -2832,96 +2614,15 @@ const POS = () => {
               ) : null}
             </div>
 
-            {/* ═══ Panel de Topes de Gasto ═══ */}
-            {clientMode === 'student' && selectedStudent && studentLimitsDetail.length > 0 && (
-              <div className="bg-gradient-to-r from-slate-50 to-blue-50 border-b border-slate-200 px-2 py-1.5 sm:px-3 sm:py-2">
-                <p className="text-[8px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  📊 Topes de Gasto
-                </p>
-                <div className="space-y-1">
-                  {studentLimitsDetail.map((lim) => {
-                    const pct = lim.limit > 0 ? Math.min(100, (lim.spent / lim.limit) * 100) : 0;
-                    const isExceeded = lim.remaining <= 0;
-                    const isWarning = pct >= 70 && !isExceeded;
-                    const barColor = isExceeded ? 'bg-red-500' : isWarning ? 'bg-orange-400' : 'bg-emerald-500';
-                    const textColor = isExceeded ? 'text-red-700' : isWarning ? 'text-orange-700' : 'text-slate-700';
-
-                    return (
-                      <div key={lim.type} className="flex items-center gap-1.5 sm:gap-2">
-                        {/* Etiqueta */}
-                        <div className="w-[52px] sm:w-[68px] flex-shrink-0">
-                          <span className={`text-[8px] sm:text-[10px] font-bold ${lim.isActive ? 'text-blue-700' : 'text-slate-400'}`}>
-                            {lim.isActive ? '🔒 ' : ''}{lim.label}
-                          </span>
-                        </div>
-                        {/* Barra de progreso */}
-                        <div className="flex-1 h-2.5 sm:h-3 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${barColor}`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        {/* Info de restante */}
-                        <div className="w-[85px] sm:w-[110px] text-right flex-shrink-0">
-                          <span className={`text-[8px] sm:text-[10px] font-bold ${textColor}`}>
-                            {isExceeded ? '🚫 Agotado' : `S/ ${lim.remaining.toFixed(2)}`}
-                          </span>
-                          <span className="text-[7px] sm:text-[9px] text-slate-400 ml-0.5">
-                            / {lim.limit.toFixed(0)}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* Info de renovación */}
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                  {studentLimitsDetail.map((lim) => (
-                    <span key={lim.type} className="text-[7px] sm:text-[8px] text-slate-400">
-                      🔄 {lim.label}: {lim.renewalText}
-                    </span>
-                  ))}
-                </div>
+            {/* Saldo del alumno - siempre visible */}
+            {clientMode === 'student' && selectedStudent && (
+              <div className="bg-white border-b border-slate-200 px-2 py-1 sm:px-3 sm:py-1.5 flex items-center justify-between">
+                <span className="text-[9px] sm:text-xs text-slate-500 font-medium">💰 Saldo disponible:</span>
+                <span className={`text-[10px] sm:text-sm font-bold ${selectedStudent.balance > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  S/ {(selectedStudent.balance || 0).toFixed(2)}
+                </span>
               </div>
             )}
-
-            {/* Saldo del alumno - siempre visible */}
-            {clientMode === 'student' && selectedStudent && (() => {
-              // Si tiene topes cargados, mostrar el disponible del tope más restrictivo
-              const hasLimits = studentLimitsDetail.length > 0;
-              if (hasLimits) {
-                // Tomar el tope con menos disponible (el más restrictivo)
-                const minRemaining = Math.min(...studentLimitsDetail.map(l => l.remaining));
-                const limitingLim = studentLimitsDetail.find(l => l.remaining === minRemaining)!;
-                const isExceeded = minRemaining <= 0;
-                const isWarning = minRemaining < getTotal();
-                return (
-                  <div className={`border-b px-2 py-1 sm:px-3 sm:py-1.5 flex items-center justify-between ${
-                    isExceeded ? 'bg-red-50 border-red-200' : isWarning ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-200'
-                  }`}>
-                    <span className={`text-[9px] sm:text-xs font-medium ${
-                      isExceeded ? 'text-red-600' : isWarning ? 'text-orange-600' : 'text-slate-500'
-                    }`}>
-                      🔒 Disponible ({limitingLim.label}):
-                    </span>
-                    <span className={`text-[10px] sm:text-sm font-bold ${
-                      isExceeded ? 'text-red-700' : isWarning ? 'text-orange-700' : 'text-emerald-600'
-                    }`}>
-                      S/ {Math.max(0, minRemaining).toFixed(2)}
-                    </span>
-                  </div>
-                );
-              }
-              // Sin topes: mostrar saldo normal
-              return (
-                <div className="bg-white border-b border-slate-200 px-2 py-1 sm:px-3 sm:py-1.5 flex items-center justify-between">
-                  <span className="text-[9px] sm:text-xs text-slate-500 font-medium">💰 Saldo disponible:</span>
-                  <span className={`text-[10px] sm:text-sm font-bold ${selectedStudent.balance > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                    S/ {(selectedStudent.balance || 0).toFixed(2)}
-                  </span>
-                </div>
-              );
-            })()}
 
             {/* Items del Carrito - Más compacto en móvil */}
             <div className="flex-1 overflow-y-auto p-1.5 sm:p-2">
@@ -2987,41 +2688,24 @@ const POS = () => {
                     <p className="text-[9px] sm:text-xs text-gray-400 mt-1 sm:mt-2">{cart.length} productos</p>
                   </div>
 
-                  {selectedStudent && insufficientBalance && (
-                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
-                      <AlertCircle className="h-3 w-3 sm:h-5 sm:w-5 text-red-600 flex-shrink-0" />
+                  {/* Con Recargas + saldo suficiente → descuenta del saldo */}
+                  {selectedStudent && selectedStudent.free_account === false && selectedStudent.balance >= getTotal() && (
+                    <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
+                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-blue-600 flex-shrink-0" />
                       <div>
-                        <p className="font-bold text-red-800 text-[9px] sm:text-sm">Saldo Insuficiente</p>
-                        <p className="text-[8px] sm:text-xs text-red-600">
-                          Falta: S/ {(getTotal() - selectedStudent.balance).toFixed(2)}
+                        <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
+                        <p className="text-[8px] sm:text-xs text-blue-700">
+                          Saldo: S/ {selectedStudent.balance.toFixed(2)} → S/ {(selectedStudent.balance - getTotal()).toFixed(2)}
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* Alumno con tope configurado y sin saldo suficiente → compra autorizada */}
-                  {selectedStudent &&
-                    !insufficientBalance &&
-                    selectedStudent.free_account === false &&
-                    selectedStudent.balance < getTotal() &&
-                    ((selectedStudent.daily_limit && selectedStudent.daily_limit > 0) ||
-                     (selectedStudent.weekly_limit && selectedStudent.weekly_limit > 0) ||
-                     (selectedStudent.monthly_limit && selectedStudent.monthly_limit > 0)) && (
-                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
-                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-yellow-600 flex-shrink-0" />
-                      <div>
-                        <p className="font-bold text-yellow-800 text-[9px] sm:text-sm">✓ Compra dentro del tope</p>
-                        <p className="text-[8px] sm:text-xs text-yellow-700">
-                          Se registrará como deuda pendiente
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  
+                  {/* Cuenta Libre → puede comprar siempre */}
                   {selectedStudent && selectedStudent.free_account !== false && (
                     <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${
-                      selectedStudent.balance >= getTotal() 
-                        ? 'bg-blue-50 border-blue-300' 
+                      selectedStudent.balance >= getTotal()
+                        ? 'bg-blue-50 border-blue-300'
                         : 'bg-green-50 border-green-300'
                     }`}>
                       <Check className={`h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 ${
@@ -3044,6 +2728,16 @@ const POS = () => {
                           </>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Mensaje de bloqueo — solo se muestra si el carrito no está vacío y hay razón */}
+                  {cart.length > 0 && checkoutBlockReason() && (
+                    <div className="bg-red-50 border-2 border-red-400 rounded-xl p-2 sm:p-3 flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-[10px] sm:text-xs text-red-700 font-semibold leading-tight">
+                        {checkoutBlockReason()}
+                      </p>
                     </div>
                   )}
 

@@ -257,7 +257,6 @@ export interface OfflineTransaction {
   balance_before?: number;
   should_use_balance?: boolean;
   is_free_account?: boolean;
-  has_configured_limit?: boolean;
   // Ticket temporal
   temp_ticket_code: string;
 }
@@ -371,7 +370,7 @@ export async function preloadPOSData(schoolId: string): Promise<{
     // 1. Cargar TODOS los alumnos activos de la sede
     const { data: students } = await supabase
       .from('students')
-      .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, school_id, is_active')
+      .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, is_active')
       .eq('school_id', schoolId)
       .eq('is_active', true);
 

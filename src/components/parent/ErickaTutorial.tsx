@@ -597,7 +597,9 @@ export function ErickaTutorial({ schoolId, onSetActiveTab, forceShow = false, on
         tutorialForced = data?.enabled === true;
       }
 
-      if (tutorialForced || !done) {
+      // Solo mostrar si está explícitamente activado para esta sede en maintenance_config
+      // Sin esa entrada activa, el tutorial NO aparece en ninguna sede
+      if (tutorialForced) {
         setEnabled(true);
         setPhase('welcome');
         setCurrentSteps(WELCOME_STEPS);

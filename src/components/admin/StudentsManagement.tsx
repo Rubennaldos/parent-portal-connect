@@ -314,13 +314,7 @@ const StudentsManagement = () => {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                {student.daily_limit ? (
-                                  <span className="font-mono text-sm">
-                                    S/ {student.daily_limit.toFixed(2)}
-                                  </span>
-                                ) : (
-                                  <span className="text-muted-foreground text-sm">Sin límite</span>
-                                )}
+                                <span className="text-muted-foreground text-sm">—</span>
                               </TableCell>
                               <TableCell>
                                 {student.is_active ? (
@@ -392,13 +386,7 @@ const StudentsManagement = () => {
                           </span>
                         </TableCell>
                         <TableCell>
-                          {student.daily_limit ? (
-                            <span className="font-mono text-sm">
-                              S/ {student.daily_limit.toFixed(2)}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">Sin límite</span>
-                          )}
+                          <span className="text-muted-foreground text-sm">—</span>
                         </TableCell>
                         <TableCell>
                           {student.is_active ? (

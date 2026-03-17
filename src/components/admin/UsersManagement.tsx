@@ -66,6 +66,7 @@ interface User {
 interface Profile {
   id: string;
   role: string;
+  full_name?: string | null;
   school_id: string | null;
   pos_number: number | null;
   ticket_prefix: string | null;
@@ -80,6 +81,8 @@ interface School {
 interface UserWithProfile extends User {
   profile?: Profile;
   school?: School;
+  /** Solo para role=parent: hijos desde students */
+  children?: { full_name: string; grade?: string; section?: string; school_id?: string }[];
 }
 
 export function UsersManagement() {
@@ -114,10 +117,10 @@ export function UsersManagement() {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      // Obtener perfiles con email
+      // Obtener perfiles con email y nombre (quienes no están aquí no aparecen en la lista)
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, email, role, school_id, pos_number, ticket_prefix')
+        .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
         .order('email');
 
       if (profilesError) throw profilesError;
@@ -143,10 +146,10 @@ export function UsersManagement() {
       }
 
       // Crear usuarios con datos reales
-      const usersWithData = (profiles || []).map((profile) => {
-        // Para padres, usar school_id de parent_profiles
-        const schoolId = profile.role === 'parent' 
-          ? parentSchoolsMap.get(profile.id) 
+      let usersWithData = (profiles || []).map((profile) => {
+        // Para padres, usar school_id de parent_profiles (puede ser null → SIN SEDE)
+        const schoolId = profile.role === 'parent'
+          ? parentSchoolsMap.get(profile.id)
           : profile.school_id;
 
         return {
@@ -158,13 +161,32 @@ export function UsersManagement() {
           user_metadata: {},
           profile: {
             ...profile,
-            school_id: schoolId, // Actualizar con school_id correcto
+            school_id: schoolId,
           },
           school: schoolId ? schoolsMap.get(schoolId) : undefined,
+          children: [] as UserWithProfile['children'],
         };
       });
 
-      console.log('👥 Usuarios cargados con sedes:', usersWithData.filter(u => u.profile?.role === 'parent'));
+      // Para padres: cargar hijos desde students (así se ve aunque tengan SIN SEDE)
+      if (parentIds.length > 0) {
+        const { data: studentsData } = await supabase
+          .from('students')
+          .select('parent_id, full_name, grade, section, school_id')
+          .in('parent_id', parentIds)
+          .eq('is_active', true);
+        const byParent = new Map<string, UserWithProfile['children']>();
+        (studentsData || []).forEach((s: any) => {
+          if (!s.parent_id) return;
+          const list = byParent.get(s.parent_id) || [];
+          list.push({ full_name: s.full_name, grade: s.grade, section: s.section, school_id: s.school_id });
+          byParent.set(s.parent_id, list);
+        });
+        usersWithData = usersWithData.map((u) => ({
+          ...u,
+          children: u.profile?.role === 'parent' ? (byParent.get(u.id) || []) : undefined,
+        }));
+      }
 
       setUsers(usersWithData as UserWithProfile[]);
 
@@ -291,7 +313,10 @@ export function UsersManagement() {
   };
 
   const filteredUsers = users.filter(user => {
-    const matchesSearch = user.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    const term = searchTerm.toLowerCase().trim();
+    const matchesSearch = !term
+      || user.email?.toLowerCase().includes(term)
+      || (user.profile?.full_name?.toLowerCase().includes(term));
     const matchesRole = roleFilter === 'all' || user.profile?.role === roleFilter;
     return matchesSearch && matchesRole;
   });
@@ -447,9 +472,11 @@ export function UsersManagement() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Nombre</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Rol</TableHead>
                   <TableHead>Sede</TableHead>
+                  <TableHead>Hijos</TableHead>
                   <TableHead>Método</TableHead>
                   <TableHead>Creado</TableHead>
                   <TableHead>Último acceso</TableHead>
@@ -457,8 +484,24 @@ export function UsersManagement() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.map((user) => (
+                {filteredUsers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-6 text-muted-foreground">
+                      {searchTerm || roleFilter !== 'all' ? (
+                        <>No hay usuarios que coincidan con la búsqueda o el filtro.</>
+                      ) : (
+                        <>No hay usuarios cargados.</>
+                      )}
+                      {searchTerm && (
+                        <p className="text-xs mt-2 max-w-md mx-auto">
+                          Si el correo debería existir y no aparece, puede que falte su perfil en la base de datos (cuenta en Auth sin fila en <code>profiles</code>). Ejecuta en Supabase → SQL Editor el script <code>SYNC_MISSING_PROFILES_FROM_AUTH.sql</code> para crearlos.
+                        </p>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ) : filteredUsers.map((user) => (
                   <TableRow key={user.id}>
+                    <TableCell className="text-sm">{user.profile?.full_name?.trim() || '-'}</TableCell>
                     <TableCell className="font-mono text-sm">{user.email}</TableCell>
                     <TableCell>{getRoleBadge(user.profile?.role || 'unknown')}</TableCell>
                     <TableCell>
@@ -476,6 +519,19 @@ export function UsersManagement() {
                         <Badge variant="destructive" className="text-xs">
                           ⚠️ SIN SEDE
                         </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {user.profile?.role === 'parent' && user.children !== undefined ? (
+                        user.children.length > 0 ? (
+                          <span className="text-xs text-gray-700" title={user.children.map(c => `${c.full_name}${c.grade || c.section ? ` (${[c.grade, c.section].filter(Boolean).join(' - ')})` : ''}`).join('\n')}>
+                            {user.children.length} hijo{user.children.length !== 1 ? 's' : ''}: {user.children.map(c => c.full_name).join(', ')}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">0 hijos</span>
+                        )
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}

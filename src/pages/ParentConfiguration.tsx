@@ -401,6 +401,8 @@ const ParentConfiguration = () => {
         }
       } else {
         // Ver todos los padres (admin general)
+        // Incluir también padres que solo están en profiles (role=parent) sin parent_profiles,
+        // para que sus hijos aparezcan (ej. usuario SIN SEDE que sí tiene hijos en students).
         console.log('🌍 Viendo todos los padres');
         const { data: allParents, error: parentsError } = await supabase
           .from('parent_profiles')
@@ -415,7 +417,12 @@ const ParentConfiguration = () => {
             responsible_2_address
           `)
           .order('full_name');
-        
+
+        const { data: profilesWithParentRole, error: profilesRoleError } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('role', 'parent');
+
         if (parentsError) {
           console.error('❌ Error al cargar padres:', parentsError);
           toast({
@@ -423,27 +430,54 @@ const ParentConfiguration = () => {
             title: 'Error',
             description: `Error al cargar padres: ${parentsError.message}`,
           });
-        } else {
-          // Obtener emails de profiles
-          if (allParents && allParents.length > 0) {
-            const userIdsForProfiles = allParents.map(p => p.user_id).filter(Boolean);
-            const { data: profilesData, error: profilesError } = await supabase
-              .from('profiles')
-              .select('id, email')
-              .in('id', userIdsForProfiles);
-            
-            if (!profilesError && profilesData) {
-              // Mapear emails a los padres
-              parentsData = allParents.map(parent => ({
-                ...parent,
-                profile: profilesData.find(p => p.id === parent.user_id) || null
-              }));
-            } else {
-              parentsData = allParents || [];
-            }
+        }
+
+        const parentProfileUserIds = new Set((allParents || []).map((p: any) => p.user_id).filter(Boolean));
+        const missingParentIds = (profilesWithParentRole || [])
+          .filter((p: any) => !parentProfileUserIds.has(p.id))
+          .map((p: any) => p.id);
+
+        if (missingParentIds.length > 0) {
+          console.log('📋 Padres en profiles sin parent_profiles (se agregan para mostrar hijos):', missingParentIds.length);
+        }
+
+        if (allParents && allParents.length > 0) {
+          const userIdsForProfiles = allParents.map((p: any) => p.user_id).filter(Boolean);
+          const { data: profilesData, error: profilesError } = await supabase
+            .from('profiles')
+            .select('id, email, full_name')
+            .in('id', userIdsForProfiles);
+
+          if (!profilesError && profilesData) {
+            parentsData = allParents.map((parent: any) => ({
+              ...parent,
+              profile: profilesData.find((p: any) => p.id === parent.user_id) || null
+            }));
           } else {
             parentsData = allParents || [];
           }
+        } else {
+          parentsData = [];
+        }
+
+        // Agregar padres que solo existen en profiles (tienen hijos en students pero no parent_profiles)
+        if (missingParentIds.length > 0 && profilesWithParentRole) {
+          const extraParents = profilesWithParentRole
+            .filter((p: any) => missingParentIds.includes(p.id))
+            .map((p: any) => ({
+            user_id: p.id,
+            full_name: p.full_name || p.email || 'Sin nombre',
+            school_id: null,
+            school: null,
+            profile: { id: p.id, email: p.email, full_name: p.full_name },
+            responsible_2_full_name: null,
+            responsible_2_dni: null,
+            responsible_2_document_type: null,
+            responsible_2_phone_1: null,
+            responsible_2_email: null,
+            responsible_2_address: null,
+          }));
+          parentsData = [...(parentsData || []), ...extraParents];
         }
       }
       
