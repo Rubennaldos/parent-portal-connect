@@ -319,7 +319,8 @@ export function UsersManagement() {
     const term = searchTerm.toLowerCase().trim();
     const matchesSearch = !term
       || user.email?.toLowerCase().includes(term)
-      || (user.profile?.full_name?.toLowerCase().includes(term));
+      || user.profile?.full_name?.toLowerCase().includes(term)
+      || user.children?.some(c => c.full_name?.toLowerCase().includes(term));
     const matchesRole = roleFilter === 'all' || user.profile?.role === roleFilter;
     return matchesSearch && matchesRole;
   });
