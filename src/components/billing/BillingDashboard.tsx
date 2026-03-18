@@ -60,6 +60,7 @@ interface DashboardStats {
   totalCollectedWeek: number;
   totalCollectedMonth: number;
   totalDebtors: number;
+  totalTicketsPending: number;
   lunchDebtors: number;
   cafeteriaDebtors: number;
   totalTeacherDebt: number;
@@ -118,6 +119,7 @@ const emptyStats: DashboardStats = {
   totalCollectedWeek: 0,
   totalCollectedMonth: 0,
   totalDebtors: 0,
+  totalTicketsPending: 0,
   lunchDebtors: 0,
   cafeteriaDebtors: 0,
   totalTeacherDebt: 0,
@@ -661,6 +663,7 @@ export const BillingDashboard = () => {
         totalCollectedWeek,
         totalCollectedMonth,
         totalDebtors: teacherIds.size + studentIds.size + manualNames.size,
+        totalTicketsPending: allDebts.length,
         lunchDebtors: lunchDebtorKeys.size,
         cafeteriaDebtors: cafeteriaDebtorKeys.size,
         totalTeacherDebt,
@@ -978,28 +981,26 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Desglose del período */}
+        {/* Tickets Pendientes */}
         <Card className="border-l-4 border-blue-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
               <Calendar className="h-3.5 w-3.5 text-blue-500" />
-              {(() => {
-                const from = new Date(dateFrom + 'T12:00:00');
-                const to = new Date(dateTo + 'T12:00:00');
-                const sameMonth = from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear();
-                const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000);
-                if (diffDays === 0) return 'Resumen del Día';
-                if (diffDays <= 7) return `${diffDays + 1} días`;
-                if (sameMonth) return from.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
-                return `${from.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })} – ${to.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}`;
-              })()}
+              Tickets Pendientes
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-blue-600">
-              S/ {stats.totalCollectedMonth.toFixed(2)}
+              {stats.totalTicketsPending}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Total cobrado en el rango</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {stats.totalDebtors} deudor(es) · {stats.totalTicketsPending} ticket(s) sin pagar
+            </p>
+            {stats.totalTicketsPending > 0 && (
+              <p className="text-[10px] text-blue-500 mt-1">
+                Promedio S/ {stats.totalDebtors > 0 ? (stats.totalPending / stats.totalDebtors).toFixed(2) : '0.00'} por deudor
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1017,7 +1018,9 @@ export const BillingDashboard = () => {
                 ? ((stats.totalCollectedMonth / (stats.totalCollectedMonth + stats.totalPending)) * 100).toFixed(0)
                 : 100}%
             </div>
-            <p className="text-xs text-gray-500 mt-1">Cobrado vs Pendiente (período)</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Cobrado S/ {stats.totalCollectedMonth.toFixed(0)} de S/ {(stats.totalCollectedMonth + stats.totalPending).toFixed(0)} total
+            </p>
           </CardContent>
         </Card>
       </div>
