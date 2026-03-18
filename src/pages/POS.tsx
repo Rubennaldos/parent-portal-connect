@@ -1763,6 +1763,7 @@ const POS = () => {
             ticket_code: ticketCode,
             payment_status: 'pending', // 🔥 CRÉDITO: Iniciar como pending
             payment_method: null, // Sin método de pago inicial
+            metadata: { source: 'pos' },
           })
           .select()
           .single();
