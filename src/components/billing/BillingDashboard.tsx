@@ -190,6 +190,27 @@ export const BillingDashboard = () => {
 
   const canViewAllSchools = role === 'admin_general';
 
+  // ── Atajos de rango de fechas ──
+  const applyRange = (range: 'today' | 'yesterday' | 'week' | 'month' | 'lastmonth') => {
+    const now = new Date();
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
+    if (range === 'today') {
+      setDateFrom(fmt(now)); setDateTo(fmt(now));
+    } else if (range === 'yesterday') {
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      setDateFrom(fmt(y)); setDateTo(fmt(y));
+    } else if (range === 'week') {
+      const mon = new Date(now); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+      setDateFrom(fmt(mon)); setDateTo(fmt(now));
+    } else if (range === 'month') {
+      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(fmt(now));
+    } else if (range === 'lastmonth') {
+      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      setDateFrom(fmt(first)); setDateTo(fmt(last));
+    }
+  };
+
   useEffect(() => {
     fetchUserSchool();
     fetchSchools();
@@ -249,35 +270,41 @@ export const BillingDashboard = () => {
       const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
       const weekStart = new Date(now);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
       // ========== FETCH EN PARALELO: 4 queries independientes ==========
+      const periodStart = dateFrom + 'T00:00:00-05:00';
+      const periodEnd   = dateTo   + 'T23:59:59-05:00';
+
       const [pendingData, lunchOrders, paidWithLunch, paidData] = await Promise.all([
-        // 1. Transacciones pendientes
+        // 1. Transacciones pendientes DENTRO del rango de fechas
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
             .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
             .in('payment_status', ['pending', 'partial'])
             .eq('type', 'purchase')
-            .eq('is_deleted', false);
+            .eq('is_deleted', false)
+            .gte('created_at', periodStart)
+            .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 2. Lunch orders pagar_luego
+        // 2. Lunch orders pagar_luego DENTRO del rango de fechas
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('lunch_orders')
             .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
             .in('status', ['confirmed', 'delivered'])
             .eq('is_cancelled', false)
-            .eq('payment_method', 'pagar_luego');
+            .eq('payment_method', 'pagar_luego')
+            .gte('order_date', dateFrom)
+            .lte('order_date', dateTo);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 3. Transacciones pagadas con lunch_order_id (para deduplicar por metadata)
+        // 3. Transacciones pagadas con lunch_order_id (para deduplicar) DENTRO del rango
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
@@ -285,12 +312,14 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .not('metadata->>lunch_order_id', 'is', null);
+            .not('metadata->>lunch_order_id', 'is', null)
+            .gte('created_at', periodStart)
+            .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 4. Cobros del período seleccionado (dateFrom → dateTo) + del mes actual para eficiencia
+        // 4. Cobros del período seleccionado (para estadísticas de cobrado)
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
@@ -298,7 +327,8 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .gte('created_at', monthStart.toISOString()); // traer todo el mes para eficiencia
+            .gte('created_at', periodStart)
+            .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -515,26 +545,21 @@ export const BillingDashboard = () => {
         schoolStatsMap[sName].debtors.add(debtorKey);
       });
 
-      // ========== COBROS (HOY, AYER, SEMANA, MES) ==========
-      let totalCollectedToday = 0;
+      // ========== COBROS DEL PERÍODO SELECCIONADO ==========
+      // Todos los paidData ya vienen filtrados por dateFrom..dateTo desde la query
+      let totalCollectedToday = 0;   // cobrado en el primer día del rango (si es un día único = "hoy")
       let collectedYesterday = 0;
-      let totalCollectedWeek = 0;
-      let totalCollectedMonth = 0;
+      let totalCollectedWeek = 0;    // total del período completo
+      let totalCollectedMonth = 0;   // mismo valor (todo es del período elegido)
       const paymentMethods = { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 };
-
-      // Período seleccionado por el filtro de fechas
-      const periodFrom = new Date(dateFrom + 'T00:00:00');
-      const periodTo = new Date(dateTo + 'T23:59:59');
 
       paidData?.forEach((t: any) => {
         const amt = Math.abs(t.amount || 0);
         const txDate = t.created_at.split('T')[0];
         totalCollectedMonth += amt;
+        totalCollectedWeek  += amt;
         if (txDate === today) totalCollectedToday += amt;
         if (txDate === yesterday) collectedYesterday += amt;
-        // "Esta semana" ahora usa el período seleccionado
-        const txTime = new Date(t.created_at);
-        if (txTime >= periodFrom && txTime <= periodTo) totalCollectedWeek += amt;
 
         const method = (t.payment_method || 'efectivo').toLowerCase();
         if (method.includes('yape')) paymentMethods.yape += amt;
@@ -837,24 +862,45 @@ export const BillingDashboard = () => {
         </div>
 
         {/* Fila 2: Rango de fechas */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <p className="text-xs text-gray-500">Desde</p>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => { setDateFrom(e.target.value); }}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
+        <div className="space-y-2">
+          {/* Atajos de rango */}
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { label: 'Hoy',         range: 'today'      },
+              { label: 'Ayer',        range: 'yesterday'  },
+              { label: 'Esta semana', range: 'week'       },
+              { label: 'Este mes',    range: 'month'      },
+              { label: 'Mes anterior',range: 'lastmonth'  },
+            ] as const).map(({ label, range }) => (
+              <button
+                key={range}
+                onClick={() => applyRange(range)}
+                className="px-2.5 py-1 text-xs rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors font-medium"
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <div className="space-y-1">
-            <p className="text-xs text-gray-500">Hasta</p>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => { setDateTo(e.target.value); }}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
+          {/* Inputs de fecha */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-xs text-gray-500">Desde</p>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-gray-500">Hasta</p>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -900,7 +946,7 @@ export const BillingDashboard = () => {
             <div className="text-2xl font-black text-red-600">
               S/ {displayPending.toFixed(2)}
             </div>
-            <p className="text-xs text-gray-500 mt-1">{displayDebtors} deudor(es) activo(s)</p>
+            <p className="text-xs text-gray-500 mt-1">{displayDebtors} deudor(es) · periodo seleccionado</p>
             {debtCategory === 'all' && (stats.lunchPending > 0 || stats.cafeteriaPending > 0) && (
               <div className="flex gap-3 mt-2 text-[10px]">
                 <span className="text-amber-700 font-semibold">Almuerzos: S/ {stats.lunchPending.toFixed(2)}</span>
@@ -915,14 +961,14 @@ export const BillingDashboard = () => {
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
               <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-              Cobrado Hoy
+              {dateFrom === dateTo ? `Cobrado el ${new Date(dateFrom + 'T12:00:00').toLocaleDateString('es-PE', { day: '2-digit', month: 'short' })}` : 'Cobrado (período)'}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-green-600">
-              S/ {stats.totalCollectedToday.toFixed(2)}
+              S/ {stats.totalCollectedWeek.toFixed(2)}
             </div>
-            {stats.collectedYesterday > 0 && (
+            {stats.collectedYesterday > 0 && dateFrom === dateTo && (
               <p className={cn("text-xs mt-1 font-medium", 
                 stats.totalCollectedToday >= stats.collectedYesterday ? "text-green-600" : "text-orange-600"
               )}>
@@ -932,7 +978,7 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Esta Semana → ahora muestra el período filtrado */}
+        {/* Desglose del período */}
         <Card className="border-l-4 border-blue-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
@@ -942,7 +988,8 @@ export const BillingDashboard = () => {
                 const to = new Date(dateTo + 'T12:00:00');
                 const sameMonth = from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear();
                 const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000);
-                if (diffDays <= 7) return `Semana ${from.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}–${to.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}`;
+                if (diffDays === 0) return 'Resumen del Día';
+                if (diffDays <= 7) return `${diffDays + 1} días`;
                 if (sameMonth) return from.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
                 return `${from.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })} – ${to.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })}`;
               })()}
@@ -950,9 +997,9 @@ export const BillingDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-blue-600">
-              S/ {stats.totalCollectedWeek.toFixed(2)}
+              S/ {stats.totalCollectedMonth.toFixed(2)}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Este mes: S/ {stats.totalCollectedMonth.toFixed(2)}</p>
+            <p className="text-xs text-gray-500 mt-1">Total cobrado en el rango</p>
           </CardContent>
         </Card>
 
@@ -970,7 +1017,7 @@ export const BillingDashboard = () => {
                 ? ((stats.totalCollectedMonth / (stats.totalCollectedMonth + stats.totalPending)) * 100).toFixed(0)
                 : 100}%
             </div>
-            <p className="text-xs text-gray-500 mt-1">Cobrado vs Pendiente (mes)</p>
+            <p className="text-xs text-gray-500 mt-1">Cobrado vs Pendiente (período)</p>
           </CardContent>
         </Card>
       </div>

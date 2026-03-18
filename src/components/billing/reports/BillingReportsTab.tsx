@@ -948,6 +948,24 @@ export const BillingReportsTab = ({
               />
             </div>
           </div>
+          {/* Atajos rápidos */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {([
+              { label: 'Hoy',    fn: () => { const t = new Date().toISOString().split('T')[0]; setDateFrom(t); setDateTo(t); setCurrentPage(1); } },
+              { label: 'Ayer',   fn: () => { const y = new Date(Date.now()-86400000).toISOString().split('T')[0]; setDateFrom(y); setDateTo(y); setCurrentPage(1); } },
+              { label: 'Mes anterior', fn: () => {
+                  const now = new Date();
+                  const first = new Date(now.getFullYear(), now.getMonth()-1, 1);
+                  const last  = new Date(now.getFullYear(), now.getMonth(), 0);
+                  setDateFrom(first.toISOString().split('T')[0]); setDateTo(last.toISOString().split('T')[0]); setCurrentPage(1);
+              }},
+            ]).map(({ label, fn }) => (
+              <button key={label} onClick={fn}
+                className="px-2.5 py-1 text-xs rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors font-medium">
+                {label}
+              </button>
+            ))}
+          </div>
 
           {/* Fila 3: Estado + Sede (si admin) */}
           <div className={`grid gap-2 mb-3 ${canViewAllSchools ? 'grid-cols-2' : 'grid-cols-1'}`}>
