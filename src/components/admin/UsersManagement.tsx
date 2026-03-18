@@ -44,7 +44,13 @@ import {
   Edit2,
   Trash2,
   Key,
-  MoreVertical
+  MoreVertical,
+  Monitor,
+  LogOut,
+  Loader2,
+  Smartphone,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -96,6 +102,11 @@ export function UsersManagement() {
   const [deletingUser, setDeletingUser] = useState<UserWithProfile | null>(null);
   const [resetPasswordUser, setResetPasswordUser] = useState<UserWithProfile | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  // ── Sesiones activas ──────────────────────────────────────────
+  const [sessionsUser, setSessionsUser] = useState<UserWithProfile | null>(null);
+  const [sessionsData, setSessionsData] = useState<{ sessions: any[]; note?: string } | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [signingOutSession, setSigningOutSession] = useState<string | null>(null);
   const [editingRole, setEditingRole] = useState<string>('');
 
   // Estadísticas
@@ -289,6 +300,59 @@ export function UsersManagement() {
         description: 'No se pudo actualizar el rol',
       });
     }
+  };
+
+  // ── Sesiones activas ──────────────────────────────────────────
+  const callSessionsFunction = async (body: object) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-user-sessions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify(body),
+      }
+    );
+    return res.json();
+  };
+
+  const openSessionsModal = async (user: UserWithProfile) => {
+    setSessionsUser(user);
+    setSessionsData(null);
+    setSessionsLoading(true);
+    const result = await callSessionsFunction({ action: 'list_sessions', targetUserId: user.id });
+    setSessionsData(result);
+    setSessionsLoading(false);
+  };
+
+  const handleSignOutAll = async (userId: string) => {
+    setSigningOutSession('all');
+    const result = await callSessionsFunction({ action: 'sign_out_all', targetUserId: userId });
+    if (result.success) {
+      toast({ title: '✅ Sesiones cerradas', description: 'Todas las sesiones del usuario fueron cerradas.' });
+      setSessionsData({ sessions: [], note: 'Sesiones cerradas.' });
+    } else {
+      toast({ title: 'Error', description: result.error || 'No se pudo cerrar sesiones', variant: 'destructive' });
+    }
+    setSigningOutSession(null);
+  };
+
+  const handleSignOutSession = async (userId: string, sessionId: string) => {
+    setSigningOutSession(sessionId);
+    const result = await callSessionsFunction({ action: 'sign_out_session', targetUserId: userId, sessionId });
+    if (result.success) {
+      toast({ title: '✅ Sesión cerrada', description: result.message });
+      // Recargar sesiones
+      const updated = await callSessionsFunction({ action: 'list_sessions', targetUserId: userId });
+      setSessionsData(updated);
+    } else {
+      toast({ title: 'Error', description: result.error || 'No se pudo cerrar la sesión', variant: 'destructive' });
+    }
+    setSigningOutSession(null);
   };
 
   const handleDeleteUser = async (user: UserWithProfile) => {
@@ -602,6 +666,15 @@ export function UsersManagement() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => openSessionsModal(user)}
+                          title="Ver dispositivos conectados"
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          <Monitor className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => {
                             setEditingUser(user);
                             setEditingRole(user.profile?.role || '');
@@ -748,6 +821,118 @@ export function UsersManagement() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Modal: Sesiones activas / Dispositivos conectados ── */}
+      <Dialog open={!!sessionsUser} onOpenChange={(open) => { if (!open) { setSessionsUser(null); setSessionsData(null); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Monitor className="h-5 w-5 text-blue-600" />
+              Dispositivos conectados
+            </DialogTitle>
+            <DialogDescription>
+              <strong>{sessionsUser?.email}</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {sessionsLoading && (
+              <div className="flex items-center justify-center py-8 gap-2 text-gray-500">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Cargando sesiones...
+              </div>
+            )}
+
+            {!sessionsLoading && sessionsData && (
+              <>
+                {/* Alerta / nota informativa */}
+                {sessionsData.note && (
+                  <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                    <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-yellow-800">{sessionsData.note}</p>
+                  </div>
+                )}
+
+                {/* Lista de sesiones */}
+                {sessionsData.sessions && sessionsData.sessions.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                      <Smartphone className="h-4 w-4 text-green-500" />
+                      {sessionsData.sessions.length} sesión(es) activa(s)
+                    </p>
+                    {sessionsData.sessions.map((s: any, i: number) => (
+                      <div key={s.id || i} className="flex items-start justify-between gap-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold bg-green-100 text-green-700 rounded px-1.5 py-0.5">ACTIVA</span>
+                            {s.ip && <span className="text-xs text-gray-500">IP: {s.ip}</span>}
+                          </div>
+                          {s.user_agent && (
+                            <p className="text-[10px] text-gray-400 mt-1 truncate">{s.user_agent}</p>
+                          )}
+                          <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-400">
+                            {s.created_at && (
+                              <span className="flex items-center gap-0.5">
+                                <Clock className="h-3 w-3" />
+                                Inicio: {format(new Date(s.created_at), 'dd/MM HH:mm', { locale: es })}
+                              </span>
+                            )}
+                            {s.updated_at && (
+                              <span>Última actividad: {format(new Date(s.updated_at), 'dd/MM HH:mm', { locale: es })}</span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-red-600 border-red-200 hover:bg-red-50 flex-shrink-0 text-xs"
+                          disabled={signingOutSession === s.id}
+                          onClick={() => sessionsUser && handleSignOutSession(sessionsUser.id, s.id)}
+                        >
+                          {signingOutSession === s.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <LogOut className="h-3 w-3 mr-1" />
+                          )}
+                          Cerrar
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  !sessionsData.note && (
+                    <div className="text-center py-6 text-gray-400">
+                      <Monitor className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">Sin sesiones activas detectadas</p>
+                    </div>
+                  )
+                )}
+
+                {/* Botón cerrar TODAS */}
+                <div className="pt-2 border-t">
+                  <Button
+                    variant="destructive"
+                    className="w-full"
+                    disabled={signingOutSession === 'all'}
+                    onClick={() => sessionsUser && handleSignOutAll(sessionsUser.id)}
+                  >
+                    {signingOutSession === 'all' ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <LogOut className="h-4 w-4 mr-2" />
+                    )}
+                    Cerrar TODAS las sesiones de este usuario
+                  </Button>
+                  <p className="text-[10px] text-gray-400 text-center mt-1">
+                    El usuario deberá volver a iniciar sesión en todos sus dispositivos
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
