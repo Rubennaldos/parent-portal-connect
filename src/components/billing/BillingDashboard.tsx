@@ -323,14 +323,16 @@ export const BillingDashboard = () => {
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 4. Cobros del período seleccionado (para estadísticas de cobrado)
+        // 4. Solo deudas cobradas del período: almuerzos pagados + ventas a crédito cobradas
+        // Excluimos ventas directas del POS (source='pos') porque esas no son cobranzas
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
-            .select('amount, payment_method, created_at, school_id, schools(name)')
+            .select('id, amount, payment_method, created_at, school_id, metadata, schools(name)')
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
+            .neq('metadata->>source', 'pos')   // excluir ventas directas del kiosco
             .gte('created_at', periodStart)
             .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
@@ -962,25 +964,21 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Cobrado Hoy */}
+        {/* Cobrado (deudas cobradas del período) */}
         <Card className="border-l-4 border-green-500 hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-gray-500 flex items-center gap-1.5 uppercase tracking-wide">
               <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-              {dateFrom === dateTo ? `Cobrado el ${new Date(dateFrom + 'T12:00:00').toLocaleDateString('es-PE', { day: '2-digit', month: 'short' })}` : 'Cobrado (período)'}
+              Deudas Cobradas
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-green-600">
               S/ {stats.totalCollectedWeek.toFixed(2)}
             </div>
-            {stats.collectedYesterday > 0 && dateFrom === dateTo && (
-              <p className={cn("text-xs mt-1 font-medium", 
-                stats.totalCollectedToday >= stats.collectedYesterday ? "text-green-600" : "text-orange-600"
-              )}>
-                {stats.totalCollectedToday >= stats.collectedYesterday ? '↑' : '↓'} Ayer: S/ {stats.collectedYesterday.toFixed(2)}
-              </p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">
+              Pagos recibidos en el período (excluye ventas al contado del kiosco)
+            </p>
           </CardContent>
         </Card>
 
@@ -1017,16 +1015,19 @@ export const BillingDashboard = () => {
           </CardHeader>
           <CardContent>
             {(() => {
-              const totalTickets = stats.totalTicketsPaid + stats.totalTicketsPending;
-              const pct = totalTickets > 0 ? Math.round((stats.totalTicketsPaid / totalTickets) * 100) : 100;
+              const cobrado  = stats.totalCollectedWeek;   // deudas cobradas del período
+              const pendiente = stats.totalPending;         // deudas sin cobrar del período
+              const vendido  = cobrado + pendiente;
+              const pct = vendido > 0 ? Math.round((cobrado / vendido) * 100) : 100;
+              const color = pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-yellow-600' : 'text-red-600';
               return (
                 <>
-                  <div className="text-2xl font-black text-purple-600">{pct}%</div>
+                  <div className={cn('text-2xl font-black', color)}>{pct}%</div>
                   <p className="text-xs text-gray-500 mt-1">
-                    {stats.totalTicketsPaid} pagados de {totalTickets} tickets del período
+                    Cobrado S/ {cobrado.toFixed(2)} de S/ {vendido.toFixed(2)} generado
                   </p>
                   <p className="text-[10px] text-gray-400 mt-0.5">
-                    {stats.totalTicketsPending} ticket(s) sin cobrar aún
+                    Pendiente S/ {pendiente.toFixed(2)} · {pct < 100 ? `Falta cobrar ${100 - pct}%` : '¡Todo cobrado!'}
                   </p>
                 </>
               );
