@@ -27,6 +27,11 @@ import {
   UserCheck,
   UtensilsCrossed,
   Coffee,
+  Trophy,
+  Medal,
+  Activity,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +55,16 @@ interface UnifiedDebt {
   teacher_name?: string;
   created_at: string;
   category: 'almuerzo' | 'cafeteria';
+}
+
+interface AdminRankEntry {
+  admin_id: string;
+  name: string;
+  role: string;
+  school_name: string;
+  amountCollected: number;
+  ticketsCollected: number;
+  timeline: Array<{ hour: string; amount: number; count: number }>;
 }
 
 interface DashboardStats {
@@ -178,6 +193,10 @@ export const BillingDashboard = () => {
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
+  const [adminRanking, setAdminRanking] = useState<AdminRankEntry[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [rankingExpanded, setRankingExpanded] = useState(false);
+  const [selectedAdminTimeline, setSelectedAdminTimeline] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
   // Helpers de fecha
@@ -223,6 +242,7 @@ export const BillingDashboard = () => {
   useEffect(() => {
     if (userSchoolId || canViewAllSchools) {
       fetchDashboardStats();
+      fetchAdminRanking();
     }
   }, [selectedSchool, dateFrom, dateTo, userSchoolId, canViewAllSchools]);
 
@@ -258,6 +278,82 @@ export const BillingDashboard = () => {
       setSchools(data || []);
     } catch (error) {
       console.error('Error fetching schools:', error);
+    }
+  };
+
+  const fetchAdminRanking = async () => {
+    setRankingLoading(true);
+    try {
+      const periodStart = dateFrom + 'T00:00:00-05:00';
+      const periodEnd   = dateTo   + 'T23:59:59-05:00';
+      const schoolIdFilter = (!canViewAllSchools || selectedSchool !== 'all')
+        ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
+        : null;
+
+      // Traer cobros aprobados en recharge_requests (pagos de vouchers y almuerzos)
+      let rrQuery = supabase
+        .from('recharge_requests')
+        .select('id, amount, approved_by, approved_at, school_id, request_type, schools(name), profiles!recharge_requests_approved_by_fkey(id, full_name, role, school_id)')
+        .eq('status', 'approved')
+        .not('approved_by', 'is', null)
+        .gte('approved_at', periodStart)
+        .lte('approved_at', periodEnd);
+      if (schoolIdFilter) rrQuery = rrQuery.eq('school_id', schoolIdFilter);
+      const { data: rrData } = await rrQuery.limit(2000);
+
+      // Traer transacciones de cobro manual (crédito cobrado en caja)
+      let txQuery = supabase
+        .from('transactions')
+        .select('id, amount, created_by, created_at, school_id, schools(name), profiles!transactions_created_by_fkey(id, full_name, role, school_id)')
+        .eq('type', 'purchase')
+        .eq('payment_status', 'paid')
+        .eq('is_deleted', false)
+        .not('created_by', 'is', null)
+        .neq('metadata->>source', 'pos')
+        .gte('created_at', periodStart)
+        .lte('created_at', periodEnd);
+      if (schoolIdFilter) txQuery = txQuery.eq('school_id', schoolIdFilter);
+      const { data: txData } = await txQuery.limit(2000);
+
+      // Construir mapa admin_id → stats
+      const map = new Map<string, AdminRankEntry>();
+
+      const addEntry = (adminId: string, profile: any, amount: number, timestamp: string, schoolName: string) => {
+        if (!adminId || !profile) return;
+        if (!map.has(adminId)) {
+          map.set(adminId, {
+            admin_id: adminId,
+            name: profile.full_name || 'Sin nombre',
+            role: profile.role || 'admin',
+            school_name: schoolName || 'Sin sede',
+            amountCollected: 0,
+            ticketsCollected: 0,
+            timeline: Array.from({ length: 24 }, (_, h) => ({ hour: String(h).padStart(2, '0') + ':00', amount: 0, count: 0 })),
+          });
+        }
+        const entry = map.get(adminId)!;
+        const amt = Math.abs(amount || 0);
+        entry.amountCollected += amt;
+        entry.ticketsCollected++;
+        // timezone Lima UTC-5
+        const hour = new Date(new Date(timestamp).getTime() - 5 * 3600000).getUTCHours();
+        entry.timeline[hour].amount += amt;
+        entry.timeline[hour].count++;
+      };
+
+      rrData?.forEach((r: any) => {
+        addEntry(r.approved_by, r.profiles, r.amount, r.approved_at, r.schools?.name || '');
+      });
+      txData?.forEach((t: any) => {
+        addEntry(t.created_by, t.profiles, Math.abs(t.amount || 0), t.created_at, t.schools?.name || '');
+      });
+
+      const ranking = Array.from(map.values()).sort((a, b) => b.amountCollected - a.amountCollected);
+      setAdminRanking(ranking);
+    } catch (e) {
+      console.error('Error fetching admin ranking:', e);
+    } finally {
+      setRankingLoading(false);
     }
   };
 
@@ -858,7 +954,7 @@ export const BillingDashboard = () => {
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={() => fetchDashboardStats()}
+            onClick={() => { fetchDashboardStats(); fetchAdminRanking(); }}
             className="text-xs gap-1"
           >
             <RefreshCw className="h-3 w-3" />
@@ -1303,6 +1399,144 @@ export const BillingDashboard = () => {
           </CardContent>
         </Card>
       )}
+      {/* ===== SECCIÓN 7: RANKING DE ADMINS POR COBRANZA ===== */}
+      <Card className="overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-yellow-50 to-orange-50 border-b pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-base font-bold flex items-center gap-2 text-yellow-900">
+              <Trophy className="h-5 w-5 text-yellow-500" />
+              Ranking de Cobranza — Admins
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {rankingLoading && <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />}
+              <button
+                onClick={() => setRankingExpanded(!rankingExpanded)}
+                className="text-xs text-gray-500 flex items-center gap-1 hover:text-gray-800"
+              >
+                {rankingExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {rankingExpanded ? 'Ocultar' : 'Ver todo'}
+              </button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          {adminRanking.length === 0 && !rankingLoading && (
+            <p className="text-sm text-gray-400 text-center py-4">Sin actividad en el período seleccionado</p>
+          )}
+
+          {/* ── Alertas automáticas ── */}
+          {adminRanking.length >= 2 && (() => {
+            const top = adminRanking[0];
+            const avg = adminRanking.reduce((s, a) => s + a.amountCollected, 0) / adminRanking.length;
+            const topPct = avg > 0 ? Math.round((top.amountCollected / avg - 1) * 100) : 0;
+            const zero = adminRanking.filter(a => a.amountCollected === 0);
+            return (
+              <div className="space-y-2">
+                {topPct >= 20 && (
+                  <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    <Trophy className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-green-800 font-medium">
+                      🥇 <strong>{top.name}</strong> está cobrando <strong>{topPct}% más</strong> que el promedio del equipo (S/ {avg.toFixed(0)} promedio · S/ {top.amountCollected.toFixed(0)} ella/él)
+                    </p>
+                  </div>
+                )}
+                {zero.length > 0 && (
+                  <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-red-800 font-medium">
+                      ⚠️ {zero.map(a => <strong key={a.admin_id}>{a.name}</strong>).reduce((a: any, b: any, i) => [a, i > 0 ? ', ' : '', b], [] as any)} no registra cobros en este período.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ── Lista ranking ── */}
+          <div className="space-y-2">
+            {(rankingExpanded ? adminRanking : adminRanking.slice(0, 5)).map((admin, idx) => {
+              const maxAmt = adminRanking[0]?.amountCollected || 1;
+              const barPct = Math.round((admin.amountCollected / maxAmt) * 100);
+              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}.`;
+              const isSelected = selectedAdminTimeline === admin.admin_id;
+              return (
+                <div key={admin.admin_id} className="space-y-1">
+                  <div
+                    className={cn(
+                      'flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors',
+                      isSelected ? 'bg-yellow-50 border border-yellow-300' : 'hover:bg-gray-50'
+                    )}
+                    onClick={() => setSelectedAdminTimeline(isSelected ? null : admin.admin_id)}
+                  >
+                    <span className="text-base w-7 text-center flex-shrink-0">{medal}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-gray-800 truncate">{admin.name}</span>
+                        <span className="text-sm font-black text-green-700 flex-shrink-0">S/ {admin.amountCollected.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-gray-400">{admin.school_name} · {admin.ticketsCollected} cobros</span>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5 mt-1">
+                        <div
+                          className={cn(
+                            'h-1.5 rounded-full transition-all',
+                            idx === 0 ? 'bg-yellow-400' : idx === 1 ? 'bg-gray-400' : idx === 2 ? 'bg-amber-600' : 'bg-blue-400'
+                          )}
+                          style={{ width: `${Math.max(barPct, 2)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Línea de tiempo por hora (se abre al hacer click) */}
+                  {isSelected && (
+                    <div className="ml-10 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <p className="text-[10px] font-semibold text-gray-500 mb-2 flex items-center gap-1">
+                        <Activity className="h-3 w-3" /> Actividad por hora — {admin.name}
+                      </p>
+                      <div className="flex items-end gap-0.5 h-16">
+                        {admin.timeline.map((slot, h) => {
+                          const maxSlot = Math.max(...admin.timeline.map(s => s.amount), 1);
+                          const ht = Math.max(Math.round((slot.amount / maxSlot) * 100), slot.amount > 0 ? 8 : 0);
+                          const isWork = h >= 7 && h <= 18;
+                          return (
+                            <div key={h} className="flex-1 flex flex-col items-center gap-0.5" title={`${slot.hour}: S/${slot.amount.toFixed(0)} (${slot.count} cobros)`}>
+                              <div
+                                className={cn(
+                                  'w-full rounded-sm transition-all',
+                                  slot.amount > 0 ? 'bg-green-500' : isWork ? 'bg-gray-200' : 'bg-gray-100'
+                                )}
+                                style={{ height: `${ht}%`, minHeight: slot.amount > 0 ? '4px' : '2px' }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex justify-between text-[9px] text-gray-400 mt-1">
+                        <span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {admin.timeline.filter(s => s.count > 0).map(s => (
+                          <span key={s.hour} className="text-[10px] bg-green-100 text-green-800 rounded px-1.5 py-0.5 font-medium">
+                            {s.hour} → S/ {s.amount.toFixed(0)} ({s.count} cobros)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {!rankingExpanded && adminRanking.length > 5 && (
+              <button onClick={() => setRankingExpanded(true)} className="text-xs text-blue-600 hover:underline w-full text-center pt-1">
+                Ver {adminRanking.length - 5} admins más...
+              </button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
     </div>
   );
 };
