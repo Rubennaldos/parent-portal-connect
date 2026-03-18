@@ -280,11 +280,13 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
 
       if (orderError) throw orderError;
 
-      // 2. Cancelar la transacción vinculada (deuda pendiente)
+      // 2. Cancelar la transacción vinculada — SOLO si aún no fue pagada
+      // (si ya está 'paid' o tiene voucher en revisión, NO tocar la transacción)
       const { error: txError } = await supabase
         .from('transactions')
         .update({ payment_status: 'cancelled' })
-        .contains('metadata', { lunch_order_id: order.id });
+        .contains('metadata', { lunch_order_id: order.id })
+        .eq('payment_status', 'pending');
 
       if (txError) console.error('⚠️ Error actualizando transacción:', txError);
 
@@ -303,7 +305,9 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
     if (order.is_cancelled || order.status === 'cancelled') return null;
     if (order.status === 'delivered') return null;
 
-    const isPaid = order._transaction_payment_status === 'paid';
+    const txStatus = order._transaction_payment_status;
+    const isPaid = txStatus === 'paid';
+    const isInReview = txStatus === 'pending';
     const withinDeadline = canCancelForDate(order.order_date);
 
     // Ya pagado → solo admin puede revertir
@@ -312,6 +316,16 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
         <div className="mt-2 flex items-start gap-1.5 text-[10px] sm:text-xs bg-amber-50 border border-amber-200 rounded px-2 py-1.5 text-amber-700">
           <Lock className="h-3 w-3 flex-shrink-0 mt-0.5" />
           <span>Este pedido ya fue <strong>pagado</strong>. Para anularlo, comunícate con la administración del colegio.</span>
+        </div>
+      );
+    }
+
+    // Pago en revisión → bloquear para evitar el bug de pedidos cancelados con voucher pendiente
+    if (isInReview) {
+      return (
+        <div className="mt-2 flex items-start gap-1.5 text-[10px] sm:text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1.5 text-blue-700">
+          <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
+          <span><strong>Pago en revisión.</strong> No se puede anular mientras el comprobante está siendo procesado.</span>
         </div>
       );
     }

@@ -2254,8 +2254,14 @@ export default function LunchOrders() {
                       </Button>
                     )}
 
-                    {/* Botón Anular (siempre visible excepto si está cancelado) */}
-                    {!order.is_cancelled && (
+                    {/* Botón Anular — bloqueado si el pago está en revisión o ya fue pagado */}
+                    {!order.is_cancelled && (order as any)._tx_payment_status === 'pending' && (
+                      <div className="flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-700">
+                        <Clock className="h-3 w-3 flex-shrink-0" />
+                        <span>Pago en revisión</span>
+                      </div>
+                    )}
+                    {!order.is_cancelled && (order as any)._tx_payment_status !== 'pending' && (
                       <Button
                         size="sm"
                         variant="destructive"

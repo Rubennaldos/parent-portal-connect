@@ -1679,11 +1679,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
       if (orderError) throw orderError;
 
-      // 2. Update related transaction (find by metadata.lunch_order_id)
+      // 2. Update related transaction — SOLO si aún no fue pagada
+      // (si ya está 'paid' o tiene voucher en revisión, NO tocar la transacción)
       const { error: txError } = await supabase
         .from('transactions')
         .update({ payment_status: 'cancelled' })
-        .contains('metadata', { lunch_order_id: orderId });
+        .contains('metadata', { lunch_order_id: orderId })
+        .eq('payment_status', 'pending');
 
       if (txError) console.error('⚠️ Error updating transaction:', txError);
 
@@ -3188,8 +3190,14 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                     </div>
                   )}
 
-                  {/* Cancel button - only for pending orders within cancellation deadline */}
-                  {!order.is_cancelled && order.status === 'pending' && canCancel && order.transaction_payment_status !== 'paid' && (
+                  {/* Cancel button — evaluado por pedido individual */}
+                  {!order.is_cancelled && order.status === 'pending' && order.transaction_payment_status === 'pending' && (
+                    <div className="mt-3 flex items-start gap-1.5 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1.5 text-blue-700">
+                      <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                      <span><strong>Pago en revisión.</strong> No se puede cancelar mientras el comprobante está siendo procesado.</span>
+                    </div>
+                  )}
+                  {!order.is_cancelled && order.status === 'pending' && canCancel && order.transaction_payment_status !== 'paid' && order.transaction_payment_status !== 'pending' && (
                     <Button
                       variant="outline"
                       size="sm"
