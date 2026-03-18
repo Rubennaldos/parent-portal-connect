@@ -99,12 +99,12 @@ const Cobranzas = () => {
       setLoading(true);
       console.log('🔍 Verificando permisos de Cobranzas para rol:', role);
 
-      // Supervisor Red: puede ver Cobrar + Vouchers para aprobar recargas
+      // Supervisor Red: puede ver Cobrar + Vouchers + Reportes de todas las sedes
       if (role === 'supervisor_red') {
         setPermissions({
           dashboard: false,
           collect: true,
-          reports: false,
+          reports: true,
           statistics: false,
           config: false,
           vouchers: true,
@@ -434,6 +434,19 @@ const Cobranzas = () => {
                       )}
                     </button>
                   )}
+                  {permissions.reports && (
+                    <button
+                      onClick={() => setActiveTab('reports')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'reports'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                      Reportes
+                    </button>
+                  )}
                   {permissions.comprobantes && (
                     <button
                       onClick={() => setActiveTab('comprobantes')}
@@ -545,6 +558,19 @@ const Cobranzas = () => {
                           {pendingVouchers > 9 ? '9+' : pendingVouchers}
                         </span>
                       )}
+                    </button>
+                  )}
+                  {permissions.reports && (
+                    <button
+                      onClick={() => setActiveTab('reports')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'reports'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      Reportes
                     </button>
                   )}
                   {permissions.comprobantes && (
