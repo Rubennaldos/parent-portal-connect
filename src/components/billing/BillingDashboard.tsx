@@ -61,6 +61,7 @@ interface DashboardStats {
   totalCollectedMonth: number;
   totalDebtors: number;
   totalTicketsPending: number;
+  totalTicketsPaid: number;
   lunchDebtors: number;
   cafeteriaDebtors: number;
   totalTeacherDebt: number;
@@ -120,6 +121,7 @@ const emptyStats: DashboardStats = {
   totalCollectedMonth: 0,
   totalDebtors: 0,
   totalTicketsPending: 0,
+  totalTicketsPaid: 0,
   lunchDebtors: 0,
   cafeteriaDebtors: 0,
   totalTeacherDebt: 0,
@@ -664,6 +666,7 @@ export const BillingDashboard = () => {
         totalCollectedMonth,
         totalDebtors: teacherIds.size + studentIds.size + manualNames.size,
         totalTicketsPending: allDebts.length,
+        totalTicketsPaid: paidData?.length ?? 0,
         lunchDebtors: lunchDebtorKeys.size,
         cafeteriaDebtors: cafeteriaDebtorKeys.size,
         totalTeacherDebt,
@@ -1013,14 +1016,21 @@ export const BillingDashboard = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-purple-600">
-              {stats.totalCollectedMonth + stats.totalPending > 0
-                ? ((stats.totalCollectedMonth / (stats.totalCollectedMonth + stats.totalPending)) * 100).toFixed(0)
-                : 100}%
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Cobrado S/ {stats.totalCollectedMonth.toFixed(0)} de S/ {(stats.totalCollectedMonth + stats.totalPending).toFixed(0)} total
-            </p>
+            {(() => {
+              const totalTickets = stats.totalTicketsPaid + stats.totalTicketsPending;
+              const pct = totalTickets > 0 ? Math.round((stats.totalTicketsPaid / totalTickets) * 100) : 100;
+              return (
+                <>
+                  <div className="text-2xl font-black text-purple-600">{pct}%</div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {stats.totalTicketsPaid} pagados de {totalTickets} tickets del período
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    {stats.totalTicketsPending} ticket(s) sin cobrar aún
+                  </p>
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
