@@ -141,6 +141,9 @@ export const SalesList = () => {
   const [loading, setLoading] = useState(true);
   const fetchTxRequestId = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState<Transaction[] | null>(null);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
@@ -358,8 +361,84 @@ export const SalesList = () => {
     }
   };
 
-  const fetchTransactions = async () => {
-    const currentRequestId = ++fetchTxRequestId.current;
+  // Búsqueda global por nombre (ignora la fecha seleccionada)
+  const fetchGlobalSearch = async (term: string) => {
+    if (!term.trim() || term.trim().length < 3) {
+      setGlobalSearchResults(null);
+      return;
+    }
+    setGlobalSearchLoading(true);
+    try {
+      // Buscar por nombre de alumno en students
+      const { data: matchingStudents } = await supabase
+        .from('students')
+        .select('id')
+        .ilike('full_name', `%${term.trim()}%`)
+        .limit(50);
+
+      const studentIds = (matchingStudents || []).map((s: any) => s.id);
+
+      let query = supabase
+        .from('transactions')
+        .select(`
+          *,
+          student:students(id, full_name, balance),
+          teacher:teacher_profiles(id, full_name),
+          school:schools(id, name, code)
+        `)
+        .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (!canViewAllSchools && userSchoolId) {
+        query = query.eq('school_id', userSchoolId);
+      } else if (selectedSchool !== 'all') {
+        query = query.eq('school_id', selectedSchool);
+      }
+
+      if (studentIds.length > 0) {
+        query = query.in('student_id', studentIds);
+      } else {
+        // Si no hay estudiantes con ese nombre, buscar en ticket_code y descripción
+        query = query.or(
+          `ticket_code.ilike.%${term.trim()}%,` +
+          `description.ilike.%${term.trim()}%,` +
+          `client_name.ilike.%${term.trim()}%`
+        );
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Cargar perfiles de cajeros
+      if (data && data.length > 0) {
+        const createdByIds = [...new Set(data.map((t: any) => t.created_by).filter(Boolean))];
+        if (createdByIds.length > 0) {
+          const { data: profilesData } = await supabase
+            .from('profiles')
+            .select('id, email, full_name')
+            .in('id', createdByIds);
+          if (profilesData) {
+            const profilesMap = new Map(profilesData.map(p => [p.id, p]));
+            data.forEach((t: any) => {
+              if (t.created_by) t.profiles = profilesMap.get(t.created_by);
+            });
+          }
+        }
+      }
+
+      setGlobalSearchResults(data || []);
+    } catch (err) {
+      console.error('[GlobalSearch] Error:', err);
+      setGlobalSearchResults(null);
+    } finally {
+      setGlobalSearchLoading(false);
+    }
+  };
+
+  const fetchTransactions = async () => {    const currentRequestId = ++fetchTxRequestId.current;
     try {
       if (!canViewAllSchools && !userSchoolId) {
         setLoading(false);
@@ -829,15 +908,19 @@ export const SalesList = () => {
     return false;
   };
 
-  // Búsqueda inteligente
-  const filteredTransactions = transactions.filter(t => {
+  // Búsqueda inteligente — si hay resultados globales los usa, si no usa los del día
+  const baseTransactions = globalSearchResults !== null ? globalSearchResults : transactions;
+  const filteredTransactions = baseTransactions.filter(t => {
     // Primero filtrar por tipo de venta
     if (salesFilter === 'pos' && isLunchTransaction(t)) return false;  // POS: excluir almuerzos
     if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false; // Almuerzos: excluir POS
-    
-    // Luego filtrar por búsqueda
+
+    // En búsqueda global ya vienen filtrados por nombre desde Supabase; solo aplicar filtro de tipo
+    if (globalSearchResults !== null) return true;
+
+    // Luego filtrar por búsqueda local (solo cuando no hay búsqueda global)
     if (!searchTerm.trim()) return true;
-    
+
     const search = searchTerm.toLowerCase();
     return (
       t.ticket_code?.toLowerCase().includes(search) ||
@@ -1010,18 +1093,40 @@ export const SalesList = () => {
           <div className="relative mb-6">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
-              placeholder="🔍 Buscar: ticket, cliente, monto..."
+              placeholder="🔍 Buscar: ticket, cliente, monto... (busca en todos los días)"
               className="pl-10 h-12 text-base border-2 focus:border-emerald-500"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchTerm(val);
+                // Limpiar resultados globales si borra todo
+                if (!val.trim()) {
+                  setGlobalSearchResults(null);
+                  if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+                  return;
+                }
+                // Debounce 600ms para búsqueda global
+                if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+                globalSearchTimer.current = setTimeout(() => {
+                  fetchGlobalSearch(val);
+                }, 600);
+              }}
             />
-            {searchTerm && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+              {globalSearchLoading && (
+                <span className="text-xs text-gray-400 animate-pulse">Buscando...</span>
+              )}
+              {globalSearchResults !== null && !globalSearchLoading && (
+                <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-800">
+                  🌐 {filteredTransactions.length} resultados (todos los días)
+                </Badge>
+              )}
+              {searchTerm && globalSearchResults === null && !globalSearchLoading && (
                 <Badge variant="secondary" className="text-xs">
                   {filteredTransactions.length} resultados
                 </Badge>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Filtro de Tipo de Venta */}
@@ -1160,7 +1265,9 @@ export const SalesList = () => {
                 <div className="text-center py-12">
                   <FileText className="h-16 w-16 mx-auto mb-3 text-muted-foreground opacity-30" />
                   <p className="text-muted-foreground">
-                    {searchTerm 
+                    {searchTerm && globalSearchResults !== null
+                      ? `No se encontraron ventas para "${searchTerm}" en ningún día`
+                      : searchTerm 
                       ? 'No se encontraron resultados' 
                       : salesFilter === 'pos' 
                         ? `No hay ventas de cafetería para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}` 
@@ -1168,7 +1275,7 @@ export const SalesList = () => {
                           ? `No hay ventas de almuerzos para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}` 
                           : `No hay ventas para ${format(selectedDate, "dd/MM/yyyy", { locale: es })}`}
                   </p>
-                  {transactions.length > 0 && filteredTransactions.length === 0 && (
+                  {transactions.length > 0 && filteredTransactions.length === 0 && globalSearchResults === null && (
                     <p className="text-xs text-muted-foreground mt-2">
                       Hay {transactions.length} venta(s) en total. Prueba cambiando el filtro de tipo.
                     </p>
