@@ -201,7 +201,7 @@ export function RechargeModal({
       const MAX_PX  = 800;
       const QUALITY = 0.60;
 
-      const tryConvert = (src: string) => {
+      const convertViaCanvas = (src: string) => {
         const img = new Image();
         img.onload = () => {
           URL.revokeObjectURL(src);
@@ -215,7 +215,6 @@ export function RechargeModal({
           canvas.width  = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d')!;
-          // Fondo blanco para transparencias (PNG con alpha)
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
@@ -226,16 +225,46 @@ export function RechargeModal({
           );
         };
         img.onerror = () => {
-          // El navegador no puede decodificar el formato (ej. HEIC).
-          // Devolvemos el archivo original como Blob — el servidor lo recibirá
-          // y al menos quedará guardado aunque no se vea en preview.
           URL.revokeObjectURL(src);
-          resolve(new Blob([file], { type: 'image/jpeg' }));
+          // Si el browser no puede decodificar (ej. HEIC en Android),
+          // intentar con FileReader como fallback antes de rendirnos
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img2 = new Image();
+            img2.onload = () => {
+              let { width, height } = img2;
+              if (width > MAX_PX || height > MAX_PX) {
+                const ratio = Math.min(MAX_PX / width, MAX_PX / height);
+                width  = Math.round(width  * ratio);
+                height = Math.round(height * ratio);
+              }
+              const canvas2 = document.createElement('canvas');
+              canvas2.width  = width;
+              canvas2.height = height;
+              const ctx2 = canvas2.getContext('2d')!;
+              ctx2.fillStyle = '#ffffff';
+              ctx2.fillRect(0, 0, width, height);
+              ctx2.drawImage(img2, 0, 0, width, height);
+              canvas2.toBlob(
+                (blob) => resolve(blob ?? new Blob([file], { type: 'image/jpeg' })),
+                'image/jpeg',
+                QUALITY
+              );
+            };
+            img2.onerror = () => {
+              // Último recurso: subir el archivo original como blob binario
+              // (el admin al menos verá que llegó algo, aunque no se visualice)
+              resolve(new Blob([file], { type: file.type || 'image/jpeg' }));
+            };
+            img2.src = e.target?.result as string;
+          };
+          reader.onerror = () => resolve(new Blob([file], { type: file.type || 'image/jpeg' }));
+          reader.readAsDataURL(file);
         };
         img.src = src;
       };
 
-      tryConvert(URL.createObjectURL(file));
+      convertViaCanvas(URL.createObjectURL(file));
     });
   };
 

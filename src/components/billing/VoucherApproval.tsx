@@ -122,43 +122,41 @@ export const VoucherApproval = () => {
     try {
       const schoolFilter = !canViewAll ? userSchoolId : (selectedSchoolFilter !== 'all' ? selectedSchoolFilter : null);
 
-      // Buscar por nombre del padre, email del padre, nombre del alumno o código de referencia
-      const { data: byParent } = await supabase
-        .from('recharge_requests')
-        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
-        .or(`profiles.full_name.ilike.%${term}%,profiles.email.ilike.%${term}%`)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      const { data: byStudent } = await supabase
-        .from('recharge_requests')
-        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
-        .ilike('students.full_name', `%${term}%`)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      const { data: byRef } = await supabase
-        .from('recharge_requests')
-        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
-        .ilike('reference_code', `%${term}%`)
-        .order('created_at', { ascending: false })
+      // 1) Buscar parent_ids cuyo email o nombre coincidan
+      const { data: matchingProfiles } = await supabase
+        .from('profiles')
+        .select('id')
+        .or(`full_name.ilike.%${term}%,email.ilike.%${term}%`)
         .limit(50);
+      const parentIds = (matchingProfiles || []).map((p: any) => p.id);
 
-      // Unificar y deduplicar por id
-      const allRaw = [...(byParent || []), ...(byStudent || []), ...(byRef || [])];
-      const seen = new Set<string>();
-      let merged = allRaw.filter((r: any) => {
-        if (seen.has(r.id)) return false;
-        seen.add(r.id);
-        return true;
-      });
+      // 2) Buscar student_ids cuyo nombre coincida
+      const { data: matchingStudents } = await supabase
+        .from('students')
+        .select('id')
+        .ilike('full_name', `%${term}%`)
+        .limit(50);
+      const studentIds = (matchingStudents || []).map((s: any) => s.id);
 
-      // Aplicar filtro de sede si corresponde
-      if (schoolFilter) merged = merged.filter((r: any) => r.school_id === schoolFilter);
-      // Aplicar filtro de status
-      if (filter !== 'all') merged = merged.filter((r: any) => r.status === filter);
+      // 3) Construir filtro OR para recharge_requests
+      const orParts: string[] = [`reference_code.ilike.%${term}%`];
+      if (parentIds.length > 0) orParts.push(`parent_id.in.(${parentIds.join(',')})`);
+      if (studentIds.length > 0) orParts.push(`student_id.in.(${studentIds.join(',')})`);
 
-      setRequests(merged as any);
+      let query = supabase
+        .from('recharge_requests')
+        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
+        .or(orParts.join(','))
+        .order('created_at', { ascending: false })
+        .limit(150);
+
+      if (schoolFilter) query = query.eq('school_id', schoolFilter);
+      if (filter !== 'all') query = query.eq('status', filter);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      setRequests((data || []) as any);
     } catch (e) {
       console.error('Error en búsqueda global:', e);
     }
