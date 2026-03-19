@@ -446,6 +446,27 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         </CardContent>
       </Card>
 
+      {/* ⚠️ AVISO MULTI-SEDE: solo si el padre tiene hijos en sedes distintas */}
+      {isMultiSchool && (
+        <Card className="border-2 border-amber-400 bg-gradient-to-r from-amber-50 to-yellow-50">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-100 rounded-full flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-amber-800">⚠️ Atención: Hijos en sedes distintas</p>
+                <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                  <strong>NO deposite todo junto.</strong> Si sus hijos se encuentran en diferentes sedes,
+                  cada sede tiene un número de cuenta bancaria distinto.
+                  Tiene que hacer el <strong>pago por separado</strong>, usando el botón de pago de cada alumno individualmente.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Resumen del Carrito */}
       <Card id="cart-total-pending-card" className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
         <CardContent className="pt-6 pb-5">
@@ -636,14 +657,14 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                           ? 'border-blue-200 bg-blue-50/30 opacity-70'
                           : `cursor-pointer ${isSelected ? 'border-green-400 bg-green-50/40' : 'border-gray-200'}`
                       }`}
-                      onClick={() => !isCoveredByPending && toggleTransaction(debt.student_id, transaction.id, allTxIds)}
+                      onClick={() => !isCoveredByPending && toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
                     >
                       <div className="flex items-center gap-3">
                         {/* Checkbox — solo si no está cubierta por voucher pendiente */}
                         {!isCoveredByPending ? (
                           <Checkbox
                             checked={isSelected}
-                            onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, allTxIds)}
+                            onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
                             onClick={(e) => e.stopPropagation()}
                             className="flex-shrink-0"
                           />
