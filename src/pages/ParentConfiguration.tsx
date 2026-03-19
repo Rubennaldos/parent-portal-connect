@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle } from 'lucide-react';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
+import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -968,6 +969,10 @@ const ParentConfiguration = () => {
               <FileText className="h-4 w-4 mr-2" />
               Reportes Excel
             </TabsTrigger>
+            <TabsTrigger value="kiosk-wallet" className="flex-1 min-w-[120px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-500 data-[state=active]:text-white">
+              <Wallet className="h-4 w-4 mr-2" />
+              Saldos Kiosco
+            </TabsTrigger>
           </TabsList>
 
           {/* Pestaña de Gestión de Padres */}
@@ -1439,6 +1444,16 @@ const ParentConfiguration = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Pestaña Saldos Kiosco */}
+          <TabsContent value="kiosk-wallet" className="mt-6">
+            <KioskWalletReport
+              canViewAllSchools={canViewAllSchools}
+              userSchoolId={userSchoolId}
+              schools={schools}
+            />
+          </TabsContent>
+
         </Tabs>
       </div>
 
