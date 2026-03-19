@@ -309,7 +309,7 @@ export const BillingDashboard = () => {
         .eq('payment_status', 'paid')
         .eq('is_deleted', false)
         .not('created_by', 'is', null)
-        .or('metadata->>source.is.null,metadata->>source.neq.pos')
+        .not('metadata->>source', 'eq', 'pos')
         .gte('created_at', periodStart)
         .lte('created_at', periodEnd);
       if (schoolIdFilter) txQuery = txQuery.eq('school_id', schoolIdFilter);
@@ -428,7 +428,7 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .or('metadata->>source.is.null,metadata->>source.neq.pos')   // excluir ventas directas del kiosco
+            .not('metadata->>source', 'eq', 'pos')   // excluir ventas directas del kiosco
             .gte('created_at', periodStart)
             .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
