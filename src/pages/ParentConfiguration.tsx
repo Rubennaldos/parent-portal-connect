@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
@@ -86,6 +86,8 @@ interface TeacherProfile {
   created_at: string;
 }
 
+const PARENTS_PAGE_SIZE = 50;
+
 const ParentConfiguration = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -102,6 +104,9 @@ const ParentConfiguration = () => {
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [selectedSchoolTeacher, setSelectedSchoolTeacher] = useState<string>('all');
   const [selectedSchoolAnalytics, setSelectedSchoolAnalytics] = useState<string>('all');
+  const [parentsPage, setParentsPage] = useState(0);
+  const [parentsTotalCount, setParentsTotalCount] = useState(0);
+  const allParentsListRef = useRef<ParentProfile[]>([]);
   
   // Permisos
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
@@ -147,17 +152,23 @@ const ParentConfiguration = () => {
   }, [user, role]);
 
   useEffect(() => {
-    // Esperar a que los permisos estén listos
-    // Solo ejecutar fetchData cuando tengamos la información necesaria:
-    // - Si canViewAllSchools es true, podemos cargar (no necesitamos userSchoolId)
-    // - Si canViewAllSchools es false, necesitamos userSchoolId
     if (canViewAllSchools === true || (canViewAllSchools === false && userSchoolId)) {
-      console.log('🚀 Trigger fetchData - canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId);
+      setParentsPage(0);
+    }
+  }, [canViewAllSchools, userSchoolId]);
+
+  useEffect(() => {
+    setParentsPage(0);
+  }, [searchTerm, selectedSchool]);
+
+  useEffect(() => {
+    if (canViewAllSchools === true || (canViewAllSchools === false && userSchoolId)) {
+      console.log('🚀 Trigger fetchData - canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId, 'parentsPage:', parentsPage);
       fetchData();
     } else {
       console.log('⏳ Esperando permisos... canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId);
     }
-  }, [canViewAllSchools, userSchoolId]);
+  }, [canViewAllSchools, userSchoolId, parentsPage]);
 
   const checkPermissions = async () => {
     if (!user || !role) return;
@@ -341,71 +352,74 @@ const ParentConfiguration = () => {
           console.log('📋 Lista de parent_ids:', parentIds);
           
           if (parentIds.length > 0) {
-            // PASO 3: Obtener solo los padres de esos estudiantes
-            console.log('🔍 PASO 3: Buscando parent_profiles con user_id en:', parentIds);
-            const { data: filteredParents, error: parentsError } = await supabase
-              .from('parent_profiles')
-              .select(`
-                *,
-                school:schools(id, name, code),
-                responsible_2_full_name,
-                responsible_2_dni,
-                responsible_2_document_type,
-                responsible_2_phone_1,
-                responsible_2_email,
-                responsible_2_address
-              `)
-              .in('user_id', parentIds)
-              .order('full_name');
-            
-            if (parentsError) {
-              console.error('❌ Error al cargar padres:', parentsError);
-              console.error('❌ Detalles del error:', {
-                message: parentsError.message,
-                details: parentsError.details,
-                hint: parentsError.hint,
-                code: parentsError.code
-              });
-              toast({
-                variant: 'destructive',
-                title: 'Error',
-                description: `Error al cargar padres: ${parentsError.message}`,
-              });
+            const pageStart = parentsPage * PARENTS_PAGE_SIZE;
+            const pageEnd = pageStart + PARENTS_PAGE_SIZE;
+
+            if (allParentsListRef.current.length > 0) {
+              parentsData = allParentsListRef.current.slice(pageStart, pageEnd);
             } else {
-              console.log('✅ Padres encontrados:', filteredParents?.length || 0);
-              console.log('📋 Datos de padres:', filteredParents);
-              
-              // Obtener emails de profiles
-              if (filteredParents && filteredParents.length > 0) {
-                const userIdsForProfiles = filteredParents.map(p => p.user_id).filter(Boolean);
-                const { data: profilesData, error: profilesError } = await supabase
-                  .from('profiles')
-                  .select('id, email')
-                  .in('id', userIdsForProfiles);
-                
-                if (!profilesError && profilesData) {
-                  // Mapear emails a los padres
-                  parentsData = filteredParents.map(parent => ({
-                    ...parent,
-                    profile: profilesData.find(p => p.id === parent.user_id) || null
-                  }));
-                } else {
-                  parentsData = filteredParents || [];
+              const BATCH = 100;
+              const allFilteredParents: any[] = [];
+              for (let i = 0; i < parentIds.length; i += BATCH) {
+                const chunk = parentIds.slice(i, i + BATCH);
+                const { data: batchParents, error: parentsError } = await supabase
+                  .from('parent_profiles')
+                  .select(`
+                    *,
+                    school:schools(id, name, code),
+                    responsible_2_full_name,
+                    responsible_2_dni,
+                    responsible_2_document_type,
+                    responsible_2_phone_1,
+                    responsible_2_email,
+                    responsible_2_address
+                  `)
+                  .in('user_id', chunk)
+                  .order('full_name');
+                if (parentsError) {
+                  console.error('❌ Error al cargar padres (lote):', parentsError);
+                  toast({
+                    variant: 'destructive',
+                    title: 'Error',
+                    description: `Error al cargar padres: ${parentsError.message}`,
+                  });
+                  break;
                 }
-              } else {
-                parentsData = filteredParents || [];
+                if (batchParents) allFilteredParents.push(...batchParents);
+              }
+              const filteredParents = allFilteredParents;
+              console.log('✅ Padres encontrados (sede):', filteredParents?.length || 0);
+
+              if (filteredParents.length > 0) {
+                const userIdsForProfiles = filteredParents.map(p => p.user_id).filter(Boolean);
+                const allProfiles: any[] = [];
+                for (let i = 0; i < userIdsForProfiles.length; i += BATCH) {
+                  const chunk = userIdsForProfiles.slice(i, i + BATCH);
+                  const { data: profilesData } = await supabase.from('profiles').select('id, email').in('id', chunk);
+                  if (profilesData) allProfiles.push(...profilesData);
+                }
+                const fullList = filteredParents.map(parent => ({
+                  ...parent,
+                  profile: allProfiles.find((p: any) => p.id === parent.user_id) || null
+                }));
+                allParentsListRef.current = fullList;
+                setParentsTotalCount(fullList.length);
+                parentsData = fullList.slice(pageStart, pageEnd);
               }
             }
           } else {
             console.warn('⚠️ No se encontraron parent_ids en los estudiantes');
+            allParentsListRef.current = [];
+            setParentsTotalCount(0);
           }
         }
       } else {
-        // Ver todos los padres (admin general)
-        // Incluir también padres que solo están en profiles (role=parent) sin parent_profiles,
-        // para que sus hijos aparezcan (ej. usuario SIN SEDE que sí tiene hijos en students).
-        console.log('🌍 Viendo todos los padres');
-        const { data: allParents, error: parentsError } = await supabase
+        // Admin general: paginación server-side para evitar 400 (URL demasiado larga con miles de IDs)
+        allParentsListRef.current = [];
+        console.log('🌍 Viendo todos los padres (página)', parentsPage + 1);
+        const from = parentsPage * PARENTS_PAGE_SIZE;
+        const to = from + PARENTS_PAGE_SIZE - 1;
+        const { data: pageParents, error: parentsError, count } = await supabase
           .from('parent_profiles')
           .select(`
             *,
@@ -416,13 +430,9 @@ const ParentConfiguration = () => {
             responsible_2_phone_1,
             responsible_2_email,
             responsible_2_address
-          `)
-          .order('full_name');
-
-        const { data: profilesWithParentRole, error: profilesRoleError } = await supabase
-          .from('profiles')
-          .select('id, email, full_name')
-          .eq('role', 'parent');
+          `, { count: 'exact' })
+          .order('full_name')
+          .range(from, to);
 
         if (parentsError) {
           console.error('❌ Error al cargar padres:', parentsError);
@@ -431,54 +441,27 @@ const ParentConfiguration = () => {
             title: 'Error',
             description: `Error al cargar padres: ${parentsError.message}`,
           });
+        } else {
+          setParentsTotalCount(count ?? 0);
         }
 
-        const parentProfileUserIds = new Set((allParents || []).map((p: any) => p.user_id).filter(Boolean));
-        const missingParentIds = (profilesWithParentRole || [])
-          .filter((p: any) => !parentProfileUserIds.has(p.id))
-          .map((p: any) => p.id);
-
-        if (missingParentIds.length > 0) {
-          console.log('📋 Padres en profiles sin parent_profiles (se agregan para mostrar hijos):', missingParentIds.length);
-        }
-
-        if (allParents && allParents.length > 0) {
-          const userIdsForProfiles = allParents.map((p: any) => p.user_id).filter(Boolean);
+        if (pageParents && pageParents.length > 0) {
+          const userIdsForProfiles = pageParents.map((p: any) => p.user_id).filter(Boolean);
           const { data: profilesData, error: profilesError } = await supabase
             .from('profiles')
             .select('id, email, full_name')
             .in('id', userIdsForProfiles);
 
           if (!profilesError && profilesData) {
-            parentsData = allParents.map((parent: any) => ({
+            parentsData = pageParents.map((parent: any) => ({
               ...parent,
               profile: profilesData.find((p: any) => p.id === parent.user_id) || null
             }));
           } else {
-            parentsData = allParents || [];
+            parentsData = pageParents || [];
           }
         } else {
           parentsData = [];
-        }
-
-        // Agregar padres que solo existen en profiles (tienen hijos en students pero no parent_profiles)
-        if (missingParentIds.length > 0 && profilesWithParentRole) {
-          const extraParents = profilesWithParentRole
-            .filter((p: any) => missingParentIds.includes(p.id))
-            .map((p: any) => ({
-            user_id: p.id,
-            full_name: p.full_name || p.email || 'Sin nombre',
-            school_id: null,
-            school: null,
-            profile: { id: p.id, email: p.email, full_name: p.full_name },
-            responsible_2_full_name: null,
-            responsible_2_dni: null,
-            responsible_2_document_type: null,
-            responsible_2_phone_1: null,
-            responsible_2_email: null,
-            responsible_2_address: null,
-          }));
-          parentsData = [...(parentsData || []), ...extraParents];
         }
       }
       
@@ -1191,6 +1174,34 @@ const ParentConfiguration = () => {
                     </Card>
                   ))}
                 </div>
+
+                {parentsTotalCount > PARENTS_PAGE_SIZE && (
+                  <div className="flex items-center justify-center gap-4 mt-6 py-4 border-t border-emerald-200">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                      disabled={parentsPage === 0}
+                      onClick={() => setParentsPage(p => Math.max(0, p - 1))}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Anterior
+                    </Button>
+                    <span className="text-sm text-emerald-800 font-medium">
+                      Página {parentsPage + 1} de {Math.ceil(parentsTotalCount / PARENTS_PAGE_SIZE)}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                      disabled={(parentsPage + 1) * PARENTS_PAGE_SIZE >= parentsTotalCount}
+                      onClick={() => setParentsPage(p => p + 1)}
+                    >
+                      Siguiente
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                )}
 
                 {filteredParents.length === 0 && (
                   <div className="text-center py-16 bg-emerald-50/50 rounded-2xl border-2 border-dashed border-emerald-300">
