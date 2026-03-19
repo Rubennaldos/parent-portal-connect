@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,8 +8,13 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Wallet, Search, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle, Loader2, RefreshCw, ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Wallet, Search, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle,
+  Loader2, RefreshCw, ShieldAlert, ChevronDown, ChevronUp, Eye, Image as ImageIcon
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+// ── Tipos ──────────────────────────────────────────────────────────────────────
 
 interface Student {
   id: string;
@@ -20,9 +24,11 @@ interface Student {
   kiosk_disabled: boolean;
   school_id: string;
   school_name?: string;
-  spending_limit_daily?: number | null;
-  spending_limit_weekly?: number | null;
-  spending_limit_monthly?: number | null;
+  // Columnas reales de topes en students
+  limit_type?: 'none' | 'daily' | 'weekly' | 'monthly' | null;
+  daily_limit?: number | null;
+  weekly_limit?: number | null;
+  monthly_limit?: number | null;
   total_recharged?: number;
   recharge_count?: number;
 }
@@ -34,6 +40,7 @@ interface RechargeEntry {
   created_at: string;
   approved_at: string | null;
   reference_code: string | null;
+  voucher_url: string | null;
 }
 
 interface TransactionEntry {
@@ -51,8 +58,9 @@ interface Props {
   schools: { id: string; name: string }[];
 }
 
+// ── Componente ─────────────────────────────────────────────────────────────────
+
 export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: Props) => {
-  const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
 
@@ -65,20 +73,42 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
   const [recharges, setRecharges] = useState<RechargeEntry[]>([]);
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   const [expandedTopes, setExpandedTopes] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const canEditTopes = role === 'admin_general' || role === 'superadmin';
+
+  // ── Fetch alumnos con saldo o recargas ─────────────────────────────────────
 
   const fetchStudents = useCallback(async () => {
     setLoading(true);
     try {
+      // Primero: IDs de alumnos que tuvieron recargas aprobadas
+      let rechargeQuery = supabase
+        .from('recharge_requests')
+        .select('student_id, amount')
+        .eq('request_type', 'recharge')
+        .eq('status', 'approved');
+
+      if (!canViewAllSchools && userSchoolId) {
+        rechargeQuery = rechargeQuery.eq('school_id', userSchoolId);
+      } else if (schoolFilter !== 'all') {
+        rechargeQuery = rechargeQuery.eq('school_id', schoolFilter);
+      }
+
+      const { data: rData } = await rechargeQuery;
+
+      // Mapa de totales
+      const rechargeMap = new Map<string, { total: number; count: number }>();
+      (rData || []).forEach((r: any) => {
+        const prev = rechargeMap.get(r.student_id) || { total: 0, count: 0 };
+        rechargeMap.set(r.student_id, { total: prev.total + (r.amount || 0), count: prev.count + 1 });
+      });
+      const rechargedIds = [...rechargeMap.keys()];
+
+      // Query de alumnos: balance > 0 OR tienen recargas
       let query = supabase
         .from('students')
-        .select(`
-          id, full_name, balance, free_account, kiosk_disabled, school_id,
-          spending_limit_daily, spending_limit_weekly, spending_limit_monthly,
-          schools(name)
-        `)
-        .or('balance.gt.0,id.in.(select student_id from recharge_requests where request_type=recharge and status=approved)')
+        .select('id, full_name, balance, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, schools(name)')
         .order('balance', { ascending: false });
 
       if (!canViewAllSchools && userSchoolId) {
@@ -87,24 +117,15 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
         query = query.eq('school_id', schoolFilter);
       }
 
+      // Filtrar: saldo > 0 OR tiene recargas
+      if (rechargedIds.length > 0) {
+        query = query.or(`balance.gt.0,id.in.(${rechargedIds.join(',')})`);
+      } else {
+        query = query.gt('balance', 0);
+      }
+
       const { data, error } = await query;
       if (error) throw error;
-
-      // Enriquecer con totales de recargas
-      const studentIds = (data || []).map((s: any) => s.id);
-      let rechargeMap = new Map<string, { total: number; count: number }>();
-      if (studentIds.length > 0) {
-        const { data: rData } = await supabase
-          .from('recharge_requests')
-          .select('student_id, amount')
-          .in('student_id', studentIds)
-          .eq('request_type', 'recharge')
-          .eq('status', 'approved');
-        (rData || []).forEach((r: any) => {
-          const prev = rechargeMap.get(r.student_id) || { total: 0, count: 0 };
-          rechargeMap.set(r.student_id, { total: prev.total + (r.amount || 0), count: prev.count + 1 });
-        });
-      }
 
       const enriched = (data || []).map((s: any) => ({
         ...s,
@@ -115,30 +136,33 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
 
       setStudents(enriched);
     } catch (e: any) {
+      console.error('KioskWalletReport fetchStudents:', e);
       toast({ title: 'Error al cargar alumnos', description: e.message, variant: 'destructive' });
     }
     setLoading(false);
   }, [canViewAllSchools, userSchoolId, schoolFilter]);
 
-  useEffect(() => {
-    fetchStudents();
-  }, [fetchStudents]);
+  useEffect(() => { fetchStudents(); }, [fetchStudents]);
+
+  // ── Abrir billetera de un alumno ───────────────────────────────────────────
 
   const openWallet = async (student: Student) => {
     setSelectedStudent(student);
     setWalletLoading(true);
     setRecharges([]);
     setTransactions([]);
-
     try {
       const [rRes, tRes] = await Promise.all([
+        // Ingresos: SOLO recharge_requests con request_type='recharge'
         supabase
           .from('recharge_requests')
-          .select('id, amount, status, created_at, approved_at, reference_code')
+          .select('id, amount, status, created_at, approved_at, reference_code, voucher_url')
           .eq('student_id', student.id)
           .eq('request_type', 'recharge')
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(100),
+        // Egresos: SOLO transacciones de kiosco POS (sin lunch_order_id)
+        // Usamos lunch_order_id IS NULL para capturar historial completo (antiguas sin source:'pos')
         supabase
           .from('transactions')
           .select('id, amount, ticket_code, created_at, payment_status, description')
@@ -146,19 +170,20 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
           .eq('type', 'purchase')
           .is('metadata->>lunch_order_id' as any, null)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(100),
       ]);
-
       if (rRes.error) throw rRes.error;
       if (tRes.error) throw tRes.error;
-
       setRecharges(rRes.data || []);
       setTransactions(tRes.data || []);
     } catch (e: any) {
+      console.error('KioskWalletReport openWallet:', e);
       toast({ title: 'Error al cargar billetera', description: e.message, variant: 'destructive' });
     }
     setWalletLoading(false);
   };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   const filteredStudents = students.filter(s =>
     !search.trim() ||
@@ -166,17 +191,29 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
     (s.school_name || '').toLowerCase().includes(search.toLowerCase())
   );
 
-  const formatAmount = (amount: number) =>
-    `S/ ${Math.abs(amount).toFixed(2)}`;
+  const fmt = (amount: number) => `S/ ${Math.abs(amount).toFixed(2)}`;
 
-  const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('es-PE', {
+      day: '2-digit', month: 'short', year: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
 
   const getTipoLabel = (s: Student) => {
     if (s.kiosk_disabled) return <Badge variant="outline" className="text-orange-600 border-orange-300 text-[10px]">Solo almuerzo</Badge>;
     if (s.free_account !== false) return <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">Cuenta libre</Badge>;
     return <Badge className="bg-blue-100 text-blue-800 text-[10px]">Con recargas</Badge>;
   };
+
+  const getTopeLabel = (s: Student) => {
+    if (!s.limit_type || s.limit_type === 'none') return 'Sin tope';
+    if (s.limit_type === 'daily') return `Diario S/ ${s.daily_limit || 0}`;
+    if (s.limit_type === 'weekly') return `Semanal S/ ${s.weekly_limit || 0}`;
+    if (s.limit_type === 'monthly') return `Mensual S/ ${s.monthly_limit || 0}`;
+    return 'Sin tope';
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
@@ -188,7 +225,8 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
             Reporte de Saldos Kiosco
           </CardTitle>
           <CardDescription className="text-blue-700">
-            Alumnos con saldo activo o historial de recargas. Solo lectura. Haz clic en un alumno para ver su billetera.
+            Alumnos con saldo activo o historial de recargas. Solo lectura.
+            {!canEditTopes && <span className="ml-2 text-orange-500">· Edición de topes: solo admin general</span>}
           </CardDescription>
         </CardHeader>
       </Card>
@@ -206,7 +244,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
         </div>
         {canViewAllSchools && (
           <Select value={schoolFilter} onValueChange={setSchoolFilter}>
-            <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectTrigger className="w-full sm:w-[220px]">
               <SelectValue placeholder="Todas las sedes" />
             </SelectTrigger>
             <SelectContent>
@@ -222,7 +260,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
         </Button>
       </div>
 
-      {/* Resumen rápido */}
+      {/* Tarjetas resumen */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="border border-emerald-200 bg-emerald-50">
           <CardContent className="pt-4 pb-3">
@@ -256,15 +294,9 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
 
       {/* Tabla */}
       {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-        </div>
+        <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
       ) : filteredStudents.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center text-gray-400">
-            No se encontraron alumnos con saldo o recargas registradas.
-          </CardContent>
-        </Card>
+        <Card><CardContent className="py-12 text-center text-gray-400">No se encontraron alumnos con saldo o recargas registradas.</CardContent></Card>
       ) : (
         <Card className="border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
@@ -296,17 +328,17 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
                         onClick={() => setExpandedTopes(expandedTopes === student.id ? null : student.id)}
                         className="text-xs text-gray-500 hover:text-blue-600 flex items-center gap-1 mx-auto"
                       >
-                        {student.spending_limit_daily || student.spending_limit_weekly || student.spending_limit_monthly
-                          ? <span className="text-blue-600 font-medium">Con tope</span>
-                          : <span className="text-gray-400">Sin tope</span>
-                        }
+                        <span className={student.limit_type && student.limit_type !== 'none' ? 'text-blue-600 font-medium' : 'text-gray-400'}>
+                          {getTopeLabel(student)}
+                        </span>
                         {expandedTopes === student.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                       </button>
                       {expandedTopes === student.id && (
                         <div className="mt-1 text-left bg-white border border-gray-200 rounded-lg p-2 shadow-sm text-xs space-y-0.5">
-                          <p>Diario: <strong>{student.spending_limit_daily ? `S/ ${student.spending_limit_daily}` : 'Sin límite'}</strong></p>
-                          <p>Semanal: <strong>{student.spending_limit_weekly ? `S/ ${student.spending_limit_weekly}` : 'Sin límite'}</strong></p>
-                          <p>Mensual: <strong>{student.spending_limit_monthly ? `S/ ${student.spending_limit_monthly}` : 'Sin límite'}</strong></p>
+                          <p>Tipo: <strong>{student.limit_type || 'none'}</strong></p>
+                          <p>Diario: <strong>{student.daily_limit ? `S/ ${student.daily_limit}` : '—'}</strong></p>
+                          <p>Semanal: <strong>{student.weekly_limit ? `S/ ${student.weekly_limit}` : '—'}</strong></p>
+                          <p>Mensual: <strong>{student.monthly_limit ? `S/ ${student.monthly_limit}` : '—'}</strong></p>
                           {!canEditTopes && (
                             <p className="text-orange-500 flex items-center gap-1 mt-1">
                               <ShieldAlert className="h-3 w-3" /> Solo admin general puede editar
@@ -315,9 +347,9 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-500 text-xs">
-                      {student.total_recharged! > 0
-                        ? <span className="text-purple-600 font-medium">S/ {student.total_recharged!.toFixed(2)} ({student.recharge_count} vez{student.recharge_count !== 1 ? 'ces' : ''})</span>
+                    <td className="px-4 py-3 text-right text-xs">
+                      {(student.total_recharged || 0) > 0
+                        ? <span className="text-purple-600 font-medium">S/ {student.total_recharged!.toFixed(2)} ({student.recharge_count} {student.recharge_count === 1 ? 'vez' : 'veces'})</span>
                         : <span className="text-gray-300">—</span>
                       }
                     </td>
@@ -335,18 +367,19 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
         </Card>
       )}
 
-      {/* Modal Billetera */}
+      {/* ── Modal Billetera ── */}
       <Dialog open={!!selectedStudent} onOpenChange={open => { if (!open) setSelectedStudent(null); }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-blue-900">
               <Wallet className="h-5 w-5 text-blue-500" />
               Billetera Kiosco — {selectedStudent?.full_name}
+              <span className="text-sm font-normal text-gray-400 ml-1">· {selectedStudent?.school_name}</span>
             </DialogTitle>
           </DialogHeader>
 
-          {/* Resumen de saldo */}
-          <div className="grid grid-cols-3 gap-3 mb-2">
+          {/* Tarjetas resumen del alumno */}
+          <div className="grid grid-cols-3 gap-3">
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
               <p className="text-xs text-emerald-600 font-medium">Saldo actual</p>
               <p className={`text-xl font-bold ${(selectedStudent?.balance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
@@ -368,8 +401,8 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
           </div>
 
           {/* Topes */}
-          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-2">
-            <div className="flex items-center justify-between mb-2">
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-1.5">
               <p className="text-sm font-semibold text-gray-700">Topes de gasto</p>
               {!canEditTopes && (
                 <span className="text-xs text-orange-500 flex items-center gap-1">
@@ -377,17 +410,16 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
                 </span>
               )}
             </div>
-            <div className="flex gap-4 text-sm">
-              <div><span className="text-gray-500">Diario:</span> <strong>{selectedStudent?.spending_limit_daily ? `S/ ${selectedStudent.spending_limit_daily}` : 'Sin límite'}</strong></div>
-              <div><span className="text-gray-500">Semanal:</span> <strong>{selectedStudent?.spending_limit_weekly ? `S/ ${selectedStudent.spending_limit_weekly}` : 'Sin límite'}</strong></div>
-              <div><span className="text-gray-500">Mensual:</span> <strong>{selectedStudent?.spending_limit_monthly ? `S/ ${selectedStudent.spending_limit_monthly}` : 'Sin límite'}</strong></div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div><span className="text-gray-500">Tipo activo:</span> <strong className="capitalize">{selectedStudent?.limit_type || 'none'}</strong></div>
+              <div><span className="text-gray-500">Diario:</span> <strong>{selectedStudent?.daily_limit ? `S/ ${selectedStudent.daily_limit}` : '—'}</strong></div>
+              <div><span className="text-gray-500">Semanal:</span> <strong>{selectedStudent?.weekly_limit ? `S/ ${selectedStudent.weekly_limit}` : '—'}</strong></div>
+              <div><span className="text-gray-500">Mensual:</span> <strong>{selectedStudent?.monthly_limit ? `S/ ${selectedStudent.monthly_limit}` : '—'}</strong></div>
             </div>
           </div>
 
           {walletLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
-            </div>
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-blue-500" /></div>
           ) : (
             <Tabs defaultValue="recharges">
               <TabsList className="w-full bg-gray-100">
@@ -395,56 +427,103 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
                   <ArrowUpCircle className="h-4 w-4 mr-1" /> Ingresos ({recharges.length})
                 </TabsTrigger>
                 <TabsTrigger value="transactions" className="flex-1 data-[state=active]:bg-red-600 data-[state=active]:text-white">
-                  <ArrowDownCircle className="h-4 w-4 mr-1" /> Egresos ({transactions.length})
+                  <ArrowDownCircle className="h-4 w-4 mr-1" /> Egresos POS ({transactions.length})
                 </TabsTrigger>
               </TabsList>
 
-              {/* Ingresos (recargas aprobadas) */}
+              {/* ── INGRESOS: recharge_requests con request_type='recharge' ── */}
               <TabsContent value="recharges" className="mt-3 space-y-2">
                 {recharges.length === 0 ? (
                   <p className="text-center text-gray-400 py-6 text-sm">Sin recargas registradas</p>
                 ) : recharges.map(r => (
-                  <div key={r.id} className="flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 hover:border-blue-200">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="h-4 w-4 text-blue-500 shrink-0" />
-                      <div>
-                        <p className="text-xs text-gray-500">{formatDate(r.created_at)}</p>
-                        {r.reference_code && <p className="text-[11px] text-gray-400">Op: {r.reference_code}</p>}
+                  <div key={r.id} className="bg-white border border-gray-100 rounded-xl px-4 py-3 hover:border-blue-200 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Info izquierda */}
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <TrendingUp className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs text-gray-500">{fmtDate(r.created_at)}</p>
+                          {r.approved_at && (
+                            <p className="text-[11px] text-emerald-600">Aprobado: {fmtDate(r.approved_at)}</p>
+                          )}
+                          {r.reference_code && (
+                            <p className="text-[11px] text-gray-500 font-mono">N° Op: <strong>{r.reference_code}</strong></p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={r.status === 'approved' ? 'bg-emerald-100 text-emerald-700 text-[10px]' : r.status === 'pending' ? 'bg-amber-100 text-amber-700 text-[10px]' : 'bg-red-100 text-red-700 text-[10px]'}>
-                        {r.status === 'approved' ? 'Aprobado' : r.status === 'pending' ? 'Pendiente' : 'Rechazado'}
-                      </Badge>
-                      <span className="font-bold text-blue-600">+{formatAmount(r.amount)}</span>
+
+                      {/* Info derecha: estado + monto + comprobante */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {r.voucher_url ? (
+                          <button
+                            onClick={() => setPreviewImage(r.voucher_url)}
+                            className="border border-blue-200 rounded-lg overflow-hidden w-10 h-10 hover:border-blue-400 transition-colors shrink-0"
+                            title="Ver comprobante"
+                          >
+                            <img src={r.voucher_url} alt="Comprobante" className="w-full h-full object-cover" />
+                          </button>
+                        ) : (
+                          <div className="w-10 h-10 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center" title="Sin comprobante">
+                            <ImageIcon className="h-4 w-4 text-gray-300" />
+                          </div>
+                        )}
+                        <Badge className={
+                          r.status === 'approved' ? 'bg-emerald-100 text-emerald-700 text-[10px]' :
+                          r.status === 'pending'  ? 'bg-amber-100 text-amber-700 text-[10px]' :
+                                                    'bg-red-100 text-red-700 text-[10px]'
+                        }>
+                          {r.status === 'approved' ? 'Aprobado' : r.status === 'pending' ? 'Pendiente' : 'Rechazado'}
+                        </Badge>
+                        <span className="font-bold text-blue-600 text-sm">+{fmt(r.amount)}</span>
+                      </div>
                     </div>
                   </div>
                 ))}
               </TabsContent>
 
-              {/* Egresos (compras en kiosco) */}
+              {/* ── EGRESOS: transactions type=purchase sin lunch_order_id (kiosco POS) ── */}
               <TabsContent value="transactions" className="mt-3 space-y-2">
+                <p className="text-[11px] text-gray-400 italic px-1">
+                  Solo compras del kiosco (POS). Los pagos de almuerzo se gestionan en el módulo de Almuerzos.
+                </p>
                 {transactions.length === 0 ? (
                   <p className="text-center text-gray-400 py-6 text-sm">Sin compras en kiosco registradas</p>
                 ) : transactions.map(t => (
-                  <div key={t.id} className="flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2 hover:border-red-200">
-                    <div className="flex items-center gap-2">
-                      <TrendingDown className="h-4 w-4 text-red-400 shrink-0" />
+                  <div key={t.id} className="flex items-center justify-between bg-white border border-gray-100 rounded-xl px-4 py-2.5 hover:border-red-200 transition-colors">
+                    <div className="flex items-start gap-3">
+                      <TrendingDown className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
                       <div>
                         <p className="text-xs text-gray-700 font-medium">{t.description || 'Compra kiosco'}</p>
-                        <p className="text-[11px] text-gray-400">{formatDate(t.created_at)}{t.ticket_code ? ` · ${t.ticket_code}` : ''}</p>
+                        <p className="text-[11px] text-gray-400">
+                          {fmtDate(t.created_at)}
+                          {t.ticket_code && <span className="ml-2 font-mono">· {t.ticket_code}</span>}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className={t.payment_status === 'paid' ? 'bg-gray-100 text-gray-600 text-[10px]' : 'bg-amber-100 text-amber-700 text-[10px]'}>
                         {t.payment_status === 'paid' ? 'Cobrado' : 'Deuda'}
                       </Badge>
-                      <span className="font-bold text-red-500">-{formatAmount(t.amount)}</span>
+                      <span className="font-bold text-red-500">-{fmt(t.amount)}</span>
                     </div>
                   </div>
                 ))}
               </TabsContent>
             </Tabs>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Visor de comprobante ampliado ── */}
+      <Dialog open={!!previewImage} onOpenChange={open => { if (!open) setPreviewImage(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-4 w-4" /> Comprobante de recarga
+            </DialogTitle>
+          </DialogHeader>
+          {previewImage && (
+            <img src={previewImage} alt="Comprobante" className="w-full rounded-lg border border-gray-200" />
           )}
         </DialogContent>
       </Dialog>
