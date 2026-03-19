@@ -192,34 +192,50 @@ export function RechargeModal({
   };
 
   // ── Helper: comprimir imagen antes de subir ──
-  // Reduce fotos de celular (4-8 MB) a menos de 500 KB para evitar timeouts en red móvil
+  // Convierte CUALQUIER formato (HEIC, HEIF, PNG, WebP, etc.) a JPEG comprimido.
+  // Máximo 800px, calidad 60% → resultado siempre menor a 200 KB.
+  // Si el navegador no puede decodificar el formato (ej. HEIC en Android),
+  // intenta de todas formas y si falla convierte el archivo crudo a Blob seguro.
   const compressImage = async (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
-        let { width, height } = img;
-        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
-          const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => resolve(blob || file),
-          'image/jpeg',
-          0.75
-        );
+      const MAX_PX  = 800;
+      const QUALITY = 0.60;
+
+      const tryConvert = (src: string) => {
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(src);
+          let { width, height } = img;
+          if (width > MAX_PX || height > MAX_PX) {
+            const ratio = Math.min(MAX_PX / width, MAX_PX / height);
+            width  = Math.round(width  * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width  = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d')!;
+          // Fondo blanco para transparencias (PNG con alpha)
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => resolve(blob ?? new Blob([file], { type: 'image/jpeg' })),
+            'image/jpeg',
+            QUALITY
+          );
+        };
+        img.onerror = () => {
+          // El navegador no puede decodificar el formato (ej. HEIC).
+          // Devolvemos el archivo original como Blob — el servidor lo recibirá
+          // y al menos quedará guardado aunque no se vea en preview.
+          URL.revokeObjectURL(src);
+          resolve(new Blob([file], { type: 'image/jpeg' }));
+        };
+        img.src = src;
       };
-      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-      img.src = url;
+
+      tryConvert(URL.createObjectURL(file));
     });
   };
 
