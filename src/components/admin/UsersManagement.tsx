@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -51,9 +51,11 @@ import {
   Smartphone,
   Clock,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { cn } from '@/lib/utils';
 import { CreateAdminSimple } from '@/components/admin/CreateAdminSimple';
 
 interface User {
@@ -107,6 +109,7 @@ export function UsersManagement() {
   const [sessionsData, setSessionsData] = useState<{ sessions: any[]; note?: string } | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [signingOutSession, setSigningOutSession] = useState<string | null>(null);
+  const [sessionsAutoRefresh, setSessionsAutoRefresh] = useState(false);
   const [editingRole, setEditingRole] = useState<string>('');
 
   // Estadísticas
@@ -303,16 +306,15 @@ export function UsersManagement() {
   };
 
   // ── Sesiones activas ──────────────────────────────────────────
-  const openSessionsModal = async (user: UserWithProfile) => {
-    setSessionsUser(user);
-    setSessionsData(null);
-    setSessionsLoading(true);
+  const sessionsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadSessions = async (userId: string, silent = false) => {
+    if (!silent) setSessionsLoading(true);
     try {
-      const { data, error } = await supabase.rpc('get_user_sessions', { p_user_id: user.id });
+      const { data, error } = await supabase.rpc('get_user_sessions', { p_user_id: userId });
       if (error) {
-        // Si la RPC no existe todavía, mostrar mensaje amigable
-        setSessionsData({ sessions: [], note: error.message.includes('does not exist') 
-          ? 'Para ver sesiones, ejecuta primero el SQL CREATE_RPC_USER_SESSIONS.sql en Supabase.'
+        setSessionsData({ sessions: [], note: error.message.includes('does not exist')
+          ? 'Ejecuta CREATE_RPC_USER_SESSIONS.sql en Supabase para activar esta función.'
           : error.message });
       } else {
         setSessionsData({ sessions: data || [] });
@@ -320,7 +322,34 @@ export function UsersManagement() {
     } catch (e: any) {
       setSessionsData({ sessions: [], note: e.message || 'Error al cargar sesiones' });
     }
-    setSessionsLoading(false);
+    if (!silent) setSessionsLoading(false);
+  };
+
+  const openSessionsModal = async (user: UserWithProfile) => {
+    setSessionsUser(user);
+    setSessionsData(null);
+    setSessionsAutoRefresh(false);
+    await loadSessions(user.id);
+  };
+
+  // Auto-refresh: encender/apagar polling cada 5 segundos
+  useEffect(() => {
+    if (sessionsAutoRefresh && sessionsUser) {
+      sessionsIntervalRef.current = setInterval(() => {
+        loadSessions(sessionsUser.id, true);
+      }, 5000);
+    } else {
+      if (sessionsIntervalRef.current) clearInterval(sessionsIntervalRef.current);
+    }
+    return () => { if (sessionsIntervalRef.current) clearInterval(sessionsIntervalRef.current); };
+  }, [sessionsAutoRefresh, sessionsUser]);
+
+  // Limpiar intervalo al cerrar modal
+  const closeSessionsModal = () => {
+    setSessionsAutoRefresh(false);
+    if (sessionsIntervalRef.current) clearInterval(sessionsIntervalRef.current);
+    setSessionsUser(null);
+    setSessionsData(null);
   };
 
   const handleSignOutAll = async (userId: string) => {
@@ -332,8 +361,7 @@ export function UsersManagement() {
       } else {
         toast({ title: '✅ Sesiones cerradas', description: 'Todas las sesiones del usuario fueron cerradas.' });
         setSessionsData({ sessions: [], note: 'Todas las sesiones fueron cerradas. El usuario deberá iniciar sesión de nuevo.' });
-      }
-    } catch (e: any) {
+      }    } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
     setSigningOutSession(null);
@@ -827,7 +855,7 @@ export function UsersManagement() {
       </Dialog>
 
       {/* ── Modal: Sesiones activas / Dispositivos conectados ── */}
-      <Dialog open={!!sessionsUser} onOpenChange={(open) => { if (!open) { setSessionsUser(null); setSessionsData(null); } }}>
+      <Dialog open={!!sessionsUser} onOpenChange={(open) => { if (!open) closeSessionsModal(); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -840,12 +868,39 @@ export function UsersManagement() {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {sessionsLoading && (
-              <div className="flex items-center justify-center py-8 gap-2 text-gray-500">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Cargando sesiones...
-              </div>
-            )}
+            {/* Barra de controles: Actualizar + Auto-refresh */}
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs gap-1.5"
+                disabled={sessionsLoading}
+                onClick={() => sessionsUser && loadSessions(sessionsUser.id)}
+              >
+                {sessionsLoading
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <RefreshCw className="h-3 w-3" />}
+                Actualizar
+              </Button>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <span className="text-xs text-gray-500">Auto-refresh cada 5s</span>
+                <div
+                  className={cn(
+                    'relative w-9 h-5 rounded-full transition-colors cursor-pointer',
+                    sessionsAutoRefresh ? 'bg-green-500' : 'bg-gray-300'
+                  )}
+                  onClick={() => setSessionsAutoRefresh(v => !v)}
+                >
+                  <div className={cn(
+                    'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform',
+                    sessionsAutoRefresh ? 'translate-x-4' : 'translate-x-0.5'
+                  )} />
+                </div>
+                {sessionsAutoRefresh && (
+                  <span className="text-[10px] text-green-600 font-semibold animate-pulse">EN VIVO</span>
+                )}
+              </label>
+            </div>
 
             {!sessionsLoading && sessionsData && (
               <>
