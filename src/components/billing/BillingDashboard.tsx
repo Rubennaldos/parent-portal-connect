@@ -304,16 +304,16 @@ export const BillingDashboard = () => {
       // Traer transacciones de cobro manual (crédito cobrado en caja)
       let txQuery = supabase
         .from('transactions')
-        .select('id, amount, created_by, created_at, school_id, schools(name), profiles!transactions_created_by_fkey(id, full_name, role, school_id)')
+        .select('id, amount, created_by, created_at, school_id, metadata, schools(name), profiles!transactions_created_by_fkey(id, full_name, role, school_id)')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .eq('is_deleted', false)
         .not('created_by', 'is', null)
-        .not('metadata->>source', 'eq', 'pos')
         .gte('created_at', periodStart)
         .lte('created_at', periodEnd);
       if (schoolIdFilter) txQuery = txQuery.eq('school_id', schoolIdFilter);
       const { data: txData } = await txQuery.limit(2000);
+      const nonPosTxData = (txData || []).filter((t: any) => t.metadata?.source !== 'pos');
 
       // Construir mapa admin_id → stats
       const map = new Map<string, AdminRankEntry>();
@@ -344,7 +344,7 @@ export const BillingDashboard = () => {
       rrData?.forEach((r: any) => {
         addEntry(r.approved_by, r.profiles, r.amount, r.approved_at, r.schools?.name || '');
       });
-      txData?.forEach((t: any) => {
+      nonPosTxData.forEach((t: any) => {
         addEntry(t.created_by, t.profiles, Math.abs(t.amount || 0), t.created_at, t.schools?.name || '');
       });
 
@@ -428,7 +428,6 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .not('metadata->>source', 'eq', 'pos')   // excluir ventas directas del kiosco
             .gte('created_at', periodStart)
             .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
@@ -648,14 +647,15 @@ export const BillingDashboard = () => {
       });
 
       // ========== COBROS DEL PERÍODO SELECCIONADO ==========
-      // Todos los paidData ya vienen filtrados por dateFrom..dateTo desde la query
+      // Excluir POS directo (source='pos') en memoria para evitar errores de sintaxis JSONB en filtros PostgREST
+      const validPaid = (paidData || []).filter((t: any) => t.metadata?.source !== 'pos');
       let totalCollectedToday = 0;   // cobrado en el primer día del rango (si es un día único = "hoy")
       let collectedYesterday = 0;
       let totalCollectedWeek = 0;    // total del período completo
       let totalCollectedMonth = 0;   // mismo valor (todo es del período elegido)
       const paymentMethods = { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 };
 
-      paidData?.forEach((t: any) => {
+      validPaid.forEach((t: any) => {
         const amt = Math.abs(t.amount || 0);
         const txDate = t.created_at.split('T')[0];
         totalCollectedMonth += amt;
@@ -764,7 +764,7 @@ export const BillingDashboard = () => {
         totalCollectedMonth,
         totalDebtors: teacherIds.size + studentIds.size + manualNames.size,
         totalTicketsPending: allDebts.length,
-        totalTicketsPaid: paidData?.length ?? 0,
+        totalTicketsPaid: validPaid.length,
         lunchDebtors: lunchDebtorKeys.size,
         cafeteriaDebtors: cafeteriaDebtorKeys.size,
         totalTeacherDebt,
