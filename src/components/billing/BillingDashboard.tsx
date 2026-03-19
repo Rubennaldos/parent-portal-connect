@@ -404,7 +404,8 @@ export const BillingDashboard = () => {
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         }),
-        // 3. Transacciones pagadas con lunch_order_id (para deduplicar) DENTRO del rango
+        // 3. Transacciones pagadas (para deduplicar por lunch_order_id) DENTRO del rango
+        // Filtro de metadata se hace en memoria para evitar 400 de PostgREST con ->>
         fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
@@ -412,7 +413,6 @@ export const BillingDashboard = () => {
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .not('metadata->>lunch_order_id', 'is', null)
             .gte('created_at', periodStart)
             .lte('created_at', periodEnd);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);

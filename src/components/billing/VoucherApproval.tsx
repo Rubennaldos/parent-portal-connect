@@ -87,6 +87,7 @@ export const VoucherApproval = () => {
   // undefined = no cargado aún | null = admin_general (sin filtro) | string = school_id
   const [userSchoolId, setUserSchoolId] = useState<string | null | undefined>(undefined);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
   // Códigos de operación ingresados manualmente por el admin cuando el padre no los puso
   const [overrideRefCodes, setOverrideRefCodes] = useState<Record<string, string>>({});
 
@@ -104,6 +105,65 @@ export const VoucherApproval = () => {
   useEffect(() => {
     if (userSchoolId !== undefined) fetchRequests();
   }, [filter, userSchoolId, selectedSchoolFilter]);
+
+  // Búsqueda global con debounce: cuando hay término de búsqueda, busca en TODA la BD
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!searchTerm.trim() || searchTerm.trim().length < 2) return;
+    searchTimerRef.current = setTimeout(() => {
+      fetchGlobalSearch(searchTerm.trim());
+    }, 400);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [searchTerm]);
+
+  const fetchGlobalSearch = async (term: string) => {
+    setSearchLoading(true);
+    try {
+      const schoolFilter = !canViewAll ? userSchoolId : (selectedSchoolFilter !== 'all' ? selectedSchoolFilter : null);
+
+      // Buscar por nombre del padre, email del padre, nombre del alumno o código de referencia
+      const { data: byParent } = await supabase
+        .from('recharge_requests')
+        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
+        .or(`profiles.full_name.ilike.%${term}%,profiles.email.ilike.%${term}%`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      const { data: byStudent } = await supabase
+        .from('recharge_requests')
+        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
+        .ilike('students.full_name', `%${term}%`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      const { data: byRef } = await supabase
+        .from('recharge_requests')
+        .select('*, students(full_name, balance), profiles!recharge_requests_parent_id_fkey(full_name, email), schools(name)')
+        .ilike('reference_code', `%${term}%`)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      // Unificar y deduplicar por id
+      const allRaw = [...(byParent || []), ...(byStudent || []), ...(byRef || [])];
+      const seen = new Set<string>();
+      let merged = allRaw.filter((r: any) => {
+        if (seen.has(r.id)) return false;
+        seen.add(r.id);
+        return true;
+      });
+
+      // Aplicar filtro de sede si corresponde
+      if (schoolFilter) merged = merged.filter((r: any) => r.school_id === schoolFilter);
+      // Aplicar filtro de status
+      if (filter !== 'all') merged = merged.filter((r: any) => r.status === filter);
+
+      setRequests(merged as any);
+    } catch (e) {
+      console.error('Error en búsqueda global:', e);
+    }
+    setSearchLoading(false);
+  };
 
   const fetchUserSchool = async () => {
     if (!user) return;
@@ -865,14 +925,19 @@ export const VoucherApproval = () => {
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <Input
-          placeholder="Buscar por alumno, padre, sede, monto, N° operación, ticket..."
+          placeholder="Buscar por alumno, padre, email, sede, monto, N° operación..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="pl-10 h-11"
         />
+        {searchLoading && (
+          <div className="absolute right-8 top-1/2 -translate-y-1/2">
+            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          </div>
+        )}
         {searchTerm && (
           <button
-            onClick={() => setSearchTerm('')}
+            onClick={() => { setSearchTerm(''); fetchRequests(); }}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
           >
             <X className="h-4 w-4" />
@@ -932,7 +997,9 @@ export const VoucherApproval = () => {
         ))}
         {searchTerm && (
           <span className="px-3 py-2 text-xs text-gray-500 italic">
-            {filteredRequests.length} resultado(s) para "{searchTerm}"
+            {searchLoading
+              ? 'Buscando en toda la base de datos...'
+              : `${filteredRequests.length} resultado(s) para "${searchTerm}" — búsqueda global (sin límite de fecha)`}
           </span>
         )}
       </div>
