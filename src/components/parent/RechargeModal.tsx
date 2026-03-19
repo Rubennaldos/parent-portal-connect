@@ -44,7 +44,7 @@ interface BreakdownItem {
 interface RechargeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Callback para el botÃ³n "Cancelar" (volver sin pagar) */
+  /** Callback para el botón "Cancelar" (volver sin pagar) */
   onCancel?: () => void;
   studentName: string;
   studentId: string;
@@ -55,13 +55,13 @@ interface RechargeModalProps {
   suggestedAmount?: number;
   /** Tipo de solicitud: 'recharge', 'lunch_payment' o 'debt_payment' */
   requestType?: 'recharge' | 'lunch_payment' | 'debt_payment';
-  /** DescripciÃ³n del pago (ej: "Almuerzo - MenÃº NiÃ±os - 20 de febrero") */
+  /** Descripción del pago (ej: "Almuerzo - Menú Niños - 20 de febrero") */
   requestDescription?: string;
   /** IDs de lunch_orders asociados (solo para lunch_payment) */
   lunchOrderIds?: string[];
-  /** IDs de transacciones que se estÃ¡n pagando (para debt_payment) */
+  /** IDs de transacciones que se están pagando (para debt_payment) */
   paidTransactionIds?: string[];
-  /** Desglose de Ã­tems que se estÃ¡n pagando */
+  /** Desglose de ítems que se están pagando */
   breakdownItems?: BreakdownItem[];
   /** IDs de todos los estudiantes incluidos en un pago combinado */
   combinedStudentIds?: string[];
@@ -126,7 +126,7 @@ export function RechargeModal({
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  // â”€â”€ Comprobantes adicionales (pago en partes) â”€â”€
+  // ── Comprobantes adicionales (pago en partes) ──
   const [extraVouchers, setExtraVouchers] = useState<ExtraVoucher[]>([]);
   const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -171,7 +171,7 @@ export function RechargeModal({
 
       setPaymentConfig(config || null);
 
-      // Auto-seleccionar el primer mÃ©todo disponible
+      // Auto-seleccionar el primer método disponible
       if (config) {
         if (config.yape_enabled !== false && config.yape_number) {
           setSelectedMethod('yape');
@@ -195,7 +195,7 @@ export function RechargeModal({
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      toast({ title: 'Imagen muy grande', description: 'MÃ¡ximo 5 MB', variant: 'destructive' });
+      toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' });
       return;
     }
 
@@ -205,9 +205,9 @@ export function RechargeModal({
     reader.readAsDataURL(file);
   };
 
-  // â”€â”€ Helper: comprimir imagen antes de subir â”€â”€
+  // ── Helper: comprimir imagen antes de subir ──
   // Convierte CUALQUIER formato (HEIC, HEIF, PNG, WebP, etc.) a JPEG comprimido.
-  // MÃ¡ximo 800px, calidad 60% â†’ resultado siempre menor a 200 KB.
+  // Máximo 800px, calidad 60% → resultado siempre menor a 200 KB.
   // Si el navegador no puede decodificar el formato (ej. HEIC en Android),
   // intenta de todas formas y si falla convierte el archivo crudo a Blob seguro.
   const compressImage = async (file: File): Promise<Blob> => {
@@ -267,7 +267,7 @@ export function RechargeModal({
             };
             img2.onerror = () => {
               // Ãšltimo recurso: subir el archivo original como blob binario
-              // (el admin al menos verÃ¡ que llegÃ³ algo, aunque no se visualice)
+              // (el admin al menos verá que llegó algo, aunque no se visualice)
               resolve(new Blob([file], { type: file.type || 'image/jpeg' }));
             };
             img2.src = e.target?.result as string;
@@ -282,8 +282,8 @@ export function RechargeModal({
     });
   };
 
-  // â”€â”€ Helper: subir imagen a storage â”€â”€
-  // âš ï¸ LANZA error si falla â€” asÃ­ el insert no se hace sin foto
+  // ── Helper: subir imagen a storage ──
+  // ⚠️ LANZA error si falla â€” así el insert no se hace sin foto
   const uploadVoucherImage = async (file: File, userId: string): Promise<string> => {
     const compressed = await compressImage(file);
     const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
@@ -293,16 +293,16 @@ export function RechargeModal({
       .upload(fileName, compressed, { upsert: false, contentType: 'image/jpeg' });
     if (uploadError) {
       console.error('Error al subir imagen del voucher:', uploadError.message);
-      throw new Error(`No se pudo subir la foto del comprobante: ${uploadError.message}. Verifica tu conexiÃ³n e intenta nuevamente.`);
+      throw new Error(`No se pudo subir la foto del comprobante: ${uploadError.message}. Verifica tu conexión e intenta nuevamente.`);
     }
     const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
     if (!publicUrl) {
-      throw new Error('No se pudo obtener la URL pÃºblica de la imagen. Contacta al administrador.');
+      throw new Error('No se pudo obtener la URL pública de la imagen. Contacta al administrador.');
     }
     return publicUrl;
   };
 
-  // â”€â”€ Helper: verificar duplicado de cÃ³digo de operaciÃ³n â”€â”€
+  // ── Helper: verificar duplicado de código de operación ──
   const checkDuplicate = async (code: string): Promise<boolean> => {
     const { data } = await supabase
       .from('recharge_requests')
@@ -321,48 +321,48 @@ export function RechargeModal({
 
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
-      toast({ title: 'Monto invÃ¡lido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
+      toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
       return;
     }
     if (requestType === 'recharge' && numAmount > 2000) {
-      toast({ title: 'Monto muy alto', description: 'El monto mÃ¡ximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.', variant: 'destructive' });
+      toast({ title: 'Monto muy alto', description: 'El monto máximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.', variant: 'destructive' });
       return;
     }
 
-    // â”€â”€ Validar cÃ³digo principal obligatorio â”€â”€
+    // ── Validar código principal obligatorio ──
     if (!referenceCode.trim()) {
       toast({
-        title: 'ðŸš« NÃºmero de operaciÃ³n obligatorio',
-        description: 'Debes ingresar el nÃºmero de operaciÃ³n o cÃ³digo de transacciÃ³n para continuar.',
+        title: '🚫 Número de operación obligatorio',
+        description: 'Debes ingresar el número de operación o código de transacción para continuar.',
         variant: 'destructive',
       });
       return;
     }
 
-    // â”€â”€ Validar foto del comprobante principal obligatoria â”€â”€
+    // ── Validar foto del comprobante principal obligatoria ──
     if (!voucherFile) {
       toast({
-        title: 'ðŸš« Foto del comprobante obligatoria',
+        title: '🚫 Foto del comprobante obligatoria',
         description: 'Debes adjuntar la captura o foto del comprobante de pago para continuar.',
         variant: 'destructive',
       });
       return;
     }
 
-    // â”€â”€ Validar comprobantes adicionales â”€â”€
+    // ── Validar comprobantes adicionales ──
     for (const ev of extraVouchers) {
       if (!ev.referenceCode.trim()) {
         toast({
           variant: 'destructive',
-          title: 'ðŸš« CÃ³digo obligatorio en comprobante adicional',
-          description: 'Cada comprobante adicional debe tener su nÃºmero de operaciÃ³n.',
+          title: '🚫 Código obligatorio en comprobante adicional',
+          description: 'Cada comprobante adicional debe tener su número de operación.',
         });
         return;
       }
       if (!ev.voucherFile) {
         toast({
           variant: 'destructive',
-          title: 'ðŸš« Foto obligatoria en comprobante adicional',
+          title: '🚫 Foto obligatoria en comprobante adicional',
           description: 'Cada comprobante adicional debe tener su foto adjuntada.',
         });
         return;
@@ -371,35 +371,35 @@ export function RechargeModal({
       if (!evAmount || evAmount <= 0) {
         toast({
           variant: 'destructive',
-          title: 'Monto invÃ¡lido en comprobante adicional',
+          title: 'Monto inválido en comprobante adicional',
           description: 'Ingresa el monto pagado en cada comprobante adicional.',
         });
         return;
       }
     }
 
-    // â”€â”€ Verificar que no haya cÃ³digos repetidos entre sÃ­ â”€â”€
+    // ── Verificar que no haya códigos repetidos entre sí ──
     const allCodes = [referenceCode.trim(), ...extraVouchers.map(ev => ev.referenceCode.trim())];
     const uniqueCodes = new Set(allCodes);
     if (uniqueCodes.size !== allCodes.length) {
       toast({
         variant: 'destructive',
-        title: 'ðŸš« CÃ³digos repetidos',
-        description: 'Cada comprobante debe tener un cÃ³digo de operaciÃ³n diferente.',
+        title: '🚫 Códigos repetidos',
+        description: 'Cada comprobante debe tener un código de operación diferente.',
       });
       return;
     }
 
     setLoading(true);
     try {
-      // â”€â”€ Verificar duplicados en BD para TODOS los cÃ³digos â”€â”€
+      // ── Verificar duplicados en BD para TODOS los códigos ──
       for (const code of allCodes) {
         const isDuplicate = await checkDuplicate(code);
         if (isDuplicate) {
           toast({
             variant: 'destructive',
-            title: 'ðŸš« Voucher ya emitido o usado',
-            description: `El cÃ³digo "${code}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
+            title: '🚫 Voucher ya emitido o usado',
+            description: `El código "${code}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
             duration: 8000,
           });
           setLoading(false);
@@ -407,7 +407,7 @@ export function RechargeModal({
         }
       }
 
-      // â”€â”€ Prevenir doble envÃ­o de voucher para los mismos pedidos â”€â”€
+      // ── Prevenir doble envío de voucher para los mismos pedidos ──
       if ((requestType === 'lunch_payment' || requestType === 'debt_payment') && lunchOrderIds && lunchOrderIds.length > 0) {
         const { data: existingReq } = await supabase
           .from('recharge_requests')
@@ -420,16 +420,16 @@ export function RechargeModal({
         if (existingReq && existingReq.length > 0) {
           toast({
             variant: 'destructive',
-            title: 'âš ï¸ Comprobante ya enviado',
-            description: 'Ya enviaste un comprobante para estos pedidos. Espera la revisiÃ³n del administrador.',
+            title: '⚠️ Comprobante ya enviado',
+            description: 'Ya enviaste un comprobante para estos pedidos. Espera la revisión del administrador.',
           });
           setLoading(false);
           return;
         }
       }
 
-      // Nota: debt_payment permite mÃºltiples envÃ­os (pagos en partes / diferencias)
-      // No se bloquea aquÃ­ â€” el admin verÃ¡ todos los comprobantes y los conciliarÃ¡
+      // Nota: debt_payment permite múltiples envíos (pagos en partes / diferencias)
+      // No se bloquea aquí â€” el admin verá todos los comprobantes y los conciliará
 
       const { data: student } = await supabase
         .from('students')
@@ -437,7 +437,7 @@ export function RechargeModal({
         .eq('id', studentId)
         .single();
 
-      // â”€â”€ PASO 1: Subir TODAS las imÃ¡genes primero (si falla alguna, no insertamos nada) â”€â”€
+      // ── PASO 1: Subir TODAS las imágenes primero (si falla alguna, no insertamos nada) ──
       const voucherUrl = await uploadVoucherImage(voucherFile, user.id);
 
       const extraUrls: string[] = [];
@@ -458,7 +458,7 @@ export function RechargeModal({
         ? `${notes.trim() ? notes.trim() + ' | ' : ''}Pago combinado: ${studentName}`
         : (notes.trim() || null);
 
-      // â”€â”€ PASO 2: Insertar TODOS los registros (imÃ¡genes ya estÃ¡n subidas) â”€â”€
+      // ── PASO 2: Insertar TODOS los registros (imágenes ya están subidas) ──
       const { error: insertError } = await supabase.from('recharge_requests').insert({
         student_id: studentId,
         parent_id: user.id,
@@ -501,7 +501,7 @@ export function RechargeModal({
       console.error('Error al enviar solicitud:', err);
       toast({
         title: 'Error al enviar',
-        description: err.message || 'OcurriÃ³ un error. Intenta de nuevo.',
+        description: err.message || 'Ocurrió un error. Intenta de nuevo.',
         variant: 'destructive',
       });
     } finally {
@@ -510,7 +510,7 @@ export function RechargeModal({
     }
   };
 
-  // â”€â”€ Copiar al portapapeles con feedback visual â”€â”€
+  // ── Copiar al portapapeles con feedback visual ──
   const handleCopy = (text: string, fieldKey: string) => {
     navigator.clipboard.writeText(text).catch(() => {
       // fallback para navegadores sin clipboard API
@@ -544,7 +544,7 @@ export function RechargeModal({
       enabled: paymentConfig?.yape_enabled ?? true,
       number: paymentConfig?.yape_number || null,
       holder: paymentConfig?.yape_holder || null,
-      hint: 'Abre tu app de Yape y transfiere al nÃºmero indicado.',
+      hint: 'Abre tu app de Yape y transfiere al número indicado.',
     },
     plin: {
       label: 'Plin',
@@ -553,14 +553,14 @@ export function RechargeModal({
       enabled: paymentConfig?.plin_enabled ?? true,
       number: paymentConfig?.plin_number || null,
       holder: paymentConfig?.plin_holder || null,
-      hint: 'Abre tu app de Plin y transfiere al nÃºmero indicado.',
+      hint: 'Abre tu app de Plin y transfiere al número indicado.',
     },
     transferencia: {
       label: 'Transferencia',
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
       enabled: paymentConfig?.transferencia_enabled ?? true,
-      // number se usa para saber si estÃ¡ disponible
+      // number se usa para saber si está disponible
       number: (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info) ? 'available' : null,
       holder: paymentConfig?.bank_account_holder || null,
       hint: 'Realiza una transferencia bancaria con los datos indicados.',
@@ -578,11 +578,11 @@ export function RechargeModal({
     : ['amount', 'method', 'voucher'] as const;
   const currentStepIndex = visibleSteps.indexOf(step as any);
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PASO 1: Monto â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────── PASO 1: Monto ───────────────────────
   const renderStepAmount = () => (
     <div className="space-y-5">
 
-      {/* âš ï¸ AVISO IMPORTANTE: solo para recarga de kiosco */}
+      {/* ⚠️ AVISO IMPORTANTE: solo para recarga de kiosco */}
       {requestType === 'recharge' && (
         <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -591,13 +591,13 @@ export function RechargeModal({
             </div>
             <div>
               <p className="font-bold text-amber-900 text-base leading-tight mb-1">
-                âš ï¸ Â¿Para quÃ© sirve esta recarga?
+                ⚠️ ¿Para qué sirve esta recarga?
               </p>
               <p className="text-amber-800 text-sm leading-relaxed">
-                Este saldo es <strong>Ãºnicamente para compras en el kiosco</strong> (recreo, snacks, etc.).
+                Este saldo es <strong>únicamente para compras en el kiosco</strong> (recreo, snacks, etc.).
               </p>
               <p className="text-amber-700 text-sm leading-relaxed mt-2">
-                ðŸ‘‰ Si deseas <strong>pagar los almuerzos</strong>, hazlo desde la pestaÃ±a{' '}
+                👉 Si deseas <strong>pagar los almuerzos</strong>, hazlo desde la pestaña{' '}
                 <span className="bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
                   ðŸ’³ Pagos
                 </span>{' '}
@@ -617,7 +617,7 @@ export function RechargeModal({
       </div>
 
       <div className="space-y-2">
-        <Label className="font-semibold">Â¿CuÃ¡nto deseas recargar?</Label>
+        <Label className="font-semibold">¿Cuánto deseas recargar?</Label>
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-lg">S/</span>
           <Input
@@ -648,7 +648,7 @@ export function RechargeModal({
 
       {amount && parseFloat(amount) > 0 && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex justify-between text-sm">
-          <span className="text-gray-600">Saldo despuÃ©s de recarga:</span>
+          <span className="text-gray-600">Saldo después de recarga:</span>
           <span className="font-bold text-green-700">S/ {(currentBalance + parseFloat(amount)).toFixed(2)}</span>
         </div>
       )}
@@ -658,12 +658,12 @@ export function RechargeModal({
         disabled={!amount || parseFloat(amount) <= 0}
         className="w-full h-12 text-base font-semibold bg-blue-600 hover:bg-blue-700"
       >
-        Continuar â†’
+        Continuar →
       </Button>
     </div>
   );
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PASO 2: MÃ©todo + instrucciones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────── PASO 2: Método + instrucciones ───────────────────────
   const renderStepMethod = () => {
     const hasAnyMethod = !!(
       (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
@@ -691,15 +691,15 @@ export function RechargeModal({
             <AlertCircle className="h-8 w-8 text-amber-500 mx-auto" />
             <p className="text-sm font-medium text-amber-800">Medios de pago no configurados</p>
             <p className="text-xs text-amber-600">
-              El colegio aÃºn no ha configurado nÃºmeros de Yape, Plin o cuenta bancaria. 
-              Contacta a la administraciÃ³n del colegio.
+              El colegio aún no ha configurado números de Yape, Plin o cuenta bancaria. 
+              Contacta a la administración del colegio.
             </p>
           </div>
         ) : (
           <>
-            {/* Selector de mÃ©todo */}
+            {/* Selector de método */}
             <div className="space-y-2">
-              <Label className="font-semibold text-sm">Elige cÃ³mo vas a pagar</Label>
+              <Label className="font-semibold text-sm">Elige cómo vas a pagar</Label>
               <div className="grid grid-cols-3 gap-2">
                 {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
@@ -728,7 +728,7 @@ export function RechargeModal({
                 {currentMethodInfo?.number && (
                   <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
                     <p className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                      ðŸ“‹ Pasos a seguir
+                      📋 Pasos a seguir
                     </p>
                     
                     <div className="space-y-2 text-sm text-gray-600">
@@ -742,15 +742,15 @@ export function RechargeModal({
                       </div>
                       <div className="flex items-start gap-2">
                         <span className="bg-blue-100 text-blue-700 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                        <span>Toma captura del comprobante y envÃ­alo en el siguiente paso</span>
+                        <span>Toma captura del comprobante y envíalo en el siguiente paso</span>
                       </div>
                     </div>
 
-                    {/* â”€â”€ Datos de pago con botones COPIAR â”€â”€ */}
+                    {/* ── Datos de pago con botones COPIAR ── */}
                     <div className="bg-white border-2 border-dashed border-blue-300 rounded-xl overflow-hidden">
                       <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
                         <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
-                          {selectedMethod === 'transferencia' ? 'ðŸ¦ Datos bancarios â€” copia los nÃºmeros' : `ðŸ“± NÃºmero de ${currentMethodInfo?.label}`}
+                          {selectedMethod === 'transferencia' ? 'ðŸ¦ Datos bancarios â€” copia los números' : `📱 Número de ${currentMethodInfo?.label}`}
                         </p>
                       </div>
 
@@ -764,14 +764,14 @@ export function RechargeModal({
                                 <p className="text-sm font-semibold text-gray-800">{methodInfo.transferencia.bankName}</p>
                               </div>
                             )}
-                            {/* Titular â€” solo display, sin botÃ³n copiar */}
+                            {/* Titular â€” solo display, sin botón copiar */}
                             {currentMethodInfo?.holder && (
                               <div className="pb-1.5 border-b border-gray-100">
                                 <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
                                 <p className="text-sm font-semibold text-gray-800">{currentMethodInfo?.holder}</p>
                               </div>
                             )}
-                            {/* Cuenta Corriente â€” con botÃ³n copiar */}
+                            {/* Cuenta Corriente â€” con botón copiar */}
                             {methodInfo.transferencia.accountNumber && (
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex-1 min-w-0">
@@ -787,11 +787,11 @@ export function RechargeModal({
                                   }`}
                                 >
                                   {copiedField === 'account' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                                  {copiedField === 'account' ? 'Â¡Copiado!' : 'Copiar'}
+                                  {copiedField === 'account' ? '¡Copiado!' : 'Copiar'}
                                 </button>
                               </div>
                             )}
-                            {/* CCI â€” con botÃ³n copiar */}
+                            {/* CCI â€” con botón copiar */}
                             {methodInfo.transferencia.cci && (
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex-1 min-w-0">
@@ -807,24 +807,24 @@ export function RechargeModal({
                                   }`}
                                 >
                                   {copiedField === 'cci' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                                  {copiedField === 'cci' ? 'Â¡Copiado!' : 'Copiar'}
+                                  {copiedField === 'cci' ? '¡Copiado!' : 'Copiar'}
                                 </button>
                               </div>
                             )}
                           </>
                         ) : (
                           <>
-                            {/* Titular Yape/Plin â€” solo display, sin botÃ³n copiar */}
+                            {/* Titular Yape/Plin â€” solo display, sin botón copiar */}
                             {currentMethodInfo?.holder && (
                               <div className="pb-1.5 border-b border-gray-100">
                                 <p className="text-[10px] text-gray-400 uppercase tracking-wide">Titular</p>
                                 <p className="text-sm font-semibold text-gray-800">{currentMethodInfo?.holder}</p>
                               </div>
                             )}
-                            {/* NÃºmero â€” con botÃ³n copiar */}
+                            {/* Número â€” con botón copiar */}
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">NÃºmero</p>
+                                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Número</p>
                                 <p className="text-2xl font-bold text-gray-900 tracking-widest">{currentMethodInfo?.number}</p>
                               </div>
                               <button
@@ -836,7 +836,7 @@ export function RechargeModal({
                                 }`}
                               >
                                 {copiedField === 'number' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                                {copiedField === 'number' ? 'Â¡Copiado!' : 'Copiar'}
+                                {copiedField === 'number' ? '¡Copiado!' : 'Copiar'}
                               </button>
                             </div>
                           </>
@@ -859,22 +859,22 @@ export function RechargeModal({
             disabled={!currentMethodInfo?.number}
             className="h-11 bg-blue-600 hover:bg-blue-700 font-semibold w-full"
           >
-            Ya paguÃ© â†’ Enviar comprobante
+            Ya pagué → Enviar comprobante
           </Button>
           <div className="flex gap-2">
             {!skipAmountStep && (
               <Button variant="outline" onClick={() => setStep('amount')} className="flex-1 h-10">
-                â† AtrÃ¡s
+                ← Atrás
               </Button>
             )}
-            {/* BotÃ³n "Pagar despuÃ©s" desactivado â€” padres deben pagar obligatoriamente */}
+            {/* Botón "Pagar después" desactivado â€” padres deben pagar obligatoriamente */}
             {/* {(requestType === 'lunch_payment' || requestType === 'debt_payment') && (
               <Button
                 variant="ghost"
                 onClick={onClose}
                 className="flex-1 h-10 text-gray-500 hover:text-gray-700"
               >
-                Pagar despuÃ©s
+                Pagar después
               </Button>
             )} */}
           </div>
@@ -883,16 +883,16 @@ export function RechargeModal({
     );
   };
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PASO 3: Subir voucher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────── PASO 3: Subir voucher ───────────────────────
   const renderStepVoucher = () => (
     <div className="space-y-5">
       {/* Resumen del pago */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center justify-between text-sm">
         <span className="text-gray-600">{requestType === 'lunch_payment' ? 'Pago almuerzo:' : requestType === 'debt_payment' ? 'Pago deuda:' : 'Recarga solicitada:'}</span>
-        <span className="font-bold text-blue-700">S/ {parseFloat(amount).toFixed(2)} vÃ­a {currentMethodInfo?.label}</span>
+        <span className="font-bold text-blue-700">S/ {parseFloat(amount).toFixed(2)} vía {currentMethodInfo?.label}</span>
       </div>
 
-      {/* â”€â”€ Desglose de compras (solo para debt_payment) â”€â”€ */}
+      {/* ── Desglose de compras (solo para debt_payment) ── */}
       {requestType === 'debt_payment' && breakdownItems && breakdownItems.length > 0 && (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
           <button
@@ -900,7 +900,7 @@ export function RechargeModal({
             onClick={() => setShowBreakdown(v => !v)}
             className="w-full flex items-center justify-between px-3 py-2 bg-gray-100 hover:bg-gray-200 text-xs font-semibold text-gray-700 transition-colors"
           >
-            <span>ðŸ“‹ Ver desglose de lo que estÃ¡s pagando ({breakdownItems.length} compra{breakdownItems.length !== 1 ? 's' : ''})</span>
+            <span>📋 Ver desglose de lo que estás pagando ({breakdownItems.length} compra{breakdownItems.length !== 1 ? 's' : ''})</span>
             <span className="text-gray-500">{showBreakdown ? 'â–²' : 'â–¼'}</span>
           </button>
           {showBreakdown && (
@@ -920,26 +920,26 @@ export function RechargeModal({
         </div>
       )}
 
-      {/* NÃºmero de operaciÃ³n â€” OBLIGATORIO */}
+      {/* Número de operación â€” OBLIGATORIO */}
       <div className={`space-y-1.5 rounded-xl p-3 border-2 ${referenceCode.trim() ? 'border-green-300 bg-green-50' : 'border-red-400 bg-red-50'}`}>
         <Label className="font-bold text-sm flex items-center gap-1.5">
           <Hash className="h-4 w-4 text-red-500" />
-          NÃºmero de operaciÃ³n
+          Número de operación
           <span className="text-red-600 font-black">* OBLIGATORIO</span>
         </Label>
         <Input
-          placeholder="Ej: 123456789 (lo encuentras en tu app despuÃ©s de pagar)"
+          placeholder="Ej: 123456789 (lo encuentras en tu app después de pagar)"
           value={referenceCode}
           onChange={(e) => setReferenceCode(e.target.value)}
           className={`font-mono text-base font-semibold border-2 h-11 ${referenceCode.trim() ? 'border-green-400 bg-white' : 'border-red-400 bg-white'}`}
         />
         {!referenceCode.trim() ? (
           <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
-            âš ï¸ Sin este nÃºmero no se puede procesar tu pago. Lo encuentras en Yape/Plin/banco tras realizar la transferencia.
+            ⚠️ Sin este número no se puede procesar tu pago. Lo encuentras en Yape/Plin/banco tras realizar la transferencia.
           </p>
         ) : (
           <p className="text-xs text-green-700 font-medium flex items-center gap-1">
-            âœ… CÃ³digo ingresado correctamente.
+            ✅ Código ingresado correctamente.
           </p>
         )}
       </div>
@@ -961,7 +961,7 @@ export function RechargeModal({
             >
               <X className="h-3 w-3" />
             </button>
-            <p className="text-xs text-green-700 font-medium mt-1 flex items-center gap-1">âœ… Foto adjuntada correctamente.</p>
+            <p className="text-xs text-green-700 font-medium mt-1 flex items-center gap-1">✅ Foto adjuntada correctamente.</p>
           </div>
         ) : (
           <>
@@ -972,10 +972,10 @@ export function RechargeModal({
             >
               <Upload className="h-6 w-6" />
               <span className="text-sm font-semibold">Toca para adjuntar la captura del pago</span>
-              <span className="text-xs">JPG, PNG â€” mÃ¡x. 5 MB</span>
+              <span className="text-xs">JPG, PNG â€” máx. 5 MB</span>
             </button>
             <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
-              âš ï¸ Debes adjuntar la foto o captura del comprobante de pago para continuar.
+              ⚠️ Debes adjuntar la foto o captura del comprobante de pago para continuar.
             </p>
           </>
         )}
@@ -998,7 +998,7 @@ export function RechargeModal({
         />
       </div>
 
-      {/* â”€â”€ Comprobantes adicionales (pago en partes) â”€â”€ */}
+      {/* ── Comprobantes adicionales (pago en partes) ── */}
       {extraVouchers.map((ev, idx) => (
         <div key={ev.id} className="border-2 border-blue-200 rounded-xl p-4 space-y-3 bg-blue-50">
           <div className="flex items-center justify-between">
@@ -1017,7 +1017,7 @@ export function RechargeModal({
               Monto exacto de <em>este</em> comprobante <span className="text-red-500">*</span>
             </Label>
             <p className="text-[11px] text-blue-600">
-              Como pagas en partes, indica cuÃ¡nto cubre <strong>este voucher</strong> (puede ser una parte del total).
+              Como pagas en partes, indica cuánto cubre <strong>este voucher</strong> (puede ser una parte del total).
             </p>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">S/</span>
@@ -1033,10 +1033,10 @@ export function RechargeModal({
             </div>
           </div>
 
-          {/* CÃ³digo de operaciÃ³n adicional */}
+          {/* Código de operación adicional */}
           <div className="space-y-1">
             <Label className="text-sm font-semibold">
-              CÃ³digo de operaciÃ³n <span className="text-red-500">*</span>
+              Código de operación <span className="text-red-500">*</span>
             </Label>
             <Input
               placeholder="Ej: 987654321"
@@ -1062,7 +1062,7 @@ export function RechargeModal({
                 >
                   <X className="h-3 w-3" />
                 </button>
-                <p className="text-xs text-green-700 font-medium mt-1">âœ… Foto adjuntada.</p>
+                <p className="text-xs text-green-700 font-medium mt-1">✅ Foto adjuntada.</p>
               </div>
             ) : (
               <>
@@ -1073,7 +1073,7 @@ export function RechargeModal({
                   <Upload className="h-5 w-5" />
                   <span className="text-xs font-semibold">Adjuntar captura</span>
                 </button>
-                <p className="text-xs text-red-600 font-semibold">âš ï¸ Obligatorio para este comprobante.</p>
+                <p className="text-xs text-red-600 font-semibold">⚠️ Obligatorio para este comprobante.</p>
               </>
             )}
             <input
@@ -1085,7 +1085,7 @@ export function RechargeModal({
                 const file = e.target.files?.[0];
                 if (!file) return;
                 if (file.size > 5 * 1024 * 1024) {
-                  toast({ title: 'Imagen muy grande', description: 'MÃ¡ximo 5 MB', variant: 'destructive' });
+                  toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' });
                   return;
                 }
                 const reader = new FileReader();
@@ -1100,7 +1100,7 @@ export function RechargeModal({
         </div>
       ))}
 
-      {/* BotÃ³n agregar otro comprobante */}
+      {/* Botón agregar otro comprobante */}
       <button
         onClick={() => setExtraVouchers(prev => [...prev, {
           id: `extra_${Date.now()}`,
@@ -1116,7 +1116,7 @@ export function RechargeModal({
       </button>
 
       <div className="flex gap-2">
-        <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">â† AtrÃ¡s</Button>
+        <Button variant="outline" onClick={() => setStep('method')} className="flex-1 h-11">← Atrás</Button>
         <Button
           id="recharge-modal-submit-btn"
           onClick={handleSubmit}
@@ -1127,9 +1127,9 @@ export function RechargeModal({
             extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount || !ev.voucherFile)
           }
           title={
-            !referenceCode.trim() ? 'Falta el nÃºmero de operaciÃ³n' :
+            !referenceCode.trim() ? 'Falta el número de operación' :
             !voucherFile ? 'Falta adjuntar la foto del comprobante' :
-            extraVouchers.some(ev => !ev.referenceCode.trim()) ? 'Falta cÃ³digo en un comprobante adicional' :
+            extraVouchers.some(ev => !ev.referenceCode.trim()) ? 'Falta código en un comprobante adicional' :
             extraVouchers.some(ev => !ev.voucherFile) ? 'Falta foto en un comprobante adicional' : ''
           }
           className="flex-grow h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
@@ -1144,20 +1144,20 @@ export function RechargeModal({
         </Button>
       </div>
 
-      {/* BotÃ³n cancelar (solo cuando hay callback de cancelar, ej. desde PaymentsTab) */}
+      {/* Botón cancelar (solo cuando hay callback de cancelar, ej. desde PaymentsTab) */}
       {onCancel && (
         <button
           type="button"
           onClick={onCancel}
           className="w-full text-center text-xs text-gray-400 hover:text-gray-600 underline py-1 transition-colors"
         >
-          Cancelar â€” volver a la pestaÃ±a de pagos
+          Cancelar â€” volver a la pestaña de pagos
         </button>
       )}
     </div>
   );
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ VISTA COMBINADA (1 sola pantalla) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────── VISTA COMBINADA (1 sola pantalla) ───────────────────────
   const renderCombinedView = () => {
     const hasAnyMethod = !!(
       (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
@@ -1181,7 +1181,7 @@ export function RechargeModal({
           <div className="space-y-2">
             {requestType === 'recharge' && (
               <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 text-xs text-amber-800">
-                <strong>âš ï¸ Esta recarga es solo para compras en el kiosco.</strong> Para almuerzos, usa la pestaÃ±a Pagos.
+                <strong>⚠️ Esta recarga es solo para compras en el kiosco.</strong> Para almuerzos, usa la pestaña Pagos.
               </div>
             )}
             <div className="flex items-center gap-2">
@@ -1251,13 +1251,13 @@ export function RechargeModal({
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center space-y-2">
             <AlertCircle className="h-8 w-8 text-amber-500 mx-auto" />
             <p className="text-sm font-medium text-amber-800">Medios de pago no configurados</p>
-            <p className="text-xs text-amber-600">Contacta a la administraciÃ³n del colegio.</p>
+            <p className="text-xs text-amber-600">Contacta a la administración del colegio.</p>
           </div>
         ) : (
           <>
             {/* Method tabs â€” horizontal */}
             <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1.5">MÃ©todo de pago</p>
+              <p className="text-xs font-semibold text-gray-500 mb-1.5">Método de pago</p>
               <div className="grid grid-cols-3 gap-2">
                 {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
@@ -1288,7 +1288,7 @@ export function RechargeModal({
               <div className="bg-white border-2 border-blue-200 rounded-xl overflow-hidden">
                 <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
                   <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
-                    {selectedMethod === 'transferencia' ? 'ðŸ¦ Datos bancarios' : `ðŸ“± ${currentMethodInfo?.label}`}
+                    {selectedMethod === 'transferencia' ? 'ðŸ¦ Datos bancarios' : `📱 ${currentMethodInfo?.label}`}
                   </p>
                 </div>
                 <div className="p-3 space-y-2">
@@ -1351,7 +1351,7 @@ export function RechargeModal({
                       )}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="text-[9px] text-gray-400 uppercase">NÃºmero</p>
+                          <p className="text-[9px] text-gray-400 uppercase">Número</p>
                           <p className="text-xl font-bold text-gray-900 tracking-widest">{currentMethodInfo?.number}</p>
                         </div>
                         <button
@@ -1377,7 +1377,7 @@ export function RechargeModal({
             )}>
               <Label className="font-bold text-xs flex items-center gap-1">
                 <Hash className="h-3.5 w-3.5 text-red-500" />
-                NÂ° de operaciÃ³n <span className="text-red-500">*</span>
+                N° de operación <span className="text-red-500">*</span>
               </Label>
               <Input
                 placeholder="Ej: 123456789"
@@ -1385,7 +1385,7 @@ export function RechargeModal({
                 onChange={(e) => setReferenceCode(e.target.value)}
                 className="font-mono text-sm font-semibold h-10"
               />
-              {referenceCode.trim() && <p className="text-[10px] text-green-600 font-medium">âœ… CÃ³digo ingresado</p>}
+              {referenceCode.trim() && <p className="text-[10px] text-green-600 font-medium">✅ Código ingresado</p>}
             </div>
 
             <div className={cn(
@@ -1406,7 +1406,7 @@ export function RechargeModal({
                   >
                     <X className="h-3 w-3" />
                   </button>
-                  <p className="text-[10px] text-green-600 font-medium mt-1">âœ… Foto adjuntada</p>
+                  <p className="text-[10px] text-green-600 font-medium mt-1">✅ Foto adjuntada</p>
                 </div>
               ) : (
                 <button
@@ -1475,7 +1475,7 @@ export function RechargeModal({
                   </div>
 
                   <Input
-                    placeholder="NÂ° operaciÃ³n"
+                    placeholder="N° operación"
                     value={ev.referenceCode}
                     onChange={(e) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, referenceCode: e.target.value } : v))}
                     className="font-mono text-sm h-9"
@@ -1504,7 +1504,7 @@ export function RechargeModal({
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      if (file.size > 5 * 1024 * 1024) { toast({ title: 'Imagen muy grande', description: 'MÃ¡ximo 5 MB', variant: 'destructive' }); return; }
+                      if (file.size > 5 * 1024 * 1024) { toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' }); return; }
                       const reader = new FileReader();
                       reader.onload = (ev2) => setExtraVouchers(prev => prev.map(v => v.id === ev.id ? { ...v, voucherFile: file, voucherPreview: ev2.target?.result as string } : v));
                       reader.readAsDataURL(file);
@@ -1550,9 +1550,9 @@ export function RechargeModal({
               {loading ? (
                 <><Loader2 className="h-4 w-4 animate-spin mr-2" />Enviando...</>
               ) : !selectedMethod ? (
-                <>Selecciona el mÃ©todo de pago</>
+                <>Selecciona el método de pago</>
               ) : !referenceCode.trim() ? (
-                <>Falta el NÂ° de operaciÃ³n</>
+                <>Falta el N° de operación</>
               ) : !voucherFile ? (
                 <>Falta adjuntar la foto</>
               ) : extraVouchers.length > 0 ? (
@@ -1573,14 +1573,14 @@ export function RechargeModal({
     );
   };
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PASO 4: Ã‰xito â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────── PASO 4: Ã‰xito ───────────────────────
   const renderStepSuccess = () => (
     <div className="text-center space-y-5 py-4">
       <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
         <CheckCircle2 className="h-12 w-12 text-green-600" />
       </div>
       <div>
-        <h3 className="text-xl font-bold text-gray-900">Â¡Comprobante enviado!</h3>
+        <h3 className="text-xl font-bold text-gray-900">¡Comprobante enviado!</h3>
         <p className="text-gray-500 mt-2 text-sm">
           {requestType === 'lunch_payment'
             ? <>Recibimos tu pago de almuerzo de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
@@ -1606,24 +1606,24 @@ export function RechargeModal({
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
         <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
-          <Clock className="h-4 w-4" /> Â¿QuÃ© pasa ahora?
+          <Clock className="h-4 w-4" /> ¿Qué pasa ahora?
         </p>
         <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-          <li>Un administrador verificarÃ¡ tu comprobante</li>
+          <li>Un administrador verificará tu comprobante</li>
           {requestType === 'lunch_payment' ? (
             <>
-              <li>Tu pedido de almuerzo quedarÃ¡ <strong>confirmado</strong> al aprobarse</li>
-              <li>RecibirÃ¡s la confirmaciÃ³n en la app</li>
+              <li>Tu pedido de almuerzo quedará <strong>confirmado</strong> al aprobarse</li>
+              <li>Recibirás la confirmación en la app</li>
             </>
           ) : requestType === 'debt_payment' ? (
             <>
-              <li>Tus compras pendientes se marcarÃ¡n como <strong>pagadas</strong></li>
-              <li>La deuda desaparecerÃ¡ de tu cuenta al aprobarse</li>
+              <li>Tus compras pendientes se marcarán como <strong>pagadas</strong></li>
+              <li>La deuda desaparecerá de tu cuenta al aprobarse</li>
             </>
           ) : (
             <>
-              <li>El saldo se acreditarÃ¡ en menos de 24 horas</li>
-              <li>PodrÃ¡s ver el saldo actualizado en la app</li>
+              <li>El saldo se acreditará en menos de 24 horas</li>
+              <li>Podrás ver el saldo actualizado en la app</li>
             </>
           )}
         </ul>
@@ -1645,7 +1645,7 @@ export function RechargeModal({
             </div>
             <h3 className="text-lg font-bold text-gray-900">Recargas en mantenimiento</h3>
             <p className="text-sm text-gray-600">
-              El mÃ³dulo de recargas estÃ¡ temporalmente suspendido mientras lo mejoramos.
+              El módulo de recargas está temporalmente suspendido mientras lo mejoramos.
               Su saldo actual sigue activo para compras en el kiosco.
             </p>
             <p className="text-xs text-gray-500">
@@ -1667,7 +1667,7 @@ export function RechargeModal({
           <DialogTitle className="text-xl flex items-center gap-2">
             <Wallet className="h-5 w-5 text-blue-600" />
             {step === 'success'
-              ? 'Â¡Listo!'
+              ? '¡Listo!'
               : isCombinedPayment
               ? 'Pagar Todo Junto'
               : requestType === 'lunch_payment'
