@@ -12,7 +12,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   Wallet, Search, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle,
   Loader2, RefreshCw, ShieldAlert, ChevronDown, ChevronUp, Eye,
-  Image as ImageIcon, FileSpreadsheet, FileText, Info, ChevronLeft, ChevronRight
+  Image as ImageIcon, FileSpreadsheet, FileText, Info, ChevronLeft, ChevronRight,
+  History
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import jsPDF from 'jspdf';
@@ -588,6 +589,33 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
                 </p>
               </div>
             </div>
+
+            {/* Saldo histórico / no registrado */}
+            {(() => {
+              const totalIngresado = recharges.filter(r => r.status === 'approved').reduce((s, r) => s + r.amount, 0);
+              const totalGastado   = transactions.filter(t => t.payment_status === 'paid').reduce((s, t) => s + Math.abs(t.amount), 0);
+              const montoFantasma  = (selectedStudent?.balance || 0) + totalGastado - totalIngresado;
+              if (montoFantasma < 0.01) return null;
+              return (
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                  <History className="h-4 w-4 text-gray-400 shrink-0" />
+                  <span className="text-xs text-gray-500 flex-1">
+                    Saldo inicial / histórico detectado:&nbsp;
+                    <strong className="text-gray-700">S/ {montoFantasma.toFixed(2)}</strong>
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-4 w-4 text-gray-400 cursor-help shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[280px] text-xs leading-relaxed">
+                      Este monto corresponde a saldos cargados en versiones anteriores del
+                      sistema o migraciones que no tienen un comprobante de recarga digital.
+                      No es un error: el saldo es real y el alumno puede usarlo con normalidad.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              );
+            })()}
 
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
               <div className="flex items-center justify-between mb-1.5">
