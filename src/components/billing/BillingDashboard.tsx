@@ -726,17 +726,17 @@ export const BillingDashboard = () => {
       let refundCount = 0;
       let refundAmount = 0;
       try {
-        const refundData = await fetchAllPaginated((cursor) => {
+        const refundDataRaw = await fetchAllPaginated((cursor) => {
           let q = supabase
             .from('transactions')
             .select('amount, metadata, created_at')
             .eq('payment_status', 'cancelled')
-            .eq('is_deleted', false)
-            .eq('metadata->>requires_refund', 'true');
+            .eq('is_deleted', false);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
         });
+        const refundData = refundDataRaw.filter((t: any) => t.metadata?.requires_refund === true || t.metadata?.requires_refund === 'true');
         refundCount = refundData.length;
         refundAmount = refundData.reduce((sum: number, t: any) => sum + Math.abs(t.amount || 0), 0);
       } catch { /* ignore */ }
