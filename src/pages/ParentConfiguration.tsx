@@ -924,7 +924,7 @@ const ParentConfiguration = () => {
           <div>
             <h1 className="text-3xl font-black text-emerald-900 flex items-center gap-3">
               <Users className="h-8 w-8 text-emerald-600" />
-              Configuración de Padres y Profesores
+              Configuración de Padres, Profesores y Alumnos
             </h1>
             <p className="text-emerald-600 font-medium mt-1">
               Gestiona perfiles de padres, profesores, estudiantes y genera reportes del sistema
@@ -958,7 +958,7 @@ const ParentConfiguration = () => {
             
             <TabsTrigger value="directory" className="flex-1 min-w-[120px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
               <BookOpen className="h-4 w-4 mr-2" />
-              Directorio
+              Alumnos
             </TabsTrigger>
 
             <TabsTrigger value="analytics" className="flex-1 min-w-[120px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white">
@@ -971,7 +971,7 @@ const ParentConfiguration = () => {
             </TabsTrigger>
             <TabsTrigger value="kiosk-wallet" className="flex-1 min-w-[120px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-500 data-[state=active]:text-white">
               <Wallet className="h-4 w-4 mr-2" />
-              Saldos Kiosco
+              Recargas
             </TabsTrigger>
           </TabsList>
 
