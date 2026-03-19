@@ -155,9 +155,11 @@ export const BillingReportsTab = ({
         const orParts: string[] = [];
         if (studentIds.length > 0) orParts.push(`student_id.in.(${studentIds.join(',')})`);
         if (teacherIds.length > 0) orParts.push(`teacher_id.in.(${teacherIds.join(',')})`);
-        orParts.push(`description.ilike.${searchPattern}`);
-        orParts.push(`ticket_code.ilike.${searchPattern}`);
-        orParts.push(`manual_client_name.ilike.${searchPattern}`);
+        // Escapar el patrón entre comillas para evitar 400 con caracteres especiales
+        const escapedPattern = searchPattern.replace(/"/g, '\\"');
+        orParts.push(`description.ilike."${escapedPattern}"`);
+        orParts.push(`ticket_code.ilike."${escapedPattern}"`);
+        orParts.push(`manual_client_name.ilike."${escapedPattern}"`);
 
         const orFilter = orParts.join(',');
 
@@ -421,15 +423,24 @@ export const BillingReportsTab = ({
 
   // ── Effects ────────────────────────────────────────────────────────────────
 
+  // ── Ref para evitar el doble fetch en mount ───────────────────────────────
+  const isMounted = useRef(false);
+
   // Re-fetch cuando cambian filtros (resetea a página 1)
   useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      fetchTransactions(1);
+      return;
+    }
     setCurrentPage(1);
     fetchTransactions(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSchool, dateFrom, dateTo, statusFilter, searchTerm, userSchoolId, canViewAllSchools]);
 
-  // Re-fetch cuando cambia la página (sin resetear)
+  // Re-fetch cuando cambia la página (sin resetear) — ignorar el primer render
   useEffect(() => {
+    if (!isMounted.current) return;
     fetchTransactions(currentPage);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
