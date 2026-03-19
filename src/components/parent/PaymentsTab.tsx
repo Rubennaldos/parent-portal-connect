@@ -34,6 +34,7 @@ interface StudentDebt {
   student_name: string;
   student_photo: string | null;
   student_balance: number;
+  school_id: string;
   total_debt: number;
   pending_transactions: PendingTransaction[];
 }
@@ -152,6 +153,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             student_name: student.full_name,
             student_photo: student.photo_url,
             student_balance: student.balance || 0,
+            school_id: student.school_id,
             total_debt: totalDebt,
             pending_transactions: transactions.map(t => ({
               id: t.id,
@@ -259,6 +261,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
 
+  // ── Detectar si las deudas pertenecen a sedes distintas ──
+  const uniqueSchoolIds = [...new Set(debts.map(d => d.school_id).filter(Boolean))];
+  const isMultiSchool = uniqueSchoolIds.length > 1;
+
   // ── Datos para pago combinado ──
   // Solo bloqueamos el pago combinado si TODAS las transacciones de TODOS los hijos
   // ya están cubiertas por vouchers pendientes (no basta con que alguna lo esté)
@@ -307,6 +313,15 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   };
 
   const handleCombinedPay = () => {
+    if (isMultiSchool) {
+      toast({
+        title: '⚠️ Sedes distintas',
+        description: 'No puedes combinar pagos de sedes distintas. Por favor, selecciona y paga las deudas de cada sede por separado, ya que tienen números de cuenta diferentes.',
+        variant: 'destructive',
+        duration: 7000,
+      });
+      return;
+    }
     setCombinedMode(true);
     setSelectedDebt(null);
     setShowPaymentModal(true);
@@ -466,7 +481,15 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                 </p>
               </div>
             </div>
-            {hasCombinedPendingVoucher ? (
+            {isMultiSchool ? (
+              <div className="w-full bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-800">Pago conjunto no disponible</p>
+                  <p className="text-[10px] text-amber-700 mt-0.5">Tus hijos están en sedes distintas con cuentas bancarias diferentes. Paga cada sede por separado usando el botón individual de cada alumno.</p>
+                </div>
+              </div>
+            ) : hasCombinedPendingVoucher ? (
               <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
                 <Send className="h-4 w-4 text-blue-600" />
                 <div>

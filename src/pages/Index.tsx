@@ -283,20 +283,16 @@ const Index = () => {
     }
   };
 
-  // Cargar estado de mantenimiento al montar y cada 30s como fallback
+  // Cargar estado de mantenimiento al montar y cada 30s como fallback.
+  // Se usa parentProfileData?.school_id como dependencia principal para evitar
+  // que los dos useEffect anteriores se pisen entre sí y causen bucles de renders.
   useEffect(() => {
     if (!user) return;
-    fetchMaintenanceConfig();
-    const interval = setInterval(() => fetchMaintenanceConfig(), 30000);
+    // Si ya tenemos el school_id del perfil lo usamos directamente (evita la query extra a students)
+    fetchMaintenanceConfig(parentProfileData?.school_id);
+    const interval = setInterval(() => fetchMaintenanceConfig(parentProfileData?.school_id), 30000);
     return () => clearInterval(interval);
-  }, [user]);
-
-  // Re-verificar cuando se carga parentProfileData (school_id disponible)
-  useEffect(() => {
-    if (user && parentProfileData?.school_id) {
-      fetchMaintenanceConfig(parentProfileData.school_id);
-    }
-  }, [parentProfileData?.school_id]);
+  }, [user, parentProfileData?.school_id]);
 
   // Realtime: detectar cambios en maintenance_config para bloqueo instantáneo
   useEffect(() => {
