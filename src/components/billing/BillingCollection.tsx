@@ -1893,7 +1893,7 @@ Agradecemos su pronta atención. 🙏`;
 
       const statusFilter = paidStatusFilter || 'all';
 
-      console.log('📊 [Reportes] fetchPaidTransactions ejecutando:', { page, schoolIdFilter, statusFilter, paidDateFrom, paidDateTo, canViewAllSchools, selectedSchool, userSchoolId });
+      console.log('📊 [Reportes] fetchPaidTransactions ejecutando:', { page, schoolIdFilter, statusFilter, paidDateFrom, paidDateTo });
 
       // Primero contar el total (query liviana)
       let countQuery = supabase
@@ -2039,9 +2039,7 @@ Agradecemos su pronta atención. 🙏`;
 
   // Cargar pagos realizados cuando cambia la pestaña o la página
   useEffect(() => {
-    console.log('📊 [Reportes] useEffect disparado:', { activeTab, selectedSchool, canViewAllSchools, userSchoolId, paidPage, paidDateFrom, paidDateTo, paidStatusFilter });
     if (activeTab === 'pagos') {
-      console.log('📊 [Reportes] Llamando fetchPaidTransactions...');
       fetchPaidTransactions(paidPage);
     }
     if (activeTab === 'config' && userSchoolId) {

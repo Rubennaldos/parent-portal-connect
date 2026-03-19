@@ -155,11 +155,12 @@ export const BillingReportsTab = ({
         const orParts: string[] = [];
         if (studentIds.length > 0) orParts.push(`student_id.in.(${studentIds.join(',')})`);
         if (teacherIds.length > 0) orParts.push(`teacher_id.in.(${teacherIds.join(',')})`);
-        // Escapar el patrón entre comillas para evitar 400 con caracteres especiales
-        const escapedPattern = searchPattern.replace(/"/g, '\\"');
-        orParts.push(`description.ilike."${escapedPattern}"`);
-        orParts.push(`ticket_code.ilike."${escapedPattern}"`);
-        orParts.push(`manual_client_name.ilike."${escapedPattern}"`);
+        // Encerrar el patrón entre comillas para que PostgREST lo trate como string literal
+        // (necesario cuando contiene espacios, paréntesis u otros caracteres especiales)
+        const safePattern = `%${searchTerm.trim().replace(/"/g, '')}%`;
+        orParts.push(`description.ilike."${safePattern}"`);
+        orParts.push(`ticket_code.ilike."${safePattern}"`);
+        orParts.push(`manual_client_name.ilike."${safePattern}"`);
 
         const orFilter = orParts.join(',');
 
@@ -428,6 +429,9 @@ export const BillingReportsTab = ({
 
   // Re-fetch cuando cambian filtros (resetea a página 1)
   useEffect(() => {
+    // Esperar a tener información del usuario antes de hacer fetch
+    if (!canViewAllSchools && !userSchoolId) return;
+
     if (!isMounted.current) {
       isMounted.current = true;
       fetchTransactions(1);
@@ -441,6 +445,7 @@ export const BillingReportsTab = ({
   // Re-fetch cuando cambia la página (sin resetear) — ignorar el primer render
   useEffect(() => {
     if (!isMounted.current) return;
+    if (!canViewAllSchools && !userSchoolId) return;
     fetchTransactions(currentPage);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);

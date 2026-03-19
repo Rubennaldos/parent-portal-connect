@@ -108,7 +108,7 @@ const Cobranzas = () => {
           statistics: false,
           config: false,
           vouchers: true,
-          pagos_realizados: false,
+          pagos_realizados: false, // supervisor_red usa BillingReportsTab (reports)
           config_sede: false,
           comprobantes: false,
           config_sunat: false,
@@ -128,8 +128,8 @@ const Cobranzas = () => {
           statistics: true,
           config: true,
           vouchers: true,
-          pagos_realizados: true,
-          config_sede: false, // admin_general usa BillingConfig completo, no la versión de sede
+          pagos_realizados: false, // admin_general usa BillingReportsTab (reports), no la versión básica
+          config_sede: false,
           comprobantes: true,
           config_sunat: true,
         });
