@@ -303,54 +303,58 @@ export function UsersManagement() {
   };
 
   // ── Sesiones activas ──────────────────────────────────────────
-  const callSessionsFunction = async (body: object) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-user-sessions`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify(body),
-      }
-    );
-    return res.json();
-  };
-
   const openSessionsModal = async (user: UserWithProfile) => {
     setSessionsUser(user);
     setSessionsData(null);
     setSessionsLoading(true);
-    const result = await callSessionsFunction({ action: 'list_sessions', targetUserId: user.id });
-    setSessionsData(result);
+    try {
+      const { data, error } = await supabase.rpc('get_user_sessions', { p_user_id: user.id });
+      if (error) {
+        // Si la RPC no existe todavía, mostrar mensaje amigable
+        setSessionsData({ sessions: [], note: error.message.includes('does not exist') 
+          ? 'Para ver sesiones, ejecuta primero el SQL CREATE_RPC_USER_SESSIONS.sql en Supabase.'
+          : error.message });
+      } else {
+        setSessionsData({ sessions: data || [] });
+      }
+    } catch (e: any) {
+      setSessionsData({ sessions: [], note: e.message || 'Error al cargar sesiones' });
+    }
     setSessionsLoading(false);
   };
 
   const handleSignOutAll = async (userId: string) => {
     setSigningOutSession('all');
-    const result = await callSessionsFunction({ action: 'sign_out_all', targetUserId: userId });
-    if (result.success) {
-      toast({ title: '✅ Sesiones cerradas', description: 'Todas las sesiones del usuario fueron cerradas.' });
-      setSessionsData({ sessions: [], note: 'Sesiones cerradas.' });
-    } else {
-      toast({ title: 'Error', description: result.error || 'No se pudo cerrar sesiones', variant: 'destructive' });
+    try {
+      const { error } = await supabase.rpc('revoke_user_sessions', { p_user_id: userId });
+      if (error) {
+        toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      } else {
+        toast({ title: '✅ Sesiones cerradas', description: 'Todas las sesiones del usuario fueron cerradas.' });
+        setSessionsData({ sessions: [], note: 'Todas las sesiones fueron cerradas. El usuario deberá iniciar sesión de nuevo.' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
     setSigningOutSession(null);
   };
 
   const handleSignOutSession = async (userId: string, sessionId: string) => {
     setSigningOutSession(sessionId);
-    const result = await callSessionsFunction({ action: 'sign_out_session', targetUserId: userId, sessionId });
-    if (result.success) {
-      toast({ title: '✅ Sesión cerrada', description: result.message });
-      // Recargar sesiones
-      const updated = await callSessionsFunction({ action: 'list_sessions', targetUserId: userId });
-      setSessionsData(updated);
-    } else {
-      toast({ title: 'Error', description: result.error || 'No se pudo cerrar la sesión', variant: 'destructive' });
+    try {
+      // Cerrar sesión específica eliminando de auth.sessions via RPC
+      const { error } = await supabase.rpc('revoke_single_session', { p_session_id: sessionId });
+      if (error) {
+        // Fallback: cerrar todas
+        await handleSignOutAll(userId);
+        return;
+      }
+      toast({ title: '✅ Sesión cerrada', description: 'El dispositivo fue desconectado.' });
+      // Recargar lista
+      const { data } = await supabase.rpc('get_user_sessions', { p_user_id: userId });
+      setSessionsData({ sessions: data || [] });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
     setSigningOutSession(null);
   };
