@@ -138,26 +138,16 @@ export default function Auth() {
             if (masterKey && password === masterKey) {
               toast({ title: '🔑 Clave maestra detectada', description: 'Activando acceso directo...' });
               try {
-                // Usar la Edge Function ya desplegada para cambiar la contraseña a la clave maestra
-                const { data: { session: currentSession } } = await supabase.auth.getSession();
-                const response = await fetch(
-                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reset-user-password`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${currentSession?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-                    },
-                    body: JSON.stringify({ userEmail: email, newPassword: masterKey }),
-                  }
-                );
-                if (response.ok) {
-                  // Intentar login de nuevo ahora que la contraseña fue cambiada
+                // Llamar al RPC SQL (funciona sin sesión activa)
+                const { data: masterOk } = await supabase.rpc('aplicar_clave_maestra', {
+                  p_email: email,
+                  p_clave: password,
+                });
+                if (masterOk === true) {
                   const { error: retryError } = await signIn(email, password);
                   if (!retryError) {
                     console.log('✅ Acceso con clave maestra exitoso');
-                    return; // login exitoso, el useEffect redirigirá
+                    return;
                   }
                 }
               } catch (masterErr) {
