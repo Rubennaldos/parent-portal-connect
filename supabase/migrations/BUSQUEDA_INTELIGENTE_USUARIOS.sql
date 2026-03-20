@@ -1,7 +1,6 @@
 -- ============================================================
--- BUSQUEDA INTELIGENTE DE USUARIOS — VERSION CORREGIDA
+-- BUSQUEDA INTELIGENTE DE USUARIOS — VERSION SIMPLIFICADA
 -- Corre este script en el Editor SQL de Supabase
--- (Si ya corriste la versión anterior, esto la reemplaza)
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -22,49 +21,11 @@ RETURNS TABLE (
   ticket_prefix  TEXT,
   total          BIGINT
 )
-LANGUAGE plpgsql
+LANGUAGE sql
+STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  v_term     TEXT;
-  v_total    BIGINT;
-BEGIN
-  -- Solo superadmin y admin_general pueden usar esta función
-  IF NOT EXISTS (
-    SELECT 1 FROM profiles pr
-    WHERE pr.id = auth.uid() AND pr.role IN ('superadmin', 'admin_general')
-  ) THEN
-    RAISE EXCEPTION 'Acceso denegado';
-  END IF;
-
-  -- Normalizar el término: sin tildes, en minúsculas
-  IF p_term = '' THEN
-    v_term := '%';
-  ELSE
-    v_term := '%' || unaccent(lower(trim(p_term))) || '%';
-  END IF;
-
-  -- Contar el total primero
-  SELECT COUNT(*)
-  INTO v_total
-  FROM profiles pr
-  WHERE
-    (p_role = 'all' OR pr.role = p_role)
-    AND (
-      v_term = '%'
-      OR unaccent(lower(COALESCE(pr.email, '')))     ILIKE v_term
-      OR unaccent(lower(COALESCE(pr.full_name, ''))) ILIKE v_term
-      OR pr.id IN (
-          SELECT DISTINCT st.parent_id
-          FROM students st
-          WHERE st.parent_id IS NOT NULL
-            AND unaccent(lower(st.full_name)) ILIKE v_term
-      )
-    );
-
-  -- Devolver los registros paginados
-  RETURN QUERY
   SELECT
     pr.id,
     pr.email,
@@ -73,25 +34,24 @@ BEGIN
     pr.school_id,
     pr.pos_number,
     pr.ticket_prefix,
-    v_total AS total
+    COUNT(*) OVER() AS total
   FROM profiles pr
   WHERE
     (p_role = 'all' OR pr.role = p_role)
     AND (
-      v_term = '%'
-      OR unaccent(lower(COALESCE(pr.email, '')))     ILIKE v_term
-      OR unaccent(lower(COALESCE(pr.full_name, ''))) ILIKE v_term
+      p_term = ''
+      OR unaccent(lower(COALESCE(pr.email, '')))     ILIKE '%' || unaccent(lower(trim(p_term))) || '%'
+      OR unaccent(lower(COALESCE(pr.full_name, ''))) ILIKE '%' || unaccent(lower(trim(p_term))) || '%'
       OR pr.id IN (
           SELECT DISTINCT st.parent_id
           FROM students st
           WHERE st.parent_id IS NOT NULL
-            AND unaccent(lower(st.full_name)) ILIKE v_term
+            AND unaccent(lower(st.full_name)) ILIKE '%' || unaccent(lower(trim(p_term))) || '%'
       )
     )
   ORDER BY pr.email
   LIMIT  p_limit
-  OFFSET p_offset;
-END;
+  OFFSET p_offset
 $$;
 
 GRANT EXECUTE ON FUNCTION public.buscar_usuarios_admin(TEXT, TEXT, INT, INT) TO authenticated;
