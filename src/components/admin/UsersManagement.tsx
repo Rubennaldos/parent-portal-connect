@@ -52,10 +52,6 @@ import {
   Clock,
   AlertTriangle,
   RefreshCw,
-  Eye,
-  Wallet,
-  ReceiptText,
-  CreditCard,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -115,76 +111,6 @@ export function UsersManagement() {
   const [signingOutSession, setSigningOutSession] = useState<string | null>(null);
   const [sessionsAutoRefresh, setSessionsAutoRefresh] = useState(false);
   const [editingRole, setEditingRole] = useState<string>('');
-
-  // ── "Ver como" — previsualización de perfil ───────────────────
-  const [previewUser, setPreviewUser] = useState<UserWithProfile | null>(null);
-  const [previewData, setPreviewData] = useState<{
-    students?: any[];
-    recharges?: any[];
-    pendingPayments?: any[];
-    recentTransactions?: any[];
-  }>({});
-  const [previewLoading, setPreviewLoading] = useState(false);
-
-  const openPreview = async (user: UserWithProfile) => {
-    setPreviewUser(user);
-    setPreviewData({});
-    setPreviewLoading(true);
-    try {
-      const role = user.profile?.role || '';
-      if (role === 'parent') {
-        // Hijos con saldo
-        const { data: students } = await supabase
-          .from('students')
-          .select('id, full_name, balance, free_account, kiosk_disabled, grade, section')
-          .eq('parent_id', user.id)
-          .order('full_name');
-
-        // Últimas 5 recargas / pagos
-        const { data: recharges } = await supabase
-          .from('recharge_requests')
-          .select('id, amount, status, request_type, created_at, reference_code')
-          .eq('parent_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(8);
-
-        // Transacciones pendientes de pago (deudas activas)
-        const studentIds = (students || []).map((s: any) => s.id);
-        let pendingPayments: any[] = [];
-        if (studentIds.length > 0) {
-          const { data: pending } = await supabase
-            .from('transactions')
-            .select('id, amount, description, created_at, students(full_name)')
-            .in('student_id', studentIds)
-            .eq('type', 'purchase')
-            .eq('payment_status', 'pending')
-            .not('metadata->>lunch_order_id', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(10);
-          pendingPayments = pending || [];
-        }
-
-        setPreviewData({ students: students || [], recharges: recharges || [], pendingPayments });
-      } else {
-        // Para admins / gestores: últimas transacciones de su sede
-        const schoolId = user.profile?.school_id;
-        if (schoolId) {
-          const { data: txs } = await supabase
-            .from('transactions')
-            .select('id, amount, description, type, payment_status, created_at, students(full_name)')
-            .eq('school_id', schoolId)
-            .eq('is_deleted', false)
-            .order('created_at', { ascending: false })
-            .limit(15);
-          setPreviewData({ recentTransactions: txs || [] });
-        }
-      }
-    } catch (err) {
-      console.error('Error cargando preview:', err);
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
 
   // Estadísticas
   const [stats, setStats] = useState({
@@ -772,15 +698,6 @@ export function UsersManagement() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => openPreview(user)}
-                          title="Ver como este usuario"
-                          className="text-purple-600 hover:text-purple-800 hover:bg-purple-50"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
                           onClick={() => openSessionsModal(user)}
                           title="Ver dispositivos conectados"
                           className="text-blue-600 hover:text-blue-800"
@@ -1072,164 +989,6 @@ export function UsersManagement() {
               </>
             )}
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── Dialog: "Ver como" — previsualización de perfil ─── */}
-      <Dialog open={!!previewUser} onOpenChange={(open) => !open && setPreviewUser(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-purple-700">
-              <Eye className="h-5 w-5" />
-              Vista de: {previewUser?.profile?.full_name || previewUser?.email}
-            </DialogTitle>
-            <DialogDescription>
-              Así ve el sistema este usuario ({previewUser?.profile?.role === 'parent' ? 'Padre de Familia' : previewUser?.profile?.role || 'usuario'})
-            </DialogDescription>
-          </DialogHeader>
-
-          {previewLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-              <span className="ml-3 text-gray-500">Cargando perfil...</span>
-            </div>
-          ) : (
-            <div className="space-y-4 pt-2">
-              {/* Info básica */}
-              <div className="bg-purple-50 rounded-lg p-3 flex items-center gap-3">
-                <div className="bg-purple-200 rounded-full w-12 h-12 flex items-center justify-center text-purple-700 font-bold text-lg">
-                  {(previewUser?.profile?.full_name || previewUser?.email || '?')[0].toUpperCase()}
-                </div>
-                <div>
-                  <p className="font-semibold text-gray-900">{previewUser?.profile?.full_name || '—'}</p>
-                  <p className="text-sm text-gray-600">{previewUser?.email}</p>
-                  <p className="text-xs text-purple-600 font-medium mt-0.5">
-                    {previewUser?.school?.name || previewUser?.profile?.school_id ? `📍 ${previewUser?.school?.name || 'Sede asignada'}` : '⚠️ Sin sede asignada'}
-                  </p>
-                </div>
-              </div>
-
-              {/* ── VISTA PADRE ── */}
-              {previewUser?.profile?.role === 'parent' && (
-                <>
-                  {/* Hijos */}
-                  <div>
-                    <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <Users className="h-4 w-4 text-blue-500" />
-                      Hijos registrados ({previewData.students?.length || 0})
-                    </h3>
-                    {previewData.students?.length === 0 ? (
-                      <p className="text-sm text-gray-400 italic">No tiene hijos registrados</p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {previewData.students?.map((s: any) => (
-                          <div key={s.id} className="bg-white border rounded-lg p-3 shadow-sm">
-                            <p className="font-semibold text-gray-900 text-sm">{s.full_name}</p>
-                            <p className="text-xs text-gray-500">{s.grade} {s.section}</p>
-                            <div className="mt-2 flex items-center justify-between">
-                              <span className="text-xs text-gray-500">Saldo kiosco:</span>
-                              <span className={`font-bold text-sm ${s.balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                S/ {Number(s.balance || 0).toFixed(2)}
-                              </span>
-                            </div>
-                            <div className="flex gap-1 mt-1">
-                              {!s.free_account && (
-                                <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">Con Recargas</span>
-                              )}
-                              {s.kiosk_disabled && (
-                                <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">Kiosco Off</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Últimas recargas */}
-                  <div>
-                    <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <Wallet className="h-4 w-4 text-green-500" />
-                      Últimas recargas / pagos
-                    </h3>
-                    {previewData.recharges?.length === 0 ? (
-                      <p className="text-sm text-gray-400 italic">No hay solicitudes de recarga</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {previewData.recharges?.map((r: any) => (
-                          <div key={r.id} className="flex items-center justify-between text-sm bg-white border rounded px-3 py-2">
-                            <div>
-                              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full mr-2 ${
-                                r.status === 'approved' ? 'bg-green-100 text-green-700' :
-                                r.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-red-100 text-red-700'
-                              }`}>
-                                {r.status === 'approved' ? '✅ Aprobado' : r.status === 'pending' ? '⏳ Pendiente' : '❌ Rechazado'}
-                              </span>
-                              <span className="text-gray-500 text-xs">
-                                {r.request_type === 'lunch_payment' ? '🍽️ Almuerzo' : r.request_type === 'debt_payment' ? '📋 Deuda' : '💰 Recarga'}
-                              </span>
-                            </div>
-                            <span className="font-bold text-gray-900">S/ {Number(r.amount).toFixed(2)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Deudas pendientes de almuerzos */}
-                  {(previewData.pendingPayments?.length || 0) > 0 && (
-                    <div>
-                      <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                        <ReceiptText className="h-4 w-4 text-orange-500" />
-                        Almuerzos pendientes de pago ({previewData.pendingPayments?.length})
-                      </h3>
-                      <div className="space-y-1">
-                        {previewData.pendingPayments?.map((t: any) => (
-                          <div key={t.id} className="flex items-center justify-between text-sm bg-orange-50 border border-orange-100 rounded px-3 py-2">
-                            <div>
-                              <p className="font-medium text-gray-800">{(t.students as any)?.full_name}</p>
-                              <p className="text-xs text-gray-500">{t.description}</p>
-                            </div>
-                            <span className="font-bold text-orange-700">S/ {Math.abs(Number(t.amount)).toFixed(2)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* ── VISTA ADMIN / GESTOR ── */}
-              {previewUser?.profile?.role !== 'parent' && (
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <CreditCard className="h-4 w-4 text-blue-500" />
-                    Últimas transacciones de su sede
-                  </h3>
-                  {!previewUser?.profile?.school_id ? (
-                    <p className="text-sm text-gray-400 italic">Este usuario no tiene sede asignada</p>
-                  ) : previewData.recentTransactions?.length === 0 ? (
-                    <p className="text-sm text-gray-400 italic">Sin transacciones recientes</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {previewData.recentTransactions?.map((t: any) => (
-                        <div key={t.id} className="flex items-center justify-between text-sm bg-white border rounded px-3 py-2">
-                          <div>
-                            <p className="font-medium text-gray-800">{(t.students as any)?.full_name || 'Sin alumno'}</p>
-                            <p className="text-xs text-gray-500">{t.description || t.type}</p>
-                          </div>
-                          <span className={`font-bold ${t.type === 'recharge' ? 'text-green-600' : 'text-gray-800'}`}>
-                            {t.type === 'recharge' ? '+' : ''}S/ {Math.abs(Number(t.amount)).toFixed(2)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
         </DialogContent>
       </Dialog>
 
