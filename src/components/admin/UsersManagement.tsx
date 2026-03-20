@@ -163,7 +163,10 @@ export function UsersManagement() {
 
       if (rpcError) throw rpcError;
 
-      const allProfiles = rpcResult || [];
+      // La función devuelve SETOF json — cada elemento ya es un objeto
+      const allProfiles = (rpcResult || []).map((row: any) =>
+        typeof row === 'string' ? JSON.parse(row) : row
+      );
       const total = allProfiles.length > 0 ? Number(allProfiles[0].total) : 0;
       setTotalCount(total);
 

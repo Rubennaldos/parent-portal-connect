@@ -1,40 +1,37 @@
 -- ============================================================
--- BUSQUEDA INTELIGENTE DE USUARIOS — VERSION SIMPLIFICADA
+-- BUSQUEDA INTELIGENTE — VERSIÓN FINAL (sin conflictos)
 -- Corre este script en el Editor SQL de Supabase
 -- ============================================================
 
+-- Activar extensión de tildes
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
+-- Borrar función anterior para evitar conflictos
+DROP FUNCTION IF EXISTS public.buscar_usuarios_admin(TEXT, TEXT, INT, INT);
+
+-- Nueva versión que devuelve JSON (sin conflicto de nombres de columnas)
 CREATE OR REPLACE FUNCTION public.buscar_usuarios_admin(
   p_term    TEXT    DEFAULT '',
   p_role    TEXT    DEFAULT 'all',
   p_offset  INT     DEFAULT 0,
   p_limit   INT     DEFAULT 50
 )
-RETURNS TABLE (
-  id             UUID,
-  email          TEXT,
-  full_name      TEXT,
-  role           TEXT,
-  school_id      UUID,
-  pos_number     INT,
-  ticket_prefix  TEXT,
-  total          BIGINT
-)
+RETURNS SETOF json
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT
-    pr.id,
-    pr.email,
-    pr.full_name,
-    pr.role,
-    pr.school_id,
-    pr.pos_number,
-    pr.ticket_prefix,
-    COUNT(*) OVER() AS total
+  SELECT json_build_object(
+    'id',            pr.id,
+    'email',         pr.email,
+    'full_name',     pr.full_name,
+    'role',          pr.role,
+    'school_id',     pr.school_id,
+    'pos_number',    pr.pos_number,
+    'ticket_prefix', pr.ticket_prefix,
+    'total',         COUNT(*) OVER()
+  )
   FROM profiles pr
   WHERE
     (p_role = 'all' OR pr.role = p_role)
