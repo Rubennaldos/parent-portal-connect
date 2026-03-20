@@ -99,6 +99,9 @@ export const BillingReportsTab = ({
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // ── Preview foto de comprobante ─────────────────────────────────────────────
+  const [previewVoucher, setPreviewVoucher] = useState<string | null>(null);
+
   // Anti-race-condition: solo procesar la respuesta del fetch más reciente
   const fetchRequestId = useRef(0);
 
@@ -817,6 +820,38 @@ export const BillingReportsTab = ({
 
   return (
     <div className="mt-0">
+      {/* ── Lightbox foto de comprobante ── */}
+      {previewVoucher && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setPreviewVoucher(null)}
+        >
+          <div className="relative max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+            <button
+              className="absolute -top-3 -right-3 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg text-gray-700 hover:bg-gray-100 z-10 text-lg font-bold"
+              onClick={() => setPreviewVoucher(null)}
+            >
+              ×
+            </button>
+            <img
+              src={previewVoucher}
+              alt="Foto del comprobante"
+              className="w-full rounded-xl shadow-2xl max-h-[80vh] object-contain bg-white"
+            />
+            <div className="text-center mt-3">
+              <a
+                href={previewVoucher}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white underline text-sm hover:text-gray-200"
+              >
+                Abrir en nueva pestaña
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Filtros ── */}
       <Card className="mb-4">
         <CardContent className="p-3 sm:p-4">
@@ -1200,17 +1235,39 @@ export const BillingReportsTab = ({
                           )}
                         </div>
 
-                        {/* Registrado por */}
+                        {/* Cobrado por */}
                         {transaction.created_by_profile && (() => {
                           const userInfo = getUserRoleDescription(transaction.created_by_profile, schoolName);
                           return userInfo ? (
                             <div className="border-t pt-2 mt-2">
-                              <p className="text-gray-500 text-sm">👤 Registrado por:</p>
+                              <p className="text-gray-500 text-sm">👤 Cobrado por:</p>
                               <p className="font-semibold text-gray-900">{userInfo.name}</p>
                               <p className="text-xs text-gray-600 mt-1">{userInfo.role}</p>
                             </div>
                           ) : null;
                         })()}
+
+                        {/* Foto del comprobante de pago */}
+                        {transaction.metadata?.voucher_url && (
+                          <div className="border-t pt-2 mt-2">
+                            <p className="text-gray-500 text-sm mb-1">🖼️ Foto del comprobante:</p>
+                            <button
+                              onClick={() => setPreviewVoucher(transaction.metadata.voucher_url)}
+                              className="block w-full rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition-colors group relative"
+                            >
+                              <img
+                                src={transaction.metadata.voucher_url}
+                                alt="Comprobante de pago"
+                                className="w-full max-h-48 object-cover group-hover:opacity-90 transition-opacity"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                <span className="opacity-0 group-hover:opacity-100 bg-white/90 text-gray-800 text-xs font-semibold px-3 py-1 rounded-full shadow transition-opacity">
+                                  Ver completo
+                                </span>
+                              </div>
+                            </button>
+                          </div>
+                        )}
 
                         {transaction.document_type && (
                           <div className="border-t pt-2 mt-2">
