@@ -1,14 +1,11 @@
 -- ============================================================
--- BUSQUEDA INTELIGENTE DE USUARIOS (sin tildes, sin mayúsculas)
--- Corre este script UNA SOLA VEZ en el Editor SQL de Supabase
+-- BUSQUEDA INTELIGENTE DE USUARIOS — VERSION CORREGIDA
+-- Corre este script en el Editor SQL de Supabase
+-- (Si ya corriste la versión anterior, esto la reemplaza)
 -- ============================================================
 
--- Activar extensión de tildes (ya viene en Supabase, solo hay que activarla)
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
--- Función de búsqueda inteligente para el panel de SuperAdmin
--- Busca por email, nombre del padre Y nombre de cualquier hijo
--- Sin importar tildes ni mayúsculas
 CREATE OR REPLACE FUNCTION public.buscar_usuarios_admin(
   p_term    TEXT    DEFAULT '',
   p_role    TEXT    DEFAULT 'all',
@@ -30,57 +27,71 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_term TEXT;
+  v_term     TEXT;
+  v_total    BIGINT;
 BEGIN
   -- Solo superadmin y admin_general pueden usar esta función
   IF NOT EXISTS (
-    SELECT 1 FROM profiles
-    WHERE id = auth.uid() AND role IN ('superadmin', 'admin_general')
+    SELECT 1 FROM profiles pr
+    WHERE pr.id = auth.uid() AND pr.role IN ('superadmin', 'admin_general')
   ) THEN
     RAISE EXCEPTION 'Acceso denegado';
   END IF;
 
   -- Normalizar el término: sin tildes, en minúsculas
-  v_term := '%' || unaccent(lower(trim(p_term))) || '%';
+  IF p_term = '' THEN
+    v_term := '%';
+  ELSE
+    v_term := '%' || unaccent(lower(trim(p_term))) || '%';
+  END IF;
 
-  RETURN QUERY
-  WITH matched_ids AS (
-    SELECT p.id
-    FROM profiles p
-    WHERE
-      -- Filtro de rol
-      (p_role = 'all' OR p.role = p_role)
-      AND
-      -- Si no hay término, devolver todos; si hay término, buscar en todo
-      (
-        p_term = ''
-        OR unaccent(lower(COALESCE(p.email, '')))     ILIKE v_term
-        OR unaccent(lower(COALESCE(p.full_name, ''))) ILIKE v_term
-        OR p.id IN (
-          -- Buscar por nombre de hijo
-          SELECT DISTINCT parent_id
-          FROM students
-          WHERE parent_id IS NOT NULL
-            AND unaccent(lower(full_name)) ILIKE v_term
-        )
+  -- Contar el total primero
+  SELECT COUNT(*)
+  INTO v_total
+  FROM profiles pr
+  WHERE
+    (p_role = 'all' OR pr.role = p_role)
+    AND (
+      v_term = '%'
+      OR unaccent(lower(COALESCE(pr.email, '')))     ILIKE v_term
+      OR unaccent(lower(COALESCE(pr.full_name, ''))) ILIKE v_term
+      OR pr.id IN (
+          SELECT DISTINCT st.parent_id
+          FROM students st
+          WHERE st.parent_id IS NOT NULL
+            AND unaccent(lower(st.full_name)) ILIKE v_term
       )
-  )
+    );
+
+  -- Devolver los registros paginados
+  RETURN QUERY
   SELECT
-    p.id,
-    p.email,
-    p.full_name,
-    p.role,
-    p.school_id,
-    p.pos_number,
-    p.ticket_prefix,
-    (SELECT COUNT(*) FROM matched_ids) AS total
-  FROM profiles p
-  WHERE p.id IN (SELECT id FROM matched_ids)
-  ORDER BY p.email
+    pr.id,
+    pr.email,
+    pr.full_name,
+    pr.role,
+    pr.school_id,
+    pr.pos_number,
+    pr.ticket_prefix,
+    v_total AS total
+  FROM profiles pr
+  WHERE
+    (p_role = 'all' OR pr.role = p_role)
+    AND (
+      v_term = '%'
+      OR unaccent(lower(COALESCE(pr.email, '')))     ILIKE v_term
+      OR unaccent(lower(COALESCE(pr.full_name, ''))) ILIKE v_term
+      OR pr.id IN (
+          SELECT DISTINCT st.parent_id
+          FROM students st
+          WHERE st.parent_id IS NOT NULL
+            AND unaccent(lower(st.full_name)) ILIKE v_term
+      )
+    )
+  ORDER BY pr.email
   LIMIT  p_limit
   OFFSET p_offset;
 END;
 $$;
 
--- Dar permiso al frontend
 GRANT EXECUTE ON FUNCTION public.buscar_usuarios_admin(TEXT, TEXT, INT, INT) TO authenticated;
