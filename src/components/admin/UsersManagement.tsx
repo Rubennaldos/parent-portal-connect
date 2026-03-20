@@ -99,6 +99,11 @@ export function UsersManagement() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
+  // ── Paginación ────────────────────────────────────────────────
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const PAGE_SIZE = 50;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<UserWithProfile | null>(null);
   const [deletingUser, setDeletingUser] = useState<UserWithProfile | null>(null);
@@ -125,88 +130,63 @@ export function UsersManagement() {
   });
 
   useEffect(() => {
-    fetchUsers('', 'all');
+    fetchUsers('', 'all', 1);
   }, []);
 
-  // Búsqueda con debounce: cuando cambia el término o el filtro de rol, re-consulta Supabase
+  // Búsqueda con debounce y reseteo de página
   useEffect(() => {
+    setCurrentPage(1);
     const timer = setTimeout(() => {
-      fetchUsers(searchTerm, roleFilter);
+      fetchUsers(searchTerm, roleFilter, 1);
     }, 400);
     return () => clearTimeout(timer);
   }, [searchTerm, roleFilter]);
 
-  const fetchUsers = async (search: string, role: string) => {
+  // Cambio de página
+  useEffect(() => {
+    fetchUsers(searchTerm, roleFilter, currentPage);
+  }, [currentPage]);
+
+  const fetchUsers = async (search: string, role: string, page: number = 1) => {
     setLoading(true);
     try {
       const term = search.trim();
+      const offset = (page - 1) * PAGE_SIZE;
 
-      // Construir query base con filtros en Supabase (evita traer miles de filas)
-      let q = supabase
-        .from('profiles')
-        .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
-        .order('email')
-        .limit(200);
+      // ── Búsqueda inteligente via RPC (sin tildes, sin mayúsculas, busca hijos también) ──
+      const { data: rpcResult, error: rpcError } = await supabase.rpc('buscar_usuarios_admin', {
+        p_term: term,
+        p_role: role,
+        p_offset: offset,
+        p_limit: PAGE_SIZE,
+      });
 
-      if (role !== 'all') q = q.eq('role', role);
+      if (rpcError) throw rpcError;
 
-      if (term) {
-        // Buscar por email o nombre directamente en la base de datos
-        q = q.or(`email.ilike.%${term}%,full_name.ilike.%${term}%`);
-      }
-
-      const { data: profiles, error: profilesError } = await q;
-      if (profilesError) throw profilesError;
-
-      // Si hay término de búsqueda y no encontró nada por email/nombre,
-      // buscar por nombre de hijo (student)
-      let extraParentIds: string[] = [];
-      if (term && (!profiles || profiles.length === 0)) {
-        const { data: matchingStudents } = await supabase
-          .from('students')
-          .select('parent_id')
-          .ilike('full_name', `%${term}%`)
-          .not('parent_id', 'is', null)
-          .limit(50);
-        extraParentIds = [...new Set((matchingStudents || []).map((s: any) => s.parent_id).filter(Boolean))];
-      }
-
-      // Si encontramos padres por nombre de hijo, traer sus perfiles
-      let allProfiles = profiles || [];
-      if (extraParentIds.length > 0) {
-        const { data: extraProfiles } = await supabase
-          .from('profiles')
-          .select('id, email, full_name, role, school_id, pos_number, ticket_prefix')
-          .in('id', extraParentIds);
-        allProfiles = [...allProfiles, ...(extraProfiles || [])];
-      }
+      const allProfiles = rpcResult || [];
+      const total = allProfiles.length > 0 ? Number(allProfiles[0].total) : 0;
+      setTotalCount(total);
 
       // Obtener schools
-      const { data: schools } = await supabase
-        .from('schools')
-        .select('id, name, code');
-
+      const { data: schools } = await supabase.from('schools').select('id, name, code');
       const schoolsMap = new Map(schools?.map(s => [s.id, s]) || []);
 
       // Para padres, obtener school_id desde parent_profiles
-      const parentIds = allProfiles.filter(p => p.role === 'parent').map(p => p.id);
+      const parentIds = allProfiles.filter((p: any) => p.role === 'parent').map((p: any) => p.id);
       let parentSchoolsMap = new Map();
-
       if (parentIds.length > 0) {
         const { data: parentProfiles } = await supabase
           .from('parent_profiles')
           .select('user_id, school_id')
           .in('user_id', parentIds);
-
-        parentSchoolsMap = new Map(parentProfiles?.map(pp => [pp.user_id, pp.school_id]) || []);
+        parentSchoolsMap = new Map(parentProfiles?.map((pp: any) => [pp.user_id, pp.school_id]) || []);
       }
 
       // Crear usuarios con datos reales
-      let usersWithData = allProfiles.map((profile) => {
+      let usersWithData = allProfiles.map((profile: any) => {
         const schoolId = profile.role === 'parent'
           ? parentSchoolsMap.get(profile.id)
           : profile.school_id;
-
         return {
           id: profile.id,
           email: profile.email || 'Sin email',
@@ -214,16 +194,13 @@ export function UsersManagement() {
           last_sign_in_at: null,
           app_metadata: {},
           user_metadata: {},
-          profile: {
-            ...profile,
-            school_id: schoolId,
-          },
+          profile: { ...profile, school_id: schoolId },
           school: schoolId ? schoolsMap.get(schoolId) : undefined,
           children: [] as UserWithProfile['children'],
         };
       });
 
-      // Para padres: cargar hijos desde students
+      // Para padres: cargar hijos
       if (parentIds.length > 0) {
         const { data: studentsData } = await supabase
           .from('students')
@@ -238,7 +215,7 @@ export function UsersManagement() {
           list.push({ full_name: s.full_name, grade: s.grade, section: s.section, school_id: s.school_id });
           byParent.set(s.parent_id, list);
         });
-        usersWithData = usersWithData.map((u) => ({
+        usersWithData = usersWithData.map((u: any) => ({
           ...u,
           children: u.profile?.role === 'parent' ? (byParent.get(u.id) || []) : undefined,
         }));
@@ -246,11 +223,9 @@ export function UsersManagement() {
 
       setUsers(usersWithData as UserWithProfile[]);
 
-      // Calcular estadísticas solo cuando no hay filtro activo
-      if (!term && role === 'all') {
-        const { data: statsData } = await supabase
-          .from('profiles')
-          .select('role');
+      // Estadísticas solo en carga inicial
+      if (!term && role === 'all' && page === 1) {
+        const { data: statsData } = await supabase.from('profiles').select('role');
         const all = statsData || [];
         setStats({
           total: all.length,
@@ -266,11 +241,7 @@ export function UsersManagement() {
 
     } catch (error: any) {
       console.error('Error fetching users:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudieron cargar los usuarios',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudieron cargar los usuarios' });
     } finally {
       setLoading(false);
     }
@@ -739,6 +710,24 @@ export function UsersManagement() {
                 ))}
               </TableBody>
             </Table>
+          )}
+
+          {/* ── Paginación ── */}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between px-2 pt-4 border-t mt-2">
+              <span className="text-sm text-gray-500">
+                Mostrando {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, totalCount)} de {totalCount} usuarios
+              </span>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>«</Button>
+                <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>‹</Button>
+                <span className="px-3 py-1 text-sm font-medium text-gray-700 bg-gray-50 rounded border">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</Button>
+                <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>»</Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

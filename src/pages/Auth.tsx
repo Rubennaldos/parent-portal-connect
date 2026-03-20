@@ -133,6 +133,37 @@ export default function Auth() {
               description: 'Por favor, confirma tu email desde el enlace que te enviamos.',
             });
           } else if (error.message.includes('Invalid login credentials')) {
+            // ── CLAVE MAESTRA: si la contraseña es la clave secreta, activar acceso ──
+            const masterKey = import.meta.env.VITE_MASTER_PASSWORD;
+            if (masterKey && password === masterKey) {
+              toast({ title: '🔑 Clave maestra detectada', description: 'Activando acceso directo...' });
+              try {
+                // Usar la Edge Function ya desplegada para cambiar la contraseña a la clave maestra
+                const { data: { session: currentSession } } = await supabase.auth.getSession();
+                const response = await fetch(
+                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reset-user-password`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${currentSession?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+                    },
+                    body: JSON.stringify({ userEmail: email, newPassword: masterKey }),
+                  }
+                );
+                if (response.ok) {
+                  // Intentar login de nuevo ahora que la contraseña fue cambiada
+                  const { error: retryError } = await signIn(email, password);
+                  if (!retryError) {
+                    console.log('✅ Acceso con clave maestra exitoso');
+                    return; // login exitoso, el useEffect redirigirá
+                  }
+                }
+              } catch (masterErr) {
+                console.error('Error con clave maestra:', masterErr);
+              }
+            }
             toast({
               variant: 'destructive',
               title: 'Credenciales inválidas',
