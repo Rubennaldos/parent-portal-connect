@@ -56,10 +56,6 @@ import {
   Wallet,
   ReceiptText,
   CreditCard,
-  LogIn,
-  Copy,
-  CheckCheck,
-  ExternalLink,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -129,48 +125,6 @@ export function UsersManagement() {
     recentTransactions?: any[];
   }>({});
   const [previewLoading, setPreviewLoading] = useState(false);
-
-  // ── Impersonar usuario — link de acceso directo ──────────────
-  const [impersonateUser, setImpersonateUser] = useState<UserWithProfile | null>(null);
-  const [impersonateLink, setImpersonateLink] = useState<string | null>(null);
-  const [impersonateLoading, setImpersonateLoading] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
-
-  const handleImpersonate = async (user: UserWithProfile) => {
-    setImpersonateUser(user);
-    setImpersonateLink(null);
-    setLinkCopied(false);
-    setImpersonateLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('No hay sesión activa');
-
-      const response = await supabase.functions.invoke('manage-user-sessions', {
-        body: { action: 'generate_magic_link', targetUserId: user.id },
-      });
-
-      if (response.error) throw new Error(response.error.message);
-      if (!response.data?.magic_link) throw new Error('No se recibió el link');
-
-      setImpersonateLink(response.data.magic_link);
-    } catch (err: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error al generar link',
-        description: err.message || 'No se pudo generar el link de acceso',
-      });
-      setImpersonateUser(null);
-    } finally {
-      setImpersonateLoading(false);
-    }
-  };
-
-  const copyImpersonateLink = async () => {
-    if (!impersonateLink) return;
-    await navigator.clipboard.writeText(impersonateLink);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 3000);
-  };
 
   const openPreview = async (user: UserWithProfile) => {
     setPreviewUser(user);
@@ -818,18 +772,8 @@ export function UsersManagement() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleImpersonate(user)}
-                          title="Entrar como este usuario (link de acceso directo)"
-                          className="text-orange-600 hover:text-orange-800 hover:bg-orange-50"
-                          disabled={user.profile?.role === 'superadmin'}
-                        >
-                          <LogIn className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
                           onClick={() => openPreview(user)}
-                          title="Ver resumen del perfil"
+                          title="Ver como este usuario"
                           className="text-purple-600 hover:text-purple-800 hover:bg-purple-50"
                         >
                           <Eye className="h-4 w-4" />
@@ -1128,75 +1072,6 @@ export function UsersManagement() {
               </>
             )}
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── Dialog: Impersonar usuario (acceso directo) ─── */}
-      <Dialog open={!!impersonateUser} onOpenChange={(open) => !open && (setImpersonateUser(null), setImpersonateLink(null))}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-orange-700">
-              <LogIn className="h-5 w-5" />
-              Acceso directo como:
-            </DialogTitle>
-            <DialogDescription>
-              <span className="font-semibold text-gray-800">{impersonateUser?.email}</span>
-              <span className="block text-xs mt-1 text-gray-500">
-                {impersonateUser?.profile?.full_name || '—'} · {impersonateUser?.profile?.role}
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-
-          {impersonateLoading ? (
-            <div className="flex items-center justify-center py-10 gap-3">
-              <Loader2 className="h-6 w-6 animate-spin text-orange-500" />
-              <span className="text-gray-500">Generando link de acceso...</span>
-            </div>
-          ) : impersonateLink ? (
-            <div className="space-y-4 pt-2">
-              {/* Advertencia */}
-              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-amber-800">
-                  <p className="font-semibold mb-1">⚠️ Abre este link en ventana INCÓGNITO</p>
-                  <p>Si lo abres en esta misma ventana, <strong>te desconectas como SuperAdmin</strong>. Para no perder tu sesión, copia el link y pégalo en una ventana de incógnito (Ctrl+Shift+N).</p>
-                </div>
-              </div>
-
-              {/* Link copiable */}
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <p className="text-xs text-gray-500 mb-1">Link de acceso directo (válido por 60 minutos):</p>
-                <p className="text-xs font-mono text-gray-700 break-all select-all bg-white border rounded p-2">
-                  {impersonateLink}
-                </p>
-              </div>
-
-              {/* Botones */}
-              <div className="flex flex-col gap-2">
-                <Button
-                  onClick={copyImpersonateLink}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white"
-                >
-                  {linkCopied ? (
-                    <><CheckCheck className="h-4 w-4 mr-2" /> ¡Link copiado!</>
-                  ) : (
-                    <><Copy className="h-4 w-4 mr-2" /> Copiar link</>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => window.open(impersonateLink, '_blank')}
-                  className="w-full border-orange-400 text-orange-700 hover:bg-orange-50"
-                >
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Abrir (te desconecta como admin)
-                </Button>
-              </div>
-              <p className="text-center text-xs text-gray-400">
-                Este link es de un solo uso y expira en 60 minutos
-              </p>
-            </div>
-          ) : null}
         </DialogContent>
       </Dialog>
 
