@@ -585,7 +585,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
                 <p className="text-xs text-red-600 font-medium">Total gastado</p>
                 <p className="text-xl font-bold text-red-700">
-                  S/ {transactions.filter(t => t.payment_status === 'paid').reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)}
+                  S/ {transactions.reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)}
                 </p>
               </div>
             </div>
@@ -593,7 +593,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
             {/* Saldo histórico / no registrado */}
             {(() => {
               const totalIngresado = recharges.filter(r => r.status === 'approved').reduce((s, r) => s + r.amount, 0);
-              const totalGastado   = transactions.filter(t => t.payment_status === 'paid').reduce((s, t) => s + Math.abs(t.amount), 0);
+              const totalGastado   = transactions.reduce((s, t) => s + Math.abs(t.amount), 0);
               const montoFantasma  = (selectedStudent?.balance || 0) + totalGastado - totalIngresado;
               if (montoFantasma < 0.01) return null;
               return (
