@@ -594,27 +594,53 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
             {(() => {
               const totalIngresado = recharges.filter(r => r.status === 'approved').reduce((s, r) => s + r.amount, 0);
               const totalGastado   = transactions.reduce((s, t) => s + Math.abs(t.amount), 0);
-              const montoFantasma  = (selectedStudent?.balance || 0) + totalGastado - totalIngresado;
-              if (montoFantasma < 0.01) return null;
-              return (
-                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
-                  <History className="h-4 w-4 text-gray-400 shrink-0" />
-                  <span className="text-xs text-gray-500 flex-1">
-                    Saldo inicial / histórico detectado:&nbsp;
-                    <strong className="text-gray-700">S/ {montoFantasma.toFixed(2)}</strong>
-                  </span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-4 w-4 text-gray-400 cursor-help shrink-0" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-[280px] text-xs leading-relaxed">
-                      Este monto corresponde a saldos cargados en versiones anteriores del
-                      sistema o migraciones que no tienen un comprobante de recarga digital.
-                      No es un error: el saldo es real y el alumno puede usarlo con normalidad.
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              );
+              const diferencia     = (selectedStudent?.balance || 0) + totalGastado - totalIngresado;
+
+              if (Math.abs(diferencia) < 0.01) return null;
+
+              if (diferencia > 0) {
+                // Hay saldo sin respaldo (ingresó más de lo que muestran las recargas)
+                return (
+                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                    <History className="h-4 w-4 text-gray-400 shrink-0" />
+                    <span className="text-xs text-gray-500 flex-1">
+                      Saldo inicial / histórico detectado:&nbsp;
+                      <strong className="text-gray-700">S/ {diferencia.toFixed(2)}</strong>
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-gray-400 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[280px] text-xs leading-relaxed">
+                        Este monto corresponde a saldos cargados en versiones anteriores del
+                        sistema o migraciones que no tienen un comprobante de recarga digital.
+                        No es un error: el saldo es real y el alumno puede usarlo con normalidad.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                );
+              } else {
+                // Hay consumo sin registro (gastó más de lo que muestran las transacciones)
+                return (
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+                    <History className="h-4 w-4 text-amber-500 shrink-0" />
+                    <span className="text-xs text-amber-700 flex-1">
+                      Consumo previo sin registro:&nbsp;
+                      <strong className="text-amber-800">S/ {Math.abs(diferencia).toFixed(2)}</strong>
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-amber-400 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[280px] text-xs leading-relaxed">
+                        El saldo actual es menor de lo esperado. Hay S/ {Math.abs(diferencia).toFixed(2)} en consumos
+                        realizados antes del sistema de transacciones actual que no tienen registro digital.
+                        El saldo en pantalla es el correcto.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                );
+              }
             })()}
 
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
