@@ -9,9 +9,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import {
   Loader2, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Send,
   ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown,
-  Wallet, ChevronDown, ChevronUp, Clock, Eye,
+  Wallet, ChevronDown, ChevronUp, Clock, Eye, AlertTriangle, Globe,
 } from 'lucide-react';
-import { format, subDays, parseISO, isSameDay } from 'date-fns';
+import { format, subDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CashSession, CashManualEntry, DailySalesTotals } from '@/types/cashRegisterV2';
 import ManualCashEntryModal from './ManualCashEntryModal';
@@ -57,12 +57,14 @@ interface DrillDownState {
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
-  session: CashSession;           // sesión de HOY (puede ser null si se navega a otro día)
+  session: CashSession | null;    // null cuando admin entra sin sesión abierta
   schoolId: string;
+  allSchoolIds?: string[];        // cuando se pasa, agrega datos de todas las sedes
   onCloseRequested: () => void;
   onTreasuryRequested: () => void;
   onRefresh: () => void;
   isReadOnly?: boolean;
+  isAdmin?: boolean;              // controla visibilidad del selector de fecha y datos sensibles
 }
 
 // ─── Subcomponente: Tarjeta de medio de pago clicable ────────────────────────
@@ -166,15 +168,31 @@ function ManualEntriesPanel({
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CashDayDashboard({
-  session, schoolId, onCloseRequested, onTreasuryRequested, onRefresh, isReadOnly = false,
+  session, schoolId, allSchoolIds, onCloseRequested, onTreasuryRequested, onRefresh, isReadOnly = false, isAdmin = false,
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  // ── 1. Selector de fecha ──────────────────────────────────────────────────
+  // ── Modo consolidado (todas las sedes) ────────────────────────────────────
+  const isAllSchools = (allSchoolIds?.length ?? 0) > 1;
+
+  // ── 1. Selector de fecha y modo ───────────────────────────────────────────
   const [selectedDate, setSelectedDate] = useState<string>(todayLima());
   const isToday = selectedDate === todayLima();
   const isPastDay = !isToday;
+
+  // Modo de fecha: día individual | rango personalizado | mes completo
+  const [dateMode, setDateMode] = useState<'day' | 'range' | 'month'>('day');
+  const isRangeMode = dateMode !== 'day';
+
+  // Valores pendientes (se aplican al hacer clic en "Buscar")
+  const [pendingStart, setPendingStart] = useState<string>(todayLima());
+  const [pendingEnd, setPendingEnd] = useState<string>(todayLima());
+  const [pendingMonth, setPendingMonth] = useState<string>(todayLima().substring(0, 7));
+
+  // Valores activos (los que dispararon la última búsqueda)
+  const [activeStart, setActiveStart] = useState<string>(todayLima());
+  const [activeEnd, setActiveEnd] = useState<string>(todayLima());
 
   // La sesión activa para la fecha seleccionada (puede ser distinta a la de hoy)
   const [activeSession, setActiveSession] = useState<CashSession | null>(session);
@@ -193,14 +211,64 @@ export default function CashDayDashboard({
   const [drillItems, setDrillItems] = useState<PosTransaction[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
 
-  // ── Cargar data para la fecha seleccionada ────────────────────────────────
+  // ── Cargar data para la fecha/rango seleccionado ─────────────────────────
   const load = useCallback(async () => {
+    if (!schoolId) return;
     setLoading(true);
     try {
-      // Determinar la sesión para la fecha seleccionada
+      // ── MODO RANGO / MES o TODAS LAS SEDES ─────────────────────────────
+      if (isRangeMode || isAllSchools) {
+        // En modo día, usar selectedDate; en modo rango, usar activeStart/activeEnd
+        const startDate = isRangeMode ? activeStart : selectedDate;
+        const endDate   = isRangeMode ? activeEnd   : selectedDate;
+
+        const rpcArgs = isAllSchools
+          ? { p_school_id: null as unknown as string, p_start_date: startDate, p_end_date: endDate, p_school_ids: allSchoolIds }
+          : { p_school_id: schoolId, p_start_date: startDate, p_end_date: endDate };
+
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('calculate_range_totals', rpcArgs as any);
+        if (rpcErr) console.error('[CashDayDashboard] Range RPC error:', rpcErr);
+
+        const d = rpcData || { pos: {}, lunch: {}, manual: {} };
+        const pos   = d.pos   || {};
+        const lunch = d.lunch || {};
+        const manualIncome  = Number(d.manual?.income  || 0);
+        const manualExpense = Number(d.manual?.expense || 0);
+
+        const posCobrado = safeAdd(
+          pos.cash, lunch.cash, pos.mixed_cash,
+          pos.yape,  lunch.yape, pos.mixed_yape,
+          pos.plin,  lunch.plin,
+          pos.transferencia, lunch.transferencia,
+          pos.card, lunch.card, pos.mixed_card
+        );
+
+        setSalesTotals({
+          cash:          safeAdd(pos.cash, lunch.cash, pos.mixed_cash),
+          yape:          safeAdd(pos.yape, lunch.yape, pos.mixed_yape),
+          plin:          safeAdd(pos.plin, lunch.plin),
+          transferencia: safeAdd(pos.transferencia, lunch.transferencia),
+          tarjeta:       safeAdd(pos.card, lunch.card, pos.mixed_card),
+          mixto: 0,
+          total: posCobrado,
+          credit_total:              safeAdd(pos.credit, lunch.credit),
+          manual_income_cash:         0,
+          manual_income_yape:         0,
+          manual_income_plin:         0,
+          manual_income_tarjeta:      0,
+          manual_income_transferencia:0,
+          manual_income_otro:         0,
+          manual_income_total:        manualIncome,
+          manual_expense_total:       manualExpense,
+        } as any);
+        setActiveSession(null);
+        setManualEntries([]);
+        return;
+      }
+
+      // ── MODO DÍA (lógica original) ────────────────────────────────────────
       let currentSession: CashSession | null;
       if (!isToday) {
-        // Intento 1: buscar por session_date exacto
         const { data: sess } = await supabase
           .from('cash_sessions')
           .select('*')
@@ -208,8 +276,6 @@ export default function CashDayDashboard({
           .eq('session_date', selectedDate)
           .maybeSingle();
 
-        // Intento 2: si no encontró, buscar por rango de opened_at en hora Lima
-        // (cubre el caso donde session_date quedó en UTC, un día adelantado)
         let fallbackSess: CashSession | null = null;
         if (!sess) {
           const { data: fb } = await supabase
@@ -248,7 +314,6 @@ export default function CashDayDashboard({
       const manIn  = d.manual?.income  || {};
       const manOut = d.manual?.expense || {};
 
-      // Total COBRADO en POS = solo efectivo, yape, plin, tarjeta, transferencia (lo que sí entró a caja)
       const posCobrado = safeAdd(
         pos.cash, lunch.cash, pos.mixed_cash,
         pos.yape, pos.yape_qr, lunch.yape, pos.mixed_yape,
@@ -267,8 +332,8 @@ export default function CashDayDashboard({
         transferencia: safeAdd(pos.transferencia, lunch.transferencia),
         tarjeta:       safeAdd(pos.card, lunch.card, pos.mixed_card),
         mixto: 0,
-        total: posCobrado, // solo lo cobrado; así cuadra con la suma de las 5 tarjetas
-        credit_total: creditTotal, // ventas a crédito (no están en caja)
+        total: posCobrado,
+        credit_total: creditTotal,
         manual_income_cash:          Number((manIn.cash          || 0).toFixed(2)),
         manual_income_yape:          Number((manIn.yape          || 0).toFixed(2)),
         manual_income_plin:          Number((manIn.plin          || 0).toFixed(2)),
@@ -279,7 +344,6 @@ export default function CashDayDashboard({
         manual_expense_total:        Number((manOut.total        || 0).toFixed(2)),
       } as any);
 
-      // Ingresos/egresos manuales de esa sesión — usando variable local (no estado)
       if (currentSession?.id) {
         const { data: entries } = await supabase
           .from('cash_manual_entries')
@@ -295,7 +359,7 @@ export default function CashDayDashboard({
     } finally {
       setLoading(false);
     }
-  }, [schoolId, session.id, selectedDate, isToday]);
+  }, [schoolId, allSchoolIds, session?.id, selectedDate, isToday, isRangeMode, isAllSchools, activeStart, activeEnd]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -305,7 +369,6 @@ export default function CashDayDashboard({
     setDrillItems([]);
     setDrillLoading(true);
     try {
-      // Mapeo de clave interna → valor en la columna payment_method de transactions
       const methodMap: Record<string, string[]> = {
         cash:          ['efectivo'],
         yape:          ['yape', 'yape_qr'],
@@ -315,16 +378,27 @@ export default function CashDayDashboard({
       };
       const methods = methodMap[drill.paymentMethod] || [drill.paymentMethod];
 
-      const { data } = await supabase
+      const startDate = isRangeMode ? activeStart : selectedDate;
+      const endDate   = isRangeMode ? activeEnd   : selectedDate;
+
+      let query = supabase
         .from('transactions')
         .select('id, created_at, amount, payment_method, metadata, student:student_id(full_name)')
-        .eq('school_id', schoolId)
         .eq('type', 'purchase')
         .in('payment_method', methods)
         .neq('payment_status', 'cancelled')
-        .gte('created_at', `${selectedDate}T00:00:00-05:00`)
-        .lt('created_at',  `${selectedDate}T23:59:59-05:00`)
-        .order('created_at', { ascending: false });
+        .gte('created_at', `${startDate}T00:00:00-05:00`)
+        .lt('created_at',  `${endDate}T23:59:59-05:00`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (isAllSchools && allSchoolIds?.length) {
+        query = query.in('school_id', allSchoolIds);
+      } else {
+        query = query.eq('school_id', schoolId);
+      }
+
+      const { data } = await query;
 
       setDrillItems(
         (data || []).map((t: any) => ({
@@ -341,9 +415,49 @@ export default function CashDayDashboard({
     } finally {
       setDrillLoading(false);
     }
-  }, [schoolId, selectedDate]);
+  }, [schoolId, allSchoolIds, selectedDate, isRangeMode, isAllSchools, activeStart, activeEnd]);
 
-  // ── Navegación por fechas ─────────────────────────────────────────────────
+  // ── Helpers para aplicar rangos ──────────────────────────────────────────
+  const applyRange = (start: string, end: string) => {
+    setActiveStart(start);
+    setActiveEnd(end);
+  };
+
+  const applyQuickRange = (preset: 'today' | 'yesterday' | 'last7') => {
+    const today = todayLima();
+    if (preset === 'today') {
+      setPendingStart(today); setPendingEnd(today);
+      applyRange(today, today);
+    } else if (preset === 'yesterday') {
+      const y = format(subDays(parseISO(today), 1), 'yyyy-MM-dd');
+      setPendingStart(y); setPendingEnd(y);
+      applyRange(y, y);
+    } else if (preset === 'last7') {
+      const s = format(subDays(parseISO(today), 6), 'yyyy-MM-dd');
+      setPendingStart(s); setPendingEnd(today);
+      applyRange(s, today);
+    }
+  };
+
+  const applyMonth = () => {
+    const base = parseISO(`${pendingMonth}-01`);
+    const s = format(startOfMonth(base), 'yyyy-MM-dd');
+    const e = format(endOfMonth(base), 'yyyy-MM-dd');
+    applyRange(s, e);
+  };
+
+  // Etiqueta descriptiva del rango activo para el header
+  const rangeLabelDisplay = () => {
+    if (dateMode === 'month') {
+      try { return format(parseISO(`${pendingMonth}-01`), 'MMMM yyyy', { locale: es }); } catch { return pendingMonth; }
+    }
+    if (activeStart === activeEnd) return formatDateDisplay(activeStart);
+    try {
+      return `${format(parseISO(activeStart), "d MMM", { locale: es })} → ${format(parseISO(activeEnd), "d MMM yyyy", { locale: es })}`;
+    } catch { return `${activeStart} → ${activeEnd}`; }
+  };
+
+  // ── Navegación por fechas (modo día) ──────────────────────────────────────
   const goToPreviousDay = () => {
     const d = parseISO(selectedDate);
     setSelectedDate(format(subDays(d, 1), 'yyyy-MM-dd'));
@@ -366,7 +480,14 @@ export default function CashDayDashboard({
   const manIncomeTotal  = (salesTotals as any)?.manual_income_total ?? 0;
   const manExpenseTotal = (salesTotals as any)?.manual_expense_total ?? 0;
   const totalIngresos   = safeAdd(posTotal, manIncomeTotal);
-  const granTotal       = safeAdd(posTotal, manIncomeTotal, -manExpenseTotal);
+
+  // Solo Efectivo y Tarjeta (+ sus porciones de pago mixto) van físicamente a caja.
+  // Yape/Plin y Transferencia NO van al cierre físico.
+  const posEnCaja   = safeAdd(salesTotals?.cash ?? 0, salesTotals?.tarjeta ?? 0);
+  const granTotal   = safeAdd(posEnCaja, manIncomeTotal, -manExpenseTotal);
+
+  // Monto digital (referencia informativa, no va a caja)
+  const posDigital  = safeAdd(salesTotals?.yape ?? 0, salesTotals?.plin ?? 0, salesTotals?.transferencia ?? 0);
 
   // ── Modo de lectura para días pasados ─────────────────────────────────────
   const isViewReadOnly = isReadOnly || isPastDay;
@@ -396,8 +517,18 @@ export default function CashDayDashboard({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-bold text-white">Cierre de Caja</h2>
-                  {isToday ? (
+                  <h2 className="text-lg font-bold text-white">
+                    {isAllSchools ? 'Consolidado Global' : 'Cierre de Caja'}
+                  </h2>
+                  {isAllSchools ? (
+                    <Badge className="bg-indigo-400/20 text-indigo-300 border-indigo-400/30 text-xs">
+                      <Globe className="h-3 w-3 mr-1" />Todas las sedes
+                    </Badge>
+                  ) : isRangeMode ? (
+                    <Badge className="bg-purple-400/20 text-purple-300 border-purple-400/30 text-xs">
+                      📆 Período
+                    </Badge>
+                  ) : isToday ? (
                     activeSession ? (
                       <Badge className="bg-green-400/20 text-green-300 border-green-400/30 text-xs">
                         ● Abierta
@@ -407,6 +538,10 @@ export default function CashDayDashboard({
                         Sin abrir
                       </Badge>
                     )
+                  ) : activeSession?.status === 'open' ? (
+                    <Badge className="bg-red-400/30 text-red-200 border-red-400/40 text-xs">
+                      ⚠️ Sin cerrar
+                    </Badge>
                   ) : (
                     <Badge className="bg-slate-400/20 text-slate-300 border-slate-400/30 text-xs">
                       Histórico
@@ -414,54 +549,122 @@ export default function CashDayDashboard({
                   )}
                 </div>
                 <p className="text-slate-300 text-xs capitalize mt-0.5">
-                  {formatDateDisplay(selectedDate)}
+                  {isRangeMode || isAllSchools ? rangeLabelDisplay() : formatDateDisplay(selectedDate)}
                 </p>
               </div>
             </div>
 
-            {/* Controles de fecha */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={goToPreviousDay}
-                className="w-9 h-9 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center transition-colors"
-                title="Día anterior"
-              >
-                <ChevronLeft className="h-4 w-4 text-white" />
-              </button>
+            {/* Controles de fecha — solo para admins */}
+            <div className="flex flex-col items-end gap-2">
+              {isAdmin ? (
+                <>
+                  {/* Selector de modo */}
+                  <div className="flex gap-1 bg-white/10 rounded-lg p-0.5">
+                    {(['day', 'range', 'month'] as const).map((mode) => {
+                      const labels = { day: 'Día', range: 'Rango', month: 'Mes' };
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => { setDateMode(mode); if (mode === 'day') { setActiveStart(selectedDate); setActiveEnd(selectedDate); } }}
+                          className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${dateMode === mode ? 'bg-white text-slate-800 shadow-sm' : 'text-white/70 hover:text-white'}`}
+                        >
+                          {labels[mode]}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-              {/* Input de fecha nativo — sencillo y universal */}
-              <div className="relative">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  max={todayLima()}
-                  onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value); }}
-                  className="bg-white/10 text-white text-sm rounded-lg px-3 py-2 border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/30 cursor-pointer w-[140px] [color-scheme:dark]"
-                />
-              </div>
+                  {/* Controles según modo */}
+                  {dateMode === 'day' && (
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" onClick={goToPreviousDay}
+                        className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center transition-colors">
+                        <ChevronLeft className="h-4 w-4 text-white" />
+                      </button>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        max={todayLima()}
+                        onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value); }}
+                        className="bg-white/10 text-white text-sm rounded-lg px-2.5 py-1.5 border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/30 cursor-pointer w-[130px] [color-scheme:dark]"
+                      />
+                      <button type="button" onClick={goToNextDay} disabled={isToday}
+                        className="w-8 h-8 bg-white/10 hover:bg-white/20 disabled:opacity-30 rounded-lg flex items-center justify-center transition-colors">
+                        <ChevronRight className="h-4 w-4 text-white" />
+                      </button>
+                      {!isToday && (
+                        <button type="button" onClick={goToToday}
+                          className="text-xs bg-white/10 hover:bg-white/20 text-white px-2.5 py-1.5 rounded-lg transition-colors">
+                          Hoy
+                        </button>
+                      )}
+                      {isToday && (
+                        <button type="button" onClick={() => { load(); onRefresh(); }}
+                          className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center transition-colors">
+                          <RefreshCw className={`h-4 w-4 text-white ${loading ? 'animate-spin' : ''}`} />
+                        </button>
+                      )}
+                    </div>
+                  )}
 
-              <button
-                type="button"
-                onClick={goToNextDay}
-                disabled={isToday}
-                className="w-9 h-9 bg-white/10 hover:bg-white/20 disabled:opacity-30 rounded-lg flex items-center justify-center transition-colors"
-                title="Día siguiente"
-              >
-                <ChevronRight className="h-4 w-4 text-white" />
-              </button>
+                  {dateMode === 'range' && (
+                    <div className="flex flex-col gap-1.5">
+                      {/* Presets rápidos */}
+                      <div className="flex gap-1 justify-end">
+                        {[
+                          { label: 'Hoy',    preset: 'today' as const },
+                          { label: 'Ayer',   preset: 'yesterday' as const },
+                          { label: 'Últ. 7d', preset: 'last7' as const },
+                        ].map(({ label, preset }) => (
+                          <button key={preset} type="button" onClick={() => applyQuickRange(preset)}
+                            className="text-xs bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-md transition-colors">
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Inputs de rango */}
+                      <div className="flex items-center gap-1.5">
+                        <input type="date" value={pendingStart} max={todayLima()}
+                          onChange={(e) => { if (e.target.value) setPendingStart(e.target.value); }}
+                          className="bg-white/10 text-white text-xs rounded-lg px-2 py-1.5 border border-white/20 focus:outline-none w-[120px] [color-scheme:dark]"
+                        />
+                        <span className="text-white/60 text-xs">→</span>
+                        <input type="date" value={pendingEnd} max={todayLima()} min={pendingStart}
+                          onChange={(e) => { if (e.target.value) setPendingEnd(e.target.value); }}
+                          className="bg-white/10 text-white text-xs rounded-lg px-2 py-1.5 border border-white/20 focus:outline-none w-[120px] [color-scheme:dark]"
+                        />
+                        <button type="button"
+                          onClick={() => {
+                            if (pendingStart > pendingEnd) {
+                              toast({ variant: 'destructive', title: 'Rango inválido', description: '"Desde" no puede ser posterior a "Hasta".' });
+                              return;
+                            }
+                            applyRange(pendingStart, pendingEnd);
+                          }}
+                          className="text-xs bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap">
+                          Buscar
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-              {!isToday && (
-                <button
-                  type="button"
-                  onClick={goToToday}
-                  className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-lg transition-colors whitespace-nowrap"
-                >
-                  Hoy
-                </button>
-              )}
-
-              {isToday && (
+                  {dateMode === 'month' && (
+                    <div className="flex items-center gap-1.5">
+                      <input type="month" value={pendingMonth}
+                        max={todayLima().substring(0, 7)}
+                        onChange={(e) => { if (e.target.value) setPendingMonth(e.target.value); }}
+                        className="bg-white/10 text-white text-sm rounded-lg px-2.5 py-1.5 border border-white/20 focus:outline-none w-[150px] [color-scheme:dark]"
+                      />
+                      <button type="button" onClick={applyMonth}
+                        className="text-xs bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-3 py-1.5 rounded-lg transition-colors">
+                        Buscar
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Cajeros: solo botón de actualizar — sin selector de fechas */
                 <button
                   type="button"
                   onClick={() => { load(); onRefresh(); }}
@@ -474,11 +677,38 @@ export default function CashDayDashboard({
             </div>
           </div>
 
-          {/* Aviso modo histórico */}
-          {isPastDay && (
+          {/* Aviso modo histórico — solo visible para admins con selector de fecha, solo en modo día */}
+          {isAdmin && isPastDay && !isRangeMode && !isAllSchools && (
             <div className="mt-3 flex items-center gap-2 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 text-amber-300 text-xs">
               <Calendar className="h-3.5 w-3.5 shrink-0" />
               Estás viendo un día pasado — modo solo lectura. Los botones de registro están desactivados.
+            </div>
+          )}
+
+          {/* Aviso modo rango */}
+          {isAdmin && isRangeMode && (
+            <div className="mt-3 flex items-center gap-2 bg-purple-400/10 border border-purple-400/20 rounded-lg px-3 py-2 text-purple-300 text-xs">
+              <Calendar className="h-3.5 w-3.5 shrink-0" />
+              Vista de período — solo lectura. Muestra el consolidado de ventas del rango seleccionado.
+            </div>
+          )}
+
+          {/* Aviso modo todas las sedes */}
+          {isAdmin && isAllSchools && (
+            <div className="mt-3 flex items-center gap-2 bg-indigo-400/10 border border-indigo-400/20 rounded-lg px-3 py-2 text-indigo-300 text-xs">
+              <Globe className="h-3.5 w-3.5 shrink-0" />
+              Vista consolidada de todas las sedes — suma los totales de {allSchoolIds?.length} sedes.
+            </div>
+          )}
+
+          {/* Alerta crítica: caja de día pasado que nunca fue cerrada */}
+          {isAdmin && isPastDay && !isRangeMode && activeSession?.status === 'open' && (
+            <div className="mt-2 flex items-center gap-2 bg-red-500/15 border border-red-400/30 rounded-lg px-3 py-2 text-red-300 text-xs">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+              <span>
+                <strong className="text-red-200">Caja sin cerrar:</strong> La sesión de este día quedó abierta y nunca fue reconciliada.
+                Revisa con el cajero responsable.
+              </span>
             </div>
           )}
         </CardContent>
@@ -489,9 +719,13 @@ export default function CashDayDashboard({
         <Card className="border-dashed border-2 border-gray-200">
           <CardContent className="py-12 text-center space-y-2">
             <Calendar className="h-10 w-10 mx-auto text-gray-300" />
-            <p className="text-gray-500 font-medium">No hay caja registrada para este día</p>
+            <p className="text-gray-500 font-medium">
+              {isRangeMode ? 'Sin ventas registradas en el período' : 'No hay caja registrada para este día'}
+            </p>
             <p className="text-gray-400 text-sm">
-              {isPastDay ? 'No se abrió caja en esa fecha.' : 'Abre la caja para comenzar a operar.'}
+              {isRangeMode
+                ? 'Prueba seleccionando otro rango de fechas.'
+                : isPastDay ? 'No se abrió caja en esa fecha.' : 'Abre la caja para comenzar a operar.'}
             </p>
           </CardContent>
         </Card>
@@ -502,15 +736,20 @@ export default function CashDayDashboard({
           {/* ── TARJETA GRAN TOTAL (Hero) ─────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
-            {/* 1. Todo lo que entró */}
+            {/* 1. Todo lo que entró (ventas totales, incluye digital) */}
             <Card className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">Todo lo que entró</p>
+                    <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">
+                      {isRangeMode || isAllSchools ? 'Total ventas del período' : 'Total ventas del día'}
+                    </p>
                     <p className="text-3xl font-black text-emerald-700 mt-1">S/ {totalIngresos.toFixed(2)}</p>
                     <p className="text-xs text-emerald-500 mt-1">
-                      Ventas POS S/ {posTotal.toFixed(2)} + Cobros manuales S/ {manIncomeTotal.toFixed(2)}
+                      POS S/ {posTotal.toFixed(2)} + Cobros manuales S/ {manIncomeTotal.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-purple-500 mt-0.5">
+                      Digital (no en caja): S/ {posDigital.toFixed(2)}
                     </p>
                   </div>
                   <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
@@ -538,7 +777,7 @@ export default function CashDayDashboard({
               </CardContent>
             </Card>
 
-            {/* 3. Resultado: lo que debe haber en caja AHORA (caja abrió en 0) */}
+            {/* 3. Lo que debe haber EN CAJA FÍSICA (solo Efectivo + Tarjeta) */}
             <Card className="border-2 border-indigo-400 bg-gradient-to-br from-indigo-600 to-blue-700 shadow-lg shadow-indigo-200">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
@@ -546,10 +785,10 @@ export default function CashDayDashboard({
                     <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">Lo que debe haber en caja ahora</p>
                     <p className="text-4xl font-black text-white mt-1">S/ {granTotal.toFixed(2)}</p>
                     <p className="text-xs text-indigo-300 mt-1">
-                      Ingresos {totalIngresos.toFixed(2)} − Egresos {manExpenseTotal.toFixed(2)}
+                      Efectivo+Tarjeta {posEnCaja.toFixed(2)} + Ingresos {manIncomeTotal.toFixed(2)} − Egresos {manExpenseTotal.toFixed(2)}
                     </p>
-                    <p className="text-xs text-indigo-200/90 mt-2 font-medium">
-                      La caja abrió en S/ 0.00. Este monto es lo que debería haber al cierre.
+                    <p className="text-xs text-indigo-200/80 mt-1.5">
+                      Yape/Plin/Transfer. ({posDigital.toFixed(2)}) no entran a caja
                     </p>
                   </div>
                   <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
@@ -601,23 +840,25 @@ export default function CashDayDashboard({
             </CardContent>
           </Card>
 
-          {/* ── INGRESOS + EGRESOS MANUALES ──────────────────────────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <ManualEntriesPanel
-              title="📥 Ingresos Manuales"
-              entries={incomeEntries}
-              totalAmount={totalManualIncome}
-              color="green"
-              emptyText="Sin ingresos manuales en este día"
-            />
-            <ManualEntriesPanel
-              title="📤 Egresos Manuales"
-              entries={expenseEntries}
-              totalAmount={totalManualExpense}
-              color="red"
-              emptyText="Sin egresos manuales en este día"
-            />
-          </div>
+          {/* ── INGRESOS + EGRESOS MANUALES — ocultar en modo rango ─────────── */}
+          {!isRangeMode && !isAllSchools && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <ManualEntriesPanel
+                title="📥 Ingresos Manuales"
+                entries={incomeEntries}
+                totalAmount={totalManualIncome}
+                color="green"
+                emptyText="Sin ingresos manuales en este día"
+              />
+              <ManualEntriesPanel
+                title="📤 Egresos Manuales"
+                entries={expenseEntries}
+                totalAmount={totalManualExpense}
+                color="red"
+                emptyText="Sin egresos manuales en este día"
+              />
+            </div>
+          )}
 
           {/* ── DESGLOSE POR MEDIO — Solo si hay manuales ────────────────── */}
           {(manIncomeTotal > 0 || manExpenseTotal > 0) && (
@@ -657,7 +898,7 @@ export default function CashDayDashboard({
       )}
 
       {/* ── BOTONES DE ACCIÓN — Solo cajeros activos en día de hoy ──────── */}
-      {!isViewReadOnly && activeSession && (
+      {!isViewReadOnly && !isRangeMode && !isAllSchools && activeSession && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
           <Button onClick={() => setShowIncomeModal(true)} className="h-14 bg-emerald-600 hover:bg-emerald-700 text-sm font-bold">
             <ArrowDownCircle className="h-5 w-5 mr-1.5" /> Registrar Ingreso

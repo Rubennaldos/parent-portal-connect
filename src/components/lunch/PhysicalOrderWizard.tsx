@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle, AlertCircle, Plus, Minus } from 'lucide-react';
+import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle, AlertCircle, Plus, Minus, Banknote, Smartphone, Building2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -86,11 +86,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     currency: 'soles',
     amountReceived: '',
     change: 0,
-    // Tarjeta
+    // Tarjeta / Yape / Transferencia
     operationNumber: '',
     cardType: '',
-    // Yape/Plin
-    yapeType: 'yape',
     // Transferencia
     bankName: '',
   });
@@ -133,7 +131,6 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       change: 0,
       operationNumber: '',
       cardType: '',
-      yapeType: 'yape',
       bankName: '',
     });
     setPeople([]);
@@ -828,7 +825,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             order_date: selectedMenu.date,
             category_name: selectedCategory.name,
             quantity,
-            payment_details: paymentDetails
+            payment_details: {
+              ...paymentDetails,
+              operationNumber: paymentDetails.operationNumber?.trim().toUpperCase() || '',
+            }
           }
         };
 
@@ -1630,29 +1630,58 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             
             {/* Selector de método */}
             {!cashPaymentMethod && (
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { value: 'efectivo', label: 'Efectivo', icon: '💵' },
-                  { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
-                  { value: 'yape', label: 'Yape/Plin', icon: '📱' },
-                  { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
-                  { value: 'pagar_luego', label: 'Pagar Luego', icon: '📝', highlight: true },
-                ].map((method) => (
-                  <Card
-                    key={method.value}
-                    className={`p-4 cursor-pointer hover:shadow-lg transition-all ${
-                      method.highlight ? 'border-2 border-orange-400 bg-orange-50' : ''
-                    }`}
-                    onClick={() => setCashPaymentMethod(method.value as any)}
-                  >
-                    <div className="text-center">
-                      <span className="text-3xl mb-2 block">{method.icon}</span>
-                      <p className={`font-medium ${method.highlight ? 'text-orange-700' : ''}`}>
-                        {method.label}
-                      </p>
-                    </div>
-                  </Card>
-                ))}
+              <div className="grid grid-cols-2 gap-2">
+                {/* Efectivo — Va a caja */}
+                <button
+                  onClick={() => setCashPaymentMethod('efectivo')}
+                  className="p-3 border-2 border-gray-200 bg-white rounded-xl hover:border-emerald-300 transition-all flex flex-col items-center gap-1"
+                >
+                  <Banknote className="h-7 w-7 text-gray-400" />
+                  <span className="text-sm font-bold text-gray-700">Efectivo</span>
+                  <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✅ Va a caja</span>
+                </button>
+
+                {/* Yape / Plin — No va a caja */}
+                <button
+                  onClick={() => setCashPaymentMethod('yape')}
+                  className="p-3 border-2 border-gray-200 bg-white rounded-xl hover:border-purple-300 transition-all flex flex-col items-center gap-1"
+                >
+                  <Smartphone className="h-7 w-7 text-gray-400" />
+                  <span className="text-sm font-bold text-gray-700">Yape / Plin</span>
+                  <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">❌ No va a caja</span>
+                </button>
+
+                {/* Tarjeta P.O.S — Va a caja */}
+                <button
+                  onClick={() => setCashPaymentMethod('tarjeta')}
+                  className="p-3 border-2 border-gray-200 bg-white rounded-xl hover:border-blue-300 transition-all flex flex-col items-center gap-1"
+                >
+                  <CreditCard className="h-7 w-7 text-gray-400" />
+                  <span className="text-sm font-bold text-gray-700">Tarjeta P.O.S</span>
+                  <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✅ Va a caja</span>
+                </button>
+
+                {/* Transferencia — No va a caja */}
+                <button
+                  onClick={() => setCashPaymentMethod('transferencia')}
+                  className="p-3 border-2 border-gray-200 bg-white rounded-xl hover:border-cyan-300 transition-all flex flex-col items-center gap-1"
+                >
+                  <Building2 className="h-7 w-7 text-gray-400" />
+                  <span className="text-sm font-bold text-gray-700">Transferencia</span>
+                  <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">❌ No va a caja</span>
+                </button>
+
+                {/* Pagar Luego — opción especial de almuerzos */}
+                <button
+                  onClick={() => setCashPaymentMethod('pagar_luego' as any)}
+                  className="col-span-2 p-3 border-2 border-orange-300 bg-orange-50 rounded-xl hover:border-orange-400 transition-all flex items-center justify-center gap-2"
+                >
+                  <Clock className="h-6 w-6 text-orange-500" />
+                  <div className="text-left">
+                    <span className="text-sm font-bold text-orange-700 block">Pagar Luego</span>
+                    <span className="text-[10px] text-orange-500">Queda como deuda pendiente</span>
+                  </div>
+                </button>
               </div>
             )}
 
@@ -1660,7 +1689,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             {cashPaymentMethod === 'efectivo' && (
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold text-lg">💵 Pago en Efectivo</h3>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <Banknote className="h-5 w-5 text-emerald-600" />Pago en Efectivo
+                  </h3>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1739,14 +1770,15 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             {cashPaymentMethod === 'tarjeta' && (
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold text-lg">💳 Pago con Tarjeta</h3>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <CreditCard className="h-5 w-5 text-blue-600" />Tarjeta P.O.S
+                  </h3>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
                       setCashPaymentMethod(null);
-                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', cardType: '' }));
-                    }}
+                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', cardType: '' }));                    }}
                   >
                     Cambiar
                   </Button>
@@ -1798,13 +1830,15 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             {cashPaymentMethod === 'yape' && (
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold text-lg">📱 Yape / Plin</h3>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <Smartphone className="h-5 w-5 text-purple-600" />Yape / Plin
+                  </h3>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
                       setCashPaymentMethod(null);
-                      setPaymentDetails(prev => ({ ...prev, operationNumber: '', yapeType: 'yape' }));
+                      setPaymentDetails(prev => ({ ...prev, operationNumber: '' }));
                     }}
                   >
                     Cambiar
@@ -1819,34 +1853,15 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 </div>
 
                 <div>
-                  <Label>Tipo de pago</Label>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <Button
-                      type="button"
-                      variant={paymentDetails.yapeType === 'yape' ? 'default' : 'outline'}
-                      onClick={() => setPaymentDetails(prev => ({ ...prev, yapeType: 'yape' }))}
-                    >
-                      Yape
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={paymentDetails.yapeType === 'plin' ? 'default' : 'outline'}
-                      onClick={() => setPaymentDetails(prev => ({ ...prev, yapeType: 'plin' }))}
-                    >
-                      Plin
-                    </Button>
-                  </div>
-                </div>
-
-                <div>
-                  <Label>Número de operación</Label>
+                  <Label>Código de Operación *</Label>
                   <Input
                     type="text"
-                    placeholder="Ej: 987654321"
+                    placeholder="Ej: OP12345678"
                     value={paymentDetails.operationNumber}
                     onChange={(e) => setPaymentDetails(prev => ({ ...prev, operationNumber: e.target.value }))}
-                    className="mt-2"
+                    className="mt-2 uppercase"
                   />
+                  <p className="text-xs text-purple-600 mt-1">Código de confirmación Yape / Plin (obligatorio)</p>
                 </div>
               </div>
             )}
@@ -1855,7 +1870,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             {cashPaymentMethod === 'transferencia' && (
               <div className="space-y-4 border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold text-lg">🏦 Transferencia Bancaria</h3>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <Building2 className="h-5 w-5 text-cyan-600" />Transferencia Bancaria
+                  </h3>
                   <Button
                     variant="ghost"
                     size="sm"

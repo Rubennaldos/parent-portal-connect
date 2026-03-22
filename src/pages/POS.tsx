@@ -15,6 +15,7 @@ import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -1469,6 +1470,15 @@ const POS = () => {
   };
 
   const processCheckout = async () => {
+    /** Normaliza el método de pago al formato que espera la tabla `sales` (en inglés) */
+    const toSalesMethod = (method: string | null): string => {
+      const map: Record<string, string> = {
+        efectivo: 'cash', tarjeta: 'card', transferencia: 'transfer',
+        yape: 'yape', mixto: 'mixto', saldo: 'saldo',
+        debt: 'debt', teacher_account: 'teacher_account',
+      };
+      return map[method || ''] ?? method ?? 'cash';
+    };
     if (!user?.id) {
       toast({
         variant: 'destructive',
@@ -1522,6 +1532,73 @@ const POS = () => {
         .select('school_id')
         .eq('id', user?.id)
         .single();
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 🔒 PASO 3 — Anti-duplicidad de códigos de operación
+      // Verificar ANTES de crear cualquier transacción que el código no exista.
+      // ─────────────────────────────────────────────────────────────────────
+      const schoolIdForCheck =
+        cashierProfile?.school_id ||
+        selectedStudent?.school_id ||
+        (selectedTeacher as any)?.school_1_id ||
+        null;
+
+      const codigosDigitales: string[] = [];
+      if (['yape', 'tarjeta', 'transferencia'].includes(paymentMethod || '')) {
+        if (transactionCode?.trim()) {
+          codigosDigitales.push(transactionCode.trim().toUpperCase());
+        }
+      } else if (paymentMethod === 'mixto') {
+        paymentSplits
+          .filter(s => s.operationCode?.trim() && ['yape', 'tarjeta', 'transferencia'].includes(s.method))
+          .forEach(s => codigosDigitales.push(s.operationCode!.trim().toUpperCase()));
+      }
+
+      if (codigosDigitales.length > 0 && schoolIdForCheck) {
+        // 1) Códigos duplicados dentro del mismo pago mixto
+        if (new Set(codigosDigitales).size < codigosDigitales.length) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Códigos Repetidos',
+            description: 'Dos métodos del pago mixto tienen el mismo código de operación.',
+          });
+          setIsProcessing(false);
+          return;
+        }
+
+        // 2) Verificar contra la BD — rango del día actual en Lima (UTC-5)
+        const limaOffsetMs = 5 * 60 * 60 * 1000;
+        const nowLima = new Date(Date.now() - limaOffsetMs);
+        // Medianoche Lima → 05:00 UTC del mismo día
+        const limaMidnightUTC = new Date(Date.UTC(
+          nowLima.getUTCFullYear(), nowLima.getUTCMonth(), nowLima.getUTCDate(), 5, 0, 0
+        ));
+        const limaEndOfDayUTC = new Date(limaMidnightUTC.getTime() + 24 * 60 * 60 * 1000);
+
+        for (const codigo of codigosDigitales) {
+          const { data: existingTx } = await supabase
+            .from('transactions')
+            .select('ticket_code')
+            .eq('school_id', schoolIdForCheck)
+            .gte('created_at', limaMidnightUTC.toISOString())
+            .lt('created_at', limaEndOfDayUTC.toISOString())
+            .filter('metadata->>operation_number', 'eq', codigo)
+            .limit(1);
+
+          if (existingTx && existingTx.length > 0) {
+            const ref = existingTx[0].ticket_code ? ` (Ticket: ${existingTx[0].ticket_code})` : '';
+            toast({
+              variant: 'destructive',
+              title: '⛔ Código de Operación Duplicado',
+              description: `El código "${codigo}" ya fue registrado hoy${ref}. Si es otra venta, usa un código diferente.`,
+              duration: 7000,
+            });
+            setIsProcessing(false);
+            return;
+          }
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       // Preparar datos del ticket
       const clientName = clientMode === 'student' ? selectedStudent?.full_name :
@@ -1615,7 +1692,7 @@ const POS = () => {
         // ══════════════════════════════════════════════════════════
         const studentPaymentDetails: any = { source: 'pos' };
         if (paymentMethod) studentPaymentDetails.payment_method_detail = paymentMethod;
-        if (transactionCode) studentPaymentDetails.operation_number = transactionCode;
+        if (transactionCode) studentPaymentDetails.operation_number = transactionCode.trim().toUpperCase();
         if (yapeNumber) studentPaymentDetails.yape_number = yapeNumber;
         if (plinNumber) studentPaymentDetails.plin_number = plinNumber;
         if (cashGiven) studentPaymentDetails.cash_given = parseFloat(cashGiven);
@@ -1631,7 +1708,7 @@ const POS = () => {
           ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
           : 0;
         const mixedYapeAmount = isMixedPayment
-          ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
+          ? paymentSplits.filter(p => p.method === 'yape' || p.method === 'transferencia').reduce((s, p) => s + p.amount, 0)
           : 0;
 
         // ══════════════════════════════════════════════════════════
@@ -1726,7 +1803,7 @@ const POS = () => {
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: shouldUseBalance ? (paymentMethod || 'saldo') : 'debt',
+            payment_method: toSalesMethod(shouldUseBalance ? (paymentMethod || 'saldo') : 'debt'),
             cash_received: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
             change_given: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
             items: salesItems,
@@ -1818,7 +1895,7 @@ const POS = () => {
       } else {
         // Cliente genérico - Solo registrar la venta (PAGADA)
         const genericPaymentDetails: any = { source: 'pos' };
-        if (transactionCode) genericPaymentDetails.operation_number = transactionCode;
+        if (transactionCode) genericPaymentDetails.operation_number = transactionCode.trim().toUpperCase();
         if (yapeNumber) genericPaymentDetails.yape_number = yapeNumber;
         if (plinNumber) genericPaymentDetails.plin_number = plinNumber;
         if (cashGiven) genericPaymentDetails.cash_given = parseFloat(cashGiven);
@@ -1833,7 +1910,7 @@ const POS = () => {
           ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
           : 0;
         const genericMixedYape = isMixedGeneric
-          ? paymentSplits.filter(p => ['yape', 'yape_qr', 'yape_numero', 'plin', 'plin_qr', 'plin_numero', 'transferencia'].includes(p.method)).reduce((s, p) => s + p.amount, 0)
+          ? paymentSplits.filter(p => p.method === 'yape' || p.method === 'transferencia').reduce((s, p) => s + p.amount, 0)
           : 0;
 
         const { data: transaction, error: transError } = await supabase
@@ -1882,21 +1959,22 @@ const POS = () => {
           subtotal: item.product.price * item.quantity,
         }));
 
-        await supabase
+        const { error: salesErr } = await supabase
           .from('sales')
           .insert({
-            transaction_id: transaction.id,            // ✅ UUID real de la transacción
+            transaction_id: transaction.id,
             student_id: null,
             school_id: cashierProfile?.school_id || null,
             cashier_id: user?.id,
             total: total,
             subtotal: total,
             discount: 0,
-            payment_method: paymentMethod || 'efectivo',
+            payment_method: toSalesMethod(paymentMethod || 'efectivo'),
             cash_received: (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
             change_given: (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
             items: salesItems,
           });
+        if (salesErr) console.error('[Sales] Error insertando venta genérica:', salesErr.message);
       }
 
       // Mostrar notificación rápida (sin modal)
@@ -1918,7 +1996,7 @@ const POS = () => {
       if (schoolIdForPrint) {
         // Determinar tipo de venta y método de pago basado en clientMode
         let saleType: 'general' | 'credit' | 'teacher';
-        let paymentMethodForPrint: 'cash' | 'card' | 'credit' | 'teacher';
+        let paymentMethodForPrint: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
         
         if (clientMode === 'teacher') {
           saleType = 'teacher';
@@ -1928,7 +2006,12 @@ const POS = () => {
           paymentMethodForPrint = 'credit';
         } else {
           saleType = 'general';
-          paymentMethodForPrint = (paymentMethod === 'card' ? 'card' : 'cash') as 'cash' | 'card';
+          // Mapeo correcto: 'tarjeta' → 'card', resto pasan directo
+          if (paymentMethod === 'tarjeta') paymentMethodForPrint = 'card';
+          else if (paymentMethod === 'yape') paymentMethodForPrint = 'yape';
+          else if (paymentMethod === 'transferencia') paymentMethodForPrint = 'transferencia';
+          else if (paymentMethod === 'mixto') paymentMethodForPrint = 'mixto';
+          else paymentMethodForPrint = 'cash';
         }
         
         printPOSSale({
@@ -1955,10 +2038,18 @@ const POS = () => {
 
     } catch (error: any) {
       console.error('Error processing checkout:', error);
+      const isNetworkError =
+        !navigator.onLine ||
+        error?.message?.toLowerCase().includes('failed to fetch') ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.code === 'NETWORK_ERROR';
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo completar la venta: ' + error.message,
+        title: isNetworkError ? '📶 Sin conexión' : 'Error al procesar venta',
+        description: isNetworkError
+          ? 'No hay internet. El carrito se conserva tal como está. Cuando vuelva la conexión, intenta cobrar de nuevo con el mismo código.'
+          : 'No se pudo completar la venta: ' + error.message,
+        duration: isNetworkError ? 10000 : 5000,
       });
     } finally {
       setIsProcessing(false);
@@ -2762,550 +2853,368 @@ const POS = () => {
 
       {/* MODAL DE MEDIOS DE PAGO (CLIENTE GENÉRICO) */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-              <CreditCard className="h-7 w-7 text-emerald-600" />
+        <DialogContent className="w-[95vw] max-w-md p-0 overflow-hidden flex flex-col gap-0 rounded-2xl" style={{ maxHeight: '95dvh' }}>
+          <DialogHeader className="px-4 pt-4 pb-2 border-b border-gray-100 shrink-0">
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-emerald-600" />
               Selecciona Método de Pago
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Selecciona cómo deseas cobrar esta venta
+            </DialogDescription>
           </DialogHeader>
-          
-          <div className="space-y-6">
-            {/* Resumen de Compra */}
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl p-6">
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-gray-300 uppercase font-semibold mb-1">Total a Cobrar</p>
-                  <p className="text-5xl font-black">S/ {getTotal().toFixed(2)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">{cart.length} productos</p>
-                  <p className="text-lg font-bold text-emerald-400 mt-1">
-                    {clientMode === 'generic' ? 'Cliente Genérico' : selectedStudent?.full_name}
-                  </p>
-                </div>
-              </div>
+
+          {/* Barra de total — siempre visible */}
+          <div className="bg-slate-800 text-white px-4 py-2.5 flex justify-between items-center shrink-0">
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase font-semibold">Total a Cobrar</p>
+              <p className="text-3xl font-black leading-tight">S/ {getTotal().toFixed(2)}</p>
             </div>
+            <p className="text-sm text-emerald-400 font-bold">
+              {clientMode === 'generic' ? 'Cliente Genérico' : selectedStudent?.full_name}
+            </p>
+          </div>
 
-            {/* Medios de Pago - Botones Grandes */}
-            <div className="space-y-3">
-              <p className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2">💳 Medios de Pago</p>
-              
-              <div className="grid grid-cols-2 gap-3">
-                {/* Efectivo */}
-                <button
-                  onClick={() => setPaymentMethod('efectivo')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'efectivo'
-                      ? 'border-emerald-500 bg-emerald-50 shadow-emerald-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <Banknote className={`h-12 w-12 ${paymentMethod === 'efectivo' ? 'text-emerald-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'efectivo' ? 'text-emerald-700' : 'text-gray-700'}`}>
-                      Efectivo
-                    </span>
-                  </div>
-                </button>
+          {/* Botones de método — SIEMPRE VISIBLES */}
+          <div className="px-3 pt-3 pb-2 shrink-0">
+            <div className="grid grid-cols-2 gap-2">
+              {/* Efectivo — SÍ va a caja */}
+              <button
+                onClick={() => { setPaymentMethod('efectivo'); setCashGiven(getTotal().toFixed(2)); }}
+                className={`p-3 border-2 rounded-xl transition-all flex flex-col items-center gap-1 ${
+                  paymentMethod === 'efectivo'
+                    ? 'border-emerald-500 bg-emerald-50 shadow-sm shadow-emerald-200'
+                    : 'border-gray-200 bg-white hover:border-emerald-300'
+                }`}
+              >
+                <Banknote className={`h-7 w-7 ${paymentMethod === 'efectivo' ? 'text-emerald-600' : 'text-gray-400'}`} />
+                <span className={`text-sm font-bold ${paymentMethod === 'efectivo' ? 'text-emerald-700' : 'text-gray-700'}`}>Efectivo</span>
+                <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✅ Va a caja</span>
+              </button>
 
-                {/* Yape QR */}
-                <button
-                  onClick={() => setPaymentMethod('yape_qr')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'yape_qr'
-                      ? 'border-purple-500 bg-purple-50 shadow-purple-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <QrCode className={`h-12 w-12 ${paymentMethod === 'yape_qr' ? 'text-purple-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'yape_qr' ? 'text-purple-700' : 'text-gray-700'}`}>
-                      Yape (QR)
-                    </span>
-                  </div>
-                </button>
+              {/* Yape / Plin — NO va a caja */}
+              <button
+                onClick={() => { setPaymentMethod('yape'); setTransactionCode(''); }}
+                className={`p-3 border-2 rounded-xl transition-all flex flex-col items-center gap-1 ${
+                  paymentMethod === 'yape'
+                    ? 'border-purple-500 bg-purple-50 shadow-sm shadow-purple-200'
+                    : 'border-gray-200 bg-white hover:border-purple-300'
+                }`}
+              >
+                <Smartphone className={`h-7 w-7 ${paymentMethod === 'yape' ? 'text-purple-600' : 'text-gray-400'}`} />
+                <span className={`text-sm font-bold ${paymentMethod === 'yape' ? 'text-purple-700' : 'text-gray-700'}`}>Yape / Plin</span>
+                <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">❌ No va a caja</span>
+              </button>
 
-                {/* Yape Número */}
-                <button
-                  onClick={() => setPaymentMethod('yape_numero')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'yape_numero'
-                      ? 'border-purple-500 bg-purple-50 shadow-purple-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <Smartphone className={`h-12 w-12 ${paymentMethod === 'yape_numero' ? 'text-purple-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'yape_numero' ? 'text-purple-700' : 'text-gray-700'}`}>
-                      Yape (Número)
-                    </span>
-                  </div>
-                </button>
+              {/* Tarjeta P.O.S — SÍ va a caja */}
+              <button
+                onClick={() => { setPaymentMethod('tarjeta'); setTransactionCode(''); }}
+                className={`p-3 border-2 rounded-xl transition-all flex flex-col items-center gap-1 ${
+                  paymentMethod === 'tarjeta'
+                    ? 'border-blue-500 bg-blue-50 shadow-sm shadow-blue-200'
+                    : 'border-gray-200 bg-white hover:border-blue-300'
+                }`}
+              >
+                <CreditCard className={`h-7 w-7 ${paymentMethod === 'tarjeta' ? 'text-blue-600' : 'text-gray-400'}`} />
+                <span className={`text-sm font-bold ${paymentMethod === 'tarjeta' ? 'text-blue-700' : 'text-gray-700'}`}>Tarjeta P.O.S</span>
+                <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✅ Va a caja</span>
+              </button>
 
-                {/* Plin QR */}
-                <button
-                  onClick={() => setPaymentMethod('plin_qr')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'plin_qr'
-                      ? 'border-pink-500 bg-pink-50 shadow-pink-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <QrCode className={`h-12 w-12 ${paymentMethod === 'plin_qr' ? 'text-pink-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'plin_qr' ? 'text-pink-700' : 'text-gray-700'}`}>
-                      Plin (QR)
-                    </span>
-                  </div>
-                </button>
+              {/* Transferencia — NO va a caja */}
+              <button
+                onClick={() => { setPaymentMethod('transferencia'); setTransactionCode(''); }}
+                className={`p-3 border-2 rounded-xl transition-all flex flex-col items-center gap-1 ${
+                  paymentMethod === 'transferencia'
+                    ? 'border-cyan-500 bg-cyan-50 shadow-sm shadow-cyan-200'
+                    : 'border-gray-200 bg-white hover:border-cyan-300'
+                }`}
+              >
+                <Building2 className={`h-7 w-7 ${paymentMethod === 'transferencia' ? 'text-cyan-600' : 'text-gray-400'}`} />
+                <span className={`text-sm font-bold ${paymentMethod === 'transferencia' ? 'text-cyan-700' : 'text-gray-700'}`}>Transferencia</span>
+                <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">❌ No va a caja</span>
+              </button>
 
-                {/* Plin Número */}
-                <button
-                  onClick={() => setPaymentMethod('plin_numero')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'plin_numero'
-                      ? 'border-pink-500 bg-pink-50 shadow-pink-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <Smartphone className={`h-12 w-12 ${paymentMethod === 'plin_numero' ? 'text-pink-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'plin_numero' ? 'text-pink-700' : 'text-gray-700'}`}>
-                      Plin (Número)
-                    </span>
-                  </div>
-                </button>
-
-                {/* Tarjeta */}
-                <button
-                  onClick={() => setPaymentMethod('tarjeta')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'tarjeta'
-                      ? 'border-blue-500 bg-blue-50 shadow-blue-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <CreditCard className={`h-12 w-12 ${paymentMethod === 'tarjeta' ? 'text-blue-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'tarjeta' ? 'text-blue-700' : 'text-gray-700'}`}>
-                      Tarjeta
-                    </span>
-                    <span className="text-xs text-gray-500">Visa/Mastercard</span>
-                  </div>
-                </button>
-
-                {/* Transferencia Bancaria */}
-                <button
-                  onClick={() => setPaymentMethod('transferencia')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'transferencia'
-                      ? 'border-cyan-500 bg-cyan-50 shadow-cyan-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <Building2 className={`h-12 w-12 ${paymentMethod === 'transferencia' ? 'text-cyan-600' : 'text-gray-400'}`} />
-                    <span className={`text-lg font-bold ${paymentMethod === 'transferencia' ? 'text-cyan-700' : 'text-gray-700'}`}>
-                      Transferencia
-                    </span>
-                  </div>
-                </button>
-
-                {/* PAGO MIXTO */}
-                <button
-                  onClick={() => setPaymentMethod('mixto')}
-                  className={`p-6 border-3 rounded-2xl transition-all hover:scale-105 hover:shadow-lg ${
-                    paymentMethod === 'mixto'
-                      ? 'border-orange-500 bg-orange-50 shadow-orange-200'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="relative">
-                      <CreditCard className={`h-12 w-12 ${paymentMethod === 'mixto' ? 'text-orange-600' : 'text-gray-400'}`} />
-                      <Banknote className={`h-6 w-6 absolute -bottom-1 -right-1 ${paymentMethod === 'mixto' ? 'text-orange-500' : 'text-gray-300'}`} />
-                    </div>
-                    <span className={`text-lg font-bold ${paymentMethod === 'mixto' ? 'text-orange-700' : 'text-gray-700'}`}>
-                      Pago Mixto
-                    </span>
-                    <span className="text-xs text-gray-500">Efectivo + Tarjeta</span>
-                  </div>
-                </button>
-              </div>
+              {/* Pago Mixto — distribuidor */}
+              <button
+                onClick={() => { setPaymentMethod('mixto'); setPaymentSplits([]); }}
+                className={`col-span-2 p-2.5 border-2 rounded-xl transition-all flex items-center justify-center gap-2 ${
+                  paymentMethod === 'mixto'
+                    ? 'border-orange-500 bg-orange-50 shadow-sm shadow-orange-200'
+                    : 'border-gray-200 bg-white hover:border-orange-300'
+                }`}
+              >
+                <div className="relative">
+                  <CreditCard className={`h-6 w-6 ${paymentMethod === 'mixto' ? 'text-orange-600' : 'text-gray-400'}`} />
+                  <Banknote className={`h-3.5 w-3.5 absolute -bottom-0.5 -right-0.5 ${paymentMethod === 'mixto' ? 'text-orange-500' : 'text-gray-300'}`} />
+                </div>
+                <div className="text-left">
+                  <span className={`text-sm font-bold block ${paymentMethod === 'mixto' ? 'text-orange-700' : 'text-gray-700'}`}>Pago Mixto</span>
+                  <span className="text-[10px] text-gray-500">Divide el pago entre varios métodos</span>
+                </div>
+              </button>
             </div>
+          </div>
 
-            {/* Campos adicionales según método seleccionado */}
-            
-            {/* EFECTIVO: Con cuánto paga */}
+          {/* Campos según método — única área con scroll si es necesario */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-2">
+
+            {/* EFECTIVO */}
             {paymentMethod === 'efectivo' && (
-              <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-5 space-y-4">
-                <div className="bg-white rounded-lg p-4 border-2 border-emerald-200">
-                  <p className="text-sm font-bold text-emerald-900 uppercase mb-1">Total a Cobrar</p>
-                  <p className="text-4xl font-black text-emerald-600">S/ {getTotal().toFixed(2)}</p>
+              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 space-y-2">
+                <Label className="text-sm font-bold text-emerald-900 block">¿Con cuánto paga el cliente?</Label>
+                <Input
+                  type="number"
+                  step="0.50"
+                  value={cashGiven}
+                  onChange={(e) => setCashGiven(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && parseFloat(cashGiven) >= getTotal()) {
+                      e.preventDefault();
+                      setShowConfirmDialog(false);
+                      setShowDocumentTypeDialog(true);
+                    }
+                  }}
+                  placeholder={`Ej: ${getTotal().toFixed(2)}`}
+                  className="h-14 text-2xl font-bold text-center border-emerald-300 bg-white"
+                  autoFocus
+                />
+                {/* Botones de denominación */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[10, 20, 50, 100, 200].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setCashGiven(String(d))}
+                      className={`py-2 text-xs font-bold rounded-lg border-2 transition-all ${
+                        parseFloat(cashGiven) === d
+                          ? 'border-emerald-500 bg-emerald-200 text-emerald-900'
+                          : 'border-gray-200 bg-white hover:border-emerald-300 text-gray-700'
+                      }`}
+                    >
+                      S/{d}
+                    </button>
+                  ))}
                 </div>
-                
-                <div>
-                  <Label className="text-base font-bold text-emerald-900 mb-2 block">¿Con cuánto paga el cliente?</Label>
-                  <Input
-                    type="number"
-                    step="0.50"
-                    value={cashGiven}
-                    onChange={(e) => setCashGiven(e.target.value)}
-                    onKeyDown={(e) => {
-                      // ENTER → Continuar (si el monto es suficiente)
-                      if (e.key === 'Enter' && parseFloat(cashGiven) >= getTotal()) {
-                        e.preventDefault();
-                        // Simular click en el botón CONTINUAR
-                        setShowConfirmDialog(false);
-                        setShowDocumentTypeDialog(true);
-                      }
-                    }}
-                    placeholder="Ej: 50.00"
-                    className="h-20 text-3xl font-bold text-center border-emerald-300"
-                    autoFocus
-                  />
-                  <p className="text-xs text-emerald-700 mt-2 text-center">
-                    💡 Ingresa el monto en efectivo que entrega el cliente
-                  </p>
-                </div>
-                
                 {parseFloat(cashGiven) > 0 && (
-                  <>
-                    {parseFloat(cashGiven) >= getTotal() ? (
-                      <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-2xl p-6 shadow-xl">
-                        <p className="text-sm font-bold uppercase mb-2 opacity-90">💵 Vuelto a Entregar</p>
-                        <p className="text-5xl font-black">
-                          S/ {(parseFloat(cashGiven) - getTotal()).toFixed(2)}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
-                        <p className="text-sm font-bold text-red-900">⚠️ Monto Insuficiente</p>
-                        <p className="text-sm text-red-700 mt-1">
-                          Falta: S/ {(getTotal() - parseFloat(cashGiven)).toFixed(2)}
-                        </p>
-                      </div>
-                    )}
-                  </>
+                  parseFloat(cashGiven) >= getTotal() ? (
+                    <div className="bg-emerald-500 text-white rounded-xl p-3 flex justify-between items-center">
+                      <span className="text-sm font-bold">💵 Vuelto</span>
+                      <span className="text-2xl font-black">S/ {(parseFloat(cashGiven) - getTotal()).toFixed(2)}</span>
+                    </div>
+                  ) : (
+                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-2 flex justify-between items-center">
+                      <span className="text-sm font-bold text-red-700">⚠️ Falta</span>
+                      <span className="text-lg font-bold text-red-600">S/ {(getTotal() - parseFloat(cashGiven)).toFixed(2)}</span>
+                    </div>
+                  )
                 )}
               </div>
             )}
-            
-            {/* PAGO MIXTO: Dividir entre métodos */}
-            {paymentMethod === 'mixto' && (
-              <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-5 space-y-4">
-                <div className="bg-white rounded-lg p-4 border-2 border-orange-200">
-                  <div className="flex justify-between items-center">
+
+              {/* YAPE / PLIN / TARJETA / TRANSFERENCIA: código de operación obligatorio */}
+              {(paymentMethod === 'yape' || paymentMethod === 'transferencia' || paymentMethod === 'tarjeta') && (
+                <div className={`border-2 rounded-xl p-3 ${
+                  paymentMethod === 'tarjeta'
+                    ? 'bg-blue-50 border-blue-200'
+                    : paymentMethod === 'yape'
+                    ? 'bg-purple-50 border-purple-200'
+                    : 'bg-cyan-50 border-cyan-200'
+                }`}>
+                  <Label className={`text-sm font-bold mb-1 block ${
+                    paymentMethod === 'tarjeta' ? 'text-blue-900' : paymentMethod === 'yape' ? 'text-purple-900' : 'text-cyan-900'
+                  }`}>
+                    {paymentMethod === 'tarjeta' ? 'N° de Operación (Voucher) *' : 'Código de Operación *'}
+                  </Label>
+                  <Input
+                    type="text"
+                    value={transactionCode}
+                    onChange={(e) => setTransactionCode(e.target.value)}
+                    placeholder={paymentMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
+                    className="h-12 text-lg font-semibold uppercase"
+                    autoFocus
+                  />
+                  <p className={`text-xs mt-1 ${
+                    paymentMethod === 'tarjeta' ? 'text-blue-600' : paymentMethod === 'yape' ? 'text-purple-600' : 'text-cyan-600'
+                  }`}>
+                    {paymentMethod === 'tarjeta'
+                      ? 'N° impreso en el voucher de la terminal'
+                      : paymentMethod === 'yape'
+                      ? 'Código de confirmación Yape / Plin (obligatorio)'
+                      : 'N° de operación de la transferencia bancaria'}
+                  </p>
+                </div>
+              )}
+
+              {/* PAGO MIXTO */}
+              {paymentMethod === 'mixto' && (
+                <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-3 space-y-2">
+                  {/* Resumen de avance */}
+                  <div className="flex justify-between items-center bg-white rounded-lg p-2 border border-orange-200">
                     <div>
-                      <p className="text-sm font-bold text-orange-900 uppercase">Total a Cobrar</p>
-                      <p className="text-3xl font-black text-orange-600">S/ {getTotal().toFixed(2)}</p>
+                      <p className="text-xs font-bold text-orange-900 uppercase">Total</p>
+                      <p className="text-xl font-black text-orange-600">S/ {getTotal().toFixed(2)}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-bold text-gray-600">Pagado</p>
-                      <p className="text-2xl font-bold text-emerald-600">
-                        S/ {paymentSplits.reduce((sum, p) => sum + p.amount, 0).toFixed(2)}
-                      </p>
-                      <p className="text-xs font-bold text-red-600 mt-1">
-                        Falta: S/ {(getTotal() - paymentSplits.reduce((sum, p) => sum + p.amount, 0)).toFixed(2)}
-                      </p>
+                      <p className="text-xs font-bold text-gray-500">Pagado</p>
+                      <p className="text-lg font-bold text-emerald-600">S/ {paymentSplits.reduce((sum, p) => sum + p.amount, 0).toFixed(2)}</p>
+                      {paymentSplits.reduce((sum, p) => sum + p.amount, 0) < getTotal() && (
+                        <p className="text-xs font-bold text-red-600">
+                          Falta: S/ {(getTotal() - paymentSplits.reduce((sum, p) => sum + p.amount, 0)).toFixed(2)}
+                        </p>
+                      )}
                     </div>
                   </div>
-                </div>
 
-                {/* Lista de pagos agregados */}
-                {paymentSplits.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-sm font-bold text-orange-900">Métodos Agregados:</p>
-                    {paymentSplits.map((split, index) => (
-                      <div key={index} className="bg-white border-2 border-orange-200 rounded-lg p-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          {split.method === 'efectivo' && <Banknote className="h-5 w-5 text-emerald-600 shrink-0" />}
-                          {split.method === 'tarjeta' && <CreditCard className="h-5 w-5 text-blue-600 shrink-0" />}
-                          {(split.method === 'yape_qr' || split.method === 'yape_numero') && <Smartphone className="h-5 w-5 text-purple-600 shrink-0" />}
-                          {(split.method === 'plin_qr' || split.method === 'plin_numero') && <Smartphone className="h-5 w-5 text-pink-600 shrink-0" />}
-                          {split.method === 'transferencia' && <CreditCard className="h-5 w-5 text-amber-600 shrink-0" />}
-                          <div className="min-w-0">
-                            <span className="font-bold text-sm block capitalize">
-                              {split.method === 'yape_qr' ? 'Yape QR' : split.method === 'yape_numero' ? 'Yape Número' : split.method === 'plin_qr' ? 'Plin QR' : split.method === 'plin_numero' ? 'Plin Número' : split.method === 'tarjeta' ? 'Tarjeta' : split.method === 'transferencia' ? 'Transferencia' : 'Efectivo'}
-                            </span>
-                            {split.operationCode && <span className="text-xs text-gray-500">Op: {split.operationCode}</span>}
-                            {split.phoneNumber && <span className="text-xs text-gray-500">Cel: {split.phoneNumber}</span>}
+                  {/* Lista de splits agregados */}
+                  {paymentSplits.length > 0 && (
+                    <div className="space-y-1">
+                      {paymentSplits.map((split, index) => (
+                        <div key={index} className="bg-white border border-orange-200 rounded-lg p-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {split.method === 'efectivo' && <Banknote className="h-4 w-4 text-emerald-600 shrink-0" />}
+                            {split.method === 'tarjeta' && <CreditCard className="h-4 w-4 text-blue-600 shrink-0" />}
+                            {split.method === 'yape' && <Smartphone className="h-4 w-4 text-purple-600 shrink-0" />}
+                            {split.method === 'transferencia' && <Building2 className="h-4 w-4 text-cyan-600 shrink-0" />}
+                            <div className="min-w-0">
+                              <span className="font-bold text-xs block">
+                                {split.method === 'yape' ? 'Yape / Plin' : split.method === 'tarjeta' ? 'Tarjeta' : split.method === 'transferencia' ? 'Transferencia' : 'Efectivo'}
+                              </span>
+                              {split.operationCode && <span className="text-[10px] text-gray-500">Op: {split.operationCode}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="font-black text-sm">S/ {split.amount.toFixed(2)}</span>
+                            <button onClick={() => setPaymentSplits(paymentSplits.filter((_, i) => i !== index))} className="text-red-500 hover:bg-red-50 p-0.5 rounded">
+                              <X className="h-4 w-4" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="font-black text-lg">S/ {split.amount.toFixed(2)}</span>
-                          <button
-                            onClick={() => setPaymentSplits(paymentSplits.filter((_, i) => i !== index))}
-                            className="text-red-600 hover:bg-red-50 p-1 rounded"
-                          >
-                            <X className="h-5 w-5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Formulario para agregar método */}
-                {paymentSplits.reduce((sum, p) => sum + p.amount, 0) < getTotal() && (
-                  <div className="bg-white border-2 border-orange-300 rounded-lg p-4 space-y-3">
-                    <p className="text-sm font-bold text-orange-900">Agregar Método de Pago</p>
-                    
-                    {/* Botones de métodos — mismos que el pago independiente */}
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: 'efectivo',     label: 'Efectivo',       color: 'emerald' },
-                        { id: 'tarjeta',      label: 'Tarjeta',        color: 'blue'    },
-                        { id: 'yape_qr',      label: 'Yape QR',        color: 'purple'  },
-                        { id: 'yape_numero',  label: 'Yape Número',    color: 'purple'  },
-                        { id: 'plin_qr',      label: 'Plin QR',        color: 'pink'    },
-                        { id: 'plin_numero',  label: 'Plin Número',    color: 'pink'    },
-                        { id: 'transferencia',label: 'Transferencia',  color: 'amber'   },
-                      ].map(({ id, label }) => (
-                        <button
-                          key={id}
-                          onClick={() => {
-                            setCurrentSplitMethod(id);
-                            setCurrentSplitOperationCode('');
-                            setCurrentSplitPhoneNumber('');
-                          }}
-                          className={`p-2 border-2 rounded-lg text-xs font-bold transition-all ${
-                            currentSplitMethod === id
-                              ? 'border-orange-500 bg-orange-100 text-orange-900'
-                              : 'border-gray-200 text-gray-600 hover:border-orange-300'
-                          }`}
-                        >
-                          {label}
-                        </button>
                       ))}
                     </div>
+                  )}
 
-                    {/* Campo extra: Número de celular para Yape Número */}
-                    {currentSplitMethod === 'yape_numero' && (
-                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-                        <Label className="text-xs font-bold text-purple-900 mb-1 block">Número de Celular (Yape)</Label>
-                        <Input
-                          type="text"
-                          value={currentSplitPhoneNumber}
-                          onChange={(e) => setCurrentSplitPhoneNumber(e.target.value)}
-                          placeholder="999 999 999"
-                          className="h-10 text-sm font-semibold"
-                          maxLength={9}
-                        />
+                  {/* Formulario para agregar método */}
+                  {paymentSplits.reduce((sum, p) => sum + p.amount, 0) < getTotal() && (
+                    <div className="bg-white border-2 border-orange-300 rounded-lg p-3 space-y-2">
+                      <p className="text-xs font-bold text-orange-900">Agregar Método</p>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { id: 'efectivo',     label: 'Efectivo' },
+                          { id: 'yape',         label: 'Yape/Plin' },
+                          { id: 'tarjeta',      label: 'Tarjeta' },
+                          { id: 'transferencia', label: 'Transf.' },
+                        ].map(({ id, label }) => (
+                          <button
+                            key={id}
+                            onClick={() => { setCurrentSplitMethod(id); setCurrentSplitOperationCode(''); setCurrentSplitPhoneNumber(''); }}
+                            className={`p-1.5 border-2 rounded-lg text-[11px] font-bold transition-all ${
+                              currentSplitMethod === id
+                                ? 'border-orange-500 bg-orange-100 text-orange-900'
+                                : 'border-gray-200 text-gray-600 hover:border-orange-300'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
-                    )}
 
-                    {/* Campo extra: Número de celular para Plin Número */}
-                    {currentSplitMethod === 'plin_numero' && (
-                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3">
-                        <Label className="text-xs font-bold text-pink-900 mb-1 block">Número de Celular (Plin)</Label>
-                        <Input
-                          type="text"
-                          value={currentSplitPhoneNumber}
-                          onChange={(e) => setCurrentSplitPhoneNumber(e.target.value)}
-                          placeholder="999 999 999"
-                          className="h-10 text-sm font-semibold"
-                          maxLength={9}
-                        />
-                      </div>
-                    )}
-
-                    {/* Campo extra: Código de operación para tarjeta, transferencia, yape_qr, plin_qr */}
-                    {(currentSplitMethod === 'tarjeta' || currentSplitMethod === 'transferencia' || currentSplitMethod === 'yape_qr' || currentSplitMethod === 'plin_qr') && (
-                      <div className={`border rounded-lg p-3 ${
-                        currentSplitMethod === 'tarjeta' ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'
-                      }`}>
-                        <Label className={`text-xs font-bold mb-1 block ${
-                          currentSplitMethod === 'tarjeta' ? 'text-blue-900' : 'text-amber-900'
-                        }`}>
-                          {currentSplitMethod === 'tarjeta' ? 'Nº de Operación (Voucher)' : 'Código de Operación'}
-                        </Label>
+                      {(currentSplitMethod === 'tarjeta' || currentSplitMethod === 'transferencia' || currentSplitMethod === 'yape') && (
                         <Input
                           type="text"
                           value={currentSplitOperationCode}
                           onChange={(e) => setCurrentSplitOperationCode(e.target.value)}
-                          placeholder={currentSplitMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
-                          className="h-10 text-sm font-semibold uppercase"
+                          placeholder={currentSplitMethod === 'tarjeta' ? 'N° voucher tarjeta' : 'Código de operación'}
+                          className="h-9 text-sm font-semibold uppercase"
                         />
+                      )}
+
+                      <div className="flex gap-2">
+                        <Input
+                          type="number"
+                          step="0.50"
+                          value={currentSplitAmount}
+                          onChange={(e) => setCurrentSplitAmount(e.target.value)}
+                          placeholder="Monto"
+                          className="h-9 text-base font-bold text-center flex-1"
+                        />
+                        <Button
+                          onClick={() => {
+                            if (currentSplitMethod && parseFloat(currentSplitAmount) > 0) {
+                              if ((currentSplitMethod === 'yape' || currentSplitMethod === 'tarjeta' || currentSplitMethod === 'transferencia') && !currentSplitOperationCode.trim()) {
+                                toast({ variant: 'destructive', title: 'Error', description: 'Ingresa el código de operación' });
+                                return;
+                              }
+                              const amount = parseFloat(currentSplitAmount);
+                              const totalPaid = paymentSplits.reduce((sum, p) => sum + p.amount, 0);
+                              if (totalPaid + amount <= getTotal()) {
+                                const newSplit: PaymentSplit = { method: currentSplitMethod, amount };
+                                if (currentSplitOperationCode) newSplit.operationCode = currentSplitOperationCode;
+                                setPaymentSplits([...paymentSplits, newSplit]);
+                                setCurrentSplitMethod('');
+                                setCurrentSplitAmount('');
+                                setCurrentSplitOperationCode('');
+                                setCurrentSplitPhoneNumber('');
+                              } else {
+                                toast({ variant: 'destructive', title: 'Error', description: 'El monto excede el total a pagar' });
+                              }
+                            }
+                          }}
+                          disabled={!currentSplitMethod || !currentSplitAmount || parseFloat(currentSplitAmount) <= 0}
+                          className="bg-orange-500 hover:bg-orange-600 h-9 px-4"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
                       </div>
-                    )}
-
-                    {/* Monto */}
-                    <div>
-                      <Label className="text-sm font-bold text-gray-700">Monto</Label>
-                      <Input
-                        type="number"
-                        step="0.50"
-                        value={currentSplitAmount}
-                        onChange={(e) => setCurrentSplitAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="h-12 text-xl font-bold text-center"
-                      />
                     </div>
+                  )}
 
-                    <Button
-                      onClick={() => {
-                        if (currentSplitMethod && parseFloat(currentSplitAmount) > 0) {
-                          // Validar campos extra requeridos
-                          if ((currentSplitMethod === 'yape_numero' || currentSplitMethod === 'plin_numero') && !currentSplitPhoneNumber) {
-                            toast({ variant: 'destructive', title: 'Error', description: 'Ingresa el número de celular' });
-                            return;
-                          }
-                          const amount = parseFloat(currentSplitAmount);
-                          const totalPaid = paymentSplits.reduce((sum, p) => sum + p.amount, 0);
-                          if (totalPaid + amount <= getTotal()) {
-                            const newSplit: PaymentSplit = { method: currentSplitMethod, amount };
-                            if (currentSplitOperationCode) newSplit.operationCode = currentSplitOperationCode;
-                            if (currentSplitPhoneNumber) newSplit.phoneNumber = currentSplitPhoneNumber;
-                            setPaymentSplits([...paymentSplits, newSplit]);
-                            setCurrentSplitMethod('');
-                            setCurrentSplitAmount('');
-                            setCurrentSplitOperationCode('');
-                            setCurrentSplitPhoneNumber('');
-                          } else {
-                            toast({
-                              variant: 'destructive',
-                              title: 'Error',
-                              description: 'El monto total no puede exceder el total a pagar',
-                            });
-                          }
-                        }
-                      }}
-                      disabled={!currentSplitMethod || !currentSplitAmount || parseFloat(currentSplitAmount) <= 0}
-                      className="w-full bg-orange-500 hover:bg-orange-600"
-                    >
-                      <Plus className="h-5 w-5 mr-2" />
-                      Agregar
-                    </Button>
-                  </div>
-                )}
+                  {paymentSplits.reduce((sum, p) => sum + p.amount, 0) === getTotal() && (
+                    <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-3 flex items-center justify-center gap-2">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                      <p className="font-bold text-emerald-900 text-sm">¡Pago Completo!</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
-                {paymentSplits.reduce((sum, p) => sum + p.amount, 0) === getTotal() && (
-                  <div className="bg-emerald-50 border-2 border-emerald-500 rounded-xl p-4 text-center">
-                    <CheckCircle2 className="h-8 w-8 text-emerald-600 mx-auto mb-2" />
-                    <p className="font-bold text-emerald-900">¡Pago Completo!</p>
-                    <p className="text-sm text-emerald-700">Puedes proceder con la venta</p>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {paymentMethod === 'yape_numero' && (
-              <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
-                <Label className="text-sm font-bold text-purple-900 mb-2 block">Número de Celular (Yape)</Label>
-                <Input
-                  type="text"
-                  value={yapeNumber}
-                  onChange={(e) => setYapeNumber(e.target.value)}
-                  placeholder="999 999 999"
-                  className="h-14 text-lg font-semibold"
-                  maxLength={9}
-                />
-              </div>
-            )}
-
-            {paymentMethod === 'plin_numero' && (
-              <div className="bg-pink-50 border-2 border-pink-200 rounded-xl p-4">
-                <Label className="text-sm font-bold text-pink-900 mb-2 block">Número de Celular (Plin)</Label>
-                <Input
-                  type="text"
-                  value={plinNumber}
-                  onChange={(e) => setPlinNumber(e.target.value)}
-                  placeholder="999 999 999"
-                  className="h-14 text-lg font-semibold"
-                  maxLength={9}
-                />
-              </div>
-            )}
-
-            {(paymentMethod === 'transferencia' || paymentMethod === 'yape_qr' || paymentMethod === 'plin_qr' || paymentMethod === 'tarjeta') && (
-              <div className={`border-2 rounded-xl p-4 ${
-                paymentMethod === 'tarjeta' 
-                  ? 'bg-blue-50 border-blue-200' 
-                  : 'bg-amber-50 border-amber-200'
-              }`}>
-                <Label className={`text-sm font-bold mb-2 block ${
-                  paymentMethod === 'tarjeta' ? 'text-blue-900' : 'text-amber-900'
-                }`}>
-                  {paymentMethod === 'tarjeta' ? 'Nº de Operación (Voucher)' : 'Código de Operación'}
-                </Label>
-                <Input
-                  type="text"
-                  value={transactionCode}
-                  onChange={(e) => setTransactionCode(e.target.value)}
-                  placeholder={paymentMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
-                  className="h-14 text-lg font-semibold uppercase"
-                />
-                <p className={`text-xs mt-2 ${
-                  paymentMethod === 'tarjeta' ? 'text-blue-700' : 'text-amber-700'
-                }`}>
-                  {paymentMethod === 'tarjeta' 
-                    ? 'Ingresa el número de operación del voucher de la tarjeta' 
-                    : 'Ingresa el código de la transacción para validar el pago'}
-                </p>
-              </div>
-            )}
-
-            {/* Botones de Acción */}
-            <div className="space-y-3">
+            {/* Footer fijo — CONTINUAR siempre visible */}
+            <div className="px-3 pb-3 pt-2 border-t border-gray-100 shrink-0 space-y-2">
               <Button
                 onClick={() => {
-                  // Validar según método de pago
                   if (paymentMethod === 'efectivo') {
                     if (!cashGiven || parseFloat(cashGiven) < getTotal()) {
-                      toast({
-                        variant: 'destructive',
-                        title: 'Error',
-                        description: 'Ingresa el monto en efectivo que entrega el cliente',
-                      });
+                      toast({ variant: 'destructive', title: 'Error', description: 'Ingresa el monto en efectivo que entrega el cliente' });
                       return;
                     }
                   }
-                  
                   if (paymentMethod === 'mixto') {
                     const totalPaid = paymentSplits.reduce((sum, p) => sum + p.amount, 0);
                     if (totalPaid < getTotal()) {
-                      toast({
-                        variant: 'destructive',
-                        title: 'Error',
-                        description: `Faltan S/ ${(getTotal() - totalPaid).toFixed(2)} por asignar`,
-                      });
+                      toast({ variant: 'destructive', title: 'Error', description: `Faltan S/ ${(getTotal() - totalPaid).toFixed(2)} por asignar` });
                       return;
                     }
                   }
-
-                  // Si el pago NO es efectivo puro → boleta/factura obligatoria,
-                  // saltar directo al modal de datos del cliente (sin pasar por el diálogo de tipo)
                   const esEfectivoUnico = paymentMethod === 'efectivo';
                   if (!esEfectivoUnico) {
                     setShowConfirmDialog(false);
-                    setPendingInvoiceType('boleta'); // por defecto boleta, puede cambiar a factura
-                    setInvoiceTypeLocked(false);     // permitir elegir boleta o factura en el modal
+                    setPendingInvoiceType('boleta');
+                    setInvoiceTypeLocked(false);
                     setShowInvoiceClientModal(true);
                     return;
                   }
-
-                  // Efectivo: mostrar selector de comprobante (Ticket / Boleta / Factura)
                   setShowConfirmDialog(false);
                   setShowDocumentTypeDialog(true);
                 }}
                 disabled={!paymentMethod || isProcessing}
-                className="w-full h-16 text-xl font-black bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300"
+                className="w-full h-14 text-lg font-black bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300 rounded-xl"
               >
                 {isProcessing ? (
-                  <>
-                    <Loader2 className="h-6 w-6 mr-2 animate-spin" />
-                    PROCESANDO...
-                  </>
+                  <><Loader2 className="h-5 w-5 mr-2 animate-spin" />PROCESANDO...</>
                 ) : (
-                  <>
-                    <CheckCircle2 className="h-6 w-6 mr-2" />
-                    CONTINUAR
-                  </>
+                  <><CheckCircle2 className="h-5 w-5 mr-2" />CONTINUAR</>
                 )}
               </Button>
-
               <Button
                 variant="outline"
                 onClick={() => {
@@ -3316,14 +3225,13 @@ const POS = () => {
                   setTransactionCode('');
                   setRequiresInvoice(false);
                 }}
-                className="w-full h-12 text-base"
+                className="w-full h-10 text-sm rounded-xl"
               >
                 Cancelar
               </Button>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
 
       {/* MODAL DE CONFIRMACIÓN PARA CUENTA DE CRÉDITO */}
       <Dialog open={showCreditConfirmDialog} onOpenChange={setShowCreditConfirmDialog}>
@@ -3491,7 +3399,14 @@ const POS = () => {
               </p>
               {ticketData.paymentMethod && (
                 <p style={{ margin: '2px 0', fontSize: '10px' }}>
-                  Pago: {ticketData.paymentMethod.toUpperCase()}
+                  Pago: {{
+                    'efectivo': 'EFECTIVO',
+                    'yape': 'YAPE / PLIN',
+                    'tarjeta': 'TARJETA P.O.S',
+                    'transferencia': 'TRANSFERENCIA',
+                    'mixto': 'PAGO MIXTO',
+                    'credito': 'CRÉDITO',
+                  }[ticketData.paymentMethod] ?? ticketData.paymentMethod.toUpperCase()}
                 </p>
               )}
               {ticketData.newBalance !== undefined && (
