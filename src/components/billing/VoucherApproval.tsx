@@ -26,9 +26,16 @@ import {
   Ticket,
   AlertTriangle,
   Search,
+  ShieldCheck,
+  ZoomIn,
+  CalendarDays,
+  BadgeCheck,
+  BadgeX,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 interface RechargeRequest {
   id: string;
@@ -57,6 +64,46 @@ interface RechargeRequest {
   // Computed
   _ticket_codes?: string[];
   _approver_name?: string; // Nombre de quien aprobó/rechazó
+}
+
+interface AuditTransaction {
+  id: string;
+  created_at: string;
+  amount: number;
+  payment_method: string;
+  ticket_code: string | null;
+  payment_status: string;
+  operation_number: string | null;
+  source: string | null;
+  lunch_order_id: string | null;
+  student_name: string | null;
+  school_name: string | null;
+  created_by_name: string | null;
+  created_by_email: string | null;
+}
+
+interface AuditRechargeRequest {
+  id: string;
+  created_at: string;
+  amount: number;
+  payment_method: string;
+  reference_code: string | null;
+  status: string;
+  request_type: string | null;
+  voucher_url: string | null;
+  notes: string | null;
+  description: string | null;
+  approved_at: string | null;
+  student_name: string | null;
+  parent_name: string | null;
+  parent_email: string | null;
+  approved_by_name: string | null;
+  school_name: string | null;
+}
+
+interface AuditResult {
+  transactions: AuditTransaction[];
+  recharge_requests: AuditRechargeRequest[];
 }
 
 const METHOD_LABELS: Record<string, string> = {
@@ -91,11 +138,40 @@ export const VoucherApproval = () => {
   // Códigos de operación ingresados manualmente por el admin cuando el padre no los puso
   const [overrideRefCodes, setOverrideRefCodes] = useState<Record<string, string>>({});
 
+  // ── Auditoría Anti-Fraude ──
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditCode, setAuditCode] = useState('');
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
+  const [auditZoomImage, setAuditZoomImage] = useState<string | null>(null);
+
   // ── Filtro de sedes para admin_general ──
   const [allSchools, setAllSchools] = useState<{ id: string; name: string }[]>([]);
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('all');
 
   const canViewAll = role === 'admin_general' || role === 'supervisor_red';
+
+  // ── Función de auditoría Anti-Fraude ─────────────────────────────────────
+  const runAudit = async () => {
+    const normalized = auditCode.trim().toUpperCase();
+    if (!normalized) {
+      toast({ variant: 'destructive', title: 'Ingresa un código', description: 'El campo no puede estar vacío.' });
+      return;
+    }
+    setAuditLoading(true);
+    setAuditResult(null);
+    try {
+      const { data, error } = await supabase.rpc('check_voucher_usage', { p_operation_number: normalized });
+      if (error) throw error;
+      setAuditResult(data as AuditResult);
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error en auditoría', description: err.message });
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const auditTotalHits = (auditResult?.transactions.length ?? 0) + (auditResult?.recharge_requests.length ?? 0);
 
   useEffect(() => {
     fetchUserSchool();
@@ -919,28 +995,38 @@ export const VoucherApproval = () => {
         </Button>
       </div>
 
-      {/* Barra de búsqueda inteligente */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <Input
-          placeholder="Buscar por alumno, padre, email, sede, monto, N° operación..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10 h-11"
-        />
-        {searchLoading && (
-          <div className="absolute right-8 top-1/2 -translate-y-1/2">
-            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-          </div>
-        )}
-        {searchTerm && (
-          <button
-            onClick={() => { setSearchTerm(''); fetchRequests(); }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
+      {/* Barra de búsqueda inteligente + botón auditoría */}
+      <div className="flex gap-2 items-start">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Buscar por alumno, padre, email, sede, monto, N° operación..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 h-11"
+          />
+          {searchLoading && (
+            <div className="absolute right-8 top-1/2 -translate-y-1/2">
+              <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+            </div>
+          )}
+          {searchTerm && (
+            <button
+              onClick={() => { setSearchTerm(''); fetchRequests(); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          className="h-11 gap-2 border-indigo-300 text-indigo-700 hover:bg-indigo-50 whitespace-nowrap shrink-0"
+          onClick={() => { setAuditCode(''); setAuditResult(null); setShowAuditModal(true); }}
+        >
+          <ShieldCheck className="h-4 w-4" />
+          Verificar N° Op.
+        </Button>
       </div>
 
       {/* Filtro de sede — solo para admin_general */}
@@ -1296,6 +1382,219 @@ export const VoucherApproval = () => {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* ── MODAL AUDITORÍA ANTI-FRAUDE ─────────────────────────────── */}
+      <Dialog open={showAuditModal} onOpenChange={setShowAuditModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <ShieldCheck className="h-6 w-6 text-indigo-600" />
+              Verificar Número de Operación
+            </DialogTitle>
+            <DialogDescription>
+              Busca si un código de operación ya fue utilizado anteriormente en ventas POS o en vouchers de recargas / pagos de almuerzo.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Input + buscar */}
+          <div className="flex gap-2 mt-2">
+            <div className="flex-1">
+              <Label className="text-xs text-gray-500 mb-1 block">Número de Operación</Label>
+              <Input
+                placeholder="Ej: 02510242 o YAPE-999"
+                value={auditCode}
+                onChange={(e) => setAuditCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') runAudit(); }}
+                className="uppercase h-11"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                onClick={runAudit}
+                disabled={auditLoading || !auditCode.trim()}
+                className="h-11 bg-indigo-600 hover:bg-indigo-700 gap-2"
+              >
+                {auditLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                Buscar
+              </Button>
+            </div>
+          </div>
+
+          {/* Resultados */}
+          {auditResult && (
+            <div className="mt-4 space-y-4">
+
+              {/* Banner resultado */}
+              {auditTotalHits === 0 ? (
+                <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl p-4">
+                  <BadgeCheck className="h-8 w-8 text-green-500 shrink-0" />
+                  <div>
+                    <p className="font-bold text-green-800">Código no encontrado</p>
+                    <p className="text-sm text-green-600">
+                      El código <span className="font-mono font-bold">{auditCode.trim().toUpperCase()}</span> no aparece en ningún registro del sistema. Puede ser usado con seguridad.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
+                  <BadgeX className="h-8 w-8 text-red-500 shrink-0" />
+                  <div>
+                    <p className="font-bold text-red-800">⚠️ Código ya utilizado — {auditTotalHits} registro{auditTotalHits !== 1 ? 's' : ''}</p>
+                    <p className="text-sm text-red-600">
+                      El código <span className="font-mono font-bold">{auditCode.trim().toUpperCase()}</span> ya aparece en el sistema. Verifica los detalles abajo.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Registros en transactions (ventas POS) */}
+              {auditResult.transactions.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <Hash className="h-4 w-4 text-blue-500" /> Ventas POS ({auditResult.transactions.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {auditResult.transactions.map((tx) => (
+                      <div key={tx.id} className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-blue-900 text-sm">
+                                {tx.student_name ?? 'Cliente genérico'}
+                              </span>
+                              {tx.ticket_code && (
+                                <span className="font-mono text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                  🎫 {tx.ticket_code}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 flex-wrap text-xs text-gray-600">
+                              <span className="flex items-center gap-1">
+                                <CalendarDays className="h-3 w-3" />
+                                {format(new Date(tx.created_at), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })}
+                              </span>
+                              {tx.school_name && (
+                                <span className="flex items-center gap-1">
+                                  <School className="h-3 w-3" /> {tx.school_name}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Cajero: {tx.created_by_name ?? tx.created_by_email ?? 'Desconocido'}
+                              {tx.source === 'pos' ? ' · Venta POS' : tx.lunch_order_id ? ' · Pago Almuerzo' : ''}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-lg font-black text-blue-700">S/ {Math.abs(tx.amount).toFixed(2)}</p>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tx.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {tx.payment_status === 'paid' ? 'Pagado' : tx.payment_status}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Registros en recharge_requests (vouchers de padres) */}
+              {auditResult.recharge_requests.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <Wallet className="h-4 w-4 text-purple-500" /> Vouchers de Padres ({auditResult.recharge_requests.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {auditResult.recharge_requests.map((rr) => (
+                      <div key={rr.id} className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                        <div className="flex items-start gap-3">
+                          {/* Miniatura imagen */}
+                          {rr.voucher_url ? (
+                            <button
+                              onClick={() => setAuditZoomImage(rr.voucher_url)}
+                              className="shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-purple-300 hover:border-purple-500 transition-colors relative group"
+                              title="Clic para ampliar"
+                            >
+                              <img src={rr.voucher_url} alt="Voucher" className="w-full h-full object-cover" />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-all">
+                                <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                            </button>
+                          ) : (
+                            <div className="shrink-0 w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center">
+                              <ImageIcon className="h-6 w-6 text-gray-300" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 space-y-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="font-bold text-purple-900 text-sm">
+                                  {rr.student_name ?? rr.parent_name ?? 'Desconocido'}
+                                </p>
+                                {rr.parent_name && rr.student_name && (
+                                  <p className="text-xs text-gray-500">Padre: {rr.parent_name}</p>
+                                )}
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-lg font-black text-purple-700">S/ {rr.amount.toFixed(2)}</p>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                  rr.status === 'approved' ? 'bg-green-100 text-green-700' :
+                                  rr.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                                  'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {rr.status === 'approved' ? 'Aprobado' : rr.status === 'rejected' ? 'Rechazado' : 'Pendiente'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3 flex-wrap text-xs text-gray-600">
+                              <span className="flex items-center gap-1">
+                                <CalendarDays className="h-3 w-3" />
+                                {format(new Date(rr.created_at), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })}
+                              </span>
+                              {rr.school_name && (
+                                <span className="flex items-center gap-1">
+                                  <School className="h-3 w-3" /> {rr.school_name}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Texto descriptivo */}
+                            <p className="text-xs text-purple-700 bg-purple-100 rounded-lg px-2 py-1 mt-1">
+                              {rr.status === 'approved'
+                                ? `✅ Este voucher fue aprobado el ${format(new Date(rr.approved_at!), "d MMM yyyy 'a las' HH:mm", { locale: es })}${rr.approved_by_name ? ` por ${rr.approved_by_name}` : ''} para ${rr.request_type === 'recharge' ? 'recarga de kiosco' : rr.request_type === 'lunch_payment' ? 'pago de almuerzos' : 'pago de deuda'}.`
+                                : rr.status === 'rejected'
+                                ? `❌ Este voucher fue rechazado.`
+                                : `⏳ Este voucher está pendiente de revisión. Fue enviado por ${rr.parent_name ?? 'el padre'} el ${format(new Date(rr.created_at), "d MMM yyyy", { locale: es })}.`
+                              }
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal imagen ampliada desde auditoría */}
+      {auditZoomImage && (
+        <div
+          className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+          onClick={() => setAuditZoomImage(null)}
+        >
+          <div className="relative max-w-lg w-full">
+            <button className="absolute -top-10 right-0 text-white hover:text-gray-300" onClick={() => setAuditZoomImage(null)}>
+              <X className="h-6 w-6" />
+            </button>
+            <img src={auditZoomImage} alt="Voucher ampliado" className="w-full rounded-xl shadow-2xl" />
+          </div>
         </div>
       )}
 
