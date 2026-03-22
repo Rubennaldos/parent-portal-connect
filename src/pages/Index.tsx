@@ -790,7 +790,6 @@ const Index = () => {
               <p className="text-xs sm:text-sm text-amber-800 mt-1 leading-relaxed">
                 Está en proceso de mantenimiento para mejorarlo. Disculpe la molestia.
                 Si usted tiene saldo de recarga, <strong>su dinero se encuentra a salvo y será guardado</strong>.
-                No se planea que esta actualización tome más de <strong>3 días</strong>.
               </p>
               <p className="text-xs text-amber-700 mt-1.5">
                 Si desea la devolución, contacte al <strong>991 236 870</strong> por <strong>WhatsApp</strong> indicando su correo y solicitando la devolución.

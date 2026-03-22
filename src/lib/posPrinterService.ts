@@ -64,7 +64,7 @@ interface SaleData {
   clientName: string;
   cart: CartItem[];
   total: number;
-  paymentMethod: 'cash' | 'card' | 'credit' | 'teacher';
+  paymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
   saleType: 'general' | 'credit' | 'teacher';
   schoolId: string;
 }
@@ -313,8 +313,11 @@ async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null):
         subtotal: saleData.total / 1.18, // Sin IGV
         tax: saleData.total - (saleData.total / 1.18), // IGV 18%
         total: saleData.total,
-        paymentMethod: saleData.paymentMethod === 'cash' ? 'Efectivo' : 
-                       saleData.paymentMethod === 'card' ? 'Tarjeta' :
+        paymentMethod: saleData.paymentMethod === 'cash' ? 'Efectivo' :
+                       saleData.paymentMethod === 'card' ? 'Tarjeta P.O.S' :
+                       saleData.paymentMethod === 'yape' ? 'Yape / Plin' :
+                       saleData.paymentMethod === 'transferencia' ? 'Transferencia' :
+                       saleData.paymentMethod === 'mixto' ? 'Pago Mixto' :
                        saleData.paymentMethod === 'credit' ? 'Crédito' :
                        saleData.paymentMethod === 'teacher' ? 'Profesor' : 'Otro',
         headerText: config?.print_header ? config.header_text : undefined,

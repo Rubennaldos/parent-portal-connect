@@ -66,6 +66,19 @@ createRoot(document.getElementById("root")!).render(
  */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+
+    // En desarrollo: desregistrar cualquier SW existente para evitar
+    // el error "unsupported MIME type (text/html)" en la consola.
+    if (import.meta.env.DEV) {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        if (registrations.length > 0) {
+          registrations.forEach(r => r.unregister());
+        }
+      }).catch(() => {});
+      return; // No registrar SW en desarrollo
+    }
+
+    // Producción: registro normal con auto-actualización
     navigator.serviceWorker
       .register('/sw.js', { updateViaCache: 'none' })
       .then((registration) => {

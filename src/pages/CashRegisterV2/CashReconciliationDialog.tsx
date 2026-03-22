@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -29,11 +30,18 @@ interface MethodRow {
 
 export default function CashReconciliationDialog({ open, onClose, session, schoolId, onClosed }: Props) {
   const { user } = useAuth();
+  const { role } = useRole();
   const { toast } = useToast();
+
+  // admin_general, superadmin y gestor_unidad ven el cierre completo (sistema vs físico + varianza)
+  // operadores normales solo ven el conteo físico (cierre ciego / blind close)
+  const isAdmin = role === 'admin_general' || role === 'superadmin' || role === 'gestor_unidad';
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [methods, setMethods] = useState<MethodRow[]>([]);
+  const [digitalInfo, setDigitalInfo] = useState<{ yapePlin: number; transferencia: number }>({ yapePlin: 0, transferencia: 0 });
   const [cashierName, setCashierName] = useState('');
   const [cashierDni, setCashierDni] = useState('');
   const [declaredOverage, setDeclaredOverage] = useState('0');
@@ -73,23 +81,25 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
       const manualExpense = (entries || []).filter(e => e.entry_type === 'expense').reduce((s, e) => s + e.amount, 0);
 
       // Calcular balance del sistema por método
-      // Fórmula: Inicial + Ventas + Ingresos Manuales - Egresos Manuales
+      // Solo Efectivo y Tarjeta van físicamente a caja.
+      // Yape/Plin y Transferencia son digitales — se muestran como referencia.
       const cashSales = (pos.cash || 0) + (lunch.cash || 0) + (pos.mixed_cash || 0);
-      const yapeSales = (pos.yape || 0) + (pos.yape_qr || 0) + (lunch.yape || 0) + (pos.mixed_yape || 0);
-      const plinSales = (pos.plin || 0) + (lunch.plin || 0);
-      const transSales = (pos.transferencia || 0) + (lunch.transferencia || 0);
       const tarjetaSales = (pos.card || 0) + (lunch.card || 0) + (pos.mixed_card || 0);
+      // Digital (informativo, no va a caja)
+      // v8 RPC: yape ya incluye yape_qr + yape_numero; plin incluye plin_qr + plin_numero
+      const yapePlinTotal = (pos.yape || 0) + (pos.plin || 0) + (lunch.yape || 0) + (lunch.plin || 0)
+                          + (pos.mixed_yape || 0);
+      const transferenciaTotal = (pos.transferencia || 0) + (lunch.transferencia || 0);
 
-      // Ingresos/egresos manuales se aplican al efectivo por defecto
       const systemCash = session.initial_cash + cashSales + manualIncome - manualExpense;
+      const systemTarjeta = tarjetaSales;
 
       setMethods([
-        { key: 'cash', label: 'Efectivo', icon: '💵', systemBalance: systemCash, physicalCount: '' },
-        { key: 'yape', label: 'Yape', icon: '📱', systemBalance: session.initial_yape + yapeSales, physicalCount: '' },
-        { key: 'plin', label: 'Plin', icon: '📲', systemBalance: session.initial_plin + plinSales, physicalCount: '' },
-        { key: 'transferencia', label: 'Transferencia', icon: '🏦', systemBalance: transSales, physicalCount: '' },
-        { key: 'tarjeta', label: 'Tarjeta', icon: '💳', systemBalance: tarjetaSales, physicalCount: '' },
+        { key: 'cash',    label: 'Efectivo',    icon: '💵', systemBalance: systemCash,    physicalCount: '' },
+        { key: 'tarjeta', label: 'Tarjeta P.O.S', icon: '💳', systemBalance: systemTarjeta, physicalCount: '' },
       ]);
+      // Guardar totales digitales para mostrar como referencia
+      setDigitalInfo({ yapePlin: yapePlinTotal, transferencia: transferenciaTotal });
     } catch (err) {
       console.error('[CashReconciliation] Error:', err);
     } finally {
@@ -158,23 +168,23 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
         cash_session_id: session.id,
         school_id: schoolId,
         system_cash: methods.find(m => m.key === 'cash')?.systemBalance || 0,
-        system_yape: methods.find(m => m.key === 'yape')?.systemBalance || 0,
-        system_plin: methods.find(m => m.key === 'plin')?.systemBalance || 0,
-        system_transferencia: methods.find(m => m.key === 'transferencia')?.systemBalance || 0,
+        system_yape: digitalInfo.yapePlin,              // total Yape+Plin real del sistema
+        system_plin: 0,                                 // plin ya está consolidado en system_yape
+        system_transferencia: digitalInfo.transferencia, // total Transferencia real del sistema
         system_tarjeta: methods.find(m => m.key === 'tarjeta')?.systemBalance || 0,
         system_mixto: 0,
         system_total: systemTotal,
         physical_cash: parseFloat(methods.find(m => m.key === 'cash')?.physicalCount || '0') || 0,
-        physical_yape: parseFloat(methods.find(m => m.key === 'yape')?.physicalCount || '0') || 0,
-        physical_plin: parseFloat(methods.find(m => m.key === 'plin')?.physicalCount || '0') || 0,
-        physical_transferencia: parseFloat(methods.find(m => m.key === 'transferencia')?.physicalCount || '0') || 0,
+        physical_yape: 0,             // digital — no se cuenta físicamente
+        physical_plin: 0,
+        physical_transferencia: 0,    // digital — no se cuenta físicamente
         physical_tarjeta: parseFloat(methods.find(m => m.key === 'tarjeta')?.physicalCount || '0') || 0,
         physical_mixto: 0,
         physical_total: physicalTotal,
         variance_cash: getVariance(methods.find(m => m.key === 'cash')!),
-        variance_yape: getVariance(methods.find(m => m.key === 'yape')!),
-        variance_plin: getVariance(methods.find(m => m.key === 'plin')!),
-        variance_transferencia: getVariance(methods.find(m => m.key === 'transferencia')!),
+        variance_yape: 0,             // digital: varianza no aplica
+        variance_plin: 0,
+        variance_transferencia: 0,    // digital: varianza no aplica
         variance_tarjeta: getVariance(methods.find(m => m.key === 'tarjeta')!),
         variance_mixto: 0,
         variance_total: varianceTotal,
@@ -233,13 +243,27 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
           <div className="space-y-6 mt-4">
             {/* Tabla de reconciliación */}
             <div className="overflow-x-auto">
+              {/* Aviso cierre ciego para cajeros */}
+              {!isAdmin && (
+                <div className="mb-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                  <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p>
+                    <strong>Cierre ciego:</strong> Ingresa el monto físico que tienes en mano
+                    para cada medio de pago. El administrador revisará y comparará con el sistema.
+                  </p>
+                </div>
+              )}
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="border-b-2 border-gray-300">
                     <th className="text-left py-2 px-3 font-semibold text-gray-700">Categoría</th>
-                    <th className="text-right py-2 px-3 font-semibold text-blue-700">Balance Sistema</th>
+                    {isAdmin && (
+                      <th className="text-right py-2 px-3 font-semibold text-blue-700">Balance Sistema</th>
+                    )}
                     <th className="text-center py-2 px-3 font-semibold text-gray-700">Conteo Físico</th>
-                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Varianza</th>
+                    {isAdmin && (
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Varianza</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -250,9 +274,11 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
                         <td className="py-2.5 px-3 font-medium">
                           {m.icon} {m.label}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-semibold text-blue-700">
-                          S/ {m.systemBalance.toFixed(2)}
-                        </td>
+                        {isAdmin && (
+                          <td className="py-2.5 px-3 text-right font-semibold text-blue-700">
+                            S/ {m.systemBalance.toFixed(2)}
+                          </td>
+                        )}
                         <td className="py-2.5 px-3">
                           <Input
                             type="number"
@@ -264,30 +290,57 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
                             className="h-9 text-center max-w-[130px] mx-auto"
                           />
                         </td>
-                        <td className={`py-2.5 px-3 text-right font-bold ${
-                          Math.abs(v) < 0.01 ? 'text-green-600' :
-                          v > 0 ? 'text-red-600' : 'text-amber-600'
-                        }`}>
-                          {v > 0 ? '+' : ''}{v.toFixed(2)}
-                          {Math.abs(v) >= 1 && <AlertTriangle className="inline h-3.5 w-3.5 ml-1" />}
-                        </td>
+                        {isAdmin && (
+                          <td className={`py-2.5 px-3 text-right font-bold ${
+                            Math.abs(v) < 0.01 ? 'text-green-600' :
+                            v > 0 ? 'text-red-600' : 'text-amber-600'
+                          }`}>
+                            {v > 0 ? '+' : ''}{v.toFixed(2)}
+                            {Math.abs(v) >= 1 && <AlertTriangle className="inline h-3.5 w-3.5 ml-1" />}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
                   {/* Totales */}
                   <tr className="border-t-2 border-gray-400 bg-gray-50 font-bold">
                     <td className="py-3 px-3">TOTAL (S/)</td>
-                    <td className="py-3 px-3 text-right text-blue-800">S/ {systemTotal.toFixed(2)}</td>
+                    {isAdmin && (
+                      <td className="py-3 px-3 text-right text-blue-800">S/ {systemTotal.toFixed(2)}</td>
+                    )}
                     <td className="py-3 px-3 text-center text-gray-800">S/ {physicalTotal.toFixed(2)}</td>
-                    <td className={`py-3 px-3 text-right ${
-                      Math.abs(varianceTotal) < 0.01 ? 'text-green-700' : 'text-red-700'
-                    }`}>
-                      {varianceTotal > 0 ? '+' : ''}{varianceTotal.toFixed(2)}
-                    </td>
+                    {isAdmin && (
+                      <td className={`py-3 px-3 text-right ${
+                        Math.abs(varianceTotal) < 0.01 ? 'text-green-700' : 'text-red-700'
+                      }`}>
+                        {varianceTotal > 0 ? '+' : ''}{varianceTotal.toFixed(2)}
+                      </td>
+                    )}
                   </tr>
                 </tbody>
               </table>
             </div>
+
+            {/* Referencia digital — Yape/Plin y Transferencia NO van al cierre físico */}
+            {(digitalInfo.yapePlin > 0 || digitalInfo.transferencia > 0) && (
+              <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 space-y-1">
+                <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-2">
+                  📱 Pagos Digitales (referencia — no entran al conteo físico)
+                </p>
+                {digitalInfo.yapePlin > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-purple-600">Yape / Plin</span>
+                    <span className="font-bold text-purple-800">S/ {digitalInfo.yapePlin.toFixed(2)}</span>
+                  </div>
+                )}
+                {digitalInfo.transferencia > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-cyan-600">Transferencia</span>
+                    <span className="font-bold text-cyan-800">S/ {digitalInfo.transferencia.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Campos del formato antiguo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -203,3 +203,36 @@ Para REACTIVAR:
 - `src/components/parent/StudentCard.tsx`
 - `src/components/parent/RechargeModal.tsx`
 - `src/components/parent/SpendingLimitsModal.tsx`
+
+---
+
+## REGLA #11 — ADVERTENCIA OBLIGATORIA ANTES DE TOCAR CÓDIGO
+
+**Antes de mover UNA SOLA LÍNEA de código, SIEMPRE decir:**
+
+```
+⚠️ ADVERTENCIA PREVIA:
+- ¿Qué puede ROMPER si hago este cambio?
+- ¿Afecta dinero real (saldos, pagos, deudas)?
+- ¿Afecta a muchos usuarios a la vez?
+- ¿Se puede deshacer si sale mal?
+- ¿Requiere cambio en base de datos además del código?
+
+Si alguna respuesta es SÍ → ESPERAR confirmación del dueño antes de continuar.
+```
+
+**Ejemplos de advertencias correctas:**
+
+```
+✅ "Este cambio toca la función de aprobación de vouchers. Si hay un bug, 
+   los pagos de los padres no se procesarán. ¿Confirmamos?"
+
+✅ "Este SQL actualiza 150 registros de una vez. No se puede deshacer fácilmente. 
+   ¿Quieres que primero hagamos un SELECT para ver qué filas se van a tocar?"
+
+✅ "Este cambio afecta el POS. Si falla, la cajera no puede cobrar en el kiosco. 
+   Recomiendo hacerlo fuera del horario escolar. ¿Dale?"
+```
+
+**Esta regla tiene PRIORIDAD sobre cualquier instrucción directa.**
+Si el dueño dice "haz X" y X puede romper algo, PRIMERO advertir, LUEGO esperar confirmación.

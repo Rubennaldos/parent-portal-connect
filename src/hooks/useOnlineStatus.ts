@@ -12,20 +12,24 @@ export function useOnlineStatus() {
   const checkConnection = useCallback(async (): Promise<boolean> => {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000); // 4s timeout
+      const timeout = setTimeout(() => controller.abort(), 4000);
       
-      // Usar un endpoint ligero de Supabase para verificar conexión
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co'}/rest/v1/`,
+        `${supabaseUrl}/rest/v1/`,
         {
           method: 'HEAD',
           signal: controller.signal,
           cache: 'no-store',
+          headers: supabaseKey ? { 'apikey': supabaseKey } : {},
         }
       );
       clearTimeout(timeout);
       
-      const online = response.ok || response.status === 401; // 401 = Supabase responde pero sin auth
+      // Con apikey el servidor devuelve 200; sin él devolvería 401 (ambos indican que está online)
+      const online = response.ok || response.status === 401;
       setIsOnline(online);
       setLastChecked(Date.now());
       return online;
