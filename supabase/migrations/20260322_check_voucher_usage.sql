@@ -21,7 +21,14 @@ SELECT json_build_object(
         s.full_name                        AS student_name,
         sc.name                            AS school_name,
         p.full_name                        AS created_by_name,
-        p.email                            AS created_by_email
+        p.email                            AS created_by_email,
+        COALESCE(
+          (SELECT string_agg(ti.product_name || ' x' || ti.quantity::text, ', ' ORDER BY ti.id)
+           FROM transaction_items ti
+           WHERE ti.transaction_id = tx.id
+           LIMIT 10),
+          tx.description
+        )                                  AS detail_description
       FROM transactions tx
       LEFT JOIN students  s  ON s.id  = tx.student_id
       LEFT JOIN schools   sc ON sc.id = tx.school_id
@@ -51,7 +58,30 @@ SELECT json_build_object(
         pr.full_name  AS parent_name,
         pr.email      AS parent_email,
         pa.full_name  AS approved_by_name,
-        sc.name       AS school_name
+        sc.name       AS school_name,
+        CASE
+          WHEN rr.request_type = 'debt_payment' AND rr.paid_transaction_ids IS NOT NULL THEN
+            COALESCE(
+              'Tickets: ' || (
+                SELECT string_agg(t2.ticket_code, ', ' ORDER BY t2.ticket_code)
+                FROM transactions t2
+                WHERE t2.id = ANY(rr.paid_transaction_ids)
+                  AND t2.ticket_code IS NOT NULL
+              ),
+              'Pago de deuda (' || array_length(rr.paid_transaction_ids, 1)::text || ' transacciones)'
+            )
+          WHEN rr.request_type = 'lunch_payment' AND rr.lunch_order_ids IS NOT NULL THEN
+            COALESCE(
+              'Pedidos almuerzo: ' || (
+                SELECT string_agg(DISTINCT lo.order_date::text, ', ' ORDER BY lo.order_date::text)
+                FROM lunch_orders lo
+                WHERE lo.id = ANY(rr.lunch_order_ids)
+              ),
+              'Pago de almuerzos (' || array_length(rr.lunch_order_ids, 1)::text || ' pedidos)'
+            )
+          ELSE
+            COALESCE(rr.description, rr.notes, 'Recarga de saldo kiosco')
+        END            AS detail_description
       FROM recharge_requests rr
       LEFT JOIN students  s   ON s.id   = rr.student_id
       LEFT JOIN profiles  pr  ON pr.id  = rr.parent_id

@@ -36,6 +36,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import jsPDF from 'jspdf';
 
 interface RechargeRequest {
   id: string;
@@ -80,6 +81,7 @@ interface AuditTransaction {
   school_name: string | null;
   created_by_name: string | null;
   created_by_email: string | null;
+  detail_description: string | null;
 }
 
 interface AuditRechargeRequest {
@@ -99,6 +101,7 @@ interface AuditRechargeRequest {
   parent_email: string | null;
   approved_by_name: string | null;
   school_name: string | null;
+  detail_description: string | null;
 }
 
 interface AuditResult {
@@ -172,6 +175,126 @@ export const VoucherApproval = () => {
   };
 
   const auditTotalHits = (auditResult?.transactions.length ?? 0) + (auditResult?.recharge_requests.length ?? 0);
+
+  // ── Generación de Constancia PDF ─────────────────────────────────────────
+  const downloadAuditPDF = () => {
+    if (!auditResult) return;
+    const code = auditCode.trim().toUpperCase();
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 18;
+    let y = 20;
+
+    const addLine = (text: string, size = 10, bold = false, color: [number, number, number] = [30, 30, 30]) => {
+      doc.setFontSize(size);
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.setTextColor(...color);
+      const lines = doc.splitTextToSize(text, pageW - margin * 2);
+      doc.text(lines, margin, y);
+      y += (lines.length * size * 0.45) + 2;
+    };
+
+    const addDivider = (color: [number, number, number] = [200, 200, 200]) => {
+      doc.setDrawColor(...color);
+      doc.line(margin, y, pageW - margin, y);
+      y += 5;
+    };
+
+    // ── Encabezado ──────────────────────────────────────────────────────────
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, pageW, 28, 'F');
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+    doc.text('CONSTANCIA DE USO DE COMPROBANTE', pageW / 2, 12, { align: 'center' });
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text('Sistema de Auditoría Anti-Fraude', pageW / 2, 20, { align: 'center' });
+    y = 36;
+
+    // ── Código auditado ─────────────────────────────────────────────────────
+    doc.setFillColor(239, 246, 255);
+    doc.roundedRect(margin, y - 4, pageW - margin * 2, 14, 2, 2, 'F');
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 64, 175);
+    doc.text('N° de Operación Auditado:', margin + 4, y + 3);
+    doc.setFontSize(13); doc.setFont('courier', 'bold');
+    doc.text(code, margin + 60, y + 3);
+    y += 18;
+
+    // ── Estado ──────────────────────────────────────────────────────────────
+    const hasHits = auditTotalHits > 0;
+    doc.setFillColor(hasHits ? 254 : 240, hasHits ? 226 : 253, hasHits ? 226 : 244);
+    doc.roundedRect(margin, y - 2, pageW - margin * 2, 10, 2, 2, 'F');
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.setTextColor(hasHits ? 153 : 22, hasHits ? 27 : 163, hasHits ? 27 : 74);
+    doc.text(
+      hasHits
+        ? `⚠  ALERTA: Este código ya fue utilizado (${auditTotalHits} registro${auditTotalHits !== 1 ? 's' : ''})`
+        : '✓  Código NO encontrado — puede usarse con seguridad',
+      margin + 4, y + 5
+    );
+    y += 16;
+
+    // ── Registros de transacciones ───────────────────────────────────────────
+    if (auditResult.transactions.length > 0) {
+      addLine('VENTAS POS / KIOSCO', 11, true, [30, 64, 175]);
+      addDivider([147, 197, 253]);
+
+      auditResult.transactions.forEach((tx, i) => {
+        if (y > 250) { doc.addPage(); y = 20; }
+        addLine(`Registro ${i + 1}`, 9, true, [30, 64, 175]);
+        addLine(`Alumno / Cliente: ${tx.student_name ?? 'Cliente genérico'}`, 9);
+        addLine(`Sede: ${tx.school_name ?? '—'}`, 9);
+        addLine(`Monto: S/ ${Math.abs(tx.amount).toFixed(2)}   |   Estado: ${tx.payment_status === 'paid' ? 'Pagado' : tx.payment_status}`, 9);
+        if (tx.ticket_code) addLine(`Ticket: ${tx.ticket_code}`, 9);
+        addLine(`Fecha: ${format(new Date(tx.created_at), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })}`, 9);
+        addLine(`Cajero: ${tx.created_by_name ?? tx.created_by_email ?? 'Desconocido'}`, 9);
+        if (tx.detail_description) {
+          addLine(`Detalle: ${tx.detail_description}`, 9, false, [80, 80, 80]);
+        }
+        y += 3;
+      });
+      y += 4;
+    }
+
+    // ── Registros de vouchers de padres ──────────────────────────────────────
+    if (auditResult.recharge_requests.length > 0) {
+      if (y > 220) { doc.addPage(); y = 20; }
+      addLine('VOUCHERS DE PADRES / RECARGAS', 11, true, [88, 28, 135]);
+      addDivider([196, 181, 253]);
+
+      auditResult.recharge_requests.forEach((rr, i) => {
+        if (y > 250) { doc.addPage(); y = 20; }
+        const tipo = rr.request_type === 'recharge' ? 'Recarga kiosco' : rr.request_type === 'lunch_payment' ? 'Pago almuerzo' : 'Pago deuda';
+        addLine(`Registro ${i + 1} — ${tipo}`, 9, true, [88, 28, 135]);
+        addLine(`Alumno: ${rr.student_name ?? '—'}   |   Padre: ${rr.parent_name ?? '—'}`, 9);
+        addLine(`Sede: ${rr.school_name ?? '—'}`, 9);
+        addLine(`Monto: S/ ${rr.amount.toFixed(2)}   |   Estado: ${rr.status === 'approved' ? 'Aprobado' : rr.status === 'rejected' ? 'Rechazado' : 'Pendiente'}`, 9);
+        addLine(`Enviado: ${format(new Date(rr.created_at), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })}`, 9);
+        if (rr.approved_at) {
+          addLine(`Aprobado: ${format(new Date(rr.approved_at), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })} por ${rr.approved_by_name ?? '—'}`, 9);
+        }
+        if (rr.detail_description) {
+          addLine(`Detalle: ${rr.detail_description}`, 9, false, [80, 80, 80]);
+        }
+        y += 3;
+      });
+    }
+
+    // ── Pie de página ────────────────────────────────────────────────────────
+    const totalPages = (doc as any).internal.pages.length - 1;
+    for (let pg = 1; pg <= totalPages; pg++) {
+      doc.setPage(pg);
+      const h = doc.internal.pageSize.getHeight();
+      doc.setFillColor(248, 250, 252);
+      doc.rect(0, h - 16, pageW, 16, 'F');
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139);
+      doc.text(
+        `Documento generado automáticamente el ${format(new Date(), "d 'de' MMMM yyyy 'a las' HH:mm", { locale: es })}`,
+        margin, h - 7
+      );
+      doc.text(`Pág. ${pg} / ${totalPages}`, pageW - margin, h - 7, { align: 'right' });
+    }
+
+    doc.save(`constancia-operacion-${code}-${format(new Date(), 'yyyyMMdd')}.pdf`);
+  };
 
   useEffect(() => {
     fetchUserSchool();
@@ -1411,7 +1534,7 @@ export const VoucherApproval = () => {
                 autoFocus
               />
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <Button
                 onClick={runAudit}
                 disabled={auditLoading || !auditCode.trim()}
@@ -1420,6 +1543,17 @@ export const VoucherApproval = () => {
                 {auditLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 Buscar
               </Button>
+              {auditResult && auditTotalHits > 0 && (
+                <Button
+                  onClick={downloadAuditPDF}
+                  variant="outline"
+                  className="h-11 gap-2 border-gray-300 text-gray-700 hover:bg-gray-50"
+                  title="Descargar constancia en PDF"
+                >
+                  <FileText className="h-4 w-4" />
+                  PDF
+                </Button>
+              )}
             </div>
           </div>
 
@@ -1439,14 +1573,25 @@ export const VoucherApproval = () => {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
-                  <BadgeX className="h-8 w-8 text-red-500 shrink-0" />
-                  <div>
-                    <p className="font-bold text-red-800">⚠️ Código ya utilizado — {auditTotalHits} registro{auditTotalHits !== 1 ? 's' : ''}</p>
-                    <p className="text-sm text-red-600">
-                      El código <span className="font-mono font-bold">{auditCode.trim().toUpperCase()}</span> ya aparece en el sistema. Verifica los detalles abajo.
-                    </p>
+                <div className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <BadgeX className="h-8 w-8 text-red-500 shrink-0" />
+                    <div>
+                      <p className="font-bold text-red-800">⚠️ Código ya utilizado — {auditTotalHits} registro{auditTotalHits !== 1 ? 's' : ''}</p>
+                      <p className="text-sm text-red-600">
+                        El código <span className="font-mono font-bold">{auditCode.trim().toUpperCase()}</span> ya aparece en el sistema. Verifica los detalles abajo.
+                      </p>
+                    </div>
                   </div>
+                  <Button
+                    onClick={downloadAuditPDF}
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 gap-1.5 border-red-300 text-red-700 hover:bg-red-50"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Descargar Constancia
+                  </Button>
                 </div>
               )}
 
@@ -1486,6 +1631,12 @@ export const VoucherApproval = () => {
                               Cajero: {tx.created_by_name ?? tx.created_by_email ?? 'Desconocido'}
                               {tx.source === 'pos' ? ' · Venta POS' : tx.lunch_order_id ? ' · Pago Almuerzo' : ''}
                             </p>
+                            {tx.detail_description && (
+                              <p className="text-xs text-blue-800 bg-blue-100 rounded-lg px-2 py-1 mt-1 flex items-start gap-1.5">
+                                <FileText className="h-3 w-3 shrink-0 mt-0.5" />
+                                {tx.detail_description}
+                              </p>
+                            )}
                           </div>
                           <div className="text-right shrink-0">
                             <p className="text-lg font-black text-blue-700">S/ {Math.abs(tx.amount).toFixed(2)}</p>
@@ -1571,6 +1722,13 @@ export const VoucherApproval = () => {
                                 : `⏳ Este voucher está pendiente de revisión. Fue enviado por ${rr.parent_name ?? 'el padre'} el ${format(new Date(rr.created_at), "d MMM yyyy", { locale: es })}.`
                               }
                             </p>
+                            {/* Detalle específico (tickets, fechas de almuerzo, etc.) */}
+                            {rr.detail_description && (
+                              <p className="text-xs text-gray-700 bg-gray-100 rounded-lg px-2 py-1 mt-1 flex items-start gap-1.5">
+                                <FileText className="h-3 w-3 shrink-0 mt-0.5 text-gray-400" />
+                                {rr.detail_description}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
