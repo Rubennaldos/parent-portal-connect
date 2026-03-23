@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet } from 'lucide-react';
+import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet, BadgeCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
@@ -39,6 +39,8 @@ interface Product {
   wholesale_price?: number;
   active: boolean;
   school_ids: string[];
+  stock_control_enabled: boolean;
+  is_verified?: boolean;
 }
 
 interface School {
@@ -82,6 +84,14 @@ const Products = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+
+  // Stock control per school
+  const [productStockLevels, setProductStockLevels] = useState<Record<string, number>>({});
+  const [showStockControlModal, setShowStockControlModal] = useState(false);
+  const [stockControlTarget, setStockControlTarget] = useState<Product | null>(null);
+  const [stockControlInitial, setStockControlInitial] = useState('0');
+  const [stockControlLoading, setStockControlLoading] = useState(false);
+
   const [dashStats, setDashStats] = useState<DashboardStats>({
     totalProducts: 0,
     activeProducts: 0,
@@ -215,6 +225,21 @@ const Products = () => {
 
     setProducts(productsData);
     setFilteredProducts(productsData);
+    
+    // Cargar niveles de stock si hay una sede
+    if (userSchoolId) {
+      const productIds = productsData.map(p => p.id);
+      if (productIds.length > 0) {
+        const { data: stockData } = await supabase
+          .from('product_stock')
+          .select('product_id, current_stock')
+          .eq('school_id', userSchoolId)
+          .in('product_id', productIds);
+        const levels: Record<string, number> = {};
+        (stockData || []).forEach(s => { levels[s.product_id] = s.current_stock; });
+        setProductStockLevels(levels);
+      }
+    }
     
     // Categorías predefinidas COMPLETAS
     const predefinedCategories = [
@@ -887,6 +912,73 @@ const Products = () => {
     }
   };
 
+  // ─── STOCK CONTROL: activar / desactivar por sede ───────────────────────────
+  const openStockControlModal = (product: Product) => {
+    const current = productStockLevels[product.id] ?? 0;
+    setStockControlTarget(product);
+    setStockControlInitial(product.stock_control_enabled ? String(current) : '0');
+    setShowStockControlModal(true);
+  };
+
+  const handleSaveStockControl = async (enable: boolean) => {
+    if (!stockControlTarget || !userSchoolId) return;
+    setStockControlLoading(true);
+    try {
+      // 1. Actualizar flag en products
+      const { error: err1 } = await supabase
+        .from('products')
+        .update({ stock_control_enabled: enable })
+        .eq('id', stockControlTarget.id);
+      if (err1) throw err1;
+
+      // 2. Si se activa, crear/actualizar registro en product_stock
+      if (enable) {
+        const qty = parseInt(stockControlInitial) || 0;
+        const { error: err2 } = await supabase
+          .from('product_stock')
+          .upsert(
+            { product_id: stockControlTarget.id, school_id: userSchoolId, current_stock: qty },
+            { onConflict: 'product_id,school_id' }
+          );
+        if (err2) throw err2;
+      }
+
+      toast({
+        title: enable ? '✅ Control de stock activado' : '✅ Control de stock desactivado',
+        description: enable
+          ? `Stock inicial registrado: ${stockControlInitial} unidades`
+          : 'El producto vuelve a venderse libremente',
+      });
+      setShowStockControlModal(false);
+      setStockControlTarget(null);
+      fetchProducts();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setStockControlLoading(false);
+    }
+  };
+
+  const handleToggleVerified = async (product: Product) => {
+    const newValue = !product.is_verified;
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ is_verified: newValue })
+        .eq('id', product.id);
+      if (error) throw error;
+      toast({
+        title: newValue ? '✅ Sello Verde activado' : '⭕ Verificación removida',
+        description: newValue
+          ? `"${product.name}" ahora es un artículo oficial verificado`
+          : `"${product.name}" ya no está marcado como verificado`,
+      });
+      fetchProducts();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    }
+  };
+
   const exportToCSV = () => {
     if (products.length === 0) return;
     
@@ -1236,8 +1328,20 @@ const Products = () => {
                     <Card key={product.id} className="hover:shadow-lg transition">
                       <CardHeader>
                         <div className="flex justify-between items-start">
-                          <CardTitle className="text-lg">{product.name}</CardTitle>
-                          <Badge>{product.category}</Badge>
+                          <CardTitle className="text-lg flex items-center gap-1.5">
+                            {product.name}
+                            {product.is_verified && (
+                              <BadgeCheck className="h-4 w-4 text-green-500 shrink-0" title="Producto Verificado — Sello Verde" />
+                            )}
+                          </CardTitle>
+                          <div className="flex items-center gap-1 flex-wrap justify-end">
+                            {product.is_verified && (
+                              <Badge className="bg-green-100 text-green-700 border border-green-200 text-[10px] px-1.5 py-0 h-5">
+                                Verificado
+                              </Badge>
+                            )}
+                            <Badge>{product.category}</Badge>
+                          </div>
                         </div>
                         <CardDescription>Código: {product.code}</CardDescription>
                       </CardHeader>
@@ -1268,6 +1372,15 @@ const Products = () => {
                             Stock: {product.stock_initial || 0} | Mín: {product.stock_min || 0}
                           </div>
                         )}
+                        {/* Badge de stock controlado por sede */}
+                        {product.stock_control_enabled && (
+                          <div className="flex items-center gap-2 mb-2 p-2 rounded-md bg-blue-50 border border-blue-200">
+                            <Package className="h-3 w-3 text-blue-600" />
+                            <span className="text-xs font-semibold text-blue-700">
+                              Stock en sede: {productStockLevels[product.id] ?? '–'} uds.
+                            </span>
+                          </div>
+                        )}
                         <div className="flex gap-2 flex-wrap">
                           {/* Botón de precios: visible para todos, pero cada admin solo edita su sede */}
                           <Button 
@@ -1283,6 +1396,34 @@ const Products = () => {
                             <Building2 className="h-3 w-3 mr-1" />
                             Precios
                           </Button>
+                          {/* Toggle Stock Control: visible para admins y gestores */}
+                          {(isAdminGeneral || role === 'gestor_unidad') && userSchoolId && (
+                            <Button
+                              size="sm"
+                              variant={product.stock_control_enabled ? 'default' : 'outline'}
+                              onClick={() => openStockControlModal(product)}
+                              className={product.stock_control_enabled ? 'bg-blue-600 hover:bg-blue-700' : ''}
+                              title="Controlar stock de este producto en tu sede"
+                            >
+                              <Package className="h-3 w-3 mr-1" />
+                              Stock
+                            </Button>
+                          )}
+                          {/* Botón Verificar (Sello Verde): solo admin_general y superadmin */}
+                          {(isAdminGeneral || role === 'superadmin') && (
+                            <Button
+                              size="sm"
+                              variant={product.is_verified ? 'default' : 'outline'}
+                              onClick={() => handleToggleVerified(product)}
+                              className={product.is_verified
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'text-green-600 border-green-300 hover:bg-green-50'}
+                              title={product.is_verified ? 'Quitar Sello Verde' : 'Dar Sello Verde (verificar producto)'}
+                            >
+                              <BadgeCheck className="h-3 w-3 mr-1" />
+                              {product.is_verified ? 'Verde ✓' : 'Verificar'}
+                            </Button>
+                          )}
                           {/* Editar y Eliminar: solo admin_general (modifica producto global) */}
                           {isAdminGeneral && (
                             <>
@@ -1412,6 +1553,78 @@ const Products = () => {
         categories={categories}
         schools={schools}
       />
+
+      {/* Modal: Control de Stock por Sede */}
+      <Dialog open={showStockControlModal} onOpenChange={setShowStockControlModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-blue-600" />
+              Control de Stock — {stockControlTarget?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {stockControlTarget?.stock_control_enabled ? (
+              <>
+                <p className="text-sm text-gray-600">
+                  Este producto tiene control de stock activado.
+                  Stock actual: <strong>{productStockLevels[stockControlTarget.id] ?? 0} unidades</strong>.
+                </p>
+                <div className="space-y-2">
+                  <Label>Ajustar stock a:</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={stockControlInitial}
+                    onChange={e => setStockControlInitial(e.target.value)}
+                    placeholder="Cantidad"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    className="flex-1 bg-blue-600 hover:bg-blue-700"
+                    onClick={() => handleSaveStockControl(true)}
+                    disabled={stockControlLoading}
+                  >
+                    {stockControlLoading ? 'Guardando...' : 'Actualizar Stock'}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => handleSaveStockControl(false)}
+                    disabled={stockControlLoading}
+                  >
+                    Desactivar
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600">
+                  Al activar el control de stock, el POS descontará unidades automáticamente 
+                  cada vez que se venda este producto en tu sede.
+                </p>
+                <div className="space-y-2">
+                  <Label>Stock inicial (unidades disponibles ahora):</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={stockControlInitial}
+                    onChange={e => setStockControlInitial(e.target.value)}
+                    placeholder="Ej: 50"
+                  />
+                </div>
+                <Button
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  onClick={() => handleSaveStockControl(true)}
+                  disabled={stockControlLoading}
+                >
+                  {stockControlLoading ? 'Activando...' : 'Activar Control de Stock'}
+                </Button>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

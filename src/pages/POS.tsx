@@ -119,6 +119,7 @@ interface Product {
   category: string;
   image_url?: string | null;
   active?: boolean;
+  stock_control_enabled?: boolean;
 }
 
 interface CartItem {
@@ -1989,6 +1990,24 @@ const POS = () => {
         duration: 2000,
       });
       emitSync(['transactions', 'balances', 'dashboard', 'debtors']);
+
+      // 📦 Descontar stock de los productos que tienen control de stock activado
+      if (userSchoolId) {
+        const stockItems = cart.filter(item => item.product.stock_control_enabled);
+        if (stockItems.length > 0) {
+          // Fire-and-forget: no bloquea la venta si el descuento falla
+          void (async () => {
+            for (const item of stockItems) {
+              const { error } = await supabase.rpc('deduct_product_stock', {
+                p_product_id: item.product.id,
+                p_school_id:  userSchoolId,
+                p_quantity:   item.quantity,
+              });
+              if (error) console.warn('⚠️ Error al descontar stock:', error);
+            }
+          })();
+        }
+      }
 
       // 🖨️ IMPRIMIR AUTOMÁTICAMENTE según configuración
       const schoolIdForPrint = selectedStudent?.school_id || selectedTeacher?.school_1_id || cashierProfile?.school_id;

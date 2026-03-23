@@ -17,12 +17,20 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  ArrowLeft
+  ArrowLeft,
+  Building2,
+  ClipboardList,
+  Merge,
+  BadgeCheck
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ProcessRequestModal } from '@/components/logistics/ProcessRequestModal';
+import { SuppliersTab } from '@/components/logistics/SuppliersTab';
+import { PurchaseEntriesTab } from '@/components/logistics/PurchaseEntriesTab';
+import { ProductMergeTab } from '@/components/logistics/ProductMergeTab';
+import { ItemMasterTab } from '@/components/logistics/ItemMasterTab';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 interface InventoryItem {
@@ -65,6 +73,7 @@ const Logistics = () => {
   const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   
   // Modal de procesamiento
   const [showProcessModal, setShowProcessModal] = useState(false);
@@ -76,64 +85,25 @@ const Logistics = () => {
 
   useEffect(() => {
     loadData();
+    loadUserSchool();
   }, []);
 
+  const loadUserSchool = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('school_id')
+      .eq('id', user.id)
+      .maybeSingle();
+    setUserSchoolId(data?.school_id || null);
+  };
+
   const loadData = async () => {
-    try {
-      setLoading(true);
-
-      // Cargar items de inventario con stock central
-      const { data: items, error: itemsError } = await supabase
-        .from('inventory_items')
-        .select(`
-          *,
-          category:inventory_categories(name, color, icon),
-          central_stock:inventory_stock!inner(quantity)
-        `)
-        .eq('inventory_stock.school_id', null)
-        .eq('is_active', true)
-        .order('name');
-
-      if (itemsError) throw itemsError;
-
-      const formattedItems = items?.map(item => ({
-        ...item,
-        central_stock: item.central_stock?.[0]?.quantity || 0
-      })) || [];
-
-      setInventoryItems(formattedItems);
-
-      // Cargar pedidos pendientes
-      const { data: requests, error: requestsError } = await supabase
-        .from('supply_requests')
-        .select(`
-          *,
-          requesting_school:schools(name),
-          requested_by:profiles(full_name),
-          items:supply_request_items(count)
-        `)
-        .in('status', ['pending', 'processing'])
-        .order('created_at', { ascending: false });
-
-      if (requestsError) throw requestsError;
-
-      const formattedRequests = requests?.map(req => ({
-        ...req,
-        items_count: req.items?.[0]?.count || 0
-      })) || [];
-
-      setSupplyRequests(formattedRequests);
-
-    } catch (error: any) {
-      console.error('Error loading logistics data:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo cargar la información de logística',
-      });
-    } finally {
-      setLoading(false);
-    }
+    // Las tablas inventory_items / supply_requests son del módulo de almacén central
+    // y aún no están creadas en esta instalación. Inicializamos vacío sin hacer consultas.
+    setInventoryItems([]);
+    setSupplyRequests([]);
+    setLoading(false);
   };
 
   const getStatusBadge = (status: string) => {
@@ -304,21 +274,37 @@ const Logistics = () => {
 
         {/* Tabs Principales */}
         <Tabs defaultValue="inventory" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 bg-white border rounded-xl p-1">
+          <TabsList className="grid w-full grid-cols-8 bg-white border rounded-xl p-1">
             <TabsTrigger value="inventory" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <Package className="h-4 w-4 mr-2" />
+              <Package className="h-4 w-4 mr-1" />
               Inventario
             </TabsTrigger>
             <TabsTrigger value="requests" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <TruckIcon className="h-4 w-4 mr-2" />
+              <TruckIcon className="h-4 w-4 mr-1" />
               Pedidos
             </TabsTrigger>
+            <TabsTrigger value="suppliers" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
+              <Building2 className="h-4 w-4 mr-1" />
+              Proveedores
+            </TabsTrigger>
+            <TabsTrigger value="entries" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
+              <ClipboardList className="h-4 w-4 mr-1" />
+              Entradas
+            </TabsTrigger>
+            <TabsTrigger value="merge" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
+              <Merge className="h-4 w-4 mr-1" />
+              Match
+            </TabsTrigger>
+            <TabsTrigger value="master" className="data-[state=active]:bg-green-600 data-[state=active]:text-white">
+              <BadgeCheck className="h-4 w-4 mr-1" />
+              Maestro
+            </TabsTrigger>
             <TabsTrigger value="assets" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <HardDrive className="h-4 w-4 mr-2" />
+              <HardDrive className="h-4 w-4 mr-1" />
               Activos
             </TabsTrigger>
             <TabsTrigger value="analytics" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
-              <BarChart3 className="h-4 w-4 mr-2" />
+              <BarChart3 className="h-4 w-4 mr-1" />
               Analytics
             </TabsTrigger>
           </TabsList>
@@ -470,6 +456,26 @@ const Logistics = () => {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Pestaña de Proveedores */}
+          <TabsContent value="suppliers" className="mt-6">
+            <SuppliersTab />
+          </TabsContent>
+
+          {/* Pestaña de Entradas de Stock */}
+          <TabsContent value="entries" className="mt-6">
+            <PurchaseEntriesTab schoolId={userSchoolId} />
+          </TabsContent>
+
+          {/* Pestaña de Match / Fusión de Productos */}
+          <TabsContent value="merge" className="mt-6">
+            <ProductMergeTab />
+          </TabsContent>
+
+          {/* Pestaña de Maestro de Artículos (Sello Verde) */}
+          <TabsContent value="master" className="mt-6">
+            <ItemMasterTab />
           </TabsContent>
 
           {/* Pestaña de Activos */}

@@ -31,7 +31,10 @@ export function CreateAdminSimple({ onSuccess, onCancel }: CreateAdminSimpleProp
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    // Guard anti-doble clic: si ya está procesando, ignorar
+    if (creating) return;
+
     // Validaciones
     if (!fullName.trim()) {
       toast({ variant: 'destructive', title: 'Error', description: 'Ingresa el nombre completo' });
@@ -50,53 +53,61 @@ export function CreateAdminSimple({ onSuccess, onCancel }: CreateAdminSimpleProp
     setStep('creating');
 
     try {
-      console.log('🚀 Creando Admin General:', { email, fullName });
-
-      // Usar función RPC para crear el usuario (BYPASSEA TRIGGER Y RLS)
       const { data: result, error: rpcError } = await supabase.rpc('create_admin_user', {
-        p_email: email.trim(),
-        p_password: password,
+        p_email:     email.trim().toLowerCase(),
+        p_password:  password,
         p_full_name: fullName.trim(),
-        p_role: 'admin_general',
+        p_role:      'admin_general',
       });
 
-      console.log('📦 Respuesta RPC:', { result, rpcError });
-
       if (rpcError) {
-        console.error('❌ Error en RPC:', rpcError);
         throw new Error(rpcError.message);
       }
 
       if (!result || !result.success) {
-        console.error('❌ La función RPC retornó error:', result);
-        throw new Error(result?.error || 'Error desconocido al crear el usuario');
-      }
+        const errMsg: string = result?.error || 'Error desconocido al crear el usuario';
 
-      console.log('✅ Usuario creado exitosamente:', result);
+        // Caso especial: el email ya existe (quizás el usuario fue creado
+        // en un intento anterior pero la respuesta llegó con error).
+        // En este caso NO es un error real — decirle al admin que verifique.
+        const isDuplicateEmail =
+          errMsg.toLowerCase().includes('already registered') ||
+          errMsg.toLowerCase().includes('ya está registrado') ||
+          errMsg.toLowerCase().includes('duplicate key') ||
+          errMsg.toLowerCase().includes('unique constraint');
+
+        if (isDuplicateEmail) {
+          setStep('error');
+          setErrorMessage(
+            'El correo ya está registrado en el sistema. ' +
+            'Es posible que el usuario haya sido creado correctamente en un intento anterior. ' +
+            'Recarga la página y verifica la lista antes de intentar de nuevo.'
+          );
+          return;
+        }
+
+        throw new Error(errMsg);
+      }
 
       // Éxito
       setStep('success');
-      
       toast({
         title: '✅ Admin Creado',
         description: `${fullName} (${email}) ha sido creado como Admin General`,
         duration: 4000,
       });
 
-      // Esperar 2 segundos y cerrar
       setTimeout(() => {
         resetForm();
         onSuccess();
       }, 2000);
 
     } catch (error: any) {
-      console.error('💥 Error fatal:', error);
       setStep('error');
       setErrorMessage(error.message || 'Error desconocido al crear el usuario');
-      
       toast({
         variant: 'destructive',
-        title: 'Error',
+        title: 'Error al crear el usuario',
         description: error.message || 'No se pudo crear el usuario',
         duration: 5000,
       });

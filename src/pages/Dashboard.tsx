@@ -348,18 +348,6 @@ const Dashboard = () => {
           status: 'functional' as const,
         },
         {
-          id: '7',
-          code: 'logistica',
-          name: 'Logística',
-          description: 'Inventario y compras',
-          icon: 'Package',
-          color: 'orange',
-          route: '/logistica',
-          is_active: true,
-          is_enabled: false,
-          status: 'coming_soon' as const,
-        },
-        {
           id: '14',
           code: 'cash_register',
           name: 'Cierre de Caja',
