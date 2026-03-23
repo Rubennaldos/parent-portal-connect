@@ -371,8 +371,8 @@ export default function CashDayDashboard({
     try {
       const methodMap: Record<string, string[]> = {
         cash:          ['efectivo'],
-        yape:          ['yape', 'yape_qr'],
-        plin:          ['plin'],
+        yape:          ['yape', 'yape_qr', 'plin'],   // Yape/Plin juntos
+        plin:          ['plin', 'yape', 'yape_qr'],   // mismo grupo
         tarjeta:       ['tarjeta'],
         transferencia: ['transferencia'],
       };
@@ -481,13 +481,15 @@ export default function CashDayDashboard({
   const manExpenseTotal = (salesTotals as any)?.manual_expense_total ?? 0;
   const totalIngresos   = safeAdd(posTotal, manIncomeTotal);
 
-  // Solo Efectivo y Tarjeta (+ sus porciones de pago mixto) van físicamente a caja.
-  // Yape/Plin y Transferencia NO van al cierre físico.
-  const posEnCaja   = safeAdd(salesTotals?.cash ?? 0, salesTotals?.tarjeta ?? 0);
-  const granTotal   = safeAdd(posEnCaja, manIncomeTotal, -manExpenseTotal);
+  // ── Políticas de medios de pago ──────────────────────────────────────────
+  // FÍSICO (va a caja, la cajera los cuenta): Efectivo + Tarjeta
+  // DIGITAL (no va a caja, se concilia aparte): Yape/Plin + Transferencia
+  // Yape y Plin se muestran juntos (igual que en el POS: botón "Yape / Plin").
 
-  // Monto digital (referencia informativa, no va a caja)
-  const posDigital  = safeAdd(salesTotals?.yape ?? 0, salesTotals?.plin ?? 0, salesTotals?.transferencia ?? 0);
+  const yapePlin    = safeAdd(salesTotals?.yape ?? 0, salesTotals?.plin ?? 0);
+  const posEnCaja   = safeAdd(salesTotals?.cash ?? 0, salesTotals?.tarjeta ?? 0);
+  const posDigital  = safeAdd(yapePlin, salesTotals?.transferencia ?? 0);
+  const granTotal   = safeAdd(posEnCaja, manIncomeTotal, -manExpenseTotal);
 
   // ── Modo de lectura para días pasados ─────────────────────────────────────
   const isViewReadOnly = isReadOnly || isPastDay;
@@ -733,107 +735,153 @@ export default function CashDayDashboard({
 
       {salesTotals && (
         <>
-          {/* ── TARJETA GRAN TOTAL (Hero) ─────────────────────────────────── */}
+          {/* ── TARJETAS HERO ────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
-            {/* 1. Todo lo que entró (ventas totales, incluye digital) */}
-            <Card className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50">
+            {/* 1. LO QUE DEBE HABER EN CAJA — HERO principal (va primero) */}
+            <Card className="border-2 border-indigo-400 bg-gradient-to-br from-indigo-600 to-blue-700 shadow-lg shadow-indigo-200">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">
-                      {isRangeMode || isAllSchools ? 'Total ventas del período' : 'Total ventas del día'}
+                    <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">
+                      💵 Lo que hay en caja ahora
                     </p>
-                    <p className="text-3xl font-black text-emerald-700 mt-1">S/ {totalIngresos.toFixed(2)}</p>
-                    <p className="text-xs text-emerald-500 mt-1">
-                      POS S/ {posTotal.toFixed(2)} + Cobros manuales S/ {manIncomeTotal.toFixed(2)}
-                    </p>
-                    <p className="text-xs text-purple-500 mt-0.5">
-                      Digital (no en caja): S/ {posDigital.toFixed(2)}
-                    </p>
+                    <p className="text-4xl font-black text-white mt-1">S/ {granTotal.toFixed(2)}</p>
+                    <div className="mt-2 space-y-0.5">
+                      <p className="text-xs text-indigo-200">
+                        Efectivo S/ {(salesTotals?.cash ?? 0).toFixed(2)}
+                        &nbsp;+&nbsp;Tarjeta S/ {(salesTotals?.tarjeta ?? 0).toFixed(2)}
+                        {manIncomeTotal > 0 && ` + Ingresos S/ ${manIncomeTotal.toFixed(2)}`}
+                        {manExpenseTotal > 0 && ` − Egresos S/ ${manExpenseTotal.toFixed(2)}`}
+                      </p>
+                      <p className="text-xs text-indigo-300/80 flex items-center gap-1">
+                        <span>📱 Digital no va a caja:</span>
+                        <span className="font-bold">S/ {posDigital.toFixed(2)}</span>
+                      </p>
+                    </div>
                   </div>
-                  <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-                    <TrendingUp className="h-5 w-5 text-emerald-600" />
+                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center shrink-0">
+                    <Wallet className="h-5 w-5 text-white" />
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* 2. Todo lo que salió */}
+            {/* 2. COBROS DIGITALES — informativo, no va a caja */}
+            <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-fuchsia-50">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-purple-600 uppercase tracking-wide">
+                      📱 Cobros digitales
+                    </p>
+                    <p className="text-3xl font-black text-purple-700 mt-1">S/ {posDigital.toFixed(2)}</p>
+                    <div className="mt-1.5 space-y-0.5">
+                      <p className="text-xs text-purple-500">
+                        Yape/Plin S/ {yapePlin.toFixed(2)}
+                        &nbsp;·&nbsp;Transfer. S/ {(salesTotals?.transferencia ?? 0).toFixed(2)}
+                      </p>
+                      <p className="text-xs text-purple-400 font-medium">
+                        Este dinero NO está en la caja física
+                      </p>
+                    </div>
+                  </div>
+                  <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center shrink-0">
+                    <TrendingUp className="h-5 w-5 text-purple-500" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 3. EGRESOS */}
             <Card className="border-2 border-rose-200 bg-gradient-to-br from-rose-50 to-red-50">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-rose-600 uppercase tracking-wide">Todo lo que salió</p>
+                    <p className="text-xs font-semibold text-rose-600 uppercase tracking-wide">
+                      📤 Salidas de caja
+                    </p>
                     <p className="text-3xl font-black text-rose-700 mt-1">S/ {manExpenseTotal.toFixed(2)}</p>
                     <p className="text-xs text-rose-400 mt-1">
                       {expenseEntries.length} egreso{expenseEntries.length !== 1 ? 's' : ''} registrado{expenseEntries.length !== 1 ? 's' : ''}
                     </p>
                   </div>
-                  <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center">
+                  <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center shrink-0">
                     <TrendingDown className="h-5 w-5 text-rose-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 3. Lo que debe haber EN CAJA FÍSICA (solo Efectivo + Tarjeta) */}
-            <Card className="border-2 border-indigo-400 bg-gradient-to-br from-indigo-600 to-blue-700 shadow-lg shadow-indigo-200">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">Lo que debe haber en caja ahora</p>
-                    <p className="text-4xl font-black text-white mt-1">S/ {granTotal.toFixed(2)}</p>
-                    <p className="text-xs text-indigo-300 mt-1">
-                      Efectivo+Tarjeta {posEnCaja.toFixed(2)} + Ingresos {manIncomeTotal.toFixed(2)} − Egresos {manExpenseTotal.toFixed(2)}
-                    </p>
-                    <p className="text-xs text-indigo-200/80 mt-1.5">
-                      Yape/Plin/Transfer. ({posDigital.toFixed(2)}) no entran a caja
-                    </p>
-                  </div>
-                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                    <Wallet className="h-5 w-5 text-white" />
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* ── VENTAS POS — Tarjetas clicables (LUPA) ───────────────────── */}
+          {/* ── DESGLOSE MEDIOS DE PAGO ──────────────────────────────────── */}
           <Card>
             <CardHeader className="pb-2 pt-4 px-5">
               <CardTitle className="text-base font-bold text-gray-700 flex items-center gap-2">
-                🛒 Ventas POS
+                🧾 Desglose por medio de pago
                 <Badge variant="outline" className="text-xs font-normal text-gray-500">
                   Toca un monto para ver el detalle
                 </Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="px-5 pb-5">
-              <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                {[
-                  { label: '💵 Efectivo',    value: salesTotals.cash,          key: 'cash' },
-                  { label: '📱 Yape',        value: salesTotals.yape,          key: 'yape' },
-                  { label: '📲 Plin',        value: salesTotals.plin,          key: 'plin' },
-                  { label: '🏦 Transfer.',   value: salesTotals.transferencia, key: 'transferencia' },
-                  { label: '💳 Tarjeta',     value: salesTotals.tarjeta,       key: 'tarjeta' },
-                ].map((item) => (
+            <CardContent className="px-5 pb-5 space-y-4">
+
+              {/* Físico — va a caja */}
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
+                  Físico — va a caja
+                </p>
+                <div className="grid grid-cols-2 gap-3">
                   <PaymentCard
-                    key={item.key}
-                    label={item.label}
-                    value={item.value}
-                    onClick={() => openDrillDown({ label: item.label, paymentMethod: item.key, total: item.value })}
+                    label="💵 Efectivo"
+                    value={salesTotals.cash}
+                    accent="bg-green-50 border-green-300"
+                    onClick={() => openDrillDown({ label: '💵 Efectivo', paymentMethod: 'cash', total: salesTotals.cash })}
                   />
-                ))}
-                <div className="rounded-xl bg-indigo-600 p-3 text-center flex flex-col justify-center">
-                  <p className="text-xs font-bold text-indigo-200 uppercase">Total cobrado POS</p>
-                  <p className="text-xl font-black text-white mt-0.5">S/ {salesTotals.total.toFixed(2)}</p>
-                  <p className="text-[10px] text-indigo-200 mt-0.5">Efectivo + Yape + Tarjeta + …</p>
+                  <PaymentCard
+                    label="💳 Tarjeta"
+                    value={salesTotals.tarjeta}
+                    accent="bg-blue-50 border-blue-300"
+                    onClick={() => openDrillDown({ label: '💳 Tarjeta', paymentMethod: 'tarjeta', total: salesTotals.tarjeta })}
+                  />
+                </div>
+                <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Subtotal en caja</span>
+                  <span className="text-lg font-black text-indigo-700">S/ {posEnCaja.toFixed(2)}</span>
                 </div>
               </div>
+
+              {/* Digital — no va a caja */}
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+                  Digital — no va a caja
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Yape + Plin juntos — igual que el botón del POS */}
+                  <PaymentCard
+                    label="📱 Yape / Plin"
+                    value={yapePlin}
+                    accent="bg-purple-50 border-purple-300"
+                    onClick={yapePlin > 0 ? () => openDrillDown({ label: '📱 Yape / Plin', paymentMethod: 'yape', total: yapePlin }) : undefined}
+                  />
+                  <PaymentCard
+                    label="🏦 Transferencia"
+                    value={salesTotals.transferencia}
+                    accent="bg-cyan-50 border-cyan-300"
+                    onClick={() => openDrillDown({ label: '🏦 Transferencia', paymentMethod: 'transferencia', total: salesTotals.transferencia })}
+                  />
+                </div>
+                <div className="mt-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-purple-700 uppercase tracking-wide">Subtotal digital</span>
+                  <span className="text-lg font-black text-purple-700">S/ {posDigital.toFixed(2)}</span>
+                </div>
+              </div>
+
               {(salesTotals as any).credit_total > 0 && (
-                <p className="text-xs text-amber-600 mt-3 flex items-center gap-1.5">
-                  <span className="font-semibold">Ventas a crédito (aún no están en caja):</span>
+                <p className="text-xs text-amber-600 flex items-center gap-1.5 pt-1">
+                  <span className="font-semibold">⏳ Créditos pendientes de cobro:</span>
                   <span className="font-bold">S/ {((salesTotals as any).credit_total || 0).toFixed(2)}</span>
                 </p>
               )}
@@ -860,7 +908,7 @@ export default function CashDayDashboard({
             </div>
           )}
 
-          {/* ── DESGLOSE POR MEDIO — Solo si hay manuales ────────────────── */}
+          {/* ── DESGLOSE CONSOLIDADO (cuando hay manuales) ───────────────── */}
           {(manIncomeTotal > 0 || manExpenseTotal > 0) && (
             <Card className="border border-gray-200">
               <CardHeader className="pb-2 pt-4 px-5">
@@ -869,13 +917,12 @@ export default function CashDayDashboard({
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-5">
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {[
-                    { label: '💵 Efectivo',  pos: salesTotals.cash,          man: (salesTotals as any).manual_income_cash },
-                    { label: '📱 Yape',      pos: salesTotals.yape,          man: (salesTotals as any).manual_income_yape },
-                    { label: '📲 Plin',      pos: salesTotals.plin,          man: (salesTotals as any).manual_income_plin },
-                    { label: '🏦 Transfer.', pos: salesTotals.transferencia, man: (salesTotals as any).manual_income_transferencia },
-                    { label: '💳 Tarjeta',   pos: salesTotals.tarjeta,       man: (salesTotals as any).manual_income_tarjeta },
+                    { label: '💵 Efectivo',    pos: salesTotals.cash,          man: (salesTotals as any).manual_income_cash },
+                    { label: '📱 Yape/Plin',   pos: yapePlin,                  man: safeAdd((salesTotals as any).manual_income_yape, (salesTotals as any).manual_income_plin) },
+                    { label: '🏦 Transfer.',   pos: salesTotals.transferencia, man: (salesTotals as any).manual_income_transferencia },
+                    { label: '💳 Tarjeta',     pos: salesTotals.tarjeta,       man: (salesTotals as any).manual_income_tarjeta },
                   ].map((item) => {
                     const total = safeAdd(item.pos, item.man);
                     return (
