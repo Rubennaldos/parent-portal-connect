@@ -10,6 +10,7 @@ import {
   Loader2, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Send,
   ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown,
   Wallet, ChevronDown, ChevronUp, Clock, Eye, AlertTriangle, Globe,
+  ClipboardList,
 } from 'lucide-react';
 import { format, subDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -158,6 +159,142 @@ function ManualEntriesPanel({
                 </li>
               ))}
             </ul>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// ─── Historial de Turnos (Auditoría Admin) ───────────────────────────────────
+
+interface AuditRow {
+  id: string;
+  session_date: string;
+  status: string;
+  cashier_name: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  initial_cash: number;
+  system_cash: number | null;
+  system_tarjeta: number | null;
+  declared_cash: number | null;
+  declared_tarjeta: number | null;
+  variance_total: number | null;
+  variance_justification: string | null;
+  opened_by_email?: string;
+}
+
+function CashAuditHistory({ schoolId }: { schoolId: string }) {
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase
+        .from('cash_sessions')
+        .select('id, session_date, status, cashier_name, opened_at, closed_at, initial_cash, system_cash, system_tarjeta, declared_cash, declared_tarjeta, variance_total, variance_justification, opened_by_profile:opened_by(email)')
+        .eq('school_id', schoolId)
+        .order('session_date', { ascending: false })
+        .limit(30);
+
+      setRows(
+        (data || []).map((r: any) => ({
+          ...r,
+          opened_by_email: r.opened_by_profile?.email ?? '—',
+        }))
+      );
+    } catch (err) {
+      console.error('[CashAudit] Error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [schoolId]);
+
+  useEffect(() => { if (expanded) load(); }, [expanded, load]);
+
+  return (
+    <Card className="border border-slate-200">
+      <CardHeader
+        className="pb-2 pt-4 px-5 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <CardTitle className="text-base font-bold text-gray-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="h-4 w-4 text-slate-500" />
+            Historial de Turnos / Auditoría
+          </div>
+          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </CardTitle>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="px-5 pb-5">
+          {loading ? (
+            <div className="flex justify-center py-6"><Loader2 className="h-6 w-6 animate-spin text-blue-500" /></div>
+          ) : rows.length === 0 ? (
+            <p className="text-center text-gray-400 py-6 text-sm">No hay sesiones de caja registradas.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b-2 border-gray-300 text-left">
+                    <th className="py-2 px-2 font-semibold">Fecha</th>
+                    <th className="py-2 px-2 font-semibold">Cajero</th>
+                    <th className="py-2 px-2 font-semibold">Apertura</th>
+                    <th className="py-2 px-2 font-semibold text-right">Monto Ap.</th>
+                    <th className="py-2 px-2 font-semibold">Cierre</th>
+                    <th className="py-2 px-2 font-semibold text-right">Sistema</th>
+                    <th className="py-2 px-2 font-semibold text-right">Declarado</th>
+                    <th className="py-2 px-2 font-semibold text-right">Descuadre</th>
+                    <th className="py-2 px-2 font-semibold">Justificación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const systemTotal = safeAdd(r.system_cash ?? 0, r.system_tarjeta ?? 0);
+                    const declaredTotal = safeAdd(r.declared_cash ?? 0, r.declared_tarjeta ?? 0);
+                    const vt = r.variance_total ?? 0;
+                    return (
+                      <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-2 px-2 font-medium whitespace-nowrap">
+                          {format(parseISO(r.session_date), 'dd/MM/yy')}
+                        </td>
+                        <td className="py-2 px-2 truncate max-w-[120px]">{r.cashier_name || r.opened_by_email}</td>
+                        <td className="py-2 px-2 whitespace-nowrap">
+                          {format(new Date(r.opened_at), 'HH:mm')}
+                        </td>
+                        <td className="py-2 px-2 text-right whitespace-nowrap">S/ {r.initial_cash.toFixed(2)}</td>
+                        <td className="py-2 px-2 whitespace-nowrap">
+                          {r.closed_at ? format(new Date(r.closed_at), 'HH:mm') : (
+                            <Badge className="bg-amber-100 text-amber-700 text-[10px]">Abierta</Badge>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right whitespace-nowrap font-semibold text-blue-700">
+                          {r.system_cash != null ? `S/ ${systemTotal.toFixed(2)}` : '—'}
+                        </td>
+                        <td className="py-2 px-2 text-right whitespace-nowrap font-semibold">
+                          {r.declared_cash != null ? `S/ ${declaredTotal.toFixed(2)}` : '—'}
+                        </td>
+                        <td className={`py-2 px-2 text-right whitespace-nowrap font-bold ${
+                          Math.abs(vt) < 0.50 ? 'text-green-600' : vt > 0 ? 'text-red-600' : 'text-amber-600'
+                        }`}>
+                          {r.variance_total != null
+                            ? (Math.abs(vt) < 0.50
+                                ? '✓'
+                                : `${vt > 0 ? '-' : '+'}S/ ${Math.abs(vt).toFixed(2)}`)
+                            : '—'}
+                        </td>
+                        <td className="py-2 px-2 truncate max-w-[150px] text-gray-500">
+                          {r.variance_justification || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       )}
@@ -744,7 +881,7 @@ export default function CashDayDashboard({
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">
-                      💵 Lo que hay en caja ahora
+                      💵 Ventas POS (Físico + Tarjeta)
                     </p>
                     <p className="text-4xl font-black text-white mt-1">S/ {granTotal.toFixed(2)}</p>
                     <div className="mt-2 space-y-0.5">
@@ -773,7 +910,7 @@ export default function CashDayDashboard({
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-xs font-semibold text-purple-600 uppercase tracking-wide">
-                      📱 Cobros digitales
+                      📱 Cobros digitales (procesados en Kiosco)
                     </p>
                     <p className="text-3xl font-black text-purple-700 mt-1">S/ {posDigital.toFixed(2)}</p>
                     <div className="mt-1.5 space-y-0.5">
@@ -782,7 +919,7 @@ export default function CashDayDashboard({
                         &nbsp;·&nbsp;Transfer. S/ {(salesTotals?.transferencia ?? 0).toFixed(2)}
                       </p>
                       <p className="text-xs text-purple-400 font-medium">
-                        Este dinero NO está en la caja física
+                        Cobrados vía Kiosco — NO están en caja física
                       </p>
                     </div>
                   </div>
@@ -830,7 +967,7 @@ export default function CashDayDashboard({
               <div>
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
-                  Físico — va a caja
+                  Ventas por POS (Físico y Tarjeta)
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <PaymentCard
@@ -856,7 +993,7 @@ export default function CashDayDashboard({
               <div>
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
-                  Digital — no va a caja
+                  Pagos digitales procesados en Kiosco
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   {/* Yape + Plin juntos — igual que el botón del POS */}
@@ -982,6 +1119,11 @@ export default function CashDayDashboard({
             onCreated={load}
           />
         </>
+      )}
+
+      {/* ── HISTORIAL DE TURNOS / AUDITORÍA — Solo admins ──────────────── */}
+      {isAdmin && !isAllSchools && (
+        <CashAuditHistory schoolId={schoolId} />
       )}
 
       {/* ── DRILL-DOWN MODAL (lupa) ───────────────────────────────────────── */}

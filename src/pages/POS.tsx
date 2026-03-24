@@ -2148,43 +2148,48 @@ const POS = () => {
     );
   }
 
+  // Bloqueo total: sin sesión abierta, el POS no muestra productos ni permite clics
+  const posBlocked = !!(userSchoolId && !cashGuardLoading && (!posOpenRegister || posHasUnclosed));
+
+  if (posBlocked) {
+    return (
+      <div className="h-screen flex flex-col bg-gray-100">
+        <CashOpeningModal
+          schoolId={userSchoolId!}
+          lastClosedAmount={posLastClosedAmount}
+          hasUnclosedPrevious={posHasUnclosed}
+          previousUnclosed={posPreviousUnclosed}
+          onOpened={() => {
+            setPosHasUnclosed(false);
+            setPosPreviousUnclosed(null);
+            const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+            supabase
+              .from('cash_sessions')
+              .select('*')
+              .eq('school_id', userSchoolId!)
+              .eq('session_date', today)
+              .eq('status', 'open')
+              .maybeSingle()
+              .then(({ data: v2 }) => {
+                if (v2) { setPosOpenRegister(v2); return; }
+                supabase
+                  .from('cash_registers')
+                  .select('*')
+                  .eq('school_id', userSchoolId!)
+                  .eq('status', 'open')
+                  .order('opened_at', { ascending: false })
+                  .limit(1)
+                  .maybeSingle()
+                  .then(({ data }) => setPosOpenRegister(data));
+              });
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <>
-    {/* Modal bloqueante de apertura de caja */}
-    {userSchoolId && !cashGuardLoading && (!posOpenRegister || posHasUnclosed) && (
-      <CashOpeningModal
-        schoolId={userSchoolId}
-        lastClosedAmount={posLastClosedAmount}
-        hasUnclosedPrevious={posHasUnclosed}
-        previousUnclosed={posPreviousUnclosed}
-        onOpened={() => {
-          setPosHasUnclosed(false);
-          setPosPreviousUnclosed(null);
-          // Recargar estado de caja — buscar primero en V2 (cash_sessions), luego legacy
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-          supabase
-            .from('cash_sessions')
-            .select('*')
-            .eq('school_id', userSchoolId)
-            .eq('session_date', today)
-            .eq('status', 'open')
-            .maybeSingle()
-            .then(({ data: v2 }) => {
-              if (v2) { setPosOpenRegister(v2); return; }
-              // Fallback legacy
-              supabase
-                .from('cash_registers')
-                .select('*')
-                .eq('school_id', userSchoolId)
-                .eq('status', 'open')
-                .order('opened_at', { ascending: false })
-                .limit(1)
-                .maybeSingle()
-                .then(({ data }) => setPosOpenRegister(data));
-            });
-        }}
-      />
-    )}
     <div className="h-screen flex flex-col bg-gray-100">
       {/* Header */}
       <header className="bg-slate-900 text-white px-3 sm:px-4 lg:px-6 py-2 sm:py-3 flex justify-between items-center shadow-lg print:hidden">
