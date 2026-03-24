@@ -94,54 +94,31 @@ serve(async (req) => {
     console.log(`✅ Caller verificado: ${callerUser.id} (${callerProfile.role})`)
     console.log(`🔍 Buscando usuario: ${userEmail}`)
 
-    // 4. ✅ CORRECCIÓN #2: Buscar usuario con paginación correcta (soporta más de 50 usuarios)
-    // Intentar primero con perPage alto para evitar múltiples llamadas
-    let targetUser = null
-    let page = 1
-    const perPage = 1000
+    // 4. Buscar el ID del usuario directamente desde public.profiles (más rápido que listUsers)
+    const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email')
+      .ilike('email', userEmail.trim())
+      .single()
 
-    while (!targetUser) {
-      const { data: usersPage, error: listError } = await supabaseAdmin.auth.admin.listUsers({
-        page,
-        perPage,
-      })
-
-      if (listError) {
-        console.error('❌ Error listando usuarios:', listError)
-        throw listError
-      }
-
-      // Buscar en esta página (case insensitive)
-      targetUser = usersPage.users.find(
-        u => u.email?.toLowerCase() === userEmail.toLowerCase()
-      ) || null
-
-      // Si ya no hay más usuarios o encontramos al usuario, salir
-      if (usersPage.users.length < perPage || targetUser) break
-
-      page++
-
-      // Límite de seguridad: máximo 10 páginas (10,000 usuarios)
-      if (page > 10) break
-    }
-
-    if (!targetUser) {
-      console.error('❌ Usuario no encontrado:', userEmail)
+    if (targetProfileError || !targetProfile) {
+      console.error('❌ Usuario no encontrado en profiles:', targetProfileError)
       return new Response(
         JSON.stringify({ error: `Usuario no encontrado: ${userEmail}` }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log(`✅ Usuario encontrado: ${targetUser.id}`)
+    const targetUserId = targetProfile.id
+    console.log(`✅ Usuario encontrado: ${targetUserId}`)
     console.log('🔄 Actualizando contraseña...')
 
     // 5. Actualizar la contraseña usando Admin API
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
-      targetUser.id,
+      targetUserId,
       {
         password: newPassword,
-        email_confirm: true // Asegurar que el email está confirmado
+        email_confirm: true
       }
     )
 
@@ -160,12 +137,12 @@ serve(async (req) => {
           action: 'reset_password',
           admin_user_id: callerUser.id,
           target_user_email: userEmail,
-          target_user_id: targetUser.id,
+          target_user_id: targetUserId,
           timestamp: new Date().toISOString(),
           details: `Password reset by ${callerProfile.role} (${callerUser.id}) via Edge Function`
         })
     } catch (logError) {
-      console.warn('⚠️ No se pudo crear log de auditoría (tabla no existe):', logError)
+      console.warn('⚠️ No se pudo crear log de auditoría:', logError)
     }
 
     return new Response(
