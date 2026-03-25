@@ -18,13 +18,24 @@ interface Props {
   session: CashSession;
   schoolId: string;
   onClosed: () => void;
+  /** Valores escritos en el dashboard (arqueo) antes de abrir el modal */
+  initialDeclaredCash?: string;
+  initialDeclaredTarjeta?: string;
 }
 
 function safeAdd(...values: number[]): number {
   return Number(values.reduce((acc, v) => acc + (v || 0), 0).toFixed(2));
 }
 
-export default function CashReconciliationDialog({ open, onClose, session, schoolId, onClosed }: Props) {
+export default function CashReconciliationDialog({
+  open,
+  onClose,
+  session,
+  schoolId,
+  onClosed,
+  initialDeclaredCash = '',
+  initialDeclaredTarjeta = '',
+}: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -46,14 +57,14 @@ export default function CashReconciliationDialog({ open, onClose, session, schoo
 
   useEffect(() => {
     if (open) {
-      setDeclaredCash('');
-      setDeclaredTarjeta('');
+      setDeclaredCash(initialDeclaredCash ?? '');
+      setDeclaredTarjeta(initialDeclaredTarjeta ?? '');
       setJustification('');
       setShowJustification(false);
       loadSystemBalances();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, initialDeclaredCash, initialDeclaredTarjeta]);
 
   const loadSystemBalances = async () => {
     setLoading(true);

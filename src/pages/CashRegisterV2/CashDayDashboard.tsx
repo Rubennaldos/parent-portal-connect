@@ -5,6 +5,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Loader2, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Send,
@@ -66,6 +68,9 @@ interface Props {
   onRefresh: () => void;
   isReadOnly?: boolean;
   isAdmin?: boolean;              // controla visibilidad del selector de fecha y datos sensibles
+  /** Borrador de arqueo (sincronizado con el modal de cierre) */
+  arqueoDraft?: { cash: string; tarjeta: string };
+  onArqueoDraftChange?: (v: { cash: string; tarjeta: string }) => void;
 }
 
 // ─── Subcomponente: Tarjeta de medio de pago clicable ────────────────────────
@@ -306,6 +311,8 @@ function CashAuditHistory({ schoolId }: { schoolId: string }) {
 
 export default function CashDayDashboard({
   session, schoolId, allSchoolIds, onCloseRequested, onTreasuryRequested, onRefresh, isReadOnly = false, isAdmin = false,
+  arqueoDraft,
+  onArqueoDraftChange,
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -631,6 +638,21 @@ export default function CashDayDashboard({
   // ── Modo de lectura para días pasados ─────────────────────────────────────
   const isViewReadOnly = isReadOnly || isPastDay;
 
+  const [internalArqueo, setInternalArqueo] = useState({ cash: '', tarjeta: '' });
+  const arqueo = arqueoDraft ?? internalArqueo;
+  const setArqueo = (next: { cash: string; tarjeta: string }) => {
+    if (onArqueoDraftChange) onArqueoDraftChange(next);
+    else setInternalArqueo(next);
+  };
+
+  /** Arqueo en pantalla: solo caja abierta hoy (no histórico / rango / todas las sedes) */
+  const showArqueoInputs =
+    !!salesTotals &&
+    isToday &&
+    !isRangeMode &&
+    !isAllSchools &&
+    activeSession?.status === 'open';
+
   // ── Loading inicial ───────────────────────────────────────────────────────
   if (loading && !salesTotals) {
     return (
@@ -649,54 +671,59 @@ export default function CashDayDashboard({
         <CardContent className="p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
-            {/* Título + badge estado + botón cerrar */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
-                <Wallet className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-lg font-bold text-white">
-                    {isAllSchools ? 'Consolidado Global' : 'Cierre de Caja'}
-                  </h2>
-                  {isAllSchools ? (
-                    <Badge className="bg-indigo-400/20 text-indigo-300 border-indigo-400/30 text-xs">
-                      <Globe className="h-3 w-3 mr-1" />Todas las sedes
-                    </Badge>
-                  ) : isRangeMode ? (
-                    <Badge className="bg-purple-400/20 text-purple-300 border-purple-400/30 text-xs">
-                      📆 Período
-                    </Badge>
-                  ) : isToday ? (
-                    activeSession ? (
-                      <Badge className="bg-green-400/20 text-green-300 border-green-400/30 text-xs">
-                        ● Abierta
+            {/* Título + badge + botón cerrar (botón siempre visible en pantalla chica) */}
+            <div className="flex flex-col gap-3 w-full sm:flex-1 min-w-0">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
+                  <Wallet className="h-5 w-5 text-white" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-lg font-bold text-white">
+                      {isAllSchools ? 'Consolidado Global' : 'Cierre de Caja'}
+                    </h2>
+                    {isAllSchools ? (
+                      <Badge className="bg-indigo-400/20 text-indigo-300 border-indigo-400/30 text-xs">
+                        <Globe className="h-3 w-3 mr-1" />Todas las sedes
+                      </Badge>
+                    ) : isRangeMode ? (
+                      <Badge className="bg-purple-400/20 text-purple-300 border-purple-400/30 text-xs">
+                        📆 Período
+                      </Badge>
+                    ) : isToday ? (
+                      activeSession?.status === 'open' ? (
+                        <Badge className="bg-green-400/20 text-green-300 border-green-400/30 text-xs">
+                          ● Abierta
+                        </Badge>
+                      ) : activeSession ? (
+                        <Badge className="bg-slate-400/20 text-slate-300 border-slate-400/30 text-xs">
+                          Cerrada
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-400/20 text-amber-300 border-amber-400/30 text-xs">
+                          Sin abrir
+                        </Badge>
+                      )
+                    ) : activeSession?.status === 'open' ? (
+                      <Badge className="bg-red-400/30 text-red-200 border-red-400/40 text-xs">
+                        ⚠️ Sin cerrar
                       </Badge>
                     ) : (
-                      <Badge className="bg-amber-400/20 text-amber-300 border-amber-400/30 text-xs">
-                        Sin abrir
+                      <Badge className="bg-slate-400/20 text-slate-300 border-slate-400/30 text-xs">
+                        Histórico
                       </Badge>
-                    )
-                  ) : activeSession?.status === 'open' ? (
-                    <Badge className="bg-red-400/30 text-red-200 border-red-400/40 text-xs">
-                      ⚠️ Sin cerrar
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-slate-400/20 text-slate-300 border-slate-400/30 text-xs">
-                      Histórico
-                    </Badge>
-                  )}
+                    )}
+                  </div>
+                  <p className="text-slate-300 text-xs capitalize mt-0.5">
+                    {isRangeMode || isAllSchools ? rangeLabelDisplay() : formatDateDisplay(selectedDate)}
+                  </p>
                 </div>
-                <p className="text-slate-300 text-xs capitalize mt-0.5">
-                  {isRangeMode || isAllSchools ? rangeLabelDisplay() : formatDateDisplay(selectedDate)}
-                </p>
               </div>
-              {/* Botón Cerrar Caja — visible siempre que haya sesión abierta hoy */}
-              {isToday && !isRangeMode && !isAllSchools && activeSession && activeSession.status !== 'closed' && (
+              {isToday && !isRangeMode && !isAllSchools && activeSession?.status === 'open' && (
                 <Button
                   onClick={onCloseRequested}
                   size="sm"
-                  className="ml-3 bg-red-600 hover:bg-red-700 text-white font-bold shrink-0"
+                  className="w-full sm:w-auto sm:self-start bg-red-600 hover:bg-red-700 text-white font-bold"
                 >
                   <Lock className="h-4 w-4 mr-1.5" /> Cerrar Caja
                 </Button>
@@ -911,6 +938,36 @@ export default function CashDayDashboard({
                     <Wallet className="h-5 w-5 text-white" />
                   </div>
                 </div>
+                {showArqueoInputs && (
+                  <div className="mt-4 pt-3 border-t border-white/25 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-indigo-200">Monto físico real</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={arqueo.cash}
+                        onChange={(e) => setArqueo({ ...arqueo, cash: e.target.value })}
+                        className="h-10 bg-white/95 text-slate-900 font-semibold text-center border-0"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase tracking-wide text-indigo-200">Monto voucher real (tarjeta)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={arqueo.tarjeta}
+                        onChange={(e) => setArqueo({ ...arqueo, tarjeta: e.target.value })}
+                        className="h-10 bg-white/95 text-slate-900 font-semibold text-center border-0"
+                      />
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -979,19 +1036,53 @@ export default function CashDayDashboard({
                   <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
                   Ventas por POS (Físico y Tarjeta)
                 </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <PaymentCard
-                    label="💵 Efectivo"
-                    value={salesTotals.cash}
-                    accent="bg-green-50 border-green-300"
-                    onClick={() => openDrillDown({ label: '💵 Efectivo', paymentMethod: 'cash', total: salesTotals.cash })}
-                  />
-                  <PaymentCard
-                    label="💳 Tarjeta"
-                    value={salesTotals.tarjeta}
-                    accent="bg-blue-50 border-blue-300"
-                    onClick={() => openDrillDown({ label: '💳 Tarjeta', paymentMethod: 'tarjeta', total: salesTotals.tarjeta })}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <PaymentCard
+                      label="💵 Efectivo"
+                      value={salesTotals.cash}
+                      accent="bg-green-50 border-green-300"
+                      onClick={() => openDrillDown({ label: '💵 Efectivo', paymentMethod: 'cash', total: salesTotals.cash })}
+                    />
+                    {showArqueoInputs && (
+                      <div className="rounded-lg border border-green-200 bg-green-50/80 px-3 py-2 space-y-1">
+                        <Label className="text-[10px] text-green-800 font-semibold">Monto físico real</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          inputMode="decimal"
+                          placeholder="Conteo en cajón"
+                          value={arqueo.cash}
+                          onChange={(e) => setArqueo({ ...arqueo, cash: e.target.value })}
+                          className="h-9 text-sm font-bold text-center"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <PaymentCard
+                      label="💳 Tarjeta"
+                      value={salesTotals.tarjeta}
+                      accent="bg-blue-50 border-blue-300"
+                      onClick={() => openDrillDown({ label: '💳 Tarjeta', paymentMethod: 'tarjeta', total: salesTotals.tarjeta })}
+                    />
+                    {showArqueoInputs && (
+                      <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-3 py-2 space-y-1">
+                        <Label className="text-[10px] text-blue-800 font-semibold">Monto voucher real</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          inputMode="decimal"
+                          placeholder="Total vouchers"
+                          value={arqueo.tarjeta}
+                          onChange={(e) => setArqueo({ ...arqueo, tarjeta: e.target.value })}
+                          className="h-9 text-sm font-bold text-center"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 flex items-center justify-between">
                   <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Subtotal en caja</span>

@@ -98,6 +98,56 @@ import {
   type OfflineTransaction,
 } from '@/lib/offlineStorage';
 
+/** Fecha calendario en zona Lima (YYYY-MM-DD) — debe coincidir con session_date en BD */
+function todayLimaDateString(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+}
+
+function openedAtAsLimaDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+}
+
+/**
+ * Sesión v2 abierta para la sede hoy: primero por session_date exacto, luego por opened_at en Lima
+ * (cubre desfaces de fecha guardada vs hoy).
+ */
+async function fetchOpenCashSessionForSchoolToday(schoolId: string) {
+  const today = todayLimaDateString();
+
+  const { data: exact, error: e1 } = await supabase
+    .from('cash_sessions')
+    .select('*')
+    .eq('school_id', schoolId)
+    .eq('session_date', today)
+    .eq('status', 'open')
+    .maybeSingle();
+
+  if (e1 && e1.code !== 'PGRST116') {
+    console.warn('[POS] cash_sessions (fecha exacta):', e1.message);
+  }
+  if (exact) return exact;
+
+  const { data: opens, error: e2 } = await supabase
+    .from('cash_sessions')
+    .select('*')
+    .eq('school_id', schoolId)
+    .eq('status', 'open')
+    .order('opened_at', { ascending: false })
+    .limit(15);
+
+  if (e2) {
+    console.warn('[POS] cash_sessions (lista abierta):', e2.message);
+    return null;
+  }
+
+  const row = (opens || []).find((r) => {
+    const sd = r.session_date == null ? '' : String(r.session_date).slice(0, 10);
+    return sd === today || openedAtAsLimaDate(r.opened_at) === today;
+  });
+  return row ?? null;
+}
+
 interface Student {
   id: string;
   full_name: string;
@@ -582,7 +632,10 @@ const POS = () => {
   // ── Verificar estado de caja cuando cambia la sede ──────────────
   useEffect(() => {
     const checkCash = async () => {
-      if (!userSchoolId) return;
+      if (!userSchoolId) {
+        setCashGuardLoading(false);
+        return;
+      }
       if (!navigator.onLine) {
         setCashGuardLoading(false);
         setPosOpenRegister({ id: 'offline-mode', status: 'open' });
@@ -590,18 +643,7 @@ const POS = () => {
       }
       setCashGuardLoading(true);
       try {
-        // EC-TZ: usar hora Lima (no UTC) para evitar que a las 7 PM Lima
-        // toISOString() devuelva el día siguiente
-        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-
-        // Verificar en cash_sessions (sistema v2) — solo por sede, sin filtro de usuario
-        const { data: v2Session } = await supabase
-          .from('cash_sessions')
-          .select('*')
-          .eq('school_id', userSchoolId)
-          .eq('session_date', today)
-          .neq('status', 'closed')
-          .maybeSingle();
+        const v2Session = await fetchOpenCashSessionForSchoolToday(userSchoolId);
 
         if (v2Session) {
           setPosOpenRegister(v2Session);
@@ -2184,26 +2226,22 @@ const POS = () => {
           onOpened={() => {
             setPosHasUnclosed(false);
             setPosPreviousUnclosed(null);
-            const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-            supabase
-              .from('cash_sessions')
-              .select('*')
-              .eq('school_id', userSchoolId!)
-              .eq('session_date', today)
-              .neq('status', 'closed')
-              .maybeSingle()
-              .then(({ data: v2 }) => {
-                if (v2) { setPosOpenRegister(v2); return; }
-                supabase
-                  .from('cash_registers')
-                  .select('*')
-                  .eq('school_id', userSchoolId!)
-                  .eq('status', 'open')
-                  .order('opened_at', { ascending: false })
-                  .limit(1)
-                  .maybeSingle()
-                  .then(({ data }) => setPosOpenRegister(data));
-              });
+            void (async () => {
+              const v2 = await fetchOpenCashSessionForSchoolToday(userSchoolId!);
+              if (v2) {
+                setPosOpenRegister(v2);
+                return;
+              }
+              const { data } = await supabase
+                .from('cash_registers')
+                .select('*')
+                .eq('school_id', userSchoolId!)
+                .eq('status', 'open')
+                .order('opened_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              setPosOpenRegister(data);
+            })();
           }}
         />
       </div>
