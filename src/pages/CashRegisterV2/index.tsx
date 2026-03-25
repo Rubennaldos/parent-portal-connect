@@ -29,7 +29,6 @@ export default function CashRegisterV2Page() {
 
   const [showReconciliation, setShowReconciliation] = useState(false);
   const [showTreasury, setShowTreasury] = useState(false);
-  const [arqueoDraft, setArqueoDraft] = useState({ cash: '', tarjeta: '' });
 
   const isAdminGeneral = role === 'admin_general' || role === 'superadmin';
   // gestor_unidad = "admin de sede": puede operar la caja de su sede
@@ -385,8 +384,6 @@ export default function CashRegisterV2Page() {
           onRefresh={loadSession}
           isReadOnly={dashIsReadOnly}
           isAdmin={isAnyAdmin}
-          arqueoDraft={arqueoDraft}
-          onArqueoDraftChange={setArqueoDraft}
         />
 
         {/* Diálogos de cierre y tesorería: solo cuando hay sesión activa */}
@@ -397,11 +394,8 @@ export default function CashRegisterV2Page() {
               onClose={() => setShowReconciliation(false)}
               session={todaySession}
               schoolId={schoolId}
-              initialDeclaredCash={arqueoDraft.cash}
-              initialDeclaredTarjeta={arqueoDraft.tarjeta}
               onClosed={() => {
                 setShowReconciliation(false);
-                setArqueoDraft({ cash: '', tarjeta: '' });
                 loadSession();
               }}
             />

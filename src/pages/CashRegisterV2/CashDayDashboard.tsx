@@ -5,8 +5,6 @@ import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Loader2, ArrowDownCircle, ArrowUpCircle, Lock, Unlock, RefreshCw, Send,
@@ -70,9 +68,6 @@ interface Props {
   onRefresh: () => void;
   isReadOnly?: boolean;
   isAdmin?: boolean;              // controla visibilidad del selector de fecha y datos sensibles
-  /** Borrador de arqueo (sincronizado con el modal de cierre) */
-  arqueoDraft?: { cash: string; tarjeta: string };
-  onArqueoDraftChange?: (v: { cash: string; tarjeta: string }) => void;
 }
 
 // ─── Subcomponente: Tarjeta de medio de pago clicable ────────────────────────
@@ -313,8 +308,6 @@ function CashAuditHistory({ schoolId }: { schoolId: string }) {
 
 export default function CashDayDashboard({
   session, schoolId, allSchoolIds, onCloseRequested, onOpenCashRequested, onTreasuryRequested, onRefresh, isReadOnly = false, isAdmin = false,
-  arqueoDraft,
-  onArqueoDraftChange,
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -640,21 +633,6 @@ export default function CashDayDashboard({
   // ── Modo de lectura para días pasados ─────────────────────────────────────
   const isViewReadOnly = isReadOnly || isPastDay;
 
-  const [internalArqueo, setInternalArqueo] = useState({ cash: '', tarjeta: '' });
-  const arqueo = arqueoDraft ?? internalArqueo;
-  const setArqueo = (next: { cash: string; tarjeta: string }) => {
-    if (onArqueoDraftChange) onArqueoDraftChange(next);
-    else setInternalArqueo(next);
-  };
-
-  /** Arqueo en pantalla: solo caja abierta hoy (no histórico / rango / todas las sedes) */
-  const showArqueoInputs =
-    !!salesTotals &&
-    isToday &&
-    !isRangeMode &&
-    !isAllSchools &&
-    activeSession?.status === 'open';
-
   // ── Loading inicial ───────────────────────────────────────────────────────
   if (loading && !salesTotals) {
     return (
@@ -951,36 +929,6 @@ export default function CashDayDashboard({
                     <Wallet className="h-5 w-5 text-white" />
                   </div>
                 </div>
-                {showArqueoInputs && (
-                  <div className="mt-4 pt-3 border-t border-white/25 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase tracking-wide text-indigo-200">Monto físico real</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={arqueo.cash}
-                        onChange={(e) => setArqueo({ ...arqueo, cash: e.target.value })}
-                        className="h-10 bg-white/95 text-slate-900 font-semibold text-center border-0"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase tracking-wide text-indigo-200">Monto voucher real (tarjeta)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={arqueo.tarjeta}
-                        onChange={(e) => setArqueo({ ...arqueo, tarjeta: e.target.value })}
-                        className="h-10 bg-white/95 text-slate-900 font-semibold text-center border-0"
-                      />
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
 
@@ -1049,53 +997,19 @@ export default function CashDayDashboard({
                   <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
                   Ventas por POS (Físico y Tarjeta)
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <PaymentCard
-                      label="💵 Efectivo"
-                      value={salesTotals.cash}
-                      accent="bg-green-50 border-green-300"
-                      onClick={() => openDrillDown({ label: '💵 Efectivo', paymentMethod: 'cash', total: salesTotals.cash })}
-                    />
-                    {showArqueoInputs && (
-                      <div className="rounded-lg border border-green-200 bg-green-50/80 px-3 py-2 space-y-1">
-                        <Label className="text-[10px] text-green-800 font-semibold">Monto físico real</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          inputMode="decimal"
-                          placeholder="Conteo en cajón"
-                          value={arqueo.cash}
-                          onChange={(e) => setArqueo({ ...arqueo, cash: e.target.value })}
-                          className="h-9 text-sm font-bold text-center"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <PaymentCard
-                      label="💳 Tarjeta"
-                      value={salesTotals.tarjeta}
-                      accent="bg-blue-50 border-blue-300"
-                      onClick={() => openDrillDown({ label: '💳 Tarjeta', paymentMethod: 'tarjeta', total: salesTotals.tarjeta })}
-                    />
-                    {showArqueoInputs && (
-                      <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-3 py-2 space-y-1">
-                        <Label className="text-[10px] text-blue-800 font-semibold">Monto voucher real</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          inputMode="decimal"
-                          placeholder="Total vouchers"
-                          value={arqueo.tarjeta}
-                          onChange={(e) => setArqueo({ ...arqueo, tarjeta: e.target.value })}
-                          className="h-9 text-sm font-bold text-center"
-                        />
-                      </div>
-                    )}
-                  </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <PaymentCard
+                    label="💵 Efectivo"
+                    value={salesTotals.cash}
+                    accent="bg-green-50 border-green-300"
+                    onClick={() => openDrillDown({ label: '💵 Efectivo', paymentMethod: 'cash', total: salesTotals.cash })}
+                  />
+                  <PaymentCard
+                    label="💳 Tarjeta"
+                    value={salesTotals.tarjeta}
+                    accent="bg-blue-50 border-blue-300"
+                    onClick={() => openDrillDown({ label: '💳 Tarjeta', paymentMethod: 'tarjeta', total: salesTotals.tarjeta })}
+                  />
                 </div>
                 <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 flex items-center justify-between">
                   <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Subtotal en caja</span>
