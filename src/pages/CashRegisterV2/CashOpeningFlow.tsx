@@ -43,7 +43,25 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
 
       if (error) {
         if (error.code === '23505') {
-          toast({ variant: 'destructive', title: 'Ya existe una caja abierta hoy', description: 'Solo puedes tener una sesión de caja por día por sede.' });
+          // Ya existe la fila del día (p. ej. cerrada): reabrir en lugar de fallar
+          const { data: row } = await supabase
+            .from('cash_sessions')
+            .select('*')
+            .eq('school_id', schoolId)
+            .eq('session_date', today)
+            .maybeSingle();
+          if (row?.status === 'closed') {
+            const { error: up } = await supabase
+              .from('cash_sessions')
+              .update({ status: 'open', closed_at: null, closed_by: null })
+              .eq('id', row.id);
+            if (up) throw up;
+            const { data: fresh } = await supabase.from('cash_sessions').select('*').eq('id', row.id).single();
+            toast({ title: '✅ Caja reabierta', description: 'Puedes seguir operando el día de hoy.' });
+            if (fresh) onOpened(fresh as CashSession);
+            return;
+          }
+          toast({ variant: 'destructive', title: 'Ya existe sesión de hoy', description: 'Recarga la página o entra al módulo de caja.' });
           return;
         }
         throw error;

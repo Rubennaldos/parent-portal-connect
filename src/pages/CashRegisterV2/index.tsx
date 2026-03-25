@@ -4,6 +4,7 @@ import { useRole } from '@/hooks/useRole';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle, ArrowLeft, Lock, Building2 } from 'lucide-react';
 import type { CashSession } from '@/types/cashRegisterV2';
@@ -18,6 +19,7 @@ export default function CashRegisterV2Page() {
   const { user } = useAuth();
   const { role } = useRole();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [schoolId, setSchoolId] = useState<string | null>(null);
@@ -97,6 +99,63 @@ export default function CashRegisterV2Page() {
   }, [schoolId]);
 
   useEffect(() => { if (schoolId) loadSession(); }, [schoolId, loadSession]);
+
+  /** Abrir / reabrir caja del día (desde el dashboard; misma lógica que POS al reabrir cerrada) */
+  const openCashForToday = useCallback(async () => {
+    if (!schoolId || !user?.id) return;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    try {
+      if (todaySession?.id && todaySession.status === 'closed') {
+        const { error } = await supabase
+          .from('cash_sessions')
+          .update({ status: 'open', closed_at: null, closed_by: null })
+          .eq('id', todaySession.id);
+        if (error) throw error;
+        toast({ title: '✅ Caja abierta', description: 'La sesión de hoy quedó abierta.' });
+        await loadSession();
+        return;
+      }
+      if (!todaySession) {
+        const { error } = await supabase.from('cash_sessions').insert({
+          school_id: schoolId,
+          session_date: today,
+          opened_by: user.id,
+          status: 'open',
+          initial_cash: 0,
+          initial_yape: 0,
+          initial_plin: 0,
+          initial_other: 0,
+        });
+        if (error) {
+          if (error.code === '23505') {
+            const { data: row } = await supabase
+              .from('cash_sessions')
+              .select('id, status')
+              .eq('school_id', schoolId)
+              .eq('session_date', today)
+              .maybeSingle();
+            if (row?.status === 'closed') {
+              await supabase
+                .from('cash_sessions')
+                .update({ status: 'open', closed_at: null, closed_by: null })
+                .eq('id', row.id);
+              toast({ title: '✅ Caja reabierta' });
+            } else {
+              toast({ title: 'Sesión ya registrada', description: 'Actualizando datos…' });
+            }
+            await loadSession();
+            return;
+          }
+          throw error;
+        }
+        toast({ title: '✅ Caja abierta', description: 'Sesión del día creada.' });
+        await loadSession();
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'No se pudo abrir la caja';
+      toast({ variant: 'destructive', title: 'Error', description: msg });
+    }
+  }, [schoolId, user?.id, todaySession, loadSession]);
 
   // ── Bloqueo por mantenimiento ──────────────────────────────────────────────
 
@@ -321,6 +380,7 @@ export default function CashRegisterV2Page() {
           schoolId={schoolId!}
           allSchoolIds={allSchoolIds ?? undefined}
           onCloseRequested={() => setShowReconciliation(true)}
+          onOpenCashRequested={openCashForToday}
           onTreasuryRequested={() => setShowTreasury(true)}
           onRefresh={loadSession}
           isReadOnly={dashIsReadOnly}

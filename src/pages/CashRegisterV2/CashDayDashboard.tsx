@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  Loader2, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Send,
+  Loader2, ArrowDownCircle, ArrowUpCircle, Lock, Unlock, RefreshCw, Send,
   ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown,
   Wallet, ChevronDown, ChevronUp, Clock, Eye, AlertTriangle, Globe,
   ClipboardList,
@@ -64,6 +64,8 @@ interface Props {
   schoolId: string;
   allSchoolIds?: string[];        // cuando se pasa, agrega datos de todas las sedes
   onCloseRequested: () => void;
+  /** Abrir o reabrir caja del día (sesión cerrada o sin sesión) */
+  onOpenCashRequested?: () => void | Promise<void>;
   onTreasuryRequested: () => void;
   onRefresh: () => void;
   isReadOnly?: boolean;
@@ -310,7 +312,7 @@ function CashAuditHistory({ schoolId }: { schoolId: string }) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CashDayDashboard({
-  session, schoolId, allSchoolIds, onCloseRequested, onTreasuryRequested, onRefresh, isReadOnly = false, isAdmin = false,
+  session, schoolId, allSchoolIds, onCloseRequested, onOpenCashRequested, onTreasuryRequested, onRefresh, isReadOnly = false, isAdmin = false,
   arqueoDraft,
   onArqueoDraftChange,
 }: Props) {
@@ -719,8 +721,19 @@ export default function CashDayDashboard({
                   </p>
                 </div>
               </div>
+              {isToday && !isRangeMode && !isAllSchools && onOpenCashRequested && (!activeSession || activeSession.status === 'closed') && (
+                <Button
+                  type="button"
+                  onClick={() => void onOpenCashRequested()}
+                  size="sm"
+                  className="w-full sm:w-auto sm:self-start bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                >
+                  <Unlock className="h-4 w-4 mr-1.5" /> Abrir Caja
+                </Button>
+              )}
               {isToday && !isRangeMode && !isAllSchools && activeSession?.status === 'open' && (
                 <Button
+                  type="button"
                   onClick={onCloseRequested}
                   size="sm"
                   className="w-full sm:w-auto sm:self-start bg-red-600 hover:bg-red-700 text-white font-bold"

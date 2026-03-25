@@ -2227,7 +2227,11 @@ const POS = () => {
             setPosHasUnclosed(false);
             setPosPreviousUnclosed(null);
             void (async () => {
-              const v2 = await fetchOpenCashSessionForSchoolToday(userSchoolId!);
+              let v2 = await fetchOpenCashSessionForSchoolToday(userSchoolId!);
+              if (!v2) {
+                await new Promise((r) => setTimeout(r, 400));
+                v2 = await fetchOpenCashSessionForSchoolToday(userSchoolId!);
+              }
               if (v2) {
                 setPosOpenRegister(v2);
                 return;

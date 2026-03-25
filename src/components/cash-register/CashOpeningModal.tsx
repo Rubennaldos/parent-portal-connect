@@ -119,23 +119,41 @@ export function CashOpeningModal({
 
   const handleOpen = async () => {
     if (isSubmittingRef.current) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para abrir la caja.');
+      return;
+    }
     isSubmittingRef.current = true;
     setLoading(true);
     try {
-      // Usar hora Lima para la fecha de sesión
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
-      // Verificar que no exista ya una sesión abierta hoy (doble clic / doble envío)
-      const { data: existing } = await supabase
+      const { data: existing, error: exErr } = await supabase
         .from('cash_sessions')
-        .select('id')
+        .select('id, status')
         .eq('school_id', schoolId)
         .eq('session_date', today)
         .maybeSingle();
 
+      if (exErr && exErr.code !== 'PGRST116') throw exErr;
+
       if (existing) {
-        // Ya existe — simplemente notificar y continuar
-        toast.success('✅ Caja ya estaba abierta para hoy');
+        if (existing.status === 'open') {
+          toast.success('✅ Caja ya estaba abierta para hoy');
+          onOpened();
+          return;
+        }
+        // Hay fila del día pero CERRADA → reabrir (mismo registro; el POS necesita status open)
+        const { error: upErr } = await supabase
+          .from('cash_sessions')
+          .update({
+            status: 'open',
+            closed_at: null,
+            closed_by: null,
+          })
+          .eq('id', existing.id);
+        if (upErr) throw upErr;
+        toast.success('✅ Caja reabierta — puedes vender en el POS');
         onOpened();
         return;
       }
@@ -145,7 +163,7 @@ export function CashOpeningModal({
         .insert({
           school_id: schoolId,
           session_date: today,
-          opened_by: user?.id,
+          opened_by: user.id,
           initial_cash: 0,
           initial_yape: 0,
           initial_plin: 0,
@@ -158,9 +176,9 @@ export function CashOpeningModal({
       toast.success('✅ Caja abierta — ¡Buena jornada!');
       onOpened();
     } catch (error: any) {
-      isSubmittingRef.current = false;
       toast.error('Error al abrir caja: ' + error.message);
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
