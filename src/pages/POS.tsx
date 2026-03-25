@@ -590,9 +590,11 @@ const POS = () => {
       }
       setCashGuardLoading(true);
       try {
-        const today = new Date().toISOString().split('T')[0];
+        // EC-TZ: usar hora Lima (no UTC) para evitar que a las 7 PM Lima
+        // toISOString() devuelva el día siguiente
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
-        // Primero verificar en cash_sessions (sistema v2)
+        // Verificar en cash_sessions (sistema v2) — solo por sede, sin filtro de usuario
         const { data: v2Session } = await supabase
           .from('cash_sessions')
           .select('*')
@@ -664,7 +666,27 @@ const POS = () => {
         setCashGuardLoading(false);
       }
     };
+
     checkCash();
+
+    // Suscripción realtime: si el admin abre la caja desde otro módulo,
+    // el POS la detecta automáticamente sin recargar
+    if (!userSchoolId) return;
+    const channel = supabase
+      .channel(`pos-cash-${userSchoolId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'cash_sessions',
+          filter: `school_id=eq.${userSchoolId}`,
+        },
+        () => { checkCash(); }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [userSchoolId]);
 
   const fetchProducts = async () => {

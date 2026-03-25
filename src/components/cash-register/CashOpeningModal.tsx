@@ -295,7 +295,7 @@ export function CashOpeningModal({
         <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 text-white p-6 text-center">
           <Banknote className="h-14 w-14 mx-auto mb-3" />
           <h2 className="text-2xl font-black uppercase tracking-wide">
-            Apertura de Caja
+            APERTURA DE CAJA
           </h2>
           <p className="text-emerald-100 text-sm mt-1">
             {format(new Date(), "EEEE dd 'de' MMMM yyyy", { locale: es })}
@@ -313,31 +313,21 @@ export function CashOpeningModal({
             </p>
           </div>
 
-          {lastClosedAmount != null && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center text-sm text-emerald-800">
-              💰 Último cierre registrado: <strong>S/ {lastClosedAmount.toFixed(2)}</strong>
-            </div>
-          )}
-
           {/* Botón principal */}
           <Button
             onClick={handleOpen}
             disabled={loading}
-            className="w-full h-14 text-lg font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40"
+            className="w-full h-16 text-xl font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40"
           >
             {loading ? (
               'Abriendo caja...'
             ) : (
               <>
-                <ArrowRight className="h-5 w-5 mr-2" />
+                <ArrowRight className="h-6 w-6 mr-2" />
                 Iniciar Jornada
               </>
             )}
           </Button>
-
-          <p className="text-xs text-gray-400 text-center">
-            El monto de apertura se gestiona desde el módulo de Cierre de Caja.
-          </p>
         </div>
       </div>
     </div>
