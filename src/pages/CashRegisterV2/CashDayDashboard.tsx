@@ -649,13 +649,13 @@ export default function CashDayDashboard({
         <CardContent className="p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
-            {/* Título + badge estado */}
+            {/* Título + badge estado + botón cerrar */}
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
                 <Wallet className="h-5 w-5 text-white" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-lg font-bold text-white">
                     {isAllSchools ? 'Consolidado Global' : 'Cierre de Caja'}
                   </h2>
@@ -691,6 +691,16 @@ export default function CashDayDashboard({
                   {isRangeMode || isAllSchools ? rangeLabelDisplay() : formatDateDisplay(selectedDate)}
                 </p>
               </div>
+              {/* Botón Cerrar Caja — visible siempre que haya sesión abierta hoy */}
+              {isToday && !isRangeMode && !isAllSchools && activeSession && activeSession.status !== 'closed' && (
+                <Button
+                  onClick={onCloseRequested}
+                  size="sm"
+                  className="ml-3 bg-red-600 hover:bg-red-700 text-white font-bold shrink-0"
+                >
+                  <Lock className="h-4 w-4 mr-1.5" /> Cerrar Caja
+                </Button>
+              )}
             </div>
 
             {/* Controles de fecha — solo para admins */}

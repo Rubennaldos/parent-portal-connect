@@ -32,7 +32,7 @@ export default function CashOpeningFlow({ schoolId, onOpened }: Props) {
           school_id: schoolId,
           session_date: today,
           opened_by: user.id,
-          // Apertura siempre en S/ 0.00 — política del negocio
+          status: 'open',
           initial_cash: 0,
           initial_yape: 0,
           initial_plin: 0,

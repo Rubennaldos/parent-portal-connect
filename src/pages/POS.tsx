@@ -600,7 +600,7 @@ const POS = () => {
           .select('*')
           .eq('school_id', userSchoolId)
           .eq('session_date', today)
-          .eq('status', 'open')
+          .neq('status', 'closed')
           .maybeSingle();
 
         if (v2Session) {
@@ -2190,7 +2190,7 @@ const POS = () => {
               .select('*')
               .eq('school_id', userSchoolId!)
               .eq('session_date', today)
-              .eq('status', 'open')
+              .neq('status', 'closed')
               .maybeSingle()
               .then(({ data: v2 }) => {
                 if (v2) { setPosOpenRegister(v2); return; }
