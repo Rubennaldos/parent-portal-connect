@@ -89,15 +89,16 @@ export default function CashReconciliationDialog({
       const manualExpense = (entries || []).filter(e => e.entry_type === 'expense').reduce((s, e) => s + e.amount, 0);
 
       // ── FIX: Cobranzas aprobadas en efectivo del día ─────────────────────
-      // Los pagos de deuda/almuerzo hechos en efectivo por el módulo de Cobranzas
-      // no pasan por POS, así que no entran en calculate_daily_totals.
-      // Se suman aquí directamente desde recharge_requests.
+      // Los pagos de cobranza hechos en efectivo NO pasan por POS, así que
+      // no entran en calculate_daily_totals (que solo lee transactions).
+      // Se suman aquí con filtro insensible a mayúsculas (ilike) para cubrir
+      // variantes: "efectivo", "Efectivo", "EFECTIVO", "cash", "money".
       const { data: billingCash } = await supabase
         .from('recharge_requests')
         .select('amount')
         .eq('school_id', schoolId)
         .eq('status', 'approved')
-        .in('payment_method', ['efectivo', 'cash', 'Efectivo'])
+        .or('payment_method.ilike.efectivo,payment_method.ilike.cash,payment_method.ilike.money,payment_method.ilike.en efectivo')
         .gte('approved_at', `${today}T00:00:00-05:00`)
         .lt('approved_at',  `${today}T23:59:59-05:00`);
 
@@ -196,6 +197,33 @@ export default function CashReconciliationDialog({
         .eq('id', session.id);
       if (closeError) throw closeError;
 
+      // ── Log de auditoría del cierre ──────────────────────────────────────
+      // Queda registrado: quién cerró, cuánto declaró el cajero vs. el sistema.
+      // El admin puede ver este log en el módulo de Auditoría.
+      try {
+        await supabase.from('huella_digital_logs').insert({
+          usuario_id:  user.id,
+          accion:      isAdmin ? 'CIERRE_CAJA_ADMIN' : 'CIERRE_CAJA_CAJERO',
+          modulo:      'CIERRE_CAJA',
+          school_id:   schoolId,
+          contexto: {
+            session_id:         session.id,
+            session_date:       session.session_date,
+            tipo_cierre:        isAdmin ? 'con_vision_sistema' : 'ciegas',
+            declarado_efectivo: declaredCashNum,
+            declarado_tarjeta:  declaredTarjetaNum,
+            sistema_efectivo:   systemCash,
+            sistema_tarjeta:    systemTarjeta,
+            descuadre_efectivo: varianceCash,
+            descuadre_tarjeta:  varianceTarjeta,
+            descuadre_total:    varianceTotal,
+            justificacion:      justification.trim() || null,
+          },
+        });
+      } catch (logErr) {
+        console.warn('[CashReconciliation] No se pudo guardar log de auditoría:', logErr);
+      }
+
       toast({ title: '✅ Caja cerrada', description: 'El cierre y arqueo se guardaron correctamente.' });
       onClosed();
       onClose();
@@ -264,14 +292,19 @@ export default function CashReconciliationDialog({
             )}
 
             {/* ─── CAMPOS DE ARQUEO (cajero y admin) ─── */}
-            <div className="space-y-4">
+            <div className="space-y-5">
               <p className="text-sm font-bold text-gray-700">
-                {isAdmin ? 'Montos declarados por el cajero:' : 'Escribe lo que cuentas físicamente:'}
+                {isAdmin ? 'Montos declarados por el cajero:' : 'Cuenta el dinero y escribe lo que hay:'}
               </p>
 
-              {/* Efectivo */}
-              <div className="space-y-2">
-                <Label className="text-base font-bold text-gray-800">💵 Efectivo físico en caja</Label>
+              {/* 1. Efectivo — siempre primero y más destacado */}
+              <div className={`space-y-2 ${!isAdmin ? 'bg-orange-50 border-2 border-orange-200 rounded-2xl p-4' : ''}`}>
+                <Label className={`font-black ${!isAdmin ? 'text-orange-800 text-lg' : 'text-base text-gray-800'}`}>
+                  💵 Efectivo físico en caja
+                </Label>
+                {!isAdmin && (
+                  <p className="text-xs text-orange-600">Cuenta todos los billetes y monedas que hay en la caja</p>
+                )}
                 <Input
                   type="number"
                   step="0.01"
@@ -279,7 +312,10 @@ export default function CashReconciliationDialog({
                   value={declaredCash}
                   onChange={(e) => setDeclaredCash(e.target.value)}
                   placeholder="0.00"
-                  className="h-14 text-center font-black text-2xl border-2"
+                  className={`text-center font-black border-2 ${!isAdmin
+                    ? 'h-20 text-4xl border-orange-400 focus:border-orange-500 bg-white'
+                    : 'h-14 text-2xl'
+                  }`}
                   autoFocus
                 />
                 {/* Comparativa solo para admin */}
@@ -292,9 +328,14 @@ export default function CashReconciliationDialog({
                 )}
               </div>
 
-              {/* Tarjeta */}
-              <div className="space-y-2">
-                <Label className="text-base font-bold text-gray-800">💳 Vouchers POS (tarjetas)</Label>
+              {/* 2. Tarjeta */}
+              <div className={`space-y-2 ${!isAdmin ? 'bg-blue-50 border-2 border-blue-200 rounded-2xl p-4' : ''}`}>
+                <Label className={`font-black ${!isAdmin ? 'text-blue-800 text-lg' : 'text-base text-gray-800'}`}>
+                  💳 Vouchers POS (tarjetas)
+                </Label>
+                {!isAdmin && (
+                  <p className="text-xs text-blue-600">Suma los vouchers impresos del posnet/POS</p>
+                )}
                 <Input
                   type="number"
                   step="0.01"
@@ -302,7 +343,10 @@ export default function CashReconciliationDialog({
                   value={declaredTarjeta}
                   onChange={(e) => setDeclaredTarjeta(e.target.value)}
                   placeholder="0.00"
-                  className="h-14 text-center font-black text-2xl border-2"
+                  className={`text-center font-black border-2 ${!isAdmin
+                    ? 'h-20 text-4xl border-blue-400 focus:border-blue-500 bg-white'
+                    : 'h-14 text-2xl'
+                  }`}
                 />
                 {/* Comparativa solo para admin */}
                 {isAdmin && declaredTarjeta !== '' && (
@@ -371,7 +415,10 @@ export default function CashReconciliationDialog({
               <Button
                 onClick={handleCerrarCaja}
                 disabled={saving || loading || (declaredCash === '' && declaredTarjeta === '')}
-                className={`h-12 text-base font-bold ${isAdmin ? 'bg-slate-800 hover:bg-slate-900' : 'bg-amber-600 hover:bg-amber-700'}`}
+                className={`text-base font-bold transition-all ${isAdmin
+                  ? 'h-12 bg-slate-800 hover:bg-slate-900'
+                  : 'h-16 text-lg bg-orange-500 hover:bg-orange-600 shadow-lg shadow-orange-200 w-full rounded-xl'
+                }`}
               >
                 {saving
                   ? <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Cerrando...</>
@@ -379,7 +426,7 @@ export default function CashReconciliationDialog({
                     ? <><AlertTriangle className="h-5 w-5 mr-2" /> Ver Descuadre y Cerrar</>
                     : isAdmin
                       ? <><Lock className="h-5 w-5 mr-2" /> Confirmar y Cerrar Caja</>
-                      : <><Lock className="h-5 w-5 mr-2" /> Registrar y Cerrar Turno</>
+                      : <><Lock className="h-6 w-6 mr-2" /> Registrar y Cerrar Turno</>
                 }
               </Button>
             </DialogFooter>
