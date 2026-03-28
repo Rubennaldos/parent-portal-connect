@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, ArrowLeft, Building2, ClipboardList, Merge, BadgeCheck, LayoutGrid, Package } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, ClipboardList, Merge, BadgeCheck, LayoutGrid, Package, BarChart3 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { SuppliersTab } from '@/components/logistics/SuppliersTab';
@@ -10,6 +10,7 @@ import { PurchaseEntriesTab } from '@/components/logistics/PurchaseEntriesTab';
 import { ProductMergeTab } from '@/components/logistics/ProductMergeTab';
 import { ItemMasterTab } from '@/components/logistics/ItemMasterTab';
 import InventoryMatrixView from '@/components/logistics/InventoryMatrixView';
+import LogisticsDashboard from '@/components/logistics/LogisticsDashboard';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 const BROWN = '#8B4513';
@@ -79,11 +80,19 @@ const Logistics = () => {
         </div>
 
         {/* ── Tabs: solo las 5 pestañas activas ── */}
-        <Tabs defaultValue="inv-sedes" className="w-full">
+        <Tabs defaultValue="dashboard" className="w-full">
 
           {/* TabsList: scrollable en móvil, flex con wrap en desktop */}
           <div className="overflow-x-auto pb-1">
-            <TabsList className="flex w-max sm:grid sm:w-full sm:grid-cols-5 bg-white border rounded-xl p-1 gap-0.5 min-w-full">
+            <TabsList className="flex w-max sm:grid sm:w-full sm:grid-cols-6 bg-white border rounded-xl p-1 gap-0.5 min-w-full">
+
+              <TabsTrigger
+                value="dashboard"
+                className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:bg-slate-800 data-[state=active]:text-white"
+              >
+                <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+                <span>Dashboard</span>
+              </TabsTrigger>
 
               <TabsTrigger
                 value="inv-sedes"
@@ -131,6 +140,12 @@ const Logistics = () => {
           </div>
 
           {/* ── Contenidos ── */}
+
+          <TabsContent value="dashboard" className="mt-3">
+            <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-5">
+              <LogisticsDashboard />
+            </div>
+          </TabsContent>
 
           <TabsContent value="inv-sedes" className="mt-3">
             <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-5">

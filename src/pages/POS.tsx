@@ -171,6 +171,8 @@ interface Product {
   image_url?: string | null;
   active?: boolean;
   stock_control_enabled?: boolean;
+  /** Stock actual en la sede del POS (null = sin control de stock) */
+  current_stock?: number | null;
 }
 
 interface CartItem {
@@ -2984,11 +2986,20 @@ const POS = () => {
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => (
+                <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => {
+                    const hasStockControl = product.stock_control_enabled && product.current_stock !== null && product.current_stock !== undefined;
+                    const isOutOfStock    = hasStockControl && (product.current_stock ?? 0) === 0;
+                    const isLowStock      = hasStockControl && !isOutOfStock && (product.current_stock ?? 0) <= 5;
+
+                    return (
                     <button
                       key={product.id}
-                      onClick={() => addToCart(product)}
-                      className="group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-emerald-500 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between"
+                      onClick={() => !isOutOfStock && addToCart(product)}
+                      disabled={isOutOfStock}
+                      className={`group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between
+                        ${isOutOfStock
+                          ? 'opacity-50 cursor-not-allowed border-red-200 bg-red-50'
+                          : 'hover:shadow-xl hover:border-emerald-500 active:scale-95'}`}
                     >
                       <div>
                         <h3 className="font-bold text-[8px] sm:text-base mb-0.5 sm:mb-1 line-clamp-2 leading-tight">
@@ -3000,11 +3011,23 @@ const POS = () => {
                           </p>
                         )}
                       </div>
-                      <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
-                        S/ {product.price.toFixed(2)}
-                      </p>
+                      <div className="flex items-end justify-between gap-0.5">
+                        <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
+                          S/ {product.price.toFixed(2)}
+                        </p>
+                        {hasStockControl && (
+                          <span className={`text-[7px] sm:text-[9px] font-bold px-1 py-0.5 rounded leading-none ${
+                            isOutOfStock  ? 'bg-red-100 text-red-700'    :
+                            isLowStock    ? 'bg-amber-100 text-amber-700' :
+                                            'bg-slate-100 text-slate-500'
+                          }`}>
+                            {isOutOfStock ? '✖ Agotado' : `📦 ${product.current_stock}`}
+                          </span>
+                        )}
+                      </div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

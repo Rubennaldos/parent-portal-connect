@@ -101,31 +101,51 @@ export async function getProductsForSchool(schoolId: string | null): Promise<any
 
     // Obtener todos los precios personalizados para esta sede de una sola vez
     const productIds = products.map(p => p.id);
-    const { data: customPrices, error: pricesError } = await supabase
-      .from('product_school_prices')
-      .select('product_id, price_sale, price_cost, is_available')
-      .eq('school_id', schoolId)
-      .in('product_id', productIds);
 
-    if (pricesError && pricesError.code !== 'PGRST116') {
-      throw pricesError;
+    const [pricesResult, stockResult] = await Promise.all([
+      supabase
+        .from('product_school_prices')
+        .select('product_id, price_sale, price_cost, is_available')
+        .eq('school_id', schoolId)
+        .in('product_id', productIds),
+      supabase
+        .from('product_stock')
+        .select('product_id, current_stock, is_enabled')
+        .eq('school_id', schoolId)
+        .in('product_id', productIds),
+    ]);
+
+    if (pricesResult.error && pricesResult.error.code !== 'PGRST116') {
+      throw pricesResult.error;
     }
 
     // Mapear precios personalizados por product_id
     const pricesMap = new Map(
-      (customPrices || []).map(cp => [cp.product_id, cp])
+      (pricesResult.data || []).map(cp => [cp.product_id, cp])
     );
 
-    // Combinar productos con sus precios efectivos
+    // Mapear stock por product_id
+    const stockMap = new Map(
+      (stockResult.data || []).map(s => [s.product_id, s])
+    );
+
+    // Combinar productos con sus precios efectivos y stock actual
     const productsWithPrices = products
       .map(product => {
         const customPrice = pricesMap.get(product.id);
+        const stockRow    = stockMap.get(product.id);
         
+        const base = {
+          ...product,
+          // Stock actual de esta sede (null si no hay registro en product_stock)
+          current_stock: stockRow?.current_stock ?? null,
+        };
+
         // Si existe precio personalizado, usarlo
         if (customPrice) {
           return {
-            ...product,
-            price: customPrice.price_sale, // Mantener compatibilidad con campo "price"
+            ...base,
+            price: customPrice.price_sale,
             price_sale: customPrice.price_sale,
             price_cost: customPrice.price_cost,
             active: customPrice.is_available,
@@ -135,8 +155,8 @@ export async function getProductsForSchool(schoolId: string | null): Promise<any
         
         // Si no, usar precio base
         return {
-          ...product,
-          price: product.price_sale || product.price, // Mantener compatibilidad
+          ...base,
+          price: product.price_sale || product.price,
           is_custom_price: false,
         };
       })

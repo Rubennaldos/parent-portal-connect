@@ -311,13 +311,13 @@ export default function InventoryMatrixView() {
           {/* Cabecera: sedes */}
           <thead>
             <tr className="bg-slate-800 text-white">
-              <th className="sticky left-0 z-20 bg-slate-800 text-left px-3 py-2.5 font-bold min-w-[180px] max-w-[220px] border-r border-slate-600">
+              <th className="sticky left-0 z-20 bg-slate-800 text-left px-2 py-2 font-bold min-w-[130px] max-w-[160px] border-r border-slate-600 text-[11px]">
                 Producto
               </th>
               {schools.map(s => (
                 <th
                   key={s.id}
-                  className="px-2 py-2.5 font-semibold text-center min-w-[110px] border-l border-slate-600 whitespace-nowrap"
+                  className="px-1.5 py-2 font-semibold text-center min-w-[90px] border-l border-slate-600 whitespace-nowrap text-[11px]"
                   title={s.name}
                 >
                   {abrevSede(s.name)}
@@ -338,14 +338,14 @@ export default function InventoryMatrixView() {
                 <tr key={product.id} className={`${rowBg} border-t border-slate-200 transition-colors`}>
 
                   {/* Columna fija: nombre del producto */}
-                  <td className={`sticky left-0 z-10 px-3 py-1.5 font-medium border-r border-slate-200 max-w-[220px] ${
+                  <td className={`sticky left-0 z-10 px-2 py-1 font-medium border-r border-slate-200 max-w-[160px] ${
                     isMaster ? 'bg-green-50' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                   }`}>
-                    <div className="flex items-center gap-1.5 truncate">
+                    <div className="flex items-center gap-1 truncate">
                       {isMaster && (
-                        <BadgeCheck className="h-3.5 w-3.5 text-green-600 shrink-0" title="Producto Maestro" />
+                        <BadgeCheck className="h-3 w-3 text-green-600 shrink-0" title="Producto Maestro" />
                       )}
-                      <span className="truncate" title={product.name}>{product.name}</span>
+                      <span className="truncate text-[11px] leading-tight" title={product.name}>{product.name}</span>
                     </div>
                   </td>
 
@@ -358,11 +358,11 @@ export default function InventoryMatrixView() {
                     return (
                       <td
                         key={school.id}
-                        className={`px-2 py-1.5 border-l border-slate-200 text-center align-middle ${
+                        className={`px-1 py-1 border-l border-slate-200 text-center align-middle ${
                           cell.saving ? 'opacity-50' : ''
                         }`}
                       >
-                        <div className="flex flex-col items-center gap-1">
+                        <div className="flex flex-col items-center gap-0.5">
 
                           {/* Input de cantidad — estilo Excel */}
                           <input
@@ -379,7 +379,7 @@ export default function InventoryMatrixView() {
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                             }}
-                            className={`w-14 h-7 text-center text-xs font-bold rounded border transition-colors
+                            className={`w-11 h-6 text-center text-[11px] font-bold rounded border transition-colors
                               ${!cell.enabled
                                 ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed'
                                 : cell.stock === 0
@@ -396,7 +396,7 @@ export default function InventoryMatrixView() {
                             checked={cell.enabled}
                             disabled={cell.saving}
                             onCheckedChange={(checked) => handleToggle(product.id, school.id, checked)}
-                            className="scale-75 data-[state=checked]:bg-green-600"
+                            className="scale-[0.65] data-[state=checked]:bg-green-600"
                           />
                         </div>
                       </td>
@@ -410,17 +410,17 @@ export default function InventoryMatrixView() {
           {/* Footer con totales por sede */}
           <tfoot>
             <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold">
-              <td className="sticky left-0 z-10 bg-slate-100 px-3 py-2 text-xs text-slate-600 border-r border-slate-300">
-                Total activos / stock
+              <td className="sticky left-0 z-10 bg-slate-100 px-2 py-1.5 text-[10px] text-slate-600 border-r border-slate-300">
+                Activos / stock
               </td>
               {schools.map(school => {
                 const activeCount = products.filter(p => matrix[p.id]?.[school.id]?.enabled).length;
                 const totalStock  = products.reduce((sum, p) => sum + (matrix[p.id]?.[school.id]?.stock ?? 0), 0);
                 return (
-                  <td key={school.id} className="px-2 py-2 text-center border-l border-slate-300">
+                  <td key={school.id} className="px-1 py-1.5 text-center border-l border-slate-300">
                     <div className="text-[10px] text-slate-500 leading-tight">
-                      <div className="font-bold text-green-700">{activeCount} act.</div>
-                      <div className="text-slate-500">{totalStock} un.</div>
+                      <div className="font-bold text-green-700">{activeCount}</div>
+                      <div className="text-slate-400">{totalStock}</div>
                     </div>
                   </td>
                 );
