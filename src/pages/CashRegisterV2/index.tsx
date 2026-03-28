@@ -394,6 +394,7 @@ export default function CashRegisterV2Page() {
               onClose={() => setShowReconciliation(false)}
               session={todaySession}
               schoolId={schoolId}
+              isAdmin={isAnyAdmin}
               onClosed={() => {
                 setShowReconciliation(false);
                 loadSession();

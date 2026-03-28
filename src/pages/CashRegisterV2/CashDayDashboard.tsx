@@ -898,7 +898,25 @@ export default function CashDayDashboard({
         </Card>
       )}
 
-      {salesTotals && (
+      {/* ── VISTA CAJERO: Cierre a Ciegas ────────────────────────────────── */}
+      {!isAdmin && salesTotals && (
+        <Card className="border-2 border-amber-200 bg-amber-50">
+          <CardContent className="p-6 text-center space-y-3">
+            <div className="w-14 h-14 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
+              <Clock className="h-7 w-7 text-amber-600" />
+            </div>
+            <div>
+              <p className="font-bold text-amber-800 text-lg">Turno en curso</p>
+              <p className="text-sm text-amber-600 mt-1">
+                Para cerrar el turno, usa el botón <strong>"Cerrar Caja"</strong> abajo.
+                Se te pedirá que cuentes el efectivo y los vouchers físicamente.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {salesTotals && isAdmin && (
         <>
           {/* ── TARJETAS HERO ────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

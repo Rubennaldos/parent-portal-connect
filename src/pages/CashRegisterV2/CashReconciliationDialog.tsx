@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Lock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Loader2, Lock, AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CashSession } from '@/types/cashRegisterV2';
@@ -18,6 +18,8 @@ interface Props {
   session: CashSession;
   schoolId: string;
   onClosed: () => void;
+  /** Si true: admin ve montos del sistema + comparativa. Si false: cajero hace cierre a ciegas. */
+  isAdmin?: boolean;
 }
 
 function safeAdd(...values: number[]): number {
@@ -30,6 +32,7 @@ export default function CashReconciliationDialog({
   session,
   schoolId,
   onClosed,
+  isAdmin = false,
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -65,6 +68,8 @@ export default function CashReconciliationDialog({
     setLoading(true);
     try {
       const today = session.session_date;
+
+      // RPC de totales POS + almuerzo
       const { data: rpcData } = await supabase.rpc('calculate_daily_totals', {
         p_school_id: schoolId,
         p_date: today,
@@ -74,20 +79,37 @@ export default function CashReconciliationDialog({
       const pos = d.pos || {};
       const lunch = d.lunch || {};
 
+      // Ingresos/egresos manuales de esta sesión
       const { data: entries } = await supabase
         .from('cash_manual_entries')
         .select('entry_type, amount')
         .eq('cash_session_id', session.id);
 
-      const manualIncome = (entries || []).filter(e => e.entry_type === 'income').reduce((s, e) => s + e.amount, 0);
+      const manualIncome  = (entries || []).filter(e => e.entry_type === 'income').reduce((s, e) => s + e.amount, 0);
       const manualExpense = (entries || []).filter(e => e.entry_type === 'expense').reduce((s, e) => s + e.amount, 0);
 
-      const cashSales = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
-      const tarjetaSales = safeAdd(pos.card, lunch.card, pos.mixed_card);
-      const yapePlinTotal = safeAdd(pos.yape, pos.plin, lunch.yape, lunch.plin, pos.mixed_yape);
+      // ── FIX: Cobranzas aprobadas en efectivo del día ─────────────────────
+      // Los pagos de deuda/almuerzo hechos en efectivo por el módulo de Cobranzas
+      // no pasan por POS, así que no entran en calculate_daily_totals.
+      // Se suman aquí directamente desde recharge_requests.
+      const { data: billingCash } = await supabase
+        .from('recharge_requests')
+        .select('amount')
+        .eq('school_id', schoolId)
+        .eq('status', 'approved')
+        .in('payment_method', ['efectivo', 'cash', 'Efectivo'])
+        .gte('approved_at', `${today}T00:00:00-05:00`)
+        .lt('approved_at',  `${today}T23:59:59-05:00`);
+
+      const billingCashTotal = (billingCash || []).reduce((s, r) => s + (r.amount || 0), 0);
+
+      const cashSales        = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
+      const tarjetaSales     = safeAdd(pos.card, lunch.card, pos.mixed_card);
+      const yapePlinTotal    = safeAdd(pos.yape, pos.plin, lunch.yape, lunch.plin, pos.mixed_yape);
       const transferenciaTotal = safeAdd(pos.transferencia, lunch.transferencia);
 
-      setSystemCash(safeAdd(session.initial_cash, cashSales, manualIncome, -manualExpense));
+      // systemCash = efectivo inicial + ventas en efectivo (POS+almuerzo) + cobranzas efectivo + manuales
+      setSystemCash(safeAdd(session.initial_cash, cashSales, billingCashTotal, manualIncome, -manualExpense));
       setSystemTarjeta(tarjetaSales);
       setDigitalInfo({ yapePlin: yapePlinTotal, transferencia: transferenciaTotal });
     } catch (err) {
@@ -190,8 +212,8 @@ export default function CashReconciliationDialog({
       <DialogContent className="max-w-lg max-h-[95vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
-            <Lock className="h-5 w-5 text-slate-700" />
-            Cierre de Caja
+            {isAdmin ? <Eye className="h-5 w-5 text-slate-700" /> : <EyeOff className="h-5 w-5 text-amber-600" />}
+            {isAdmin ? 'Cierre de Caja — Vista Admin' : 'Cierre de Turno'}
           </DialogTitle>
           <p className="text-sm text-gray-500">
             {format(new Date(session.session_date + 'T12:00:00'), "EEEE d 'de' MMMM yyyy", { locale: es })}
@@ -205,105 +227,128 @@ export default function CashReconciliationDialog({
         ) : (
           <div className="space-y-5 mt-2">
 
-            {/* ─── Tabla de arqueo ─── */}
-            <div className="border rounded-xl overflow-hidden">
-              <div className="bg-slate-100 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-600">
-                Arqueo de Caja
+            {/* ─── BANNER cierre a ciegas (solo cajero) ─── */}
+            {!isAdmin && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2 text-amber-800 text-sm">
+                <EyeOff className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Cierre a ciegas:</strong> Cuenta el dinero físico y escribe lo que hay.
+                  No se muestran los totales del sistema para garantizar un arqueo honesto.
+                </p>
               </div>
-              <div className="divide-y">
+            )}
 
-                {/* Efectivo */}
-                <div className="px-4 py-3 flex items-center gap-3">
-                  <div className="flex-1">
-                    <p className="font-semibold text-sm">💵 Efectivo</p>
-                    <p className="text-xs text-blue-700 font-medium">Sistema: S/ {systemCash.toFixed(2)}</p>
+            {/* ─── MODO ADMIN: muestra montos del sistema + comparativa ─── */}
+            {isAdmin && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Montos calculados por el sistema</p>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <p className="text-xs text-gray-500">💵 Efectivo (sistema)</p>
+                    <p className="text-xl font-black text-blue-800">S/ {systemCash.toFixed(2)}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">incl. fondo inicial + cobranzas</p>
                   </div>
-                  <div className="w-36 space-y-1">
-                    <Label className="text-xs text-gray-500">Monto real en físico</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={declaredCash}
-                      onChange={(e) => setDeclaredCash(e.target.value)}
-                      placeholder="0.00"
-                      className="h-10 text-center font-bold text-base"
-                      autoFocus
-                    />
-                  </div>
-                  <div className="w-28 text-right">
-                    {declaredCash !== '' && renderVarianceBadge(varianceCash)}
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <p className="text-xs text-gray-500">💳 Tarjeta (sistema)</p>
+                    <p className="text-xl font-black text-blue-800">S/ {systemTarjeta.toFixed(2)}</p>
                   </div>
                 </div>
-
-                {/* Tarjeta */}
-                <div className="px-4 py-3 flex items-center gap-3">
-                  <div className="flex-1">
-                    <p className="font-semibold text-sm">💳 Tarjeta</p>
-                    <p className="text-xs text-blue-700 font-medium">Sistema: S/ {systemTarjeta.toFixed(2)}</p>
-                  </div>
-                  <div className="w-36 space-y-1">
-                    <Label className="text-xs text-gray-500">Monto real en voucher</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={declaredTarjeta}
-                      onChange={(e) => setDeclaredTarjeta(e.target.value)}
-                      placeholder="0.00"
-                      className="h-10 text-center font-bold text-base"
-                    />
-                  </div>
-                  <div className="w-28 text-right">
-                    {declaredTarjeta !== '' && renderVarianceBadge(varianceTarjeta)}
-                  </div>
-                </div>
-
-                {/* Digital — solo informativo */}
                 {(digitalInfo.yapePlin > 0 || digitalInfo.transferencia > 0) && (
-                  <div className="px-4 py-3 bg-purple-50">
-                    <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-1.5">
-                      📱 Digital procesado en Kiosco (referencia — no se cuenta)
-                    </p>
-                    <div className="flex gap-6 text-sm">
-                      {digitalInfo.yapePlin > 0 && (
-                        <span className="text-purple-700">Yape/Plin: <strong>S/ {digitalInfo.yapePlin.toFixed(2)}</strong></span>
-                      )}
-                      {digitalInfo.transferencia > 0 && (
-                        <span className="text-cyan-700">Transferencia: <strong>S/ {digitalInfo.transferencia.toFixed(2)}</strong></span>
-                      )}
-                    </div>
+                  <div className="flex gap-4 text-xs text-purple-700 pt-1">
+                    <span>📱 Yape/Plin: <strong>S/ {digitalInfo.yapePlin.toFixed(2)}</strong></span>
+                    <span>🏦 Transfer.: <strong>S/ {digitalInfo.transferencia.toFixed(2)}</strong></span>
+                    <span className="text-gray-400">(digital — no va a caja)</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ─── CAMPOS DE ARQUEO (cajero y admin) ─── */}
+            <div className="space-y-4">
+              <p className="text-sm font-bold text-gray-700">
+                {isAdmin ? 'Montos declarados por el cajero:' : 'Escribe lo que cuentas físicamente:'}
+              </p>
+
+              {/* Efectivo */}
+              <div className="space-y-2">
+                <Label className="text-base font-bold text-gray-800">💵 Efectivo físico en caja</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={declaredCash}
+                  onChange={(e) => setDeclaredCash(e.target.value)}
+                  placeholder="0.00"
+                  className="h-14 text-center font-black text-2xl border-2"
+                  autoFocus
+                />
+                {/* Comparativa solo para admin */}
+                {isAdmin && declaredCash !== '' && (
+                  <div className={`flex justify-between items-center px-3 py-2 rounded-lg text-sm font-medium
+                    ${Math.abs(varianceCash) < 0.50 ? 'bg-green-50 text-green-700' : varianceCash > 0 ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                    <span>Sistema: S/ {systemCash.toFixed(2)}</span>
+                    <span>{renderVarianceBadge(varianceCash)}</span>
                   </div>
                 )}
               </div>
 
-              {/* Total si ambos campos tienen valor */}
-              {(declaredCash !== '' || declaredTarjeta !== '') && (
-                <div className={`px-4 py-3 flex justify-between items-center font-bold text-sm border-t-2 ${hasVariance ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-                  <span>TOTAL DECLARADO</span>
-                  <span>S/ {safeAdd(declaredCashNum, declaredTarjetaNum).toFixed(2)}</span>
-                  <span>vs Sistema S/ {safeAdd(systemCash, systemTarjeta).toFixed(2)}</span>
-                  <span>{renderVarianceBadge(varianceTotal)}</span>
-                </div>
-              )}
+              {/* Tarjeta */}
+              <div className="space-y-2">
+                <Label className="text-base font-bold text-gray-800">💳 Vouchers POS (tarjetas)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={declaredTarjeta}
+                  onChange={(e) => setDeclaredTarjeta(e.target.value)}
+                  placeholder="0.00"
+                  className="h-14 text-center font-black text-2xl border-2"
+                />
+                {/* Comparativa solo para admin */}
+                {isAdmin && declaredTarjeta !== '' && (
+                  <div className={`flex justify-between items-center px-3 py-2 rounded-lg text-sm font-medium
+                    ${Math.abs(varianceTarjeta) < 0.50 ? 'bg-green-50 text-green-700' : varianceTarjeta > 0 ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                    <span>Sistema: S/ {systemTarjeta.toFixed(2)}</span>
+                    <span>{renderVarianceBadge(varianceTarjeta)}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* ─── Resultado del arqueo ─── */}
-            {(declaredCash !== '' || declaredTarjeta !== '') && !hasVariance && (
-              <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-2 text-green-800 text-sm">
-                <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
-                <p><strong>¡Perfecto!</strong> La caja cuadra. Puedes cerrar.</p>
+            {/* ─── Resumen total (admin) ─── */}
+            {isAdmin && (declaredCash !== '' || declaredTarjeta !== '') && (
+              <div className={`rounded-xl p-4 border-2 ${hasVariance ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}`}>
+                <div className="flex justify-between items-center text-sm font-bold">
+                  <span>Total declarado:</span>
+                  <span>S/ {safeAdd(declaredCashNum, declaredTarjetaNum).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm text-gray-600 mt-1">
+                  <span>Total sistema:</span>
+                  <span>S/ {safeAdd(systemCash, systemTarjeta).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center font-black text-base mt-2 pt-2 border-t">
+                  <span>Resultado:</span>
+                  <span>{renderVarianceBadge(varianceTotal)}</span>
+                </div>
               </div>
             )}
 
-            {/* ─── Justificación si hay descuadre ─── */}
-            {showJustification && hasVariance && (
+            {/* ─── Confirmación cuadre (cajero) ─── */}
+            {!isAdmin && (declaredCash !== '' || declaredTarjeta !== '') && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-2 text-slate-700 text-sm">
+                <CheckCircle2 className="h-5 w-5 text-slate-500 shrink-0" />
+                <p>Total registrado: <strong>S/ {safeAdd(declaredCashNum, declaredTarjetaNum).toFixed(2)}</strong>. El admin verá el arqueo completo.</p>
+              </div>
+            )}
+
+            {/* ─── Justificación si hay descuadre (admin) ─── */}
+            {isAdmin && showJustification && hasVariance && (
               <div className="space-y-3">
                 <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-2 text-red-800 text-sm">
                   <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                   <p>
                     <strong>Descuadre de S/ {Math.abs(varianceTotal).toFixed(2)}.</strong>{' '}
-                    Escribe una justificación para poder cerrar la caja.
+                    Escribe una justificación para poder cerrar.
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -326,13 +371,15 @@ export default function CashReconciliationDialog({
               <Button
                 onClick={handleCerrarCaja}
                 disabled={saving || loading || (declaredCash === '' && declaredTarjeta === '')}
-                className="bg-slate-800 hover:bg-slate-900 h-12 text-base font-bold"
+                className={`h-12 text-base font-bold ${isAdmin ? 'bg-slate-800 hover:bg-slate-900' : 'bg-amber-600 hover:bg-amber-700'}`}
               >
                 {saving
                   ? <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Cerrando...</>
-                  : hasVariance && !showJustification
+                  : isAdmin && hasVariance && !showJustification
                     ? <><AlertTriangle className="h-5 w-5 mr-2" /> Ver Descuadre y Cerrar</>
-                    : <><Lock className="h-5 w-5 mr-2" /> Confirmar y Cerrar Caja</>
+                    : isAdmin
+                      ? <><Lock className="h-5 w-5 mr-2" /> Confirmar y Cerrar Caja</>
+                      : <><Lock className="h-5 w-5 mr-2" /> Registrar y Cerrar Turno</>
                 }
               </Button>
             </DialogFooter>

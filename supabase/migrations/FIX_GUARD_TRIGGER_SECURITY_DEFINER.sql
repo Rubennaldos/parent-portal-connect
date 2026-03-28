@@ -1,24 +1,28 @@
 -- ============================================================
--- FIX: fn_guard_voucher_approval — Fallback por nro_operacion
+-- FIX CRÍTICO: fn_guard_voucher_approval con SECURITY DEFINER
 -- Fecha: 2026-03-28
 --
--- PROBLEMA: El trigger buscaba auditoria_vouchers solo por id_cobranza.
--- Si el registro fue guardado antes de vincular el id_cobranza (análisis
--- previo sin id_cobranza, o FK que falló), el trigger no lo encontraba
--- aunque el nro_operacion fuera el mismo que el reference_code del voucher.
+-- PROBLEMA: La función del trigger corría con los permisos del
+-- usuario que aprueba (gestor_unidad). Como auditoria_vouchers
+-- tiene RLS que solo permite admin_general, el trigger no podía
+-- leer los registros de auditoría aunque existieran — siempre
+-- veía una tabla vacía y bloqueaba todo.
 --
--- SOLUCIÓN: Añadir fallback — si no encuentra por id_cobranza, buscar
--- también por nro_operacion = reference_code.
+-- SOLUCIÓN: Agregar SECURITY DEFINER para que la función corra
+-- con los permisos del dueño de la función (postgres), saltando
+-- RLS y pudiendo leer auditoria_vouchers correctamente.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION fn_guard_voucher_approval()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER  -- <-- ESTA ES LA CLAVE: corre como postgres, no como gestor_unidad
+SET search_path = public
 AS $$
 BEGIN
   -- Solo aplica cuando el estado cambia a 'approved'
   IF NEW.status = 'approved' AND OLD.status = 'pending' THEN
-
+    
     -- Regla 1: Debe haber foto del comprobante
     IF NEW.voucher_url IS NULL OR TRIM(NEW.voucher_url) = '' THEN
       RAISE EXCEPTION
@@ -52,12 +56,14 @@ BEGIN
         USING ERRCODE = 'P0001';
     END IF;
 
-    -- ── REGLA 7 (CORREGIDA) ─────────────────────────────────────────────
+    -- ── REGLA 7 ─────────────────────────────────────────────────────────
     -- Para pagos electrónicos DEBE existir un registro en auditoria_vouchers
     -- con estado_ia = VALIDO o SOSPECHOSO.
+    -- Gracias a SECURITY DEFINER, ahora SÍ puede leer auditoria_vouchers
+    -- sin importar el rol del usuario que aprueba.
     -- BÚSQUEDA EN DOS NIVELES:
-    --   1. Por id_cobranza = NEW.id  (link directo, lo más seguro)
-    --   2. Por nro_operacion = NEW.reference_code  (fallback si id_cobranza era NULL)
+    --   1. Por id_cobranza = NEW.id
+    --   2. Por nro_operacion = NEW.reference_code (fallback)
     IF NEW.request_type IN ('recharge', 'lunch_payment', 'debt_payment')
        AND LOWER(COALESCE(NEW.payment_method, '')) IN (
              'transferencia','yape','plin','lukita','bim','tunki','deposito','banktransfer'
@@ -67,11 +73,8 @@ BEGIN
         SELECT 1
         FROM auditoria_vouchers av
         WHERE (
-          -- Nivel 1: vinculado directamente por id
           av.id_cobranza = NEW.id
-          OR
-          -- Nivel 2: mismo nro_operacion que el reference_code del voucher
-          (
+          OR (
             NEW.reference_code IS NOT NULL
             AND TRIM(NEW.reference_code) != ''
             AND av.nro_operacion = TRIM(NEW.reference_code)
@@ -79,14 +82,13 @@ BEGIN
         )
         AND av.estado_ia IN ('VALIDO', 'SOSPECHOSO')
       ) THEN
-        -- Registrar el intento de bypass antes de bloquear
         INSERT INTO huella_digital_logs (
           usuario_id, accion, modulo, detalles_tecnicos, contexto, school_id, creado_at
         ) VALUES (
           NEW.approved_by,
           'INTENTO_BYPASS_SIN_AUDITORIA_IA',
           'RECHARGE_REQUESTS',
-          '{"origen": "trigger_bd", "alerta": "Intento de aprobación sin revisión IA válida"}'::jsonb,
+          '{"origen": "trigger_bd", "alerta": "Aprobacion sin revision IA valida"}'::jsonb,
           jsonb_build_object(
             'recharge_request_id', NEW.id,
             'payment_method', NEW.payment_method,
@@ -130,41 +132,22 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'trg_guard_voucher_approval'
+    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_guard_voucher_approval'
   ) THEN
     CREATE TRIGGER trg_guard_voucher_approval
     BEFORE UPDATE ON recharge_requests
     FOR EACH ROW
     EXECUTE FUNCTION fn_guard_voucher_approval();
-    RAISE NOTICE '✅ Trigger creado: trg_guard_voucher_approval';
+    RAISE NOTICE 'Trigger creado.';
   ELSE
-    RAISE NOTICE '✅ Trigger ya existe: trg_guard_voucher_approval (función actualizada)';
+    RAISE NOTICE 'Trigger ya existia, funcion actualizada con SECURITY DEFINER.';
   END IF;
 END
 $$;
 
--- ============================================================
--- PASO 2: Retroactivamente vincular registros existentes
--- Busca auditoria_vouchers sin id_cobranza y los vincula
--- al recharge_request correspondiente por nro_operacion = reference_code
--- ============================================================
-
-UPDATE auditoria_vouchers av
-SET id_cobranza = rr.id
-FROM recharge_requests rr
-WHERE av.id_cobranza IS NULL
-  AND av.nro_operacion IS NOT NULL
-  AND TRIM(av.nro_operacion) != ''
-  AND rr.reference_code = av.nro_operacion
-  AND av.estado_ia IN ('VALIDO', 'SOSPECHOSO');
-
--- Ver cuántos registros se vincularon
+-- Verificar que quedó con SECURITY DEFINER
 SELECT
-  '✅ FIX APLICADO' AS resultado,
-  COUNT(*) AS registros_vinculados
-FROM auditoria_vouchers
-WHERE id_cobranza IS NOT NULL;
-
-SELECT '✅ Trigger actualizado: busca por id_cobranza Y por nro_operacion' AS estado_trigger;
-SELECT '✅ Registros históricos retroactivamente vinculados a sus recharge_requests' AS estado_datos;
+  proname AS funcion,
+  prosecdef AS tiene_security_definer
+FROM pg_proc
+WHERE proname = 'fn_guard_voucher_approval';
