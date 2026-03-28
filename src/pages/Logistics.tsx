@@ -21,7 +21,8 @@ import {
   Building2,
   ClipboardList,
   Merge,
-  BadgeCheck
+  BadgeCheck,
+  LayoutGrid
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -31,6 +32,7 @@ import { SuppliersTab } from '@/components/logistics/SuppliersTab';
 import { PurchaseEntriesTab } from '@/components/logistics/PurchaseEntriesTab';
 import { ProductMergeTab } from '@/components/logistics/ProductMergeTab';
 import { ItemMasterTab } from '@/components/logistics/ItemMasterTab';
+import InventoryMatrixView from '@/components/logistics/InventoryMatrixView';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 interface InventoryItem {
@@ -274,7 +276,7 @@ const Logistics = () => {
 
         {/* Tabs Principales */}
         <Tabs defaultValue="inventory" className="w-full">
-          <TabsList className="grid w-full grid-cols-8 bg-white border rounded-xl p-1">
+          <TabsList className="grid w-full grid-cols-9 bg-white border rounded-xl p-1">
             <TabsTrigger value="inventory" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
               <Package className="h-4 w-4 mr-1" />
               Inventario
@@ -298,6 +300,10 @@ const Logistics = () => {
             <TabsTrigger value="master" className="data-[state=active]:bg-green-600 data-[state=active]:text-white">
               <BadgeCheck className="h-4 w-4 mr-1" />
               Maestro
+            </TabsTrigger>
+            <TabsTrigger value="inv-sedes" className="data-[state=active]:bg-emerald-700 data-[state=active]:text-white">
+              <LayoutGrid className="h-4 w-4 mr-1" />
+              Inv. Sedes
             </TabsTrigger>
             <TabsTrigger value="assets" className="data-[state=active]:bg-[#8B4513] data-[state=active]:text-white">
               <HardDrive className="h-4 w-4 mr-1" />
@@ -476,6 +482,13 @@ const Logistics = () => {
           {/* Pestaña de Maestro de Artículos (Sello Verde) */}
           <TabsContent value="master" className="mt-6">
             <ItemMasterTab />
+          </TabsContent>
+
+          {/* ── Pestaña: Inventario Sedes (Matriz Pivot) ── */}
+          <TabsContent value="inv-sedes" className="mt-6">
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <InventoryMatrixView />
+            </div>
           </TabsContent>
 
           {/* Pestaña de Activos */}
