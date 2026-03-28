@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { registrarHuella } from '@/services/auditService';
 import { useRole } from '@/hooks/useRole';
 import { useBillingSync, useDebouncedSync } from '@/stores/billingSync';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
@@ -816,6 +817,24 @@ export const SalesList = () => {
           description: 'La venta fue marcada como anulada',
         });
       }
+
+      // Rastro de auditoría: anulación de venta con devolución de saldo
+      registrarHuella(
+        'DEVOLUCION_SALDO_POR_ANULACION',
+        'VENTAS',
+        {
+          admin_id: user?.id,
+          transaccion_id: selectedTransaction.id,
+          ticket_code: selectedTransaction.ticket_code ?? null,
+          alumno_id: selectedTransaction.student_id ?? null,
+          alumno_nombre: selectedTransaction.student?.full_name ?? null,
+          monto_devuelto: selectedTransaction.student_id ? Math.abs(selectedTransaction.amount) : 0,
+          motivo_anulacion: annulReason.trim(),
+          metodo_devolucion: refundMethod || null,
+        },
+        undefined,
+        selectedTransaction.school_id ?? undefined
+      );
 
       setShowAnnul(false);
       setRefundMethod('');

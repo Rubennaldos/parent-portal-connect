@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { registrarHuella } from '@/services/auditService';
 import { Users, CreditCard, Search, ArrowRight, ArrowLeft, Check, Loader2, AlertTriangle, AlertCircle, Plus, Minus, Banknote, Smartphone, Building2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -728,6 +729,26 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 }
               })
               .eq('id', existingTx.id);
+
+            // Rastro de auditoría: edición de monto en transacción existente
+            registrarHuella(
+              'ALERTA_EDICION_POST_PAGO',
+              'ALMUERZO_WIZARD',
+              {
+                admin_id: user?.id,
+                transaction_id: existingTx.id,
+                monto_antes: existingTx.amount,
+                monto_despues: -Math.abs(newTotalAmount),
+                diferencia: -Math.abs(newTotalAmount) - existingTx.amount,
+                categoria: selectedCategory?.name ?? null,
+                menu_fecha: selectedMenu?.date ?? null,
+                alumno_id: selectedPerson?.id ?? null,
+                alumno_nombre: selectedPerson?.full_name ?? null,
+                motivo: 'Adición de unidades a pedido existente en PhysicalOrderWizard',
+              },
+              undefined,
+              schoolId ?? undefined
+            );
           } else {
             const transactionData: any = {
               type: 'purchase',

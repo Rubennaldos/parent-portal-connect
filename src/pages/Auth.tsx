@@ -17,7 +17,7 @@ import { supabase } from '@/lib/supabase';
 export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { signIn, signUp, user, loading: authLoading } = useAuth();
+  const { signIn, signUp, signOut, user, loading: authLoading, clearTempPasswordFlag } = useAuth();
   const { role, loading: roleLoading, getDefaultRoute } = useRole();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -175,7 +175,10 @@ export default function Auth() {
               .single();
             
             if (profile?.is_active === false) {
-              await supabase.auth.signOut();
+              // Limpiar flag de contraseña temporal antes de cerrar sesión
+              // para no dejar estado inconsistente en AuthContext
+              await clearTempPasswordFlag();
+              await signOut();
               toast({
                 variant: 'destructive',
                 title: 'Cuenta desactivada',
@@ -424,56 +427,51 @@ export default function Auth() {
 
       {/* Modal de Recuperación de Contraseña */}
       <Dialog open={showPasswordRecoveryModal} onOpenChange={setShowPasswordRecoveryModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-lg flex items-center gap-2">
               <HelpCircle className="h-5 w-5 text-[#8B4513]" />
               ¿Olvidaste tu contraseña?
             </DialogTitle>
-            <DialogDescription className="text-sm">
-              Sistema de recuperación sin correo electrónico
-            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-3">
-            {/* Mensaje principal */}
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <div className="flex gap-2">
-                <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-800">
-                  <strong className="block mb-1">Importante:</strong>
-                  <p>
-                    Actualmente el sistema <strong>no tiene configurado el envío de correos electrónicos</strong>.
-                    Para recuperar tu contraseña, debes contactar al administrador del sistema.
-                  </p>
-                </div>
-              </div>
+          <div className="space-y-4 py-2">
+            {/* Mensaje principal grande y claro */}
+            <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-5 text-center">
+              <div className="text-4xl mb-3">🔑</div>
+              <h3 className="text-base font-bold text-amber-900 mb-2">
+                Contacta al administrador de tu sede
+              </h3>
+              <p className="text-sm text-amber-800">
+                El administrador de tu colegio puede darte una contraseña temporal en minutos para que puedas volver a ingresar.
+              </p>
             </div>
 
-            {/* Instrucciones */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <h4 className="font-bold text-blue-900 text-sm mb-2">¿Cómo recuperar mi contraseña?</h4>
-              <ol className="text-xs text-blue-800 space-y-1 list-decimal list-inside ml-1">
-                <li>Contacta al <strong>Administrador del Sistema</strong></li>
-                <li>Proporciona tu <strong>correo electrónico registrado</strong></li>
-                <li>El administrador reseteará tu contraseña desde el panel de control</li>
-                <li>Recibirás una <strong>contraseña temporal</strong> que deberás cambiar en tu primer inicio de sesión</li>
+            {/* Pasos */}
+            <div className="bg-white border border-gray-200 rounded-lg p-4">
+              <h4 className="font-semibold text-gray-800 text-sm mb-3">¿Qué hacer?</h4>
+              <ol className="text-sm text-gray-700 space-y-2">
+                <li className="flex gap-2">
+                  <span className="bg-[#8B4513] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">1</span>
+                  <span>Comunícate con el <strong>administrador de tu sede</strong> (por WhatsApp, teléfono o en persona)</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="bg-[#8B4513] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">2</span>
+                  <span>Dile tu <strong>correo electrónico</strong> con el que te registraste</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="bg-[#8B4513] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">3</span>
+                  <span>El administrador te enviará una <strong>contraseña temporal</strong></span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="bg-[#8B4513] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">4</span>
+                  <span>Al ingresar con esa contraseña, el sistema te pedirá <strong>crear una nueva</strong></span>
+                </li>
               </ol>
             </div>
 
-            {/* Contacto */}
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-              <h4 className="font-bold text-green-900 text-sm mb-2">Contacto del Administrador:</h4>
-              <div className="flex items-center gap-2 text-sm text-green-800">
-                <Mail className="h-4 w-4 flex-shrink-0" />
-                <span><strong>Email:</strong> fiorella@limacafe28.com</span>
-              </div>
-            </div>
-
-            {/* Nota de seguridad */}
-            <p className="text-xs text-gray-600 text-center px-2">
-              💡 <strong>Recomendación:</strong> Una vez recuperes tu contraseña, cámbiala inmediatamente 
-              desde el menú de configuración ⚙️
+            <p className="text-xs text-gray-500 text-center">
+              💡 Una vez dentro, cámbiala desde el menú ⚙️ para mayor seguridad
             </p>
           </div>
 

@@ -39,6 +39,7 @@ import CombosPromotions from "./pages/CombosPromotions";
 import CashRegisterPage from "./pages/CashRegister";
 import CashRegisterV2Page from "./pages/CashRegisterV2";
 import Facturacion from "./pages/Facturacion";
+import Auditoria from "./pages/Auditoria";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -281,6 +282,16 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['admin_general', 'superadmin', 'contadora']}>
                   <Facturacion />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Módulo de Auditoría — Solo admin_general */}
+            <Route
+              path="/auditoria"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'superadmin']}>
+                  <Auditoria />
                 </ProtectedRoute>
               }
             />

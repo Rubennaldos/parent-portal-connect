@@ -1,3 +1,4 @@
+// @ts-nocheck — archivo Deno (Edge Function de Supabase), no usar TypeScript de Node.js
 // ====================================================================================================
 // EDGE FUNCTION: create-user
 //

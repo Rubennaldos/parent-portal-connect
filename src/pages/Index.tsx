@@ -40,8 +40,10 @@ import { FreeAccountWarningModal } from '@/components/parent/FreeAccountWarningM
 import { FreeAccountOnboardingModal } from '@/components/parent/FreeAccountOnboardingModal';
 import { SpendingLimitsModal } from '@/components/parent/SpendingLimitsModal';
 import { PaymentsTab } from '@/components/parent/PaymentsTab';
+import { PaymentHistoryTab } from '@/components/parent/PaymentHistoryTab';
 import { StudentLinksManager } from '@/components/parent/StudentLinksManager';
 import { MoreMenu } from '@/components/parent/MoreMenu';
+import { TempPasswordForm } from '@/components/parent/TempPasswordForm';
 import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
 import { LunchCalendarView } from '@/components/parent/LunchCalendarView';
@@ -86,7 +88,7 @@ interface Transaction {
 }
 
 const Index = () => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   const { toast } = useToast();
   const { isChecking } = useOnboardingCheck();
   const balanceSyncTs = useDebouncedSync('balances', 800);
@@ -458,7 +460,7 @@ const Index = () => {
 
   // ✅ Calcular deuda de cada estudiante (sin delay — se muestra en tiempo real)
   const calculateStudentDebts = async (studentsData: Student[]) => {
-    const debtsMap: Record<string, number> = {};
+    const debtsMap: Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }> = {};
     
     for (const student of studentsData) {
       if (student.free_account === false) {
@@ -876,7 +878,24 @@ const Index = () => {
               message={maintenancePagos.message}
             />
           ) : user?.id ? (
-            <PaymentsTab userId={user.id} isActive={activeTab === 'carrito'} />
+            <Tabs defaultValue="pendientes" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 h-auto mb-4">
+                <TabsTrigger value="pendientes" className="text-xs sm:text-sm py-2 sm:py-3 gap-1.5">
+                  <Receipt className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  Pendientes
+                </TabsTrigger>
+                <TabsTrigger value="historial" className="text-xs sm:text-sm py-2 sm:py-3 gap-1.5">
+                  <History className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  Historial
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="pendientes">
+                <PaymentsTab userId={user.id} isActive={activeTab === 'carrito'} />
+              </TabsContent>
+              <TabsContent value="historial">
+                <PaymentHistoryTab userId={user.id} isActive={activeTab === 'carrito'} />
+              </TabsContent>
+            </Tabs>
           ) : null}
         </div>
 
@@ -1179,6 +1198,21 @@ const Index = () => {
           key={`tutorial-manual-${tutorialManualKey}`}
         />
       )}
+
+      {/* Modal de contraseña temporal — bloquea hasta que el padre cambie su contraseña */}
+      <Dialog open={isTempPassword} onOpenChange={() => {}}>
+        <DialogContent className="max-w-sm [&>button]:hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              🔑 Cambia tu contraseña
+            </DialogTitle>
+            <DialogDescription>
+              El administrador te asignó una contraseña temporal. Por seguridad, debes crear una nueva antes de continuar.
+            </DialogDescription>
+          </DialogHeader>
+          <TempPasswordForm onDone={clearTempPasswordFlag} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

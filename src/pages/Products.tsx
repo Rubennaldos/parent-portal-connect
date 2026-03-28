@@ -12,13 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet, BadgeCheck } from 'lucide-react';
+import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet, BadgeCheck, ClipboardList } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import { PriceMatrix } from '@/components/products/PriceMatrix';
 import { BulkProductUpload } from '@/components/products/BulkProductUpload';
 import { CombosPromotionsManager } from '@/components/products/CombosPromotionsManager';
+import { ProductRequestModal } from '@/components/products/ProductRequestModal';
 
 interface Product {
   id: string;
@@ -84,6 +85,9 @@ const Products = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+
+  // Modal de solicitudes para gestor_unidad
+  const [showProductRequestModal, setShowProductRequestModal] = useState(false);
 
   // Stock control per school
   const [productStockLevels, setProductStockLevels] = useState<Record<string, number>>({});
@@ -1278,10 +1282,22 @@ const Products = () => {
                         Carga Masiva
                       </Button>
                     )}
-                    <Button onClick={() => { setShowProductModal(true); resetForm(); }}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Crear Producto
-                    </Button>
+                    {isAdminGeneral && (
+                      <Button onClick={() => { setShowProductModal(true); resetForm(); }}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Crear Producto
+                      </Button>
+                    )}
+                    {role === 'gestor_unidad' && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowProductRequestModal(true)}
+                        className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                      >
+                        <ClipboardList className="h-4 w-4 mr-2" />
+                        Solicitudes
+                      </Button>
+                    )}
                   </div>
                 </div>
                 {/* Buscador */}
@@ -1382,22 +1398,24 @@ const Products = () => {
                           </div>
                         )}
                         <div className="flex gap-2 flex-wrap">
-                          {/* Botón de precios: visible para todos, pero cada admin solo edita su sede */}
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={() => {
-                              setSelectedProduct(product);
-                              setShowPriceMatrix(true);
-                            }}
-                            className="flex-1"
-                            title={isAdminGeneral ? "Configurar precios por sede" : "Configurar precio de mi sede"}
-                          >
-                            <Building2 className="h-3 w-3 mr-1" />
-                            Precios
-                          </Button>
-                          {/* Toggle Stock Control: visible para admins y gestores */}
-                          {(isAdminGeneral || role === 'gestor_unidad') && userSchoolId && (
+                          {/* Botón de precios: solo admin_general puede editar precios */}
+                          {isAdminGeneral && (
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedProduct(product);
+                                setShowPriceMatrix(true);
+                              }}
+                              className="flex-1"
+                              title="Configurar precios por sede"
+                            >
+                              <Building2 className="h-3 w-3 mr-1" />
+                              Precios
+                            </Button>
+                          )}
+                          {/* Toggle Stock Control: solo admin_general puede modificar stock */}
+                          {isAdminGeneral && userSchoolId && (
                             <Button
                               size="sm"
                               variant={product.stock_control_enabled ? 'default' : 'outline'}
@@ -1625,6 +1643,14 @@ const Products = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de solicitudes para gestor_unidad */}
+      <ProductRequestModal
+        open={showProductRequestModal}
+        onClose={() => setShowProductRequestModal(false)}
+        schoolId={userSchoolId}
+        schoolName={schools.find(s => s.id === userSchoolId)?.name}
+      />
     </div>
   );
 };

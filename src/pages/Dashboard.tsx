@@ -34,6 +34,7 @@ import {
   Eye,
   XCircle,
   Bell,
+  ScanSearch,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -65,6 +66,7 @@ const ICON_MAP: { [key: string]: any } = {
   UtensilsCrossed,
   BarChart3,
   LineChart,
+  ScanSearch,
 };
 
 const COLOR_MAP: { [key: string]: string } = {
@@ -379,6 +381,18 @@ const Dashboard = () => {
           icon: 'FileText',
           color: 'indigo',
           route: '/facturacion',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
+          id: '17',
+          code: 'auditoria',
+          name: 'Auditoría',
+          description: 'Análisis IA de vouchers, rastro de actividad y huella digital',
+          icon: 'ScanSearch',
+          color: 'purple',
+          route: '/auditoria',
           is_active: true,
           is_enabled: false,
           status: 'functional' as const,

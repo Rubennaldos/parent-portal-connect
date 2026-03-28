@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -286,20 +286,35 @@ export function RechargeModal({
   // ⚠️ LANZA error si falla â€” así el insert no se hace sin foto
   const uploadVoucherImage = async (file: File, userId: string): Promise<string> => {
     const compressed = await compressImage(file);
-    const safeName = `voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-    const fileName = `${userId}/${safeName}`;
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('vouchers')
-      .upload(fileName, compressed, { upsert: false, contentType: 'image/jpeg' });
-    if (uploadError) {
-      console.error('Error al subir imagen del voucher:', uploadError.message);
-      throw new Error(`No se pudo subir la foto del comprobante: ${uploadError.message}. Verifica tu conexión e intenta nuevamente.`);
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const retryName = `${userId}/voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('vouchers')
+          .upload(retryName, compressed, { upsert: false, contentType: 'image/jpeg' });
+
+        if (uploadError) {
+          console.error(`[Voucher] Intento ${attempt}/3:`, uploadError.message);
+          lastError = new Error(uploadError.message);
+          if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+          continue;
+        }
+
+        const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
+        return publicUrl;
+      } catch (networkErr: unknown) {
+        console.error(`[Voucher] Error de red intento ${attempt}/3:`, networkErr);
+        lastError = networkErr instanceof Error ? networkErr : new Error('Error de red');
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+      }
     }
-    const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
-    if (!publicUrl) {
-      throw new Error('No se pudo obtener la URL pública de la imagen. Contacta al administrador.');
+
+    const isNetworkErr = lastError?.message?.toLowerCase().includes('fetch') || lastError?.message?.toLowerCase().includes('network');
+    if (isNetworkErr) {
+      throw new Error('No se pudo subir la foto por problemas de conexión. Revisa tu WiFi o datos móviles e intenta de nuevo.');
     }
-    return publicUrl;
+    throw new Error(`No se pudo subir la foto del comprobante. ${lastError?.message || 'Intenta de nuevo en unos minutos.'}`);
   };
 
   // ── Helper: verificar duplicado de código de operación ──
@@ -499,10 +514,15 @@ export function RechargeModal({
       setStep('success');
     } catch (err: any) {
       console.error('Error al enviar solicitud:', err);
+      const msg: string = err?.message || '';
+      const isPhotoError = msg.toLowerCase().includes('foto') || msg.toLowerCase().includes('subir') || msg.toLowerCase().includes('conexión') || msg.toLowerCase().includes('fetch');
       toast({
-        title: 'Error al enviar',
-        description: err.message || 'Ocurrió un error. Intenta de nuevo.',
+        title: isPhotoError ? 'Error al subir la foto' : 'Error al registrar tu solicitud',
+        description: isPhotoError
+          ? msg
+          : `Tu foto se subió pero no se pudo guardar el registro. Espera un momento y vuelve a intentarlo. (${msg})`,
         variant: 'destructive',
+        duration: 8000,
       });
     } finally {
       setLoading(false);

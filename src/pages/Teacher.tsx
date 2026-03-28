@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { TempPasswordForm } from '@/components/parent/TempPasswordForm';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -34,7 +36,7 @@ interface TeacherProfile {
 }
 
 export default function Teacher() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -1318,6 +1320,21 @@ export default function Teacher() {
           onComplete={handleOnboardingComplete}
         />
       )}
+
+      {/* Modal contraseña temporal — bloquea hasta que el profesor cambie su contraseña */}
+      <Dialog open={isTempPassword} onOpenChange={() => {}}>
+        <DialogContent className="max-w-sm [&>button]:hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              🔑 Cambia tu contraseña
+            </DialogTitle>
+            <DialogDescription>
+              El administrador te asignó una contraseña temporal. Por seguridad, debes crear una nueva antes de continuar.
+            </DialogDescription>
+          </DialogHeader>
+          <TempPasswordForm onDone={clearTempPasswordFlag} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

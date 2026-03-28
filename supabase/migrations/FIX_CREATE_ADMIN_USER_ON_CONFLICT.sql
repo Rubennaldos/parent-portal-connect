@@ -19,6 +19,7 @@ SET search_path = public, auth, extensions
 AS $$
 DECLARE
   v_user_id uuid;
+  v_instance_id uuid;
   v_encrypted_password text;
   v_now timestamptz := now();
 BEGIN
@@ -31,6 +32,19 @@ BEGIN
     RETURN jsonb_build_object(
       'success', false,
       'error',   'El email ya está registrado. Si el usuario no aparece en la lista, espera unos segundos y recarga la página.'
+    );
+  END IF;
+
+  SELECT instance_id INTO v_instance_id
+  FROM auth.users
+  WHERE instance_id IS NOT NULL
+    AND instance_id <> '00000000-0000-0000-0000-000000000000'::uuid
+  LIMIT 1;
+
+  IF v_instance_id IS NULL THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error',   'No se pudo obtener instance_id del proyecto. Crea primero un usuario desde Auth y vuelve a intentar.'
     );
   END IF;
 
@@ -53,7 +67,7 @@ BEGIN
     aud
   ) VALUES (
     v_user_id,
-    '00000000-0000-0000-0000-000000000000',
+    v_instance_id,
     lower(trim(p_email)),
     v_encrypted_password,
     v_now,

@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
 import { useBillingSync } from '@/stores/billingSync';
+import { procesarVoucherConIA } from '@/services/auditService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -131,6 +132,10 @@ export const VoucherApproval = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  // Fase de auditoría IA — mientras está en esta fase, el botón dice "Auditando IA..."
+  const [auditandoIAId, setAuditandoIAId] = useState<string | null>(null);
+  // IDs retenidos por la IA — el botón verde pasa a gris "Retenido por IA"
+  const [retenidoIds, setRetenidoIds] = useState<Set<string>>(new Set());
   const [rejectionReason, setRejectionReason] = useState<Record<string, string>>({});
   const [showRejectInput, setShowRejectInput] = useState<Record<string, boolean>>({});
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -527,6 +532,137 @@ export const VoucherApproval = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ──────────────────────────────────────────────────────────
+  // PUERTA DE ENTRADA: Auditar con IA ANTES de aprobar
+  // ──────────────────────────────────────────────────────────
+  const handleApproveConIA = async (req: RechargeRequest, overrideCode?: string) => {
+    // Si el voucher no tiene imagen, saltar la auditoría IA y aprobar directo
+    if (!req.voucher_url) {
+      toast({
+        title: '⚠️ Sin imagen de comprobante',
+        description: 'No se puede auditar con IA porque no hay foto. Revisando manualmente...',
+      });
+      return handleApprove(req, overrideCode);
+    }
+
+    setAuditandoIAId(req.id);
+    try {
+      const resultado = await procesarVoucherConIA(req.voucher_url, {
+        idCobranza: req.id,
+        schoolId: req.school_id ?? undefined,
+        usuarioId: user?.id,
+        montoEsperado: req.amount,
+        autoAprobarSiValido: false,
+      });
+
+      // ── CASO 1: RECHAZADO (fraude, duplicado, desvío de fondos) ──
+      if (resultado.estado_ia === 'RECHAZADO' || resultado.es_duplicado || resultado.es_desvio_fondos) {
+        setAuditandoIAId(null);
+        // Marcar como retenido → botón verde pasa a gris
+        setRetenidoIds(prev => new Set([...prev, req.id]));
+        const motivoCorto = resultado.es_desvio_fondos
+          ? `Pago a "${resultado.destinatario_detectado}" — destinatario no autorizado`
+          : resultado.es_duplicado
+          ? resultado.motivo_duplicado ?? 'Voucher duplicado'
+          : (resultado.analisis_ia?.motivo as string) ?? 'Comprobante retenido';
+        toast({
+          variant: 'destructive',
+          title: '🔒 Voucher retenido — revisión requerida',
+          description: `${motivoCorto}. Ve al módulo de Auditoría para ver el análisis completo y decidir si aprobar.`,
+          duration: 8000,
+        });
+        fetchRequests();
+        return;
+      }
+
+      // ── CASO 2: SOSPECHOSO — no aprobar, pedir revisión manual ──
+      if (resultado.estado_ia === 'SOSPECHOSO') {
+        const motivo = (resultado.analisis_ia?.motivo as string) ?? 'La IA no pudo verificar el comprobante con certeza.';
+        const alertas = resultado.analisis_ia?.alertas as string[] | undefined;
+        const sinDestinatario = !resultado.destinatario_detectado;
+
+        toast({
+          title: '⚠️ Voucher sospechoso — revisión manual requerida',
+          description: sinDestinatario
+            ? `La IA no pudo leer el nombre del destinatario en la imagen. El registro quedó guardado en Auditoría para revisión manual.`
+            : `${motivo}${alertas?.length ? ` • ${alertas[0]}` : ''} — Registro guardado en Auditoría para revisión.`,
+        });
+        setAuditandoIAId(null);
+        fetchRequests(); // Refrescar lista de cobranzas
+        return;
+      }
+
+      // ── CASO 3: VÁLIDO — verificar monto antes de aprobar ──
+      // Aunque la IA diga VÁLIDO, debemos confirmar que el monto del voucher
+      // coincide con el monto esperado de la cobranza (tolerancia ±5%).
+      if (resultado.monto_detectado !== null && resultado.monto_detectado !== undefined) {
+        const montoVoucher = resultado.monto_detectado;
+        const montoEsperado = req.amount;
+        const tolerancia = montoEsperado * 0.05; // ±5%
+
+        if (montoVoucher > montoEsperado + tolerancia) {
+          // ── SOBREPAGO: el voucher es mayor a la deuda ──
+          // No se puede auto-aprobar porque la diferencia debería ser saldo a favor.
+          // Requiere que el admin decida qué hacer con el excedente.
+          setAuditandoIAId(null);
+          setRetenidoIds(prev => new Set([...prev, req.id]));
+          toast({
+            variant: 'destructive',
+            title: '💸 Sobrepago detectado — revisión manual requerida',
+            description: `El voucher muestra S/ ${montoVoucher.toFixed(2)} pero la deuda es S/ ${montoEsperado.toFixed(2)}. Diferencia de S/ ${(montoVoucher - montoEsperado).toFixed(2)} a favor del padre. Ve a Auditoría para decidir cómo asignar el excedente.`,
+            duration: 10000,
+          });
+          fetchRequests();
+          return;
+        }
+
+        if (montoVoucher < montoEsperado - tolerancia) {
+          // ── ABONO INCOMPLETO: el voucher es menor a la deuda ──
+          setAuditandoIAId(null);
+          setRetenidoIds(prev => new Set([...prev, req.id]));
+          toast({
+            variant: 'destructive',
+            title: '💰 Abono incompleto — aprobación bloqueada',
+            description: `El voucher muestra S/ ${montoVoucher.toFixed(2)} pero la deuda es S/ ${montoEsperado.toFixed(2)}. Faltan S/ ${(montoEsperado - montoVoucher).toFixed(2)}. Ve a Auditoría para revisar.`,
+            duration: 10000,
+          });
+          fetchRequests();
+          return;
+        }
+      }
+
+      const destinatario = resultado.destinatario_detectado
+        ? ` · Destinatario: ${resultado.destinatario_detectado}`
+        : '';
+      const confianza = resultado.analisis_ia?.confianza
+        ? ` (${Math.round((resultado.analisis_ia.confianza as number) * 100)}% confianza)`
+        : '';
+
+      toast({
+        title: `✅ IA verificó el voucher${confianza}`,
+        description: `Banco: ${resultado.banco_detectado ?? '?'} · S/ ${resultado.monto_detectado?.toFixed(2) ?? '?'}${destinatario}. Procesando aprobación...`,
+      });
+
+    } catch (iaError: any) {
+      console.error('⚠️ Error en auditoría IA:', iaError);
+      const esError401 = iaError?.message?.includes('401') || iaError?.message?.includes('Unauthorized');
+      toast({
+        variant: 'destructive',
+        title: '🔌 Error de conexión con el servidor IA',
+        description: esError401
+          ? 'El servidor rechazó la solicitud (401). Recarga la página para renovar tu sesión e intenta de nuevo.'
+          : `Error técnico: ${iaError?.message ?? 'desconocido'}. Intenta de nuevo o contacta soporte.`,
+      });
+      setAuditandoIAId(null);
+      return;
+    } finally {
+      setAuditandoIAId(null);
+    }
+
+    // Si llegamos aquí, la IA dijo VÁLIDO → ejecutar aprobación real
+    return handleApprove(req, overrideCode);
   };
 
   const handleApprove = async (req: RechargeRequest, overrideCode?: string) => {
@@ -1231,6 +1367,9 @@ export const VoucherApproval = () => {
           {filteredRequests.map((req) => {
             const statusInfo = STATUS_BADGES[req.status];
             const isProcessing = processingId === req.id;
+            const isAuditandoIA = auditandoIAId === req.id;
+            const isRetenido = retenidoIds.has(req.id);
+            const isOccupied = isProcessing || isAuditandoIA;
 
             return (
               <Card key={req.id} className={`border-l-4 ${
@@ -1434,9 +1573,9 @@ export const VoucherApproval = () => {
                                   variant="destructive"
                                   className="flex-1 h-7 text-xs gap-1"
                                   onClick={() => handleReject(req)}
-                                  disabled={isProcessing}
+                                  disabled={isOccupied}
                                 >
-                                  {isProcessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                                  {isOccupied ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                                   Rechazar
                                 </Button>
                                 <Button
@@ -1449,28 +1588,53 @@ export const VoucherApproval = () => {
                                 </Button>
                               </div>
                             </div>
+                          ) : isRetenido ? (
+                            /* ── Retenido por IA: botón gris, enlace a Auditoría ── */
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex items-center gap-1.5 bg-gray-100 border border-gray-300 rounded-md px-3 py-2">
+                                <ShieldCheck className="h-4 w-4 text-gray-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-gray-500">Voucher retenido — en revisión IA</p>
+                                  <a
+                                    href="/auditoria"
+                                    className="text-[10px] text-indigo-500 hover:underline"
+                                  >
+                                    Ir a Auditoría para revisar y aprobar →
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
                           ) : (
                             <div className="flex flex-col gap-1.5">
                               <Button
                                 size="sm"
-                                className="h-9 bg-green-600 hover:bg-green-700 gap-1.5 font-semibold w-full text-xs sm:text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
-                                onClick={() => handleApprove(req, overrideRefCodes[req.id])}
-                                disabled={isProcessing || (!req.reference_code && !(overrideRefCodes[req.id] || '').trim())}
+                                className={`h-9 gap-1.5 font-semibold w-full text-xs sm:text-sm disabled:cursor-not-allowed transition-all ${
+                                  isAuditandoIA
+                                    ? 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400'
+                                    : isProcessing
+                                    ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-400'
+                                    : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-300'
+                                }`}
+                                onClick={() => handleApproveConIA(req, overrideRefCodes[req.id])}
+                                disabled={isOccupied || (!req.reference_code && !(overrideRefCodes[req.id] || '').trim())}
                                 title={!req.reference_code && !(overrideRefCodes[req.id] || '').trim() ? 'Debes ingresar el N° de operación antes de aprobar' : ''}
                               >
-                                {isProcessing ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Check className="h-4 w-4" />
-                                )}
-                                {req.request_type === 'debt_payment' ? `Aprobar pago S/ ${req.amount.toFixed(0)}` : `Aprobar +S/ ${req.amount.toFixed(0)}`}
+                                <Loader2 className={`h-4 w-4 ${isOccupied ? 'animate-spin' : 'hidden'}`} />
+                                <Check className={`h-4 w-4 ${isOccupied ? 'hidden' : ''}`} />
+                                {isAuditandoIA
+                                  ? 'Auditando IA...'
+                                  : isProcessing
+                                  ? 'Aprobando...'
+                                  : req.request_type === 'debt_payment'
+                                  ? `Aprobar pago S/ ${req.amount.toFixed(0)}`
+                                  : `Aprobar +S/ ${req.amount.toFixed(0)}`}
                               </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
                                 className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50 gap-1 w-full"
                                 onClick={() => setShowRejectInput((prev) => ({ ...prev, [req.id]: true }))}
-                                disabled={isProcessing}
+                                disabled={isOccupied}
                               >
                                 <XCircle className="h-3 w-3" />
                                 Rechazar
@@ -1773,6 +1937,8 @@ export const VoucherApproval = () => {
           </div>
         </div>
       )}
+
+      {/* El override de aprobación se hace en el módulo de Auditoría, no aquí */}
     </div>
   );
 };

@@ -1,3 +1,4 @@
+// @ts-nocheck — archivo Deno (Edge Function de Supabase), no usar TypeScript de Node.js
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -82,7 +83,7 @@ serve(async (req) => {
       )
     }
 
-    const allowedRoles = ['admin_general', 'superadmin']
+    const allowedRoles = ['admin_general', 'superadmin', 'gestor_unidad']
     if (!allowedRoles.includes(callerProfile.role)) {
       console.error('❌ Rol no permitido:', callerProfile.role)
       return new Response(
@@ -128,6 +129,16 @@ serve(async (req) => {
     }
 
     console.log(`✅ Contraseña actualizada exitosamente para: ${userEmail}`)
+
+    // 6. Marcar como contraseña temporal en profiles
+    try {
+      await supabaseAdmin
+        .from('profiles')
+        .update({ is_temp_password: true })
+        .eq('id', targetUserId)
+    } catch (flagError) {
+      console.warn('⚠️ No se pudo marcar is_temp_password:', flagError)
+    }
 
     // 6. Registrar en auditoría (no falla si la tabla no existe)
     try {

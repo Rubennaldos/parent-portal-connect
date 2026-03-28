@@ -32,6 +32,7 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  Search,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -208,30 +209,44 @@ export const BillingDashboard = () => {
     return d.toISOString().split('T')[0];
   };
 
+  // Estados del input (lo que el usuario está escribiendo)
   const [dateFrom, setDateFrom] = useState<string>(mondayDateStr());
   const [dateTo, setDateTo] = useState<string>(todayDateStr());
+  // Estados aplicados (los que realmente disparan el fetch — solo cambian al presionar Buscar o un atajo)
+  const [appliedDateFrom, setAppliedDateFrom] = useState<string>(mondayDateStr());
+  const [appliedDateTo, setAppliedDateTo] = useState<string>(todayDateStr());
 
   const canViewAllSchools = role === 'admin_general';
 
-  // ── Atajos de rango de fechas ──
+  // ── Atajos de rango de fechas — aplican inmediatamente (1 clic = 2 valores definidos) ──
   const applyRange = (range: 'today' | 'yesterday' | 'week' | 'month' | 'lastmonth') => {
     const now = new Date();
     const fmt = (d: Date) => d.toISOString().split('T')[0];
-    if (range === 'today') {
-      setDateFrom(fmt(now)); setDateTo(fmt(now));
-    } else if (range === 'yesterday') {
+    let from = fmt(now);
+    let to = fmt(now);
+    if (range === 'yesterday') {
       const y = new Date(now); y.setDate(y.getDate() - 1);
-      setDateFrom(fmt(y)); setDateTo(fmt(y));
+      from = fmt(y); to = fmt(y);
     } else if (range === 'week') {
       const mon = new Date(now); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
-      setDateFrom(fmt(mon)); setDateTo(fmt(now));
+      from = fmt(mon); to = fmt(now);
     } else if (range === 'month') {
-      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(fmt(now));
+      from = fmt(new Date(now.getFullYear(), now.getMonth(), 1)); to = fmt(now);
     } else if (range === 'lastmonth') {
       const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      setDateFrom(fmt(first)); setDateTo(fmt(last));
+      from = fmt(first); to = fmt(last);
     }
+    // Actualiza inputs Y estados aplicados al mismo tiempo
+    setDateFrom(from); setDateTo(to);
+    setAppliedDateFrom(from); setAppliedDateTo(to);
+  };
+
+  // ── Aplicar filtro manual (botón Buscar) ──
+  const aplicarFiltroFecha = () => {
+    if (!dateFrom || !dateTo) return;
+    setAppliedDateFrom(dateFrom);
+    setAppliedDateTo(dateTo);
   };
 
   useEffect(() => {
@@ -244,7 +259,7 @@ export const BillingDashboard = () => {
       fetchDashboardStats();
       fetchAdminRanking();
     }
-  }, [selectedSchool, dateFrom, dateTo, userSchoolId, canViewAllSchools]);
+  }, [selectedSchool, appliedDateFrom, appliedDateTo, userSchoolId, canViewAllSchools]);
 
   useEffect(() => {
     if (dashboardSyncTs > 0 && (userSchoolId || canViewAllSchools)) {
@@ -284,8 +299,8 @@ export const BillingDashboard = () => {
   const fetchAdminRanking = async () => {
     setRankingLoading(true);
     try {
-      const periodStart = dateFrom + 'T00:00:00-05:00';
-      const periodEnd   = dateTo   + 'T23:59:59-05:00';
+      const periodStart = appliedDateFrom + 'T00:00:00-05:00';
+      const periodEnd   = appliedDateTo   + 'T23:59:59-05:00';
       const schoolIdFilter = (!canViewAllSchools || selectedSchool !== 'all')
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
@@ -372,8 +387,8 @@ export const BillingDashboard = () => {
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
 
       // ========== FETCH EN PARALELO: 4 queries independientes ==========
-      const periodStart = dateFrom + 'T00:00:00-05:00';
-      const periodEnd   = dateTo   + 'T23:59:59-05:00';
+      const periodStart = appliedDateFrom + 'T00:00:00-05:00';
+      const periodEnd   = appliedDateTo   + 'T23:59:59-05:00';
 
       const [pendingData, lunchOrders, paidWithLunch, paidData] = await Promise.all([
         // 1. Transacciones pendientes DENTRO del rango de fechas
@@ -398,8 +413,8 @@ export const BillingDashboard = () => {
             .in('status', ['confirmed', 'delivered'])
             .eq('is_cancelled', false)
             .eq('payment_method', 'pagar_luego')
-            .gte('order_date', dateFrom)
-            .lte('order_date', dateTo);
+            .gte('order_date', appliedDateFrom)
+            .lte('order_date', appliedDateTo);
           if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
           if (cursor) q = q.lt('created_at', cursor);
           return q;
@@ -985,14 +1000,15 @@ export const BillingDashboard = () => {
               </button>
             ))}
           </div>
-          {/* Inputs de fecha */}
+          {/* Inputs de fecha + botón Buscar */}
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <p className="text-xs text-gray-500">Desde</p>
               <input
                 type="date"
                 value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); }}
+                onChange={(e) => setDateFrom(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && aplicarFiltroFecha()}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
@@ -1001,11 +1017,21 @@ export const BillingDashboard = () => {
               <input
                 type="date"
                 value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); }}
+                onChange={(e) => setDateTo(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && aplicarFiltroFecha()}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>
+          <Button
+            onClick={aplicarFiltroFecha}
+            disabled={!dateFrom || !dateTo}
+            size="sm"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white gap-2"
+          >
+            <Search className="h-4 w-4" />
+            Buscar
+          </Button>
         </div>
       </div>
 

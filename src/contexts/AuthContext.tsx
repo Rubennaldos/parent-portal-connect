@@ -6,9 +6,11 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  isTempPassword: boolean;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (email: string, password: string, metadata?: any) => Promise<{ data: { user: User | null; session: Session | null }; error: AuthError | null }>;
   signOut: () => Promise<void>;
+  clearTempPasswordFlag: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -17,6 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isTempPassword, setIsTempPassword] = useState(false);
 
   useEffect(() => {
     // Si la configuración no está lista, no bloqueamos el render.
@@ -30,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     // 1. Verificar sesión inicial PRIMERO (antes de suscribirse a cambios)
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (!mounted) return;
       if (error) {
         console.error('❌ Error recuperando sesión:', error);
@@ -38,6 +41,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         setSession(session);
         setUser(session.user);
+        // Verificar contraseña temporal en carga inicial (ej. el padre recarga la página)
+        try {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('is_temp_password')
+            .eq('id', session.user.id)
+            .single();
+          if (profileError) {
+            console.warn('[Auth] is_temp_password no disponible en la BD:', profileError.message);
+          } else if (mounted) {
+            setIsTempPassword(profile?.is_temp_password === true);
+          }
+        } catch {
+          // silencioso
+        }
       }
       setLoading(false);
     });
@@ -78,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_OUT') {
         setSession(null);
         setUser(null);
+        setIsTempPassword(false);
         setLoading(false);
         return;
       }
@@ -111,11 +130,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+
+    // Verificar si tiene contraseña temporal
+    if (!error && data.user) {
+      try {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('is_temp_password')
+          .eq('id', data.user.id)
+          .single();
+        if (profileError) {
+          // Columna is_temp_password probablemente no existe aún en la BD
+          console.warn('[Auth] No se pudo verificar is_temp_password:', profileError.message, '— Ejecuta la migración ADD_TEMP_PASSWORD_AND_FIX_USER_IDS.sql en Supabase');
+          setIsTempPassword(false);
+        } else {
+          setIsTempPassword(profile?.is_temp_password === true);
+        }
+      } catch {
+        setIsTempPassword(false);
+      }
+    }
+
     return { error };
+  };
+
+  const clearTempPasswordFlag = async () => {
+    if (!supabase || !user) return;
+    // Actualización optimista: cerrar el diálogo INMEDIATAMENTE aunque la red falle
+    // El padre ya cambió su contraseña exitosamente; no puede quedarse bloqueado en el modal
+    setIsTempPassword(false);
+    try {
+      await supabase.from('profiles').update({ is_temp_password: false }).eq('id', user.id);
+    } catch {
+      // Si falla, el flag en BD sigue en true — al próximo login se pedirá cambio de nuevo
+      // pero al menos el padre puede usar el sistema en esta sesión
+      console.warn('[Auth] No se pudo limpiar flag is_temp_password en BD. Se limpiará al próximo login.');
+    }
   };
 
   const signUp = async (email: string, password: string, metadata: any = {}) => {
@@ -177,7 +231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, isTempPassword, signIn, signUp, signOut, clearTempPasswordFlag }}>
       {children}
     </AuthContext.Provider>
   );

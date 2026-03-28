@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { registrarHuella } from '@/services/auditService';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
 import { useViewAsStore } from '@/stores/viewAsStore';
@@ -1425,6 +1426,24 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         title: '✅ Pago registrado',
         description: `Se registró el pago de S/ ${finalPaidAmount.toFixed(2)} con ${methodLabel}`,
       });
+
+      // Rastro de auditoría: queda registrado quién cobró, cuánto, cómo y a quién
+      registrarHuella(
+        'APROBACION_MANUAL_EFECTIVO',
+        'COBRANZAS',
+        {
+          admin_id: user.id,
+          deudor_id: currentDebtor.id,
+          deudor_nombre: currentDebtor.client_name ?? currentDebtor.id,
+          monto_cobrado: finalPaidAmount,
+          metodo_pago: methodLabel,
+          nro_operacion: finalOperationNumber || null,
+          transacciones_ids: currentDebtor.transactions?.map((t: any) => t.id) ?? [],
+          breakdown: useSplitPayment ? paymentBreakdown : null,
+        },
+        undefined,
+        currentDebtor.school_id ?? undefined
+      );
 
       // Cerrar modal y limpiar
       setShowPaymentModal(false);
@@ -2938,6 +2957,9 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                             {t.description} • {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
                                             {t.ticket_code && (
                                               <span className="ml-1 text-indigo-700 font-bold">• 🎫 {t.ticket_code}</span>
+                                            )}
+                                            {t.schools?.name && (
+                                              <span className="ml-1 text-slate-500">• 🏫 Comprado en: <span className="font-semibold text-slate-700">{t.schools.name}</span></span>
                                             )}
                                           </div>
                                         </div>

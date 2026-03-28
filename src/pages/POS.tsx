@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { registrarHuella } from '@/services/auditService';
 import { useRole } from '@/hooks/useRole';
 import { useBillingSync, useDebouncedSync } from '@/stores/billingSync';
 import { useUserProfile } from '@/hooks/useUserProfile';
@@ -239,6 +240,8 @@ const POS = () => {
   const nfcPosBuffer = useRef('');
   const nfcPosTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nfcPosLastKeyTime = useRef<number>(0);
+  // Timer para debounce de la búsqueda unificada "Cuenta Registrada"
+  const registeredSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   console.log('🏪 POS - Componente montado');
   console.log('👤 POS - Usuario:', user?.email);
@@ -275,6 +278,13 @@ const POS = () => {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [showTeacherResults, setShowTeacherResults] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false); // Para ampliar foto del estudiante
+
+  // Estados de búsqueda unificada "Cuenta Registrada" (Alumno + Profesor)
+  const [showRegisteredSearch, setShowRegisteredSearch] = useState(false);
+  const [registeredSearch, setRegisteredSearch] = useState('');
+  const [registeredResults, setRegisteredResults] = useState<Array<{ type: 'student' | 'teacher'; data: any }>>([]);
+  const [registeredLoading, setRegisteredLoading] = useState(false);
+  const [isGlobalSearch, setIsGlobalSearch] = useState(false);
   // Estados de productos
   const [productSearch, setProductSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
@@ -1001,6 +1011,101 @@ const POS = () => {
     }
   };
 
+  // ── Búsqueda unificada Alumno + Profesor ("Cuenta Registrada") ──────────────
+  const searchRegistered = async (query: string, global: boolean) => {
+    if (query.trim().length < 2) {
+      setRegisteredResults([]);
+      return;
+    }
+
+    // 🔒 SEGURIDAD: Si no es búsqueda global y no tenemos la sede del cajero,
+    // NO mostrar ningún resultado — nunca exponer datos de otras sedes por defecto.
+    if (!global && !userSchoolId) {
+      console.warn('🔒 [searchRegistered] Bloqueado: modo local sin userSchoolId. No se exponen datos.');
+      setRegisteredResults([]);
+      return;
+    }
+
+    setRegisteredLoading(true);
+    try {
+      // Consulta de alumnos
+      let studentsQuery = supabase
+        .from('students')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name)')
+        .eq('is_active', true)
+        .ilike('full_name', `%${query.trim()}%`);
+
+      // 🔒 El filtro de sede es OBLIGATORIO en modo local.
+      // Solo se omite cuando global === true (el cajero aceptó la advertencia de auditoría).
+      if (!global) {
+        studentsQuery = studentsQuery.eq('school_id', userSchoolId!);
+      }
+
+      // Consulta de profesores
+      let teachersQuery = supabase
+        .from('teacher_profiles_with_schools')
+        .select('*')
+        .ilike('full_name', `%${query.trim()}%`);
+
+      // 🔒 Igual para profesores: filtro obligatorio en modo local.
+      if (!global) {
+        teachersQuery = teachersQuery.or(`school_1_id.eq.${userSchoolId},school_2_id.eq.${userSchoolId}`);
+      }
+
+      // Límites diferenciados: modo global permite más resultados pero con techo duro
+      const studentLimit = global ? 20 : 8;
+      const teacherLimit = global ? 10 : 4;
+
+      const [studentsResult, teachersResult] = await Promise.all([
+        studentsQuery.limit(studentLimit),
+        teachersQuery.limit(teacherLimit),
+      ]);
+
+      const studentItems = (studentsResult.data || []).map((s: any) => ({
+        type: 'student' as const,
+        data: { ...s, school_name: s.schools?.name || null },
+      }));
+
+      const teacherItems = (teachersResult.data || []).map((t: any) => ({
+        type: 'teacher' as const,
+        data: { ...t, school_name: t.school_1_name || null },
+      }));
+
+      setRegisteredResults([...studentItems, ...teacherItems]);
+
+      // Precalcular estados de cuenta para los alumnos encontrados
+      if (studentItems.length > 0) {
+        const statusMap = new Map(studentAccountStatuses);
+        await Promise.all(
+          studentItems.map(async (item) => {
+            try {
+              const status = await getAccountStatus(item.data as Student);
+              statusMap.set(item.data.id, status);
+            } catch {
+              statusMap.set(item.data.id, {
+                canPurchase: !item.data.kiosk_disabled,
+                statusText: item.data.kiosk_disabled
+                  ? '🍽️ Sin cuenta — Solo almuerzo'
+                  : `💰 Saldo: S/ ${(item.data.balance || 0).toFixed(2)}`,
+                statusColor: item.data.kiosk_disabled ? 'text-orange-600' : 'text-emerald-600',
+              });
+            }
+          })
+        );
+        setStudentAccountStatuses(statusMap);
+      }
+    } catch (error: any) {
+      console.error('❌ Error en búsqueda unificada:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error al buscar',
+        description: error.message || 'No se pudo realizar la búsqueda',
+      });
+    } finally {
+      setRegisteredLoading(false);
+    }
+  };
+
   // ✅ Función helper para determinar el estado de cuenta del estudiante
   const getAccountStatus = async (student: Student): Promise<{
     canPurchase: boolean;
@@ -1107,6 +1212,14 @@ const POS = () => {
     setShowTeacherResults(false);
   };
 
+  // Abre el modal unificado de búsqueda "Cuenta Registrada"
+  const selectRegisteredMode = () => {
+    setShowRegisteredSearch(true);
+    setRegisteredSearch('');
+    setRegisteredResults([]);
+    setIsGlobalSearch(false);
+  };
+
   const resetClient = () => {
     console.log('🧹 Limpiando estado del cliente...');
     setClientMode(null);
@@ -1124,6 +1237,11 @@ const POS = () => {
     setPlinNumber('');
     setTransactionCode('');
     setRequiresInvoice(false);
+    // Limpiar búsqueda unificada
+    setShowRegisteredSearch(false);
+    setRegisteredSearch('');
+    setRegisteredResults([]);
+    setIsGlobalSearch(false);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
 
@@ -1363,6 +1481,8 @@ const POS = () => {
   };
 
   const handleConfirmCheckout = async (shouldPrint: boolean = false) => {
+    // Guarda contra doble-clic: si ya estamos procesando, ignorar llamadas adicionales
+    if (isProcessing) return;
     // Procesar directamente (ya no hay segundo modal)
     await processCheckout();
     
@@ -1801,7 +1921,7 @@ const POS = () => {
           .from('transactions')
           .insert({
             student_id: selectedStudent.id,
-            school_id: selectedStudent.school_id,
+            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra (no la sede del alumno)
             type: 'purchase',
             amount: -total,
             description: txDescription,
@@ -1863,7 +1983,7 @@ const POS = () => {
           .insert({
             transaction_id: transaction.id,
             student_id: selectedStudent.id,
-            school_id: selectedStudent.school_id,
+            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra
             cashier_id: user?.id,
             total: total,
             subtotal: total,
@@ -1896,7 +2016,7 @@ const POS = () => {
           .insert({
             student_id: null,
             teacher_id: selectedTeacher.id,
-            school_id: selectedTeacher.school_1_id || null, // ✅ Corregido: la vista usa school_1_id (no school_id_1)
+            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra (no la sede del profesor)
             type: 'purchase',
             amount: -total,
             description: `Compra Profesor: ${selectedTeacher.full_name} - ${cart.length} items`,
@@ -1944,7 +2064,7 @@ const POS = () => {
           .insert({
             transaction_id: transaction.id,            // ✅ UUID real de la transacción
             teacher_id: selectedTeacher.id,
-            school_id: selectedTeacher.school_1_id || null,
+            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra
             cashier_id: user?.id,
             total: total,
             subtotal: total,
@@ -2366,7 +2486,7 @@ const POS = () => {
               </div>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               {/* Cliente Genérico */}
               <button
                 onClick={selectGenericClient}
@@ -2377,24 +2497,14 @@ const POS = () => {
                 <p className="text-xs sm:text-sm text-gray-600">Venta al contado (Efectivo/Yape/Tarjeta)</p>
               </button>
 
-              {/* Crédito */}
+              {/* Cuenta Registrada (Alumno o Profesor) */}
               <button
-                onClick={selectStudentMode}
+                onClick={selectRegisteredMode}
                 className="p-4 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
               >
                 <User className="h-10 w-10 sm:h-16 sm:w-16 mx-auto mb-2 sm:mb-4 text-gray-400 group-hover:text-blue-600" />
-                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Crédito</h3>
-                <p className="text-xs sm:text-sm text-gray-600">Compra a crédito (Descuenta de saldo)</p>
-              </button>
-
-              {/* Profesor */}
-              <button
-                onClick={selectTeacherMode}
-                className="p-4 sm:p-8 border-2 border-gray-300 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all group"
-              >
-                <UtensilsCrossed className="h-10 w-10 sm:h-16 sm:w-16 mx-auto mb-2 sm:mb-4 text-gray-400 group-hover:text-purple-600" />
-                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Profesor</h3>
-                <p className="text-xs sm:text-sm text-gray-600">Cuenta libre (Sin límites)</p>
+                <h3 className="text-base sm:text-xl font-bold mb-1 sm:mb-2">Cuenta Registrada</h3>
+                <p className="text-xs sm:text-sm text-gray-600">Alumno (crédito/saldo) o Profesor (cuenta libre)</p>
               </button>
             </div>
 
@@ -2435,6 +2545,208 @@ const POS = () => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de Búsqueda Unificada "Cuenta Registrada" (Alumno + Profesor) ── */}
+      {showRegisteredSearch && !clientMode && (
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6">
+            {/* Encabezado */}
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-2xl font-bold">Buscar Cuenta Registrada</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Alumno o Profesor</p>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => { setShowRegisteredSearch(false); setIsGlobalSearch(false); }}
+                className="text-gray-600 hover:bg-gray-100"
+              >
+                Volver
+              </Button>
+            </div>
+
+            {/* Switch Modo Global */}
+            <div className={`flex items-center justify-between p-3 rounded-xl border-2 mb-4 transition-all ${
+              isGlobalSearch
+                ? 'bg-amber-50 border-amber-400'
+                : 'bg-gray-50 border-gray-200'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🌐</span>
+                <div>
+                  <p className={`font-bold text-sm ${isGlobalSearch ? 'text-amber-800' : 'text-gray-700'}`}>
+                    Buscar en otras sedes
+                  </p>
+                  <p className="text-[11px] text-gray-500">
+                    {isGlobalSearch
+                      ? '⚠️ Modo Olimpiadas activo — búsqueda global auditada'
+                      : 'Actívalo solo para alumnos/profesores de otras sedes'}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={isGlobalSearch}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    const ok = window.confirm(
+                      '🚨 MODO GLOBAL: Solo activa esto si el alumno o profesor pertenece a otra sede. ' +
+                      'Recuerda que el uso de esta función está siendo auditado por la administración. ' +
+                      '¿Deseas continuar?'
+                    );
+                    if (ok) {
+                      setIsGlobalSearch(true);
+                      setRegisteredResults([]);
+                      // 🔒 AUDIT REAL: Insertar huella en BD — visible en panel de Fio
+                      registrarHuella(
+                        'ALERTA_BUSQUEDA_GLOBAL',
+                        'POS',
+                        {
+                          cajero_id: user?.id ?? null,
+                          cajero_email: user?.email ?? null,
+                          descripcion: 'El usuario activó la búsqueda multi-sede en el POS',
+                          sede_cajero: userSchoolId ?? null,
+                          timestamp: new Date().toISOString(),
+                        },
+                        undefined,
+                        userSchoolId ?? undefined
+                      );
+                      if (registeredSearch.trim().length >= 2) {
+                        searchRegistered(registeredSearch, true);
+                      }
+                    }
+                  } else {
+                    // 🔒 Al desactivar: limpiar input Y resultados para forzar búsqueda fresca
+                    setIsGlobalSearch(false);
+                    setRegisteredResults([]);
+                    setRegisteredSearch('');
+                  }
+                }}
+              />
+            </div>
+
+            {/* Buscador */}
+            <div className="relative mb-4">
+              <Search className="absolute left-4 top-4 h-5 w-5 text-gray-400" />
+              <Input
+                placeholder="Escribe el nombre del alumno o profesor..."
+                value={registeredSearch}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setRegisteredSearch(val);
+                  // Debounce 350ms: solo llama a Supabase cuando el cajero deja de teclear
+                  if (registeredSearchTimer.current) clearTimeout(registeredSearchTimer.current);
+                  if (!val.trim()) {
+                    setRegisteredResults([]);
+                    return;
+                  }
+                  registeredSearchTimer.current = setTimeout(() => {
+                    searchRegistered(val, isGlobalSearch);
+                  }, 350);
+                }}
+                className="pl-12 text-lg h-14 border-2"
+                autoFocus
+              />
+              {registeredLoading && (
+                <div className="absolute right-4 top-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                </div>
+              )}
+            </div>
+
+            {/* Resultados */}
+            {registeredResults.length > 0 && (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {registeredResults.map((item, idx) => {
+                  const isStudent = item.type === 'student';
+                  const accountStatus = isStudent ? studentAccountStatuses.get(item.data.id) : null;
+                  const canPurchase = isStudent ? (accountStatus?.canPurchase ?? true) : true;
+                  const statusText = isStudent
+                    ? (accountStatus?.statusText || `💰 Saldo: S/ ${(item.data.balance || 0).toFixed(2)}`)
+                    : '✅ Cuenta Libre';
+                  const statusColor = isStudent
+                    ? (accountStatus?.statusColor || 'text-emerald-600')
+                    : 'text-purple-600';
+
+                  return (
+                    <button
+                      key={`${item.type}-${item.data.id}-${idx}`}
+                      onClick={() => {
+                        if (!canPurchase) return;
+                        if (isStudent) {
+                          setClientMode('student');
+                          setSelectedStudent(item.data as Student);
+                        } else {
+                          setClientMode('teacher');
+                          setSelectedTeacher(item.data);
+                        }
+                        setShowRegisteredSearch(false);
+                        setRegisteredSearch('');
+                        setRegisteredResults([]);
+                        setIsGlobalSearch(false);
+                      }}
+                      disabled={!canPurchase}
+                      className={cn(
+                        'w-full p-4 border-2 rounded-xl text-left flex items-center gap-4 transition-all',
+                        canPurchase
+                          ? 'hover:bg-blue-50 border-gray-200 hover:border-blue-500 cursor-pointer'
+                          : 'bg-gray-50 border-red-200 cursor-not-allowed opacity-70'
+                      )}
+                    >
+                      {/* Badge tipo */}
+                      <div className={`flex-shrink-0 px-3 py-2 rounded-lg font-black text-sm text-center min-w-[90px] ${
+                        isStudent
+                          ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400'
+                          : 'bg-blue-100 text-blue-800 border-2 border-blue-400'
+                      }`}>
+                        {isStudent ? '🟢 ALUMNO' : '🔵 PROFESOR'}
+                      </div>
+
+                      {/* Datos */}
+                      <div className="flex-1 min-w-0">
+                        <p className={cn('font-bold text-lg truncate', !canPurchase && 'text-gray-500')}>
+                          {item.data.full_name}
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          {isStudent && (
+                            <span className="text-sm text-gray-500">
+                              {item.data.grade} - {item.data.section}
+                            </span>
+                          )}
+                          {item.data.school_name && (
+                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Building2 className="h-3 w-3" />
+                              {item.data.school_name}
+                            </span>
+                          )}
+                        </div>
+                        {!canPurchase && accountStatus?.reason && (
+                          <p className="text-xs mt-1 font-medium text-red-600">{accountStatus.reason}</p>
+                        )}
+                      </div>
+
+                      {/* Estado */}
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs text-gray-500 mb-1">Estado</p>
+                        <p className={cn('text-sm font-bold', statusColor)}>{statusText}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {registeredSearch.length >= 2 && !registeredLoading && registeredResults.length === 0 && (
+              <div className="text-center py-8 text-gray-500">
+                <User className="h-16 w-16 mx-auto mb-3 opacity-30" />
+                <p className="font-semibold">No se encontraron resultados</p>
+                {!isGlobalSearch && (
+                  <p className="text-sm mt-1">¿Es de otra sede? Activa "Buscar en otras sedes" arriba.</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
