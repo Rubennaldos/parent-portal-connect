@@ -88,21 +88,25 @@ export default function CashReconciliationDialog({
       const manualIncome  = (entries || []).filter(e => e.entry_type === 'income').reduce((s, e) => s + e.amount, 0);
       const manualExpense = (entries || []).filter(e => e.entry_type === 'expense').reduce((s, e) => s + e.amount, 0);
 
-      // ── FIX: Cobranzas aprobadas en efectivo del día ─────────────────────
-      // Los pagos de cobranza hechos en efectivo NO pasan por POS, así que
-      // no entran en calculate_daily_totals (que solo lee transactions).
-      // Se suman aquí con filtro insensible a mayúsculas (ilike) para cubrir
-      // variantes: "efectivo", "Efectivo", "EFECTIVO", "cash", "money".
-      const { data: billingCash } = await supabase
+      // ── FIX Vector 4: Cobranzas aprobadas en efectivo del día ───────────
+      // Se trae todos los métodos del día y se filtra en cliente.
+      // Esto cubre: " efectivo ", "Efectivo", "EFECTIVO", "cash", "money",
+      // "en efectivo", "dinero" — incluyendo variantes con espacios.
+      const CASH_KEYWORDS = ['efectivo', 'cash', 'money', 'dinero'];
+      const { data: billingAllPayments } = await supabase
         .from('recharge_requests')
-        .select('amount')
+        .select('amount, payment_method')
         .eq('school_id', schoolId)
         .eq('status', 'approved')
-        .or('payment_method.ilike.efectivo,payment_method.ilike.cash,payment_method.ilike.money,payment_method.ilike.en efectivo')
         .gte('approved_at', `${today}T00:00:00-05:00`)
         .lt('approved_at',  `${today}T23:59:59-05:00`);
 
-      const billingCashTotal = (billingCash || []).reduce((s, r) => s + (r.amount || 0), 0);
+      const billingCashTotal = (billingAllPayments || [])
+        .filter(r => {
+          const m = (r.payment_method ?? '').toLowerCase().trim();
+          return CASH_KEYWORDS.some(kw => m.includes(kw));
+        })
+        .reduce((s, r) => s + (r.amount || 0), 0);
 
       const cashSales        = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
       const tarjetaSales     = safeAdd(pos.card, lunch.card, pos.mixed_card);
@@ -134,6 +138,28 @@ export default function CashReconciliationDialog({
   };
 
   const handleCerrarCaja = async () => {
+    // ── Vector 3: Guard de doble clic — respuesta inmediata en el ms 1 ──────
+    if (saving) return;
+
+    // ── Vector 2: Validación estricta de inputs ──────────────────────────────
+    const cashRaw    = declaredCash.trim();
+    const tarjetaRaw = declaredTarjeta.trim();
+
+    if (cashRaw !== '') {
+      const v = parseFloat(cashRaw);
+      if (isNaN(v) || v < 0) {
+        toast({ variant: 'destructive', title: 'Efectivo inválido', description: 'Ingresa un número mayor o igual a cero. Ej: 150.50' });
+        return;
+      }
+    }
+    if (tarjetaRaw !== '') {
+      const v = parseFloat(tarjetaRaw);
+      if (isNaN(v) || v < 0) {
+        toast({ variant: 'destructive', title: 'Tarjeta inválida', description: 'Ingresa un número mayor o igual a cero. Ej: 320.00' });
+        return;
+      }
+    }
+
     // Si hay descuadre y no hemos mostrado la justificación aún, mostrarla
     if (hasVariance && !showJustification) {
       setShowJustification(true);
@@ -148,7 +174,36 @@ export default function CashReconciliationDialog({
 
     if (!user) return;
     setSaving(true);
+
     try {
+      // ── Vector 5: Log de auditoría PRIMERO ────────────────────────────────
+      // Si el log falla, el cierre se aborta. El cajero no puede irse sin rastro.
+      const { error: logError } = await supabase.from('huella_digital_logs').insert({
+        usuario_id:  user.id,
+        accion:      isAdmin ? 'CIERRE_CAJA_ADMIN' : 'CIERRE_CAJA_CAJERO',
+        modulo:      'CIERRE_CAJA',
+        school_id:   schoolId,
+        contexto: {
+          session_id:         session.id,
+          session_date:       session.session_date,
+          tipo_cierre:        isAdmin ? 'con_vision_sistema' : 'ciegas',
+          cajero_id:          user.id,
+          declarado_efectivo: declaredCashNum,
+          declarado_tarjeta:  declaredTarjetaNum,
+          sistema_efectivo:   systemCash,
+          sistema_tarjeta:    systemTarjeta,
+          descuadre_efectivo: varianceCash,
+          descuadre_tarjeta:  varianceTarjeta,
+          descuadre_total:    varianceTotal,
+          justificacion:      justification.trim() || null,
+        },
+      });
+      if (logError) {
+        // Log obligatorio — sin log no hay cierre
+        throw new Error(`No se pudo registrar el log de auditoría. Sin rastro no se permite el cierre. Detalle: ${logError.message}`);
+      }
+
+      // ── Registrar arqueo ──────────────────────────────────────────────────
       const { error: reconError } = await supabase.from('cash_reconciliations').insert({
         cash_session_id: session.id,
         school_id: schoolId,
@@ -179,6 +234,7 @@ export default function CashReconciliationDialog({
       });
       if (reconError) throw reconError;
 
+      // ── Cerrar sesión ─────────────────────────────────────────────────────
       const { error: closeError } = await supabase
         .from('cash_sessions')
         .update({
@@ -197,39 +253,12 @@ export default function CashReconciliationDialog({
         .eq('id', session.id);
       if (closeError) throw closeError;
 
-      // ── Log de auditoría del cierre ──────────────────────────────────────
-      // Queda registrado: quién cerró, cuánto declaró el cajero vs. el sistema.
-      // El admin puede ver este log en el módulo de Auditoría.
-      try {
-        await supabase.from('huella_digital_logs').insert({
-          usuario_id:  user.id,
-          accion:      isAdmin ? 'CIERRE_CAJA_ADMIN' : 'CIERRE_CAJA_CAJERO',
-          modulo:      'CIERRE_CAJA',
-          school_id:   schoolId,
-          contexto: {
-            session_id:         session.id,
-            session_date:       session.session_date,
-            tipo_cierre:        isAdmin ? 'con_vision_sistema' : 'ciegas',
-            declarado_efectivo: declaredCashNum,
-            declarado_tarjeta:  declaredTarjetaNum,
-            sistema_efectivo:   systemCash,
-            sistema_tarjeta:    systemTarjeta,
-            descuadre_efectivo: varianceCash,
-            descuadre_tarjeta:  varianceTarjeta,
-            descuadre_total:    varianceTotal,
-            justificacion:      justification.trim() || null,
-          },
-        });
-      } catch (logErr) {
-        console.warn('[CashReconciliation] No se pudo guardar log de auditoría:', logErr);
-      }
-
       toast({ title: '✅ Caja cerrada', description: 'El cierre y arqueo se guardaron correctamente.' });
       onClosed();
       onClose();
     } catch (err: any) {
       console.error('[CashReconciliation] Error closing:', err);
-      toast({ variant: 'destructive', title: 'Error', description: err.message || 'No se pudo cerrar la caja.' });
+      toast({ variant: 'destructive', title: 'Error al cerrar', description: err.message || 'No se pudo cerrar la caja.' });
     } finally {
       setSaving(false);
     }
@@ -310,7 +339,15 @@ export default function CashReconciliationDialog({
                   step="0.01"
                   min="0"
                   value={declaredCash}
-                  onChange={(e) => setDeclaredCash(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // Rechazar valores negativos en tiempo real
+                    if (v === '' || parseFloat(v) >= 0) setDeclaredCash(v);
+                  }}
+                  onKeyDown={(e) => {
+                    // Bloquear tecla '-' y 'e' (notación científica) en inputs numéricos
+                    if (e.key === '-' || e.key === 'e' || e.key === 'E') e.preventDefault();
+                  }}
                   placeholder="0.00"
                   className={`text-center font-black border-2 ${!isAdmin
                     ? 'h-20 text-4xl border-orange-400 focus:border-orange-500 bg-white'
@@ -341,7 +378,13 @@ export default function CashReconciliationDialog({
                   step="0.01"
                   min="0"
                   value={declaredTarjeta}
-                  onChange={(e) => setDeclaredTarjeta(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '' || parseFloat(v) >= 0) setDeclaredTarjeta(v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === '-' || e.key === 'e' || e.key === 'E') e.preventDefault();
+                  }}
                   placeholder="0.00"
                   className={`text-center font-black border-2 ${!isAdmin
                     ? 'h-20 text-4xl border-blue-400 focus:border-blue-500 bg-white'
