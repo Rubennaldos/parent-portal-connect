@@ -428,27 +428,37 @@ export const VoucherApproval = () => {
         .flatMap((r: any) => r.lunch_order_ids as string[]);
 
       // Mapa: lunch_order_id → ticket_code
-      // ✅ JSONB: Supabase no soporta .in() con metadata->>key,
-      //    así que usamos .or() con contains para batches pequeños
+      // ✅ Filtramos por student_id (evita el filtro JSONB .cs.{} que genera 400)
+      //    y cruzamos los lunch_order_ids en cliente.
       const ticketByOrderId = new Map<string, string>();
       if (allLunchOrderIds.length > 0) {
         try {
-          // Dividir en lotes de 30 para evitar queries muy largas
-          const uniqueIds = [...new Set(allLunchOrderIds)];
-          const batchSize = 30;
-          for (let i = 0; i < uniqueIds.length; i += batchSize) {
-            const batch = uniqueIds.slice(i, i + batchSize);
-            const orFilter = batch.map(id => `metadata.cs.{"lunch_order_id":"${id}"}`).join(',');
-            const { data: txRows } = await supabase
+          const uniqueOrderIds = new Set(allLunchOrderIds);
+          // Recoger los student_ids de los vouchers que tienen lunch_order_ids
+          const studentIdsForLunch = [...new Set(
+            enriched
+              .filter(r => r.lunch_order_ids?.length)
+              .map((r: any) => r.student_id as string)
+          )];
+
+          if (studentIdsForLunch.length > 0) {
+            const { data: txRows, error: txErr } = await supabase
               .from('transactions')
               .select('ticket_code, metadata')
               .eq('type', 'purchase')
               .not('ticket_code', 'is', null)
-              .or(orFilter);
+              .not('metadata', 'is', null)
+              .in('student_id', studentIdsForLunch);
 
-            for (const tx of txRows || []) {
-              const orderId = (tx.metadata as any)?.lunch_order_id;
-              if (orderId && tx.ticket_code) ticketByOrderId.set(orderId, tx.ticket_code);
+            if (txErr) {
+              console.warn('Error al obtener tickets de lunch_orders:', txErr.message);
+            } else {
+              for (const tx of txRows || []) {
+                const orderId = (tx.metadata as any)?.lunch_order_id;
+                if (orderId && uniqueOrderIds.has(orderId) && tx.ticket_code) {
+                  ticketByOrderId.set(orderId, tx.ticket_code);
+                }
+              }
             }
           }
         } catch (e) {

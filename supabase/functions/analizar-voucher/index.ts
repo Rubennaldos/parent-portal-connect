@@ -162,15 +162,16 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verificar que el usuario es admin_general o superadmin
+    // Verificar que el usuario tiene rol autorizado para auditar vouchers
     const { data: perfil, error: perfilError } = await supabase
       .from("profiles")
       .select("role")
       .eq("id", userId)
       .single();
 
-    if (perfilError || !perfil || !["admin_general", "superadmin"].includes(perfil.role)) {
-      return json({ error: "Acceso denegado — solo admin_general puede usar este módulo" }, 403);
+    const ROLES_AUTORIZADOS = ["admin_general", "superadmin", "gestor_unidad"];
+    if (perfilError || !perfil || !ROLES_AUTORIZADOS.includes(perfil.role)) {
+      return json({ error: "Acceso denegado — solo administradores autorizados pueden usar este módulo" }, 403);
     }
 
     // ── 2. Obtener datos del request ──
@@ -289,7 +290,8 @@ REGLA CRÍTICA SOBRE FECHAS:
 
     // ── 7. Guardar en auditoria_vouchers con service_role (sin RLS) ──
     // Se guarda SIEMPRE: VALIDO, SOSPECHOSO y RECHAZADO quedan registrados.
-    // Usar service_role garantiza que el INSERT nunca falla por políticas RLS.
+    // Si el nro_operacion ya existe (análisis previo), se ACTUALIZA el registro
+    // existente con el nuevo id_cobranza para que el trigger de aprobación lo encuentre.
     let auditoriaId: string | null = null;
     let errorGuardado: string | null = null;
 
@@ -313,8 +315,53 @@ REGLA CRÍTICA SOBRE FECHAS:
         .single();
 
       if (insertError) {
-        console.error("❌ Error al guardar en auditoria_vouchers:", JSON.stringify(insertError));
-        errorGuardado = insertError.message;
+        // Código 23505 = unique_violation en PostgreSQL
+        const esConflictoUnico =
+          insertError.code === "23505" ||
+          (insertError.message ?? "").includes("duplicate") ||
+          (insertError.message ?? "").includes("unique");
+
+        if (esConflictoUnico && analisis.nro_operacion) {
+          // El nro_operacion ya existe de un análisis previo.
+          // Actualizamos ese registro para vincular el id_cobranza actual.
+          console.log(`🔄 nro_operacion duplicado — actualizando registro existente con id_cobranza=${idCobranza}`);
+
+          // Buscar el registro existente (excluyendo RECHAZADO, que no tiene índice único)
+          const { data: existente } = await supabase
+            .from("auditoria_vouchers")
+            .select("id")
+            .eq("nro_operacion", analisis.nro_operacion)
+            .neq("estado_ia", "RECHAZADO")
+            .order("creado_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (existente) {
+            const { error: updateErr } = await supabase
+              .from("auditoria_vouchers")
+              .update({
+                id_cobranza: idCobranza ?? null,
+                estado_ia: analisis.estado,
+                analisis_ia: analisisCompleto,
+                url_imagen: imageUrl,
+              })
+              .eq("id", existente.id);
+
+            if (updateErr) {
+              console.error("❌ Error actualizando registro existente:", JSON.stringify(updateErr));
+              errorGuardado = updateErr.message;
+            } else {
+              auditoriaId = existente.id;
+              console.log(`✅ Registro existente actualizado: ID=${auditoriaId}`);
+            }
+          } else {
+            console.error("❌ No se encontró registro previo para actualizar");
+            errorGuardado = insertError.message;
+          }
+        } else {
+          console.error("❌ Error al guardar en auditoria_vouchers:", JSON.stringify(insertError));
+          errorGuardado = insertError.message;
+        }
       } else {
         auditoriaId = inserted?.id ?? null;
         console.log(`💾 Registro guardado en auditoria_vouchers: ID=${auditoriaId}, estado=${analisis.estado}`);
