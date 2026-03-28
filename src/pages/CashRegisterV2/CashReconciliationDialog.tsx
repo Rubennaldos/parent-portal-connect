@@ -64,6 +64,12 @@ export default function CashReconciliationDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // ── Vector 3: clasificadores de método de pago ───────────────────────────
+  const CASH_KEYWORDS    = ['efectivo', 'cash', 'money', 'dinero'];
+  const TARJETA_KEYWORDS = ['tarjeta', 'card', 'visa', 'mastercard', 'niubiz', 'pos'];
+  const isCashMethod    = (m: string) => CASH_KEYWORDS.some(kw => m.toLowerCase().trim().includes(kw));
+  const isTarjetaMethod = (m: string) => TARJETA_KEYWORDS.some(kw => m.toLowerCase().trim().includes(kw));
+
   const loadSystemBalances = async () => {
     setLoading(true);
     try {
@@ -76,23 +82,30 @@ export default function CashReconciliationDialog({
       });
 
       const d = rpcData || { pos: {}, lunch: {} };
-      const pos = d.pos || {};
+      const pos   = d.pos   || {};
       const lunch = d.lunch || {};
 
-      // Ingresos/egresos manuales de esta sesión
+      // ── V3 FIX: Ingresos/egresos manuales separados por método ──────────
+      // Se incluye payment_method para NO mezclar Yape manual con efectivo.
+      // Por defecto (sin método registrado) se asume efectivo.
       const { data: entries } = await supabase
         .from('cash_manual_entries')
-        .select('entry_type, amount')
+        .select('entry_type, amount, payment_method')
         .eq('cash_session_id', session.id);
 
-      const manualIncome  = (entries || []).filter(e => e.entry_type === 'income').reduce((s, e) => s + e.amount, 0);
-      const manualExpense = (entries || []).filter(e => e.entry_type === 'expense').reduce((s, e) => s + e.amount, 0);
+      const manualIncomeCash = (entries || [])
+        .filter(e => e.entry_type === 'income' && isCashMethod(e.payment_method || 'cash'))
+        .reduce((s, e) => s + e.amount, 0);
+      const manualExpenseCash = (entries || [])
+        .filter(e => e.entry_type === 'expense' && isCashMethod(e.payment_method || 'cash'))
+        .reduce((s, e) => s + e.amount, 0);
+      const manualIncomeTarjeta = (entries || [])
+        .filter(e => e.entry_type === 'income' && isTarjetaMethod(e.payment_method || ''))
+        .reduce((s, e) => s + e.amount, 0);
 
-      // ── FIX Vector 4: Cobranzas aprobadas en efectivo del día ───────────
-      // Se trae todos los métodos del día y se filtra en cliente.
-      // Esto cubre: " efectivo ", "Efectivo", "EFECTIVO", "cash", "money",
-      // "en efectivo", "dinero" — incluyendo variantes con espacios.
-      const CASH_KEYWORDS = ['efectivo', 'cash', 'money', 'dinero'];
+      // ── Cobranzas aprobadas en efectivo del día ──────────────────────────
+      // Trae todos los métodos y filtra en cliente para cubrir variantes con
+      // espacios o mayúsculas ("Efectivo ", "CASH", etc.)
       const { data: billingAllPayments } = await supabase
         .from('recharge_requests')
         .select('amount, payment_method')
@@ -102,30 +115,37 @@ export default function CashReconciliationDialog({
         .lt('approved_at',  `${today}T23:59:59-05:00`);
 
       const billingCashTotal = (billingAllPayments || [])
-        .filter(r => {
-          const m = (r.payment_method ?? '').toLowerCase().trim();
-          return CASH_KEYWORDS.some(kw => m.includes(kw));
-        })
+        .filter(r => isCashMethod(r.payment_method ?? ''))
         .reduce((s, r) => s + (r.amount || 0), 0);
 
-      const cashSales        = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
-      const tarjetaSales     = safeAdd(pos.card, lunch.card, pos.mixed_card);
-      const yapePlinTotal    = safeAdd(pos.yape, pos.plin, lunch.yape, lunch.plin, pos.mixed_yape);
+      // ── Totales por canal ────────────────────────────────────────────────
+      // systemCash:    SOLO billetes y monedas (no Yape, no transferencia, no tarjeta)
+      // systemTarjeta: SOLO cobros por POS/tarjeta física
+      // digitalInfo:   SOLO digital (Yape, Plin, Transferencia) — solo informativo
+      const cashSales          = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
+      const tarjetaSales       = safeAdd(pos.card, lunch.card, pos.mixed_card);
+      const yapePlinTotal      = safeAdd(pos.yape, pos.plin, lunch.yape, lunch.plin, pos.mixed_yape);
       const transferenciaTotal = safeAdd(pos.transferencia, lunch.transferencia);
 
-      // systemCash = efectivo inicial + ventas en efectivo (POS+almuerzo) + cobranzas efectivo + manuales
-      setSystemCash(safeAdd(session.initial_cash, cashSales, billingCashTotal, manualIncome, -manualExpense));
-      setSystemTarjeta(tarjetaSales);
+      setSystemCash(safeAdd(
+        session.initial_cash,
+        cashSales,
+        billingCashTotal,
+        manualIncomeCash,
+        -manualExpenseCash,
+      ));
+      setSystemTarjeta(safeAdd(tarjetaSales, manualIncomeTarjeta));
       setDigitalInfo({ yapePlin: yapePlinTotal, transferencia: transferenciaTotal });
     } catch (err) {
-      console.error('[CashReconciliation] Error:', err);
+      console.error('[CashReconciliation] Error cargando balances:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const declaredCashNum = parseFloat(declaredCash) || 0;
-  const declaredTarjetaNum = parseFloat(declaredTarjeta) || 0;
+  // V4: parseFloat sobre el valor saneado (coma→punto, sin letras)
+  const declaredCashNum    = parseFloat(declaredCash.replace(',', '.')) || 0;
+  const declaredTarjetaNum = parseFloat(declaredTarjeta.replace(',', '.')) || 0;
   const varianceCash = Number((systemCash - declaredCashNum).toFixed(2));
   const varianceTarjeta = Number((systemTarjeta - declaredTarjetaNum).toFixed(2));
   const varianceTotal = Number((varianceCash + varianceTarjeta).toFixed(2));
@@ -137,25 +157,29 @@ export default function CashReconciliationDialog({
     return <span className="text-amber-600 font-semibold text-sm">Sobrante S/ {Math.abs(v).toFixed(2)}</span>;
   };
 
+  // ── V4: Limpieza de inputs (coma→punto, caracteres extraños) ───────────────
+  const sanitizeAmount = (raw: string): string =>
+    raw.replace(',', '.').replace(/[^0-9.]/g, '');
+
   const handleCerrarCaja = async () => {
-    // ── Vector 3: Guard de doble clic — respuesta inmediata en el ms 1 ──────
+    // ── Guard de doble clic — respuesta inmediata en el ms 1 ────────────────
     if (saving) return;
 
-    // ── Vector 2: Validación estricta de inputs ──────────────────────────────
-    const cashRaw    = declaredCash.trim();
-    const tarjetaRaw = declaredTarjeta.trim();
+    // ── V4: Limpiar y validar inputs ANTES de parsear ────────────────────────
+    const cashRaw    = sanitizeAmount(declaredCash.trim());
+    const tarjetaRaw = sanitizeAmount(declaredTarjeta.trim());
 
     if (cashRaw !== '') {
       const v = parseFloat(cashRaw);
       if (isNaN(v) || v < 0) {
-        toast({ variant: 'destructive', title: 'Efectivo inválido', description: 'Ingresa un número mayor o igual a cero. Ej: 150.50' });
+        toast({ variant: 'destructive', title: 'Efectivo inválido', description: 'Ingresa solo números. Usa punto para decimales: ej. 150.50' });
         return;
       }
     }
     if (tarjetaRaw !== '') {
       const v = parseFloat(tarjetaRaw);
       if (isNaN(v) || v < 0) {
-        toast({ variant: 'destructive', title: 'Tarjeta inválida', description: 'Ingresa un número mayor o igual a cero. Ej: 320.00' });
+        toast({ variant: 'destructive', title: 'Tarjeta inválida', description: 'Ingresa solo números. Usa punto para decimales: ej. 320.00' });
         return;
       }
     }
@@ -258,15 +282,33 @@ export default function CashReconciliationDialog({
       onClose();
     } catch (err: any) {
       console.error('[CashReconciliation] Error closing:', err);
-      toast({ variant: 'destructive', title: 'Error al cerrar', description: err.message || 'No se pudo cerrar la caja.' });
+      // ── V2: Mensaje claro para error de red / apagón ─────────────────────
+      const isNetworkError =
+        err instanceof TypeError ||
+        (typeof err.message === 'string' &&
+          (err.message.includes('fetch') ||
+           err.message.includes('network') ||
+           err.message.includes('Failed') ||
+           err.message.includes('NetworkError')));
+      const friendlyMsg = isNetworkError
+        ? 'Error de red: tu cierre no se guardó. Revisa tu conexión e intenta de nuevo.'
+        : err.message || 'No se pudo cerrar la caja.';
+      // El modal NO se cierra — el cajero puede reintentar
+      toast({ variant: 'destructive', title: 'Error al cerrar caja', description: friendlyMsg });
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[95vh] overflow-y-auto">
+    // ── V1: onOpenChange solo cierra si NO está guardando ────────────────────
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen && !saving) onClose(); }}>
+      <DialogContent
+        className="max-w-lg max-h-[95vh] overflow-y-auto"
+        // ── V1: Bloquear cierre accidental por clic fuera o ESC ─────────────
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
             {isAdmin ? <Eye className="h-5 w-5 text-slate-700" /> : <EyeOff className="h-5 w-5 text-amber-600" />}
@@ -334,19 +376,15 @@ export default function CashReconciliationDialog({
                 {!isAdmin && (
                   <p className="text-xs text-orange-600">Cuenta todos los billetes y monedas que hay en la caja</p>
                 )}
+                {/* V4: type="text" + inputMode="decimal" para aceptar coma y limpiarla */}
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={declaredCash}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    // Rechazar valores negativos en tiempo real
-                    if (v === '' || parseFloat(v) >= 0) setDeclaredCash(v);
-                  }}
-                  onKeyDown={(e) => {
-                    // Bloquear tecla '-' y 'e' (notación científica) en inputs numéricos
-                    if (e.key === '-' || e.key === 'e' || e.key === 'E') e.preventDefault();
+                    // Reemplazar coma por punto, eliminar caracteres no numéricos
+                    const clean = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                    setDeclaredCash(clean);
                   }}
                   placeholder="0.00"
                   className={`text-center font-black border-2 ${!isAdmin
@@ -373,17 +411,14 @@ export default function CashReconciliationDialog({
                 {!isAdmin && (
                   <p className="text-xs text-blue-600">Suma los vouchers impresos del posnet/POS</p>
                 )}
+                {/* V4: mismo tratamiento que efectivo */}
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={declaredTarjeta}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === '' || parseFloat(v) >= 0) setDeclaredTarjeta(v);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === '-' || e.key === 'e' || e.key === 'E') e.preventDefault();
+                    const clean = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                    setDeclaredTarjeta(clean);
                   }}
                   placeholder="0.00"
                   className={`text-center font-black border-2 ${!isAdmin
