@@ -126,7 +126,12 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
   // Diálogos de confirmación con impacto
   const [deleteConfirmCategory, setDeleteConfirmCategory] = useState<LunchCategory | null>(null);
   const [toggleConfirmCategory, setToggleConfirmCategory] = useState<LunchCategory | null>(null);
-  const [impactData, setImpactData] = useState<{ futureOrders: number; futureMenus: number } | null>(null);
+  const [impactData, setImpactData] = useState<{
+    futureOrders: number;
+    futureMenus: number;
+    /** Todos los pedidos que referencian esta categoría (histórico + futuros) */
+    totalOrders: number;
+  } | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
   
   // Form state
@@ -289,12 +294,18 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
       const today = new Date().toISOString().split('T')[0];
 
       // Contar pedidos futuros activos de esta categoría
-      const { count: ordersCount } = await supabase
+      const { count: futureCount } = await supabase
         .from('lunch_orders')
         .select('*', { count: 'exact', head: true })
         .eq('category_id', category.id)
         .gte('order_date', today)
         .eq('is_cancelled', false);
+
+      // Contar TODOS los pedidos (histórico + futuros) — la FK bloquea si existe cualquiera
+      const { count: totalCount } = await supabase
+        .from('lunch_orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('category_id', category.id);
 
       // Contar menús futuros de esta categoría
       const { count: menusCount } = await supabase
@@ -304,12 +315,13 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
         .gte('date', today);
 
       setImpactData({
-        futureOrders: ordersCount || 0,
-        futureMenus: menusCount || 0,
+        futureOrders: futureCount || 0,
+        futureMenus:  menusCount  || 0,
+        totalOrders:  totalCount  || 0,
       });
     } catch (err) {
       console.error('Error calculando impacto:', err);
-      setImpactData({ futureOrders: 0, futureMenus: 0 });
+      setImpactData({ futureOrders: 0, futureMenus: 0, totalOrders: 0 });
     } finally {
       setLoadingImpact(false);
     }
@@ -996,46 +1008,73 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
               </div>
             ) : impactData ? (
               <div className="space-y-2">
-                {impactData.futureOrders > 0 && (
+
+                {/* Bloqueo por historial de pedidos (pasados o futuros) */}
+                {impactData.totalOrders > 0 && (
                   <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <span className="text-2xl">🚨</span>
+                    <span className="text-2xl">🚫</span>
                     <div>
                       <p className="font-semibold text-red-800">
-                        {impactData.futureOrders} pedido(s) futuro(s) activo(s)
+                        No se puede eliminar — {impactData.totalOrders} pedido(s) en historial
                       </p>
                       <p className="text-sm text-red-700 mt-1">
-                        Estos pedidos perderán su referencia de categoría pero <strong>NO se eliminarán</strong>. Los alumnos/profesores aún verán "Sin categoría" en su historial.
+                        La base de datos protege esta categoría porque existen pedidos (pasados o futuros) que la referencian.
+                        Eliminarla rompería el registro histórico de los almuerzos.
                       </p>
                     </div>
                   </div>
                 )}
-                {impactData.futureMenus > 0 && (
+
+                {/* Aviso adicional de pedidos futuros */}
+                {impactData.futureOrders > 0 && (
                   <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
                     <span className="text-2xl">📅</span>
+                    <div>
+                      <p className="font-semibold text-orange-800">
+                        {impactData.futureOrders} pedido(s) futuro(s) activos
+                      </p>
+                      <p className="text-sm text-orange-700 mt-1">
+                        Los padres ya tienen pedidos confirmados para esta categoría.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {impactData.futureMenus > 0 && (
+                  <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                    <span className="text-2xl">🗓️</span>
                     <div>
                       <p className="font-semibold text-orange-800">
                         {impactData.futureMenus} menú(s) futuro(s) afectado(s)
                       </p>
                       <p className="text-sm text-orange-700 mt-1">
-                        Los menús quedarán sin categoría asignada pero <strong>seguirán existiendo</strong>.
+                        Los menús quedarán sin categoría asignada si se elimina.
                       </p>
                     </div>
                   </div>
                 )}
-                {impactData.futureOrders === 0 && impactData.futureMenus === 0 && (
+
+                {/* Todo limpio */}
+                {impactData.totalOrders === 0 && impactData.futureMenus === 0 && (
                   <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
                     <span className="text-2xl">✅</span>
-                    <p className="text-sm text-green-700">No hay pedidos ni menús futuros afectados. Es seguro eliminar.</p>
-                  </div>
-                )}
-                {impactData.futureOrders > 0 && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-blue-800 font-medium">💡 Alternativa recomendada:</p>
-                    <p className="text-xs text-blue-700 mt-1">
-                      Considera <strong>desactivar</strong> la categoría en lugar de eliminarla. Así los pedidos existentes conservan su referencia visible.
+                    <p className="text-sm text-green-700 font-medium">
+                      Sin pedidos ni menús asociados. Es seguro eliminar.
                     </p>
                   </div>
                 )}
+
+                {/* Recomendación cuando no se puede borrar */}
+                {impactData.totalOrders > 0 && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-800 font-medium">💡 Solución recomendada:</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Usa <strong>Desactivar</strong> en lugar de eliminar. La categoría dejará de
+                      aparecer para nuevos pedidos, pero el historial quedará intacto.
+                    </p>
+                  </div>
+                )}
+
               </div>
             ) : null}
           </div>
@@ -1044,10 +1083,11 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
             <Button variant="outline" onClick={() => { setDeleteConfirmCategory(null); setImpactData(null); }} disabled={loading}>
               Cancelar
             </Button>
-            {impactData && impactData.futureOrders > 0 && (
+
+            {/* Botón "Desactivar" visible si hay cualquier pedido histórico */}
+            {impactData && impactData.totalOrders > 0 && (
               <Button
-                variant="outline"
-                className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                className="bg-orange-500 hover:bg-orange-600 text-white"
                 onClick={() => {
                   if (deleteConfirmCategory) doToggleActive({ ...deleteConfirmCategory, is_active: true });
                   setDeleteConfirmCategory(null);
@@ -1055,12 +1095,16 @@ export function CategoryManager({ schoolId, open, onClose }: CategoryManagerProp
                 }}
                 disabled={loading}
               >
-                Desactivar mejor
+                Desactivar en su lugar
               </Button>
             )}
-            <Button variant="destructive" onClick={confirmDelete} disabled={loading || loadingImpact}>
-              {loading ? 'Eliminando...' : 'Sí, eliminar'}
-            </Button>
+
+            {/* Solo mostrar "Eliminar" si NO hay ningún pedido histórico */}
+            {impactData && impactData.totalOrders === 0 && (
+              <Button variant="destructive" onClick={confirmDelete} disabled={loading || loadingImpact}>
+                {loading ? 'Eliminando...' : 'Sí, eliminar'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
