@@ -197,11 +197,12 @@ export default function LogisticsDashboard() {
     try {
       const { gte, lt } = limaToday();
 
-      // 1. Transacciones de compra de hoy
+      // 1. Transacciones de compra de hoy (excluye anuladas — Vector 2 QA)
       const { data: txs, error: txErr } = await supabase
         .from('transactions')
         .select('id, school_id')
         .eq('type', 'purchase')
+        .neq('payment_status', 'cancelled')
         .gte('created_at', gte)
         .lt('created_at', lt);
       if (txErr) throw txErr;

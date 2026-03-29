@@ -678,7 +678,21 @@ export const VoucherApproval = () => {
   const handleApprove = async (req: RechargeRequest, overrideCode?: string) => {
     if (!user) return;
 
-    // ── Verificar que haya número de operación (obligatorio) ──
+    // ── Guardia 1: Verificar que el monto sea válido (> 0) ──
+    // Si el registro tiene amount = null, undefined o <= 0 en la BD,
+    // el UPDATE a Supabase fallaría con check constraint 'recharge_requests_amount_check'.
+    // Lo detectamos aquí antes de llegar a la BD.
+    const parsedAmount = Number(req.amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Monto inválido — no se puede aprobar',
+        description: `Este comprobante tiene monto S/ ${req.amount ?? '0'}, lo cual no es válido. Edita el monto en el panel de Supabase (o contacta soporte) y vuelve a intentarlo.`,
+      });
+      return;
+    }
+
+    // ── Guardia 2: Verificar que haya número de operación (obligatorio) ──
     const effectiveRefCode = req.reference_code || (overrideCode || '').trim();
     if (!effectiveRefCode) {
       toast({
@@ -1122,7 +1136,20 @@ export const VoucherApproval = () => {
       emitSync(['debtors', 'transactions', 'balances', 'dashboard']);
     } catch (err: any) {
       console.error('Error al aprobar:', err);
-      toast({ title: 'Error al aprobar', description: err.message, variant: 'destructive' });
+      // Mensaje especial para el error del trigger ANTIFRAUDE NIVEL 5
+      const esAntifraude = (err.message ?? '').includes('ANTIFRAUDE') ||
+        (err.message ?? '').includes('auditoria_vouchers') ||
+        (err.message ?? '').includes('revision de IA');
+      if (esAntifraude) {
+        toast({
+          title: '🔐 Aprobación bloqueada por seguridad',
+          description: 'Este comprobante no tiene revisión de IA válida. Ve al módulo de Auditoría → busca el comprobante → haz clic en "Aprobar" desde ahí para poder aprobarlo manualmente.',
+          variant: 'destructive',
+          duration: 10000,
+        });
+      } else {
+        toast({ title: 'Error al aprobar', description: err.message, variant: 'destructive' });
+      }
     } finally {
       setProcessingId(null);
     }

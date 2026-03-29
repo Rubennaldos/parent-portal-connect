@@ -39,6 +39,8 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { TempPasswordForm } from '@/components/parent/TempPasswordForm';
 
 interface Module {
   id: string;
@@ -82,7 +84,7 @@ const COLOR_MAP: { [key: string]: string } = {
 };
 
 const Dashboard = () => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   const { role, isStaff } = useRole();
   const { full_name } = useUserProfile();
   const maintenance = useMaintenanceGuard('dashboard_admin');
@@ -819,6 +821,21 @@ const Dashboard = () => {
         </div>
 
       </main>
+
+      {/* Modal contraseña temporal — bloquea hasta que el admin cree su nueva contraseña */}
+      <Dialog open={isTempPassword} onOpenChange={() => {}}>
+        <DialogContent className="max-w-sm [&>button]:hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              🔑 Cambia tu contraseña
+            </DialogTitle>
+            <DialogDescription>
+              Tu cuenta tiene una contraseña temporal. Por seguridad, debes crear una nueva antes de continuar.
+            </DialogDescription>
+          </DialogHeader>
+          <TempPasswordForm onDone={clearTempPasswordFlag} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

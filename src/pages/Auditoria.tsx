@@ -72,7 +72,12 @@ interface AuditoriaVoucher {
   estado_ia: EstadoIA;
   analisis_ia: Record<string, any> | null;
   school_id: string | null;
+  subido_por: string | null;
   creado_at: string;
+  // Campos enriquecidos en el frontend
+  _school_name?: string | null;
+  _analista_name?: string | null;
+  _is_duplicate?: boolean; // true si hay otro registro con el mismo nro_operacion
 }
 
 interface HuellaLog {
@@ -132,12 +137,32 @@ function EstadoBadge({ estado }: { estado: EstadoIA }) {
 function formatDate(iso: string | null) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('es-PE', {
+    timeZone: 'America/Lima',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * Devuelve true si la fecha del voucher (extraída por IA) es posterior
+ * a la fecha de registro del análisis (creado_at), con un margen de 15 min.
+ * Ambas fechas son UTC — comparación exacta sin depender de zonas horarias.
+ */
+function esFechaFutura(fechaPago: string | null, creadoAt: string): boolean {
+  if (!fechaPago) return false;
+  try {
+    let ms: number;
+    const f = fechaPago.trim();
+    const tieneZona = f.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(f);
+    ms = tieneZona ? new Date(f).getTime() : new Date(f + '-05:00').getTime();
+    const uploadMs = new Date(creadoAt).getTime();
+    return !isNaN(ms) && ms > uploadMs + 15 * 60 * 1000;
+  } catch {
+    return false;
+  }
 }
 
 function truncate(str: string | null | undefined, len = 24) {
@@ -238,7 +263,7 @@ const Auditoria = () => {
         .from('auditoria_vouchers')
         .select('*')
         .order('creado_at', { ascending: false })
-        .limit(200);
+        .limit(500);
 
       if (filtroEstado !== 'todos') {
         query = query.eq('estado_ia', filtroEstado);
@@ -246,7 +271,46 @@ const Auditoria = () => {
 
       const { data, error } = await query;
       if (error) throw error;
-      setVouchers(data ?? []);
+      const rows = data ?? [];
+
+      // ── Enriquecer con nombres de sede ──
+      const schoolIds = [...new Set(rows.map(r => r.school_id).filter(Boolean))] as string[];
+      const schoolMap = new Map<string, string>();
+      if (schoolIds.length > 0) {
+        const { data: schools } = await supabase
+          .from('schools')
+          .select('id, name')
+          .in('id', schoolIds);
+        for (const s of schools ?? []) schoolMap.set(s.id, s.name);
+      }
+
+      // ── Enriquecer con nombre de quien analizó (subido_por) ──
+      const analistaIds = [...new Set(rows.map(r => r.subido_por).filter(Boolean))] as string[];
+      const analistaMap = new Map<string, string>();
+      if (analistaIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', analistaIds);
+        for (const p of profiles ?? []) {
+          analistaMap.set(p.id, p.full_name || p.email || 'Desconocido');
+        }
+      }
+
+      // ── Marcar duplicados (mismo nro_operacion, más de 1 fila) ──
+      const nroCount = new Map<string, number>();
+      for (const r of rows) {
+        if (r.nro_operacion) {
+          nroCount.set(r.nro_operacion, (nroCount.get(r.nro_operacion) ?? 0) + 1);
+        }
+      }
+
+      setVouchers(rows.map(r => ({
+        ...r,
+        _school_name: r.school_id ? (schoolMap.get(r.school_id) ?? null) : null,
+        _analista_name: r.subido_por ? (analistaMap.get(r.subido_por) ?? r.subido_por) : null,
+        _is_duplicate: r.nro_operacion ? (nroCount.get(r.nro_operacion) ?? 0) > 1 : false,
+      })));
     } catch (err: any) {
       console.error('Error cargando vouchers:', err);
       toast({ variant: 'destructive', title: 'Error', description: err.message });
@@ -319,11 +383,9 @@ const Auditoria = () => {
     setAprobandoId(v.id);
     try {
       // 1. Buscar la cobranza — primero por id_cobranza, si no hay, por nro_operacion
-      let reqQuery = supabase
-        .from('recharge_requests')
-        .select('id, student_id, amount, status, request_type')
-        .eq('status', 'pending');
-
+      // IMPORTANTE: buscamos SIN filtrar por status, porque la IA puede haber
+      // marcado la cobranza como 'rejected' automáticamente. El admin tiene
+      // potestad de revertir ese rechazo desde Auditoría.
       let reqData = null;
       let reqErr = null;
 
@@ -336,35 +398,87 @@ const Auditoria = () => {
         reqData = res.data;
         reqErr = res.error;
       } else if (v.nro_operacion) {
+        // Sin filtro de status: puede estar pending o rejected
         const res = await supabase
           .from('recharge_requests')
           .select('id, student_id, amount, status, request_type')
           .eq('reference_code', v.nro_operacion)
-          .eq('status', 'pending')
+          .in('status', ['pending', 'rejected'])
+          .order('created_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
         reqData = res.data;
         reqErr = res.error;
       }
 
-      // Silenciar warning de variable no usada
-      void reqQuery;
-
       const req = reqData;
 
-      if (reqErr || !req) throw new Error('No se encontró la cobranza vinculada.');
-      if (req.status !== 'pending') {
-        toast({ title: '⚠️ Ya fue procesada', description: 'Esta cobranza ya fue aprobada o rechazada.' });
+      if (reqErr || !req) {
+        throw new Error('No se encontró la cobranza vinculada. Puede que ya haya sido procesada o que no tenga un ID de cobranza asociado.');
+      }
+
+      // Si ya fue aprobada previamente → sincronizar auditoria_vouchers a VALIDO
+      // Esto pasa cuando se aprobó desde el módulo de Cobranzas y el registro
+      // de Auditoría quedó con estado_ia = SOSPECHOSO o RECHAZADO sin actualizarse.
+      if (req.status === 'approved') {
+        await supabase
+          .from('auditoria_vouchers')
+          .update({ estado_ia: 'VALIDO' })
+          .eq('id', v.id);
+        toast({
+          title: '✅ Cobranza ya aprobada',
+          description: 'Esta cobranza ya había sido aprobada en el módulo de Cobranzas. Se actualizó el estado en Auditoría.',
+        });
+        setVoucherDetalle(null);
+        await fetchAll();
+        setAprobandoId(null);
+        return;
+      }
+
+      // Si está cancelled, tampoco se puede reactivar
+      if (req.status === 'cancelled') {
+        toast({ variant: 'destructive', title: '🚫 Cobranza cancelada', description: 'Esta cobranza fue cancelada y no puede aprobarse.' });
         setAprobandoId(null);
         setVoucherDetalle(null);
         return;
       }
 
-      // 2. Aprobar la cobranza (guard: solo si sigue pendiente)
+      // status es 'pending' o 'rejected' → podemos proceder con el override
+
+      // ── PASO CRÍTICO: Actualizar auditoria_vouchers a SOSPECHOSO antes de aprobar ──
+      // El trigger fn_guard_voucher_approval bloquea cualquier aprobación si
+      // auditoria_vouchers solo tiene registros con estado_ia = 'RECHAZADO'.
+      // Al marcar como SOSPECHOSO aquí, dejamos constancia de que un admin
+      // humano revisó el comprobante y decidió aprobarlo de todas formas.
+      if (v.estado_ia === 'RECHAZADO') {
+        const { error: overrideErr } = await supabase
+          .from('auditoria_vouchers')
+          .update({
+            estado_ia: 'SOSPECHOSO',
+            analisis_ia: {
+              ...(v.analisis_ia ?? {}),
+              estado: 'SOSPECHOSO',
+              motivo: `[APROBACIÓN MANUAL POR ADMIN] ${(v.analisis_ia?.motivo as string) ?? 'El administrador revisó y aprobó manualmente.'}`,
+              override_manual: true,
+              override_at: new Date().toISOString(),
+              override_by: user?.id,
+            },
+          })
+          .eq('id', v.id);
+
+        if (overrideErr) {
+          console.error('Error actualizando estado IA a SOSPECHOSO:', overrideErr);
+          throw new Error(`No se pudo preparar el override: ${overrideErr.message}`);
+        }
+      }
+
+      // 2. Aprobar la cobranza — funciona tanto para 'pending' como para 'rejected'
+      // El admin desde Auditoría tiene potestad de revertir rechazos automáticos de la IA.
       const { data: updated, error: updateErr } = await supabase
         .from('recharge_requests')
         .update({ status: 'approved', approved_by: user?.id, approved_at: new Date().toISOString() })
         .eq('id', req.id)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'rejected'])
         .select('id');
 
       if (updateErr) throw updateErr;
@@ -383,25 +497,30 @@ const Auditoria = () => {
         if (balanceErr) throw balanceErr;
       }
 
-      // 4. Actualizar el estado en auditoria_vouchers a VALIDO (override manual)
+      // 4. Marcar en auditoria_vouchers como VALIDO (el admin verificó y aprobó)
       await supabase
         .from('auditoria_vouchers')
-        .update({ estado_ia: 'VALIDO' })
+        .update({
+          estado_ia: 'VALIDO',
+          analisis_ia: {
+            ...(v.analisis_ia ?? {}),
+            estado: 'VALIDO',
+            motivo_override: `Aprobado manualmente por admin. Estado original: ${v.estado_ia}. Motivo IA: ${(v.analisis_ia?.motivo as string) ?? '—'}`,
+            override_manual: true,
+            override_at: new Date().toISOString(),
+            override_by: user?.id,
+          }
+        })
         .eq('id', v.id);
 
       toast({
         title: '✅ Aprobado manualmente',
-        description: `Cobranza de S/ ${req.amount.toFixed(2)} aprobada con override de Auditoría. Registrado en logs.`,
+        description: `Cobranza de S/ ${req.amount.toFixed(2)} aprobada tras revisión manual en Auditoría.`,
       });
 
       setVoucherDetalle(null);
-      // Refrescar vouchers y stats
-      const { data: refreshed } = await supabase
-        .from('auditoria_vouchers')
-        .select('*')
-        .order('creado_at', { ascending: false })
-        .limit(200);
-      if (refreshed) setVouchers(refreshed as AuditoriaVoucher[]);
+      // Refrescar con datos enriquecidos (sede, analista, duplicados)
+      await fetchAll();
 
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error al aprobar', description: err.message });
@@ -709,23 +828,41 @@ const Auditoria = () => {
                         <TableHead className="text-xs font-semibold text-gray-600">Banco</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Monto</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Destinatario detectado</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600">Motivo IA</TableHead>
+                        <TableHead className="text-xs font-semibold text-gray-600 min-w-[180px]">Motivo IA / Alertas</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3.5 w-3.5" /> Fecha Pago
                           </span>
                         </TableHead>
+                        <TableHead className="text-xs font-semibold text-gray-600">Sede</TableHead>
+                        <TableHead className="text-xs font-semibold text-gray-600">Analizado por</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Acciones</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {vouchersFiltrados.map(v => {
                         const motivo = (v.analisis_ia?.motivo as string) ?? null;
+                        const alertas = (v.analisis_ia?.alertas as string[]) ?? [];
                         const destinatario = (v.analisis_ia?.destinatario_detectado as string) ?? null;
+                        const esSospechoso = v.estado_ia === 'SOSPECHOSO';
+                        const esRechazado = v.estado_ia === 'RECHAZADO';
                         return (
-                        <TableRow key={v.id} className="hover:bg-gray-50/50">
+                        <TableRow
+                          key={v.id}
+                          className={`hover:bg-gray-50/50 ${v._is_duplicate ? 'bg-orange-50/40' : ''}`}
+                        >
                           <TableCell>
-                            <EstadoBadge estado={v.estado_ia} />
+                            <div className="flex flex-col gap-1">
+                              <EstadoBadge estado={v.estado_ia} />
+                              {v._is_duplicate && (
+                                <span
+                                  title="Hay otro registro con el mismo N° de operación. Puede ser un análisis repetido."
+                                  className="text-[10px] font-semibold text-orange-600 bg-orange-100 border border-orange-300 rounded px-1 cursor-help"
+                                >
+                                  ⚠ DUPLICADO
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <span className="font-mono text-xs text-gray-700">
@@ -742,24 +879,72 @@ const Auditoria = () => {
                           </TableCell>
                           <TableCell className="text-xs">
                             {destinatario ? (
-                              <span className={`font-medium ${v.estado_ia === 'RECHAZADO' ? 'text-red-600' : 'text-gray-700'}`}>
+                              <span className={`font-medium ${esRechazado ? 'text-red-600' : 'text-gray-700'}`}>
                                 {destinatario}
                               </span>
                             ) : (
                               <span className="text-gray-300">No detectado</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600 max-w-[220px]">
-                            {motivo ? (
-                              <span title={motivo} className="line-clamp-2 cursor-help">
-                                {motivo}
+                          {/* Motivo IA + Alertas expandidas para SOSPECHOSO/RECHAZADO */}
+                          <TableCell className="text-xs text-gray-600 max-w-[250px]">
+                            <div className="space-y-1">
+                              {motivo ? (
+                                <p
+                                  title={motivo}
+                                  className={`leading-tight ${(esSospechoso || esRechazado) ? 'font-medium text-red-700' : ''}`}
+                                >
+                                  {motivo}
+                                </p>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                              {/* Alertas como badges (especialmente útil para SOSPECHOSO) */}
+                              {alertas.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {alertas.map((alerta, i) => (
+                                    <span
+                                      key={i}
+                                      title={alerta}
+                                      className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border leading-tight max-w-[200px] truncate cursor-help ${
+                                        esRechazado
+                                          ? 'bg-red-100 text-red-700 border-red-300'
+                                          : 'bg-amber-100 text-amber-700 border-amber-300'
+                                      }`}
+                                    >
+                                      ⚠ {alerta}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-gray-500">
+                            <span className="flex items-center gap-1">
+                              {formatDate(v.fecha_pago_detectada)}
+                              {esFechaFutura(v.fecha_pago_detectada, v.creado_at) && (
+                                <span
+                                  title="⚠️ La fecha del comprobante aparece posterior al envío. Revisar manualmente."
+                                  className="text-amber-500 cursor-help"
+                                >
+                                  ⚠️
+                                </span>
+                              )}
+                            </span>
+                          </TableCell>
+                          {/* Sede */}
+                          <TableCell className="text-xs text-gray-600">
+                            {v._school_name ? (
+                              <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5 font-medium">
+                                {v._school_name}
                               </span>
                             ) : (
                               <span className="text-gray-300">—</span>
                             )}
                           </TableCell>
+                          {/* Analizado por */}
                           <TableCell className="text-xs text-gray-500">
-                            {formatDate(v.fecha_pago_detectada)}
+                            {v._analista_name ?? <span className="text-gray-300">—</span>}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1.5">
@@ -781,21 +966,36 @@ const Auditoria = () => {
                                   <Info className="h-3.5 w-3.5" /> Detalle
                                 </button>
                               </div>
-                              {/* Botón de aprobación directamente en la tabla */}
-                              {v.estado_ia === 'RECHAZADO' &&
+                              {/* Botón "Aprobar" para SOSPECHOSO y RECHAZADO */}
+                              {/* NUNCA para desvío de fondos (fraude confirmado) */}
+                              {(esSospechoso || esRechazado) &&
                                 !(v.analisis_ia?.es_desvio_fondos as boolean) &&
                                 (v.id_cobranza || v.nro_operacion) && (
                                 <button
                                   onClick={() => handleAprobarOverride(v)}
                                   disabled={aprobandoId === v.id}
-                                  className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2 py-0.5 rounded-md disabled:opacity-50"
-                                  title="Aprobar manualmente ignorando el rechazo de la IA"
+                                  className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border ${
+                                    esSospechoso
+                                      ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                                      : 'text-orange-700 bg-orange-100 hover:bg-orange-200 border-orange-300'
+                                  }`}
+                                  title={
+                                    esSospechoso
+                                      ? 'El comprobante tiene alertas. Verifica la imagen antes de aprobar.'
+                                      : 'Aprobar manualmente ignorando el rechazo de la IA'
+                                  }
                                 >
                                   {aprobandoId === v.id
                                     ? <><Loader2 className="h-3 w-3 animate-spin" /> Aprobando...</>
                                     : <><CheckCircle2 className="h-3 w-3" /> Aprobar</>
                                   }
                                 </button>
+                              )}
+                              {/* Aviso cuando es desvío de fondos — nunca se aprueba */}
+                              {(v.analisis_ia?.es_desvio_fondos as boolean) && (
+                                <span className="text-[10px] text-red-600 font-semibold bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
+                                  🚫 Desvío — no aprobable
+                                </span>
                               )}
                             </div>
                           </TableCell>

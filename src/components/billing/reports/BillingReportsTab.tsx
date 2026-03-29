@@ -107,6 +107,14 @@ export const BillingReportsTab = ({
 
   // ── Fetch central ──────────────────────────────────────────────────────────
 
+  // ── Helper: rehidratar fila plana del RPC al formato con objetos anidados ──
+  const rehydrateRow = (row: any) => ({
+    ...row,
+    students:         row.student_id ? { id: row.student_id, full_name: row.student_full_name, parent_id: row.student_parent_id } : null,
+    teacher_profiles: row.teacher_id ? { id: row.teacher_id, full_name: row.teacher_full_name } : null,
+    schools:          row.school_id  ? { id: row.school_id,  name: row.school_name }             : null,
+  });
+
   const fetchTransactions = async (page: number = currentPage) => {
     const requestId = ++fetchRequestId.current;
     setLoading(true);
@@ -120,214 +128,37 @@ export const BillingReportsTab = ({
           : null;
 
       const from = (page - 1) * ITEMS_PER_PAGE;
-      const to = from + ITEMS_PER_PAGE - 1;
-      const normalizedSearch = normalize(searchTerm.trim());
 
-      const applySharedFilters = (q: any) => {
-        let query = q;
-        if (statusFilter !== 'all') query = query.eq('payment_status', statusFilter);
-        if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
-        if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`);
-        if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`);
-        return query;
+      // Fix: ambas rutas (búsqueda y sin búsqueda) ahora usan RPCs (POST).
+      // Esto elimina los selects con embedded joins que causaban 400 Bad Request.
+      const rpcParams = {
+        p_school_id:   schoolIdFilter ?? null,
+        p_status:      statusFilter !== 'all' ? statusFilter : null,
+        p_date_from:   dateFrom ? `${dateFrom}T00:00:00` : null,
+        p_date_to:     dateTo   ? `${dateTo}T23:59:59`   : null,
+        p_search_term: searchTerm.trim() || null,
       };
 
-      // ✅ Búsqueda server-side: filtrar por nombre/ticket/descripción en BD
-      // Usamos or() con ilike para buscar en student name, teacher name, description, ticket
-      if (normalizedSearch) {
-        const searchPattern = `%${searchTerm.trim()}%`;
-
-        // 1. Buscar IDs de estudiantes que coinciden
-        const { data: matchStudents } = await supabase
-          .from('students')
-          .select('id')
-          .ilike('full_name', searchPattern);
-
-        // 2. Buscar IDs de profesores que coinciden
-        const { data: matchTeachers } = await supabase
-          .from('teacher_profiles')
-          .select('id')
-          .ilike('full_name', searchPattern);
-
-        if (requestId !== fetchRequestId.current) return;
-
-        const studentIds = (matchStudents || []).map((s: any) => s.id);
-        const teacherIds = (matchTeachers || []).map((t: any) => t.id);
-
-        // 3. Construir filtro OR: por student_id, teacher_id, description, ticket_code
-        const orParts: string[] = [];
-        if (studentIds.length > 0) orParts.push(`student_id.in.(${studentIds.join(',')})`);
-        if (teacherIds.length > 0) orParts.push(`teacher_id.in.(${teacherIds.join(',')})`);
-        // Encerrar el patrón entre comillas para que PostgREST lo trate como string literal
-        // (necesario cuando contiene espacios, paréntesis u otros caracteres especiales)
-        const safePattern = `%${searchTerm.trim().replace(/"/g, '')}%`;
-        orParts.push(`description.ilike."${safePattern}"`);
-        orParts.push(`ticket_code.ilike."${safePattern}"`);
-        orParts.push(`manual_client_name.ilike."${safePattern}"`);
-
-        const orFilter = orParts.join(',');
-
-        // Count
-        let countQ = supabase
-          .from('transactions')
-          .select('id', { count: 'exact', head: true })
-          .eq('type', 'purchase')
-          .eq('is_deleted', false)
-          .neq('payment_status', 'cancelled')
-          .or(orFilter);
-
-        countQ = applySharedFilters(countQ);
-        const { count } = await countQ;
-        if (requestId !== fetchRequestId.current) return;
-        setTotalCount(count || 0);
-
-        // Data (paginated)
-        let dataQ = supabase
-          .from('transactions')
-          .select(`
-            *,
-            students(id, full_name, parent_id),
-            teacher_profiles(id, full_name),
-            schools(id, name)
-          `)
-          .eq('type', 'purchase')
-          .eq('is_deleted', false)
-          .neq('payment_status', 'cancelled')
-          .or(orFilter)
-          .order('created_at', { ascending: false })
-          .range(from, to);
-
-        dataQ = applySharedFilters(dataQ);
-        const { data, error } = await dataQ;
-        if (error) throw error;
-        if (requestId !== fetchRequestId.current) return;
-
-        // Filtrar pedidos cancelados
-        const lunchOrderIds = (data || [])
-          .map((t: any) => t.metadata?.lunch_order_id)
-          .filter(Boolean);
-
-        let cancelledOrderIds = new Set<string>();
-        let existingLunchOrderIds = new Set<string>();
-
-        if (lunchOrderIds.length > 0) {
-          const uniqueIds = [...new Set<string>(lunchOrderIds)];
-          const allExisting: any[] = [];
-          const CHUNK = 200;
-          for (let i = 0; i < uniqueIds.length; i += CHUNK) {
-            const batch = uniqueIds.slice(i, i + CHUNK);
-            const { data: bd } = await supabase
-              .from('lunch_orders')
-              .select('id, is_cancelled')
-              .in('id', batch);
-            if (bd) allExisting.push(...bd);
-          }
-          cancelledOrderIds = new Set(
-            allExisting.filter((o: any) => o.is_cancelled).map((o: any) => o.id)
-          );
-          existingLunchOrderIds = new Set(allExisting.map((o: any) => o.id));
-        }
-
-        const validTx = (data || []).filter((t: any) => {
-          if (t.metadata?.lunch_order_id) {
-            if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
-            if (!existingLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
-          }
-          return true;
-        });
-
-        // Enriquecer con created_by
-        const userIds = [
-          ...new Set(
-            validTx
-              .map((t: any) => t.created_by)
-              .filter((v: any) => typeof v === 'string' && isUuid(v))
-          ),
-        ];
-        const createdByMap = new Map<string, any>();
-
-        if (userIds.length > 0) {
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
-            .in('id', userIds);
-
-          profiles?.forEach((p: any) => {
-            createdByMap.set(p.id, { ...p, school_name: p.schools?.name || null });
-          });
-
-          const { data: teacherProfiles } = await supabase
-            .from('teacher_profiles')
-            .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
-            .in('id', userIds);
-
-          teacherProfiles?.forEach((tp: any) => {
-            const existing = createdByMap.get(tp.id);
-            if (existing) {
-              createdByMap.set(tp.id, {
-                ...existing,
-                teacher_school_name: tp.schools?.name || null,
-                teacher_school_id: tp.school_id_1,
-              });
-            } else {
-              createdByMap.set(tp.id, {
-                id: tp.id,
-                full_name: tp.full_name,
-                role: 'teacher',
-                school_id: tp.school_id_1,
-                school_name: tp.schools?.name || null,
-              });
-            }
-          });
-        }
-
-        const enriched = validTx.map((t: any) => ({
-          ...t,
-          created_by_profile: createdByMap.get(t.created_by) || null,
-        }));
-
-        if (requestId !== fetchRequestId.current) return;
-        setTransactions(enriched);
-        return;
-      }
-
-      // 1. Contar total (query liviana, sin datos)
-      let countQ = supabase
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled');
-
-      countQ = applySharedFilters(countQ);
-
-      const { count } = await countQ;
+      // 1. Contar total
+      const { data: countResult, error: countError } = await supabase.rpc(
+        'count_billing_paid_transactions', rpcParams
+      );
+      if (countError) throw countError;
       if (requestId !== fetchRequestId.current) return;
-      setTotalCount(count || 0);
+      setTotalCount(Number(countResult || 0));
 
-      // 2. Traer solo la página actual con .range()
-      let dataQ = supabase
-        .from('transactions')
-        .select(`
-          *,
-          students(id, full_name, parent_id),
-          teacher_profiles(id, full_name),
-          schools(id, name)
-        `)
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      dataQ = applySharedFilters(dataQ);
-
-      const { data, error } = await dataQ;
-      if (error) throw error;
+      // 2. Traer página actual
+      const { data: rpcData, error: dataError } = await supabase.rpc(
+        'get_billing_paid_transactions',
+        { ...rpcParams, p_offset: from, p_limit: ITEMS_PER_PAGE }
+      );
+      if (dataError) throw dataError;
       if (requestId !== fetchRequestId.current) return;
+
+      const data = (rpcData || []).map(rehydrateRow);
 
       // 3. Filtrar transacciones de pedidos de almuerzo cancelados
-      const lunchOrderIds = (data || [])
+      const lunchOrderIds = data
         .map((t: any) => t.metadata?.lunch_order_id)
         .filter(Boolean);
 
@@ -352,7 +183,7 @@ export const BillingReportsTab = ({
         existingLunchOrderIds = new Set(allExisting.map((o: any) => o.id));
       }
 
-      const validTx = (data || []).filter((t: any) => {
+      const validTx = data.filter((t: any) => {
         if (t.metadata?.lunch_order_id) {
           if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
           if (!existingLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
@@ -360,7 +191,7 @@ export const BillingReportsTab = ({
         return true;
       });
 
-      // 4. Enriquecer con datos del creador
+      // 4. Enriquecer con datos del creador (solo los IDs únicos de esta página)
       const userIds = [
         ...new Set(
           validTx
@@ -375,7 +206,6 @@ export const BillingReportsTab = ({
           .from('profiles')
           .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
           .in('id', userIds);
-
         profiles?.forEach((p: any) => {
           createdByMap.set(p.id, { ...p, school_name: p.schools?.name || null });
         });
@@ -384,24 +214,12 @@ export const BillingReportsTab = ({
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
           .in('id', userIds);
-
         teacherProfiles?.forEach((tp: any) => {
           const existing = createdByMap.get(tp.id);
-          if (existing) {
-            createdByMap.set(tp.id, {
-              ...existing,
-              teacher_school_name: tp.schools?.name || null,
-              teacher_school_id: tp.school_id_1,
-            });
-          } else {
-            createdByMap.set(tp.id, {
-              id: tp.id,
-              full_name: tp.full_name,
-              role: 'teacher',
-              school_id: tp.school_id_1,
-              school_name: tp.schools?.name || null,
-            });
-          }
+          createdByMap.set(tp.id, existing
+            ? { ...existing, teacher_school_name: tp.schools?.name || null, teacher_school_id: tp.school_id_1 }
+            : { id: tp.id, full_name: tp.full_name, role: 'teacher', school_id: tp.school_id_1, school_name: tp.schools?.name || null }
+          );
         });
       }
 
@@ -655,43 +473,35 @@ export const BillingReportsTab = ({
           ? selectedSchool !== 'all' ? selectedSchool : userSchoolId
           : null;
 
-      const applyFilters = (q: any) => {
-        if (statusFilter !== 'all') q = q.eq('payment_status', statusFilter);
-        if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-        if (dateFrom) q = q.gte('created_at', `${dateFrom}T00:00:00`);
-        if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59`);
-        return q;
+      // Fix: loop de exportación también usa RPC para evitar 400 con embedded joins.
+      const exportRpcParams = {
+        p_school_id:   schoolIdFilter ?? null,
+        p_status:      statusFilter !== 'all' ? statusFilter : null,
+        p_date_from:   dateFrom ? `${dateFrom}T00:00:00` : null,
+        p_date_to:     dateTo   ? `${dateTo}T23:59:59`   : null,
+        p_search_term: searchTerm.trim() || null,
       };
 
-      // Traer TODOS los registros con paginación de 1000 en 1000
-      // (Supabase limita a 1000 por query por defecto)
-      const PAGE_SIZE = 1000;
+      const EXPORT_PAGE = 1000;
       let allData: any[] = [];
-      let from = 0;
+      let exportOffset = 0;
       let keepFetching = true;
 
       while (keepFetching) {
-        let q = supabase
-          .from('transactions')
-          .select(`*, students(id, full_name), teacher_profiles(id, full_name), schools(id, name)`)
-          .eq('type', 'purchase')
-          .eq('is_deleted', false)
-          .neq('payment_status', 'cancelled')
-          .order('created_at', { ascending: false })
-          .range(from, from + PAGE_SIZE - 1);
-
-        q = applyFilters(q);
-        const { data, error } = await q;
+        const { data, error } = await supabase.rpc(
+          'get_billing_paid_transactions',
+          { ...exportRpcParams, p_offset: exportOffset, p_limit: EXPORT_PAGE }
+        );
         if (error) throw error;
 
         if (!data || data.length === 0) {
           keepFetching = false;
         } else {
-          allData = [...allData, ...data];
-          if (data.length < PAGE_SIZE) {
-            keepFetching = false; // última página
+          allData = [...allData, ...data.map(rehydrateRow)];
+          if (data.length < EXPORT_PAGE) {
+            keepFetching = false;
           } else {
-            from += PAGE_SIZE;
+            exportOffset += EXPORT_PAGE;
           }
         }
       }

@@ -667,6 +667,7 @@ export const BillingConfig = () => {
                   { var: '{destinatario}', desc: activeTemplateTab === 'student' ? 'Nombre del padre' : 'Nombre de la persona' },
                   { var: '{nombre}', desc: activeTemplateTab === 'student' ? 'Nombre del alumno' : 'Nombre del deudor' },
                   { var: '{monto}', desc: 'Monto a cobrar' },
+                  { var: '{desglose}', desc: 'Detalle línea por línea' },
                   { var: '{monto_almuerzo}', desc: 'Solo almuerzos' },
                   { var: '{monto_cafeteria}', desc: 'Solo cafetería' },
                   { var: '{periodo}', desc: 'Período' },

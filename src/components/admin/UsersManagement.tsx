@@ -784,6 +784,7 @@ export function UsersManagement() {
         onOpenChange={(open) => !open && setResetPasswordUser(null)}
         userEmail={resetPasswordUser?.email || ''}
         userName={resetPasswordUser?.profile?.full_name}
+        recipientKind="staff"
         onSuccess={() => {
           toast({
             title: '✅ Contraseña Reseteada',

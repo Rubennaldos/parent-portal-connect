@@ -11,12 +11,12 @@ import { useToast } from '@/hooks/use-toast';
 interface ResetUserPasswordModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Si el padre tiene un solo correo
   userEmail?: string;
   userName?: string;
-  // Si el padre tiene múltiples correos (caso de padres duplicados vinculados)
   emails?: { email: string; label?: string }[];
   onSuccess?: () => void;
+  /** 'parent' = textos para padres de familia; 'staff' = admins, cajeros, profesores, etc. */
+  recipientKind?: 'parent' | 'staff';
 }
 
 export const ResetUserPasswordModal = ({
@@ -26,14 +26,15 @@ export const ResetUserPasswordModal = ({
   userName,
   emails,
   onSuccess,
+  recipientKind = 'parent',
 }: ResetUserPasswordModalProps) => {
+  const isStaff = recipientKind === 'staff';
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Si hay múltiples correos, el admin elige cuál restablecer
   const emailOptions = emails && emails.length > 0
     ? emails
     : userEmail ? [{ email: userEmail }] : [];
@@ -47,7 +48,6 @@ export const ResetUserPasswordModal = ({
     return pwd;
   };
 
-  // Auto-generar contraseña y resetear estado al abrir
   useEffect(() => {
     if (open) {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -61,9 +61,15 @@ export const ResetUserPasswordModal = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const recipientLabel = isStaff ? 'el usuario' : 'el padre/madre';
+  const recipientLabelCap = isStaff ? 'El usuario' : 'El padre/madre';
+
   const getFriendlyMessage = () => {
-    const nombre = userName || 'Padre/Madre de Familia';
-    return `Estimado/a ${nombre},\n\nLe informamos que su contraseña ha sido restablecida temporalmente.\n\n📧 Usuario: ${selectedEmail}\n🔑 Contraseña temporal: ${newPassword}\n\nAl ingresar al sistema con esta contraseña, se le pedirá que cree una nueva contraseña de su elección.\n\nSi tiene alguna duda, comuníquese con la administración de su sede.\n\nSaludos,\nEquipo Lima Café 28`;
+    const nombre = userName?.trim() || (isStaff ? 'Usuario del sistema' : 'Padre/Madre de Familia');
+    const intro = isStaff
+      ? 'Le informamos que su contraseña de acceso al portal Lima Café 28 ha sido restablecida temporalmente por administración.'
+      : 'Le informamos que su contraseña ha sido restablecida temporalmente.';
+    return `Estimado/a ${nombre},\n\n${intro}\n\n📧 Usuario: ${selectedEmail}\n🔑 Contraseña temporal: ${newPassword}\n\nAl ingresar con esta contraseña, el sistema le pedirá que cree una nueva contraseña de su elección.\n\nSi tiene alguna duda, comuníquese con la administración de su sede.\n\nSaludos,\nEquipo Lima Café 28`;
   };
 
   const copyPassword = () => {
@@ -73,7 +79,7 @@ export const ResetUserPasswordModal = ({
 
   const copyMessage = () => {
     navigator.clipboard.writeText(getFriendlyMessage()).catch(() => {});
-    toast({ title: '✅ Mensaje copiado', description: 'Listo para enviar por WhatsApp o mensaje de texto.' });
+    toast({ title: '✅ Mensaje copiado', description: 'Listo para enviar por WhatsApp, correo o mensaje de texto.' });
   };
 
   const handleReset = async () => {
@@ -100,7 +106,6 @@ export const ResetUserPasswordModal = ({
       if (data?.error) throw new Error(data.error);
 
       // Garantía adicional: marcar is_temp_password desde el frontend
-      // por si el Edge Function lo omitió (ej. columna no existía antes)
       try {
         const { data: profileData } = await supabase
           .from('profiles')
@@ -112,11 +117,9 @@ export const ResetUserPasswordModal = ({
             .from('profiles')
             .update({ is_temp_password: true })
             .eq('id', profileData.id);
-          console.log('[Reset] ✅ is_temp_password marcado desde frontend para:', selectedEmail);
         }
-      } catch (flagErr) {
-        // No bloquear el flujo si este paso falla
-        console.warn('[Reset] No se pudo marcar is_temp_password desde frontend:', flagErr);
+      } catch {
+        // No bloquear el flujo si falla
       }
 
       setDone(true);
@@ -150,7 +153,7 @@ export const ResetUserPasswordModal = ({
             Restablecer Contraseña
           </DialogTitle>
           <DialogDescription>
-            Se generará una contraseña temporal. El padre deberá cambiarla al ingresar.
+            Se generará una contraseña temporal. {recipientLabelCap} deberá cambiarla al ingresar al portal.
           </DialogDescription>
         </DialogHeader>
 
@@ -162,7 +165,7 @@ export const ResetUserPasswordModal = ({
               <div>
                 <p className="font-semibold text-green-700 text-lg">¡Contraseña restablecida!</p>
                 <p className="text-sm text-gray-500 mt-1">
-                  El padre deberá cambiarla la próxima vez que ingrese.
+                  {recipientLabelCap} deberá cambiarla la próxima vez que ingrese.
                 </p>
               </div>
             </div>
@@ -185,7 +188,7 @@ export const ResetUserPasswordModal = ({
               className="w-full bg-green-600 hover:bg-green-700 gap-2"
             >
               <MessageSquare className="h-4 w-4" />
-              Copiar mensaje para el padre
+              {isStaff ? 'Copiar mensaje para el usuario' : 'Copiar mensaje para el padre'}
             </Button>
 
             {/* Vista previa del mensaje */}
@@ -205,7 +208,7 @@ export const ResetUserPasswordModal = ({
               <div className="space-y-2">
                 <Label>¿A cuál correo restablecer?</Label>
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800 mb-1">
-                  Este padre tiene {emailOptions.length} correos registrados. Elige a cuál deseas restablecer la contraseña.
+                  Este {isStaff ? 'usuario' : 'padre'} tiene {emailOptions.length} correos registrados. Elige a cuál deseas restablecer la contraseña.
                 </div>
                 <Select value={selectedEmail} onValueChange={setSelectedEmail}>
                   <SelectTrigger>
@@ -222,7 +225,11 @@ export const ResetUserPasswordModal = ({
               </div>
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
-                <strong>Padre/Madre:</strong> {userName && userName !== selectedEmail ? userName : <em className="text-blue-600">Nombre no registrado</em>}<br />
+                <strong>{isStaff ? 'Usuario:' : 'Padre/Madre:'}</strong>{' '}
+                {userName && userName !== selectedEmail
+                  ? userName
+                  : <em className="text-blue-600">Nombre no registrado</em>}
+                <br />
                 <strong>Correo:</strong> {selectedEmail}
               </div>
             )}
@@ -231,8 +238,8 @@ export const ResetUserPasswordModal = ({
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2">
               <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-800">
-                Al restablecer, el padre <strong>no podrá entrar con su contraseña actual</strong>.
-                La contraseña temporal que generes reemplazará la anterior.
+                Al restablecer, {recipientLabel} <strong>no podrá entrar con su contraseña actual</strong>.
+                La contraseña temporal reemplazará la anterior.
               </p>
             </div>
 
@@ -272,7 +279,7 @@ export const ResetUserPasswordModal = ({
               )}
             </div>
 
-            {/* Vista previa del mensaje — SOLO visual, el botón de copiar está DESPUÉS del reset */}
+            {/* Vista previa del mensaje */}
             {newPassword.length >= 6 && (
               <div className="space-y-1">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Vista previa del mensaje</p>

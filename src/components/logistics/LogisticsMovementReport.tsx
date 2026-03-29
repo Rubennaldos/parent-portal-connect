@@ -94,6 +94,9 @@ export default function LogisticsMovementReport() {
 
   // ── Query principal — SOLO se ejecuta al hacer clic en "Generar Reporte" ──
 
+  /** Límite máximo del rango — Vector 4 QA: evitar colapso de memoria */
+  const MAX_DAYS = 90;
+
   const generateReport = useCallback(async () => {
     if (!startDate || !endDate) {
       toast({ variant: 'destructive', title: 'Fechas requeridas', description: 'Selecciona Fecha Inicio y Fecha Fin.' });
@@ -104,76 +107,51 @@ export default function LogisticsMovementReport() {
       return;
     }
 
+    // Vector 4 QA: guardia de rango máximo
+    const diffDays = Math.ceil(
+      (new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000
+    );
+    if (diffDays > MAX_DAYS) {
+      toast({
+        variant: 'destructive',
+        title: `Rango muy largo (${diffDays} días)`,
+        description: `El máximo permitido es ${MAX_DAYS} días para evitar lentitud. Divide el período en tramos más pequeños.`,
+        duration: 6000,
+      });
+      return;
+    }
+
     setLoading(true);
     setRows(null);
     try {
-      const gte = toUTCStart(startDate);
-      const lt  = toUTCEnd(endDate);
+      const gteUTC = toUTCStart(startDate);
+      const ltUTC  = toUTCEnd(endDate);
 
-      // 1. Transacciones de compra en el rango (con filtro de sede opcional)
-      let txQuery = supabase
-        .from('transactions')
-        .select('id, school_id')
-        .eq('type', 'purchase')
-        .gte('created_at', gte)
-        .lt('created_at', lt);
-
-      if (selectedSede !== 'all') txQuery = txQuery.eq('school_id', selectedSede);
-
-      const { data: txs, error: txErr } = await txQuery;
-      if (txErr) throw txErr;
-
-      if (!txs || txs.length === 0) {
-        setRows([]);
-        setRangeLabel(`${formatDate(startDate)} → ${formatDate(endDate)}`);
-        return;
-      }
-
-      const txIds        = txs.map(t => t.id);
-      const schoolByTx   = new Map(txs.map(t => [t.id, t.school_id as string]));
-      const allSchoolIds = [...new Set(txs.map(t => t.school_id).filter(Boolean) as string[])];
-
-      // 2. Items de esas transacciones (en batches de 200 para evitar límites)
-      const BATCH = 200;
-      let allItems: { transaction_id: string; product_name: string; quantity: number }[] = [];
-      for (let i = 0; i < txIds.length; i += BATCH) {
-        const batch = txIds.slice(i, i + BATCH);
-        const { data: batchItems, error: bErr } = await supabase
-          .from('transaction_items')
-          .select('transaction_id, product_name, quantity')
-          .in('transaction_id', batch);
-        if (bErr) throw bErr;
-        allItems = allItems.concat(batchItems || []);
-      }
-
-      if (allItems.length === 0) {
-        setRows([]);
-        setRangeLabel(`${formatDate(startDate)} → ${formatDate(endDate)}`);
-        return;
-      }
-
-      // 3. Nombres de sedes
-      const { data: schoolsData } = await supabase
-        .from('schools').select('id, name').in('id', allSchoolIds);
-      const sMap = new Map((schoolsData || []).map(s => [s.id, s.name]));
-
-      // 4. Agrupar en el frontend: clave = productName + schoolId
-      const grouped = new Map<string, ReportRow>();
-      for (const item of allItems) {
-        const schoolId = schoolByTx.get(item.transaction_id) || '';
-        const key = `${item.product_name}__${schoolId}`;
-        if (!grouped.has(key)) {
-          grouped.set(key, {
-            productName: item.product_name,
-            schoolName:  sMap.get(schoolId) || '—',
-            schoolId,
-            qtySold: 0,
-          });
+      // Vector 2 + 4 QA: la agregación ocurre en la BD (GROUP BY via RPC).
+      // El RPC ya excluye transacciones con payment_status = 'cancelled'.
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        'report_stock_movement',
+        {
+          p_start_utc: gteUTC,
+          p_end_utc:   ltUTC,
+          p_school_id: selectedSede !== 'all' ? selectedSede : null,
         }
-        grouped.get(key)!.qtySold += item.quantity;
+      );
+
+      if (rpcErr) {
+        // Fallback al método original si el RPC aún no fue desplegado en BD
+        console.warn('[Report] RPC not found, falling back to client-side aggregation:', rpcErr.message);
+        await generateReportFallback(gteUTC, ltUTC);
+        return;
       }
 
-      const result = [...grouped.values()].sort((a, b) => b.qtySold - a.qtySold);
+      const result: ReportRow[] = (rpcData || []).map((r: any) => ({
+        productName: r.product_name,
+        schoolName:  r.school_name,
+        schoolId:    r.school_id,
+        qtySold:     Number(r.qty_sold),
+      }));
+
       setRows(result);
       setRangeLabel(`${formatDate(startDate)} → ${formatDate(endDate)}`);
     } catch (err: any) {
@@ -183,6 +161,58 @@ export default function LogisticsMovementReport() {
       setLoading(false);
     }
   }, [startDate, endDate, selectedSede, toast]);
+
+  /** Fallback client-side (usado solo si el RPC aún no está en BD) */
+  const generateReportFallback = useCallback(async (gteUTC: string, ltUTC: string) => {
+    let txQuery = supabase
+      .from('transactions')
+      .select('id, school_id')
+      .eq('type', 'purchase')
+      .neq('payment_status', 'cancelled')   // Vector 2 QA
+      .gte('created_at', gteUTC)
+      .lt('created_at', ltUTC);
+    if (selectedSede !== 'all') txQuery = txQuery.eq('school_id', selectedSede);
+    const { data: txs, error: txErr } = await txQuery;
+    if (txErr) throw txErr;
+
+    if (!txs || txs.length === 0) {
+      setRows([]);
+      return;
+    }
+
+    const txIds        = txs.map(t => t.id);
+    const schoolByTx   = new Map(txs.map(t => [t.id, t.school_id as string]));
+    const allSchoolIds = [...new Set(txs.map(t => t.school_id).filter(Boolean) as string[])];
+
+    const BATCH = 200;
+    let allItems: { transaction_id: string; product_name: string; quantity: number }[] = [];
+    for (let i = 0; i < txIds.length; i += BATCH) {
+      const { data: batchItems, error: bErr } = await supabase
+        .from('transaction_items')
+        .select('transaction_id, product_name, quantity')
+        .in('transaction_id', txIds.slice(i, i + BATCH));
+      if (bErr) throw bErr;
+      allItems = allItems.concat(batchItems || []);
+    }
+
+    const { data: schoolsData } = await supabase
+      .from('schools').select('id, name').in('id', allSchoolIds);
+    const sMap = new Map((schoolsData || []).map(s => [s.id, s.name]));
+
+    const grouped = new Map<string, ReportRow>();
+    for (const item of allItems) {
+      const schoolId = schoolByTx.get(item.transaction_id) || '';
+      const key = `${item.product_name}__${schoolId}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, { productName: item.product_name, schoolName: sMap.get(schoolId) || '—', schoolId, qtySold: 0 });
+      }
+      grouped.get(key)!.qtySold += item.quantity;
+    }
+
+    const result = [...grouped.values()].sort((a, b) => b.qtySold - a.qtySold);
+    setRows(result);
+    setRangeLabel(`${formatDate(startDate)} → ${formatDate(endDate)}`);
+  }, [selectedSede, startDate, endDate]);
 
   // ── Derivados ────────────────────────────────────────────────────────────────
 
@@ -214,7 +244,12 @@ export default function LogisticsMovementReport() {
 
       {/* ── Panel de filtros ── */}
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
-        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filtros del Reporte</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filtros del Reporte</p>
+          <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+            Máximo 90 días por consulta
+          </span>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 

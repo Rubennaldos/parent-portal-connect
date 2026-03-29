@@ -105,11 +105,12 @@ CRITERIOS DE ESTADO
 SEÑALES DE FRAUDE ADICIONALES:
 - Texto con diferentes tipografías o tamaños en el mismo campo
 - Bordes o sombras alrededor de números (indican pegado de texto)
-- Fecha en el voucher POSTERIOR a la hora en que fue subido
 - Montos con centavos extraños (ej: S/ 100.001)
 - Logo o color del banco diferente al real
 - Resolución inconsistente entre el fondo y el texto de los números
 - Moneda que NO sea Soles peruanos (S/ o PEN)
+
+NOTA IMPORTANTE SOBRE FECHAS: NO evalúes si la fecha del comprobante es anterior o posterior a la hora actual. La validación de fechas la realiza el sistema por separado con comparación UTC exacta. Tu trabajo es SOLO detectar si la fecha fue editada visualmente (píxeles inconsistentes, diferente tipografía, halos alrededor de los números de la fecha).
 
 IMPORTANTE sobre destinatario_detectado:
 - En Yape: busca el nombre grande que aparece sobre o cerca del monto (ej: "UFRASAC CATERING SAC")
@@ -169,7 +170,10 @@ serve(async (req) => {
       .eq("id", userId)
       .single();
 
-    const ROLES_AUTORIZADOS = ["admin_general", "superadmin", "gestor_unidad"];
+    const ROLES_AUTORIZADOS = [
+      "admin_general", "superadmin", "gestor_unidad",
+      "admin_sede", "supervisor_red"
+    ];
     if (perfilError || !perfil || !ROLES_AUTORIZADOS.includes(perfil.role)) {
       return json({ error: "Acceso denegado — solo administradores autorizados pueden usar este módulo" }, 403);
     }
@@ -182,10 +186,10 @@ serve(async (req) => {
       return json({ error: "Se requiere imageUrl para analizar el voucher" }, 400);
     }
 
-    // Hora de subida para que la IA evalúe correctamente fechas "futuras"
-    const horaSubida = fechaSubida
-      ? new Date(fechaSubida).toLocaleString("es-PE", { timeZone: "America/Lima" })
-      : new Date().toLocaleString("es-PE", { timeZone: "America/Lima" });
+    // Hora de subida para mostrar contexto al admin (solo informativa para la IA)
+    // La comparación real de fechas se hace en código más abajo, con UTC puro
+    const uploadTimeUTC = fechaSubida ? new Date(fechaSubida) : new Date();
+    const horaSubida = uploadTimeUTC.toLocaleString("es-PE", { timeZone: "America/Lima" });
 
     // ── 3. Obtener la API Key de OpenAI ──
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
@@ -218,12 +222,9 @@ serve(async (req) => {
                 type: "text",
                 text: `Analiza este comprobante de pago peruano y responde SOLO con el JSON solicitado.
 
-HORA DE SUBIDA DEL COMPROBANTE (hora de Lima, Perú): ${horaSubida}
+CONTEXTO: Este voucher fue enviado el ${horaSubida} (hora de Lima, Perú). El pago puede haberse realizado minutos u horas antes — eso es completamente normal.
 
-REGLA CRÍTICA SOBRE FECHAS:
-- Es completamente NORMAL que el voucher muestre una hora ANTERIOR a la hora de subida. El padre paga y luego sube el comprobante, pueden pasar minutos o hasta horas.
-- Solo es sospechoso si la fecha/hora en el voucher es POSTERIOR a la hora de subida (por ejemplo: hora de subida 11:10 p.m. y el voucher dice 11:15 p.m. — eso es imposible porque no puedes subir un comprobante antes de que ocurra el pago).
-- Una diferencia de minutos o horas donde el voucher es MÁS ANTIGUO que la hora de subida es totalmente normal. NO lo marques como fecha futura.`,
+IMPORTANTE: NO evalúes si la fecha del voucher es anterior o posterior al envío. El sistema valida eso automáticamente con UTC. Tu única tarea con la fecha es: ¿fue editada visualmente? Extrae la fecha tal como aparece en la imagen (campo "fecha" del JSON).`,
               },
               {
                 type: "image_url",
@@ -259,22 +260,140 @@ REGLA CRÍTICA SOBRE FECHAS:
         .trim();
       analisis = JSON.parse(jsonLimpio);
     } catch (parseError) {
-      console.error("❌ GPT no devolvió JSON válido:", contenidoRaw);
-      // Si no se puede parsear, marcar como SOSPECHOSO para revisión manual
+      console.error("❌ GPT no devolvió JSON válido:", contenidoRaw.substring(0, 200));
+
+      // ── Intento de extracción parcial por regex como fallback ──
+      // Si GPT devolvió texto plano (no JSON), intentamos rescatar datos básicos.
+      const extractMonto = (t: string) => {
+        const m = t.match(/S\/\s*([\d,]+\.?\d*)/i);
+        return m ? parseFloat(m[1].replace(",", "")) : null;
+      };
+      const extractNroOp = (t: string) => {
+        const m = t.match(/\b(\d{6,15})\b/);
+        return m ? m[1] : null;
+      };
+
+      const montoExtraido = extractMonto(contenidoRaw);
+      const nroExtraido   = extractNroOp(contenidoRaw);
+
+      // Detectar si GPT rechazó analizar por política (imagen de contenido)
+      const esPoliticaGPT = contenidoRaw.toLowerCase().includes("i'm sorry") ||
+        contenidoRaw.toLowerCase().includes("i cannot") ||
+        contenidoRaw.toLowerCase().includes("lo siento") ||
+        contenidoRaw.toLowerCase().includes("no puedo");
+
+      const motivoFallback = esPoliticaGPT
+        ? "GPT rechazó analizar la imagen (política de contenido). Revisar manualmente si la imagen es legible."
+        : "La IA devolvió una respuesta que no se pudo procesar (error de parseo). Intentar re-analizar o revisar manualmente.";
+
       analisis = {
-        monto: null,
+        monto: montoExtraido,
         moneda_detectada: null,
         banco: null,
-        nro_operacion: null,
+        nro_operacion: nroExtraido,
         fecha: null,
         destinatario_detectado: null,
         estado: "SOSPECHOSO",
         confianza: 0,
-        motivo: "La IA no pudo procesar el comprobante correctamente. Requiere revisión manual.",
-        alertas: ["Error al parsear respuesta de IA — requiere revisión manual"],
-        datos_extraidos: { respuesta_cruda: contenidoRaw.substring(0, 500) },
+        motivo: motivoFallback,
+        alertas: [
+          esPoliticaGPT
+            ? "GPT rechazó analizar por política de contenido — re-intentar o revisar manual"
+            : "Respuesta de IA no parseada — re-intentar el análisis puede resolver esto",
+        ],
+        datos_extraidos: {
+          respuesta_cruda: contenidoRaw.substring(0, 500),
+          extraccion_fallback: (montoExtraido || nroExtraido)
+            ? `Monto rescatado: ${montoExtraido ?? "—"} | N° rescatado: ${nroExtraido ?? "—"}`
+            : "No se pudo extraer datos parciales",
+        },
       };
     }
+
+    // ── 5b. Comparación N° operación cliente vs IA ──────────────────────
+    // El padre ingresa manualmente su N° de operación al enviar la recarga.
+    // La IA extrae el N° del comprobante de la imagen.
+    // Si NO coinciden → alerta de posible discrepancia.
+    // Normalizamos eliminando espacios, guiones y puntos antes de comparar.
+    if (idCobranza && analisis.nro_operacion) {
+      try {
+        const { data: cobranza } = await supabase
+          .from("recharge_requests")
+          .select("reference_code")
+          .eq("id", idCobranza)
+          .maybeSingle();
+
+        if (cobranza?.reference_code) {
+          const normalizar = (s: string) =>
+            s.replace(/[\s\-\.\(\)]/g, "").toUpperCase();
+
+          const refCliente = normalizar(cobranza.reference_code);
+          const refIA      = normalizar(analisis.nro_operacion);
+
+          if (refCliente && refIA && refCliente !== refIA) {
+            const alertaNro = `N° del padre (${cobranza.reference_code}) ≠ N° en imagen (${analisis.nro_operacion}) — verificar`;
+            analisis.alertas = [...(analisis.alertas ?? []), alertaNro];
+
+            if (analisis.estado === "VALIDO") {
+              analisis.estado = "SOSPECHOSO";
+              analisis.motivo =
+                `Discrepancia en N° de operación: el padre ingresó "${cobranza.reference_code}" ` +
+                `pero el voucher muestra "${analisis.nro_operacion}". Revisar si es un error de tipeo.`;
+            }
+            console.warn(`⚠️ N° discrepante: cliente=${refCliente}, voucher=${refIA}`);
+          } else if (refCliente && refIA && refCliente === refIA) {
+            console.log(`✅ N° operación coincide: ${refIA}`);
+          }
+        }
+      } catch (nroErr) {
+        console.warn("⚠️ No se pudo comparar N° de operación:", nroErr);
+      }
+    }
+    // ── Fin comparación N° operación ────────────────────────────────────
+
+    // ── 5d. Validación de fecha en código puro (UTC vs UTC) ─────────────
+    // La IA NO hace esta comparación — nosotros sí, con math exacto.
+    // Si el voucher tiene una fecha genuinamente futura (>15 min después del envío),
+    // lo marcamos SOSPECHOSO sin depender de que GPT interprete timezones.
+    if (analisis.fecha) {
+      try {
+        let voucherMs: number;
+        const fechaStr = analisis.fecha.trim();
+
+        // GPT devuelve ISO 8601. Si no trae timezone, asumimos Lima (UTC-5)
+        const tieneZona = fechaStr.endsWith("Z") ||
+          /[+-]\d{2}:\d{2}$/.test(fechaStr);
+
+        if (tieneZona) {
+          voucherMs = new Date(fechaStr).getTime();
+        } else {
+          // Sin zona horaria → asumir hora de Lima (UTC-5) para parsear correctamente
+          voucherMs = new Date(fechaStr + "-05:00").getTime();
+        }
+
+        const uploadMs = uploadTimeUTC.getTime();
+        const MARGEN_MS = 15 * 60 * 1000; // 15 minutos de tolerancia
+
+        if (!isNaN(voucherMs) && voucherMs > uploadMs + MARGEN_MS) {
+          // El voucher muestra una fecha posterior al envío — sospechoso
+          const minutosDesfase = Math.round((voucherMs - uploadMs) / 60000);
+          analisis.alertas = analisis.alertas ?? [];
+          analisis.alertas.push(
+            `Fecha del comprobante posterior a la hora de subida (${minutosDesfase} min de desfase)`
+          );
+          if (analisis.estado === "VALIDO") {
+            analisis.estado = "SOSPECHOSO";
+            analisis.motivo = `Datos visuales válidos, pero la fecha del comprobante (${fechaStr}) es ${minutosDesfase} min posterior al envío.`;
+          }
+          console.warn(
+            `⚠️ Fecha futura detectada: voucher=${fechaStr}, upload=${uploadTimeUTC.toISOString()}, desfase=${minutosDesfase}min`
+          );
+        }
+      } catch (dateErr) {
+        console.warn("⚠️ No se pudo comparar fecha del voucher:", dateErr);
+      }
+    }
+    // ── Fin validación de fecha ──────────────────────────────────────────
 
     // ── 6. Enriquecer el analisis_ia con metadatos de auditoría ──
     const analisisCompleto = {
@@ -289,82 +408,95 @@ REGLA CRÍTICA SOBRE FECHAS:
     console.log(`✅ Análisis completado: estado=${analisis.estado}, confianza=${analisis.confianza}`);
 
     // ── 7. Guardar en auditoria_vouchers con service_role (sin RLS) ──
-    // Se guarda SIEMPRE: VALIDO, SOSPECHOSO y RECHAZADO quedan registrados.
-    // Si el nro_operacion ya existe (análisis previo), se ACTUALIZA el registro
-    // existente con el nuevo id_cobranza para que el trigger de aprobación lo encuentre.
+    // ESTRATEGIA ANTI-DUPLICADOS:
+    //   1. ANTES de insertar, buscar si ya existe un registro con el mismo nro_operacion
+    //      (incluyendo RECHAZADO — antes este caso creaba duplicados).
+    //   2. Si existe → ACTUALIZAR ese registro (nunca crear otro).
+    //   3. Si NO existe → INSERTAR nuevo.
+    // Esto garantiza 1 registro por nro_operacion, sin importar cuántas veces se analice.
     let auditoriaId: string | null = null;
     let errorGuardado: string | null = null;
 
     try {
-      const { data: inserted, error: insertError } = await supabase
-        .from("auditoria_vouchers")
-        .insert({
-          id_cobranza: idCobranza ?? null,
-          url_imagen: imageUrl,
-          banco_detectado: analisis.banco ?? null,
-          monto_detectado: analisis.monto ?? null,
-          nro_operacion: analisis.nro_operacion ?? null,
-          fecha_pago_detectada: analisis.fecha ?? null,
-          hash_imagen: hashImagen ?? null,
-          estado_ia: analisis.estado,
-          analisis_ia: analisisCompleto,
-          school_id: schoolId ?? null,
-          subido_por: usuarioId ?? null,
-        })
-        .select("id")
-        .single();
+      // ── Paso 7a: Buscar registro previo por nro_operacion (TODOS los estados) ──
+      let registroPrevioId: string | null = null;
+      if (analisis.nro_operacion) {
+        const { data: previo } = await supabase
+          .from("auditoria_vouchers")
+          .select("id")
+          .eq("nro_operacion", analisis.nro_operacion)
+          .order("creado_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        registroPrevioId = previo?.id ?? null;
+      }
 
-      if (insertError) {
-        // Código 23505 = unique_violation en PostgreSQL
-        const esConflictoUnico =
-          insertError.code === "23505" ||
-          (insertError.message ?? "").includes("duplicate") ||
-          (insertError.message ?? "").includes("unique");
+      // También buscar por id_cobranza si está disponible y no encontramos por nro_operacion
+      if (!registroPrevioId && idCobranza) {
+        const { data: previoCobranza } = await supabase
+          .from("auditoria_vouchers")
+          .select("id")
+          .eq("id_cobranza", idCobranza)
+          .order("creado_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        registroPrevioId = previoCobranza?.id ?? null;
+      }
 
-        if (esConflictoUnico && analisis.nro_operacion) {
-          // El nro_operacion ya existe de un análisis previo.
-          // Actualizamos ese registro para vincular el id_cobranza actual.
-          console.log(`🔄 nro_operacion duplicado — actualizando registro existente con id_cobranza=${idCobranza}`);
+      if (registroPrevioId) {
+        // ── Paso 7b: Actualizar registro existente (anti-duplicado) ──
+        console.log(`🔄 Registro previo encontrado (ID=${registroPrevioId}) — actualizando en lugar de insertar`);
+        const { error: updateErr } = await supabase
+          .from("auditoria_vouchers")
+          .update({
+            id_cobranza: idCobranza ?? null,
+            url_imagen: imageUrl,
+            banco_detectado: analisis.banco ?? null,
+            monto_detectado: analisis.monto ?? null,
+            nro_operacion: analisis.nro_operacion ?? null,
+            fecha_pago_detectada: analisis.fecha ?? null,
+            hash_imagen: hashImagen ?? null,
+            estado_ia: analisis.estado,
+            analisis_ia: analisisCompleto,
+            school_id: schoolId ?? null,
+            subido_por: usuarioId ?? null,
+          })
+          .eq("id", registroPrevioId);
 
-          // Buscar el registro existente (excluyendo RECHAZADO, que no tiene índice único)
-          const { data: existente } = await supabase
-            .from("auditoria_vouchers")
-            .select("id")
-            .eq("nro_operacion", analisis.nro_operacion)
-            .neq("estado_ia", "RECHAZADO")
-            .order("creado_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (existente) {
-            const { error: updateErr } = await supabase
-              .from("auditoria_vouchers")
-              .update({
-                id_cobranza: idCobranza ?? null,
-                estado_ia: analisis.estado,
-                analisis_ia: analisisCompleto,
-                url_imagen: imageUrl,
-              })
-              .eq("id", existente.id);
-
-            if (updateErr) {
-              console.error("❌ Error actualizando registro existente:", JSON.stringify(updateErr));
-              errorGuardado = updateErr.message;
-            } else {
-              auditoriaId = existente.id;
-              console.log(`✅ Registro existente actualizado: ID=${auditoriaId}`);
-            }
-          } else {
-            console.error("❌ No se encontró registro previo para actualizar");
-            errorGuardado = insertError.message;
-          }
+        if (updateErr) {
+          console.error("❌ Error actualizando registro previo:", JSON.stringify(updateErr));
+          errorGuardado = updateErr.message;
         } else {
-          console.error("❌ Error al guardar en auditoria_vouchers:", JSON.stringify(insertError));
-          errorGuardado = insertError.message;
+          auditoriaId = registroPrevioId;
+          console.log(`✅ Registro actualizado (sin duplicado): ID=${auditoriaId}, estado=${analisis.estado}`);
         }
       } else {
-        auditoriaId = inserted?.id ?? null;
-        console.log(`💾 Registro guardado en auditoria_vouchers: ID=${auditoriaId}, estado=${analisis.estado}`);
+        // ── Paso 7c: Insertar nuevo registro ──
+        const { data: inserted, error: insertError } = await supabase
+          .from("auditoria_vouchers")
+          .insert({
+            id_cobranza: idCobranza ?? null,
+            url_imagen: imageUrl,
+            banco_detectado: analisis.banco ?? null,
+            monto_detectado: analisis.monto ?? null,
+            nro_operacion: analisis.nro_operacion ?? null,
+            fecha_pago_detectada: analisis.fecha ?? null,
+            hash_imagen: hashImagen ?? null,
+            estado_ia: analisis.estado,
+            analisis_ia: analisisCompleto,
+            school_id: schoolId ?? null,
+            subido_por: usuarioId ?? null,
+          })
+          .select("id")
+          .single();
+
+        if (insertError) {
+          console.error("❌ Error insertando en auditoria_vouchers:", JSON.stringify(insertError));
+          errorGuardado = insertError.message;
+        } else {
+          auditoriaId = inserted?.id ?? null;
+          console.log(`💾 Nuevo registro guardado: ID=${auditoriaId}, estado=${analisis.estado}`);
+        }
       }
     } catch (dbErr) {
       const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);

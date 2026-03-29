@@ -61,6 +61,13 @@ import {
   UtensilsCrossed,
   Coffee,
   ChevronDown,
+  ClipboardList,
+  CheckSquare,
+  Square,
+  ArrowRight,
+  ArrowLeft,
+  GraduationCap,
+  Briefcase,
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -131,6 +138,53 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     return false;
   };
 
+  /**
+   * Construye el desglose línea por línea de las transacciones para WhatsApp.
+   * Cada línea: "- dd/MM: Producto x2, Producto2 *(S/ X.XX)*"
+   * - POS: usa transaction_items del mapa (product_name + quantity)
+   * - Almuerzo: usa metadata.menu_name o description
+   */
+  const buildTransactionDesglose = (
+    transactions: any[],
+    itemsByTxId: Map<string, any[]>,
+    type: 'all' | 'lunch' | 'cafeteria' = 'all'
+  ): string => {
+    const filtered = transactions.filter((t: any) => {
+      if (type === 'lunch') return isLunchTx(t);
+      if (type === 'cafeteria') return !isLunchTx(t);
+      return true;
+    });
+
+    if (filtered.length === 0) return '_(sin consumos en este período)_';
+
+    return filtered.map((t: any) => {
+      // Fecha: usar la fecha real del pedido si existe (almuerzos), si no la de la transacción
+      const rawDate = t.metadata?.order_created_at || t.created_at;
+      const dateStr = format(new Date(rawDate), 'dd/MM', { locale: es });
+
+      // Nombre del consumo
+      let productDesc: string;
+      const items = itemsByTxId.get(t.id);
+      if (items && items.length > 0) {
+        // POS: listar productos con cantidad
+        productDesc = items
+          .map((i: any) => `${i.product_name}${i.quantity > 1 ? ` x${i.quantity}` : ''}`)
+          .join(', ');
+      } else if (t.metadata?.menu_name) {
+        productDesc = `Almuerzo - ${t.metadata.menu_name}`;
+      } else if (t.description) {
+        // Limpiar "Almuerzo - Menú del día - 15/03/2026" para no repetir la fecha
+        productDesc = t.description.replace(/\s*-\s*\d{2}\/\d{2}\/\d{4}$/, '');
+      } else {
+        productDesc = 'Consumo';
+      }
+
+      // Las compras POS suelen guardarse con amount negativo; en el mensaje siempre mostramos monto positivo
+      const lineAmount = Math.abs(Number(t.amount ?? 0));
+      return `- ${dateStr}: ${productDesc} *(S/ ${lineAmount.toFixed(2)})*`;
+    }).join('\n');
+  };
+
   const [loading, setLoading] = useState(true);
   const [schools, setSchools] = useState<School[]>([]);
   const [periods, setPeriods] = useState<BillingPeriod[]>([]);
@@ -192,9 +246,24 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   // Selecci�n m�ltiple
   const [selectedDebtors, setSelectedDebtors] = useState<Set<string>>(new Set());
   
-  // 🆕 Selecci�n de transacciones individuales por deudor
+  // 🆕 Selección de transacciones individuales por deudor
   const [selectedTransactionsByDebtor, setSelectedTransactionsByDebtor] = useState<Map<string, Set<string>>>(new Map());
-  
+
+  // ── CXC (Cuentas por Cobrar) ──
+  const [showCxcModal, setShowCxcModal] = useState(false);
+  const [cxcStep, setCxcStep] = useState<1 | 2 | 3>(1);
+  const [cxcPeriodType, setCxcPeriodType] = useState<'all' | 'range'>('all');
+  const [cxcDateFrom, setCxcDateFrom] = useState('');
+  const [cxcDateTo, setCxcDateTo] = useState('');
+  const [cxcRubro, setCxcRubro] = useState<'cafeteria' | 'lunch' | 'all'>('cafeteria');
+  const [cxcClientType, setCxcClientType] = useState<'student' | 'teacher' | 'all'>('all');
+  const [cxcSchool, setCxcSchool] = useState<string>('all');
+  const [cxcList, setCxcList] = useState<Debtor[]>([]);
+  const [cxcLoadingList, setCxcLoadingList] = useState(false);
+  const [cxcChecked, setCxcChecked] = useState<Set<string>>(new Set());
+  const [cxcCopyingId, setCxcCopyingId] = useState<string | null>(null);
+  const [cxcHasGenerated, setCxcHasGenerated] = useState(false);
+
   // Modal de pago
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [currentDebtor, setCurrentDebtor] = useState<Debtor | null>(null);
@@ -250,8 +319,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     try {
       console.log('🔍 Verificando permisos de Cobranzas/Cobrar para rol:', role);
 
-      // Admin General tiene todos los permisos
-      if (role === 'admin_general') {
+      // Admin General y Supervisor de Red pueden ver todas las sedes
+      if (role === 'admin_general' || role === 'supervisor_red') {
         setCanViewAllSchools(true);
         setCanCollect(true);
         return;
@@ -428,34 +497,63 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         : null;
 
 
-      // --- Paginación inline para transactions (cursor por created_at) ---
-      const transactions: any[] = [];
-      {
-        let txCursor: string | null = null;
-        while (true) {
-          let tq = supabase
-            .from('transactions')
-            .select(`*, students(id, full_name, parent_id, grade, section), teacher_profiles(id, full_name), schools(id, name)`)
-            .eq('type', 'purchase')
-            .eq('is_deleted', false)
-            .in('payment_status', ['pending', 'partial'])
-            .order('created_at', { ascending: false })
-            .limit(1000);
-          if (txCursor) tq = tq.lt('created_at', txCursor);
-          if (untilDate) {
-            const ld = new Date(untilDate);
-            ld.setHours(23, 59, 59, 999);
-            tq = tq.lte('created_at', ld.toISOString());
+      // --- RPC: get_billing_pending_transactions (reemplaza el select con joins embebidos
+      //     que causaba 400 Bad Request por URL demasiado larga en PostgREST) ---
+      const untilDateUTC = untilDate
+        ? (() => { const d = new Date(untilDate); d.setHours(23, 59, 59, 999); return d.toISOString(); })()
+        : null;
+
+      // supervisor_red solo ve deudas de cafetería (kiosco/POS), nunca almuerzos.
+      // admin_general y gestor_unidad ven todo (p_transaction_type = null).
+      const txTypeFilter = role === 'supervisor_red' ? 'cafeteria' : null;
+
+      // Paginación por offset: Supabase impone max-rows=1000 a nivel servidor.
+      // Usamos .range(offset, offset+999) para pedir de 1000 en 1000.
+      // A diferencia de cursor-based, offset no pierde filas con timestamps iguales.
+      const rpcRows: any[] = [];
+      const RPC_PAGE = 1000;
+      let rpcPage = 0;
+
+      while (true) {
+        const from = rpcPage * RPC_PAGE;
+        const to = from + RPC_PAGE - 1;
+
+        const { data: batch, error: txErr } = await supabase.rpc(
+          'get_billing_pending_transactions',
+          {
+            p_school_id:        schoolIdFilter ?? null,
+            p_until_date:       untilDateUTC,
+            p_transaction_type: txTypeFilter,
           }
-          if (schoolIdFilter) tq = tq.eq('school_id', schoolIdFilter);
-          const { data: txBatch, error: txErr } = await tq;
-          if (txErr) { console.error('❌ transactions page error:', txErr); break; }
-          if (!txBatch || txBatch.length === 0) break;
-          transactions.push(...txBatch);
-          if (txBatch.length < 1000) break;
-          txCursor = txBatch[txBatch.length - 1].created_at;
-        }
+        ).order('created_at', { ascending: false }).range(from, to);
+
+        if (txErr) { console.error('❌ transactions RPC error:', txErr); break; }
+        if (!batch || batch.length === 0) break;
+        rpcRows.push(...batch);
+        if (batch.length < RPC_PAGE) break;
+        rpcPage++;
       }
+
+      // Rehidratar a formato { ..., students: {...}, teacher_profiles: {...}, schools: {...} }
+      // para que el resto del código funcione sin cambios.
+      const transactions: any[] = (rpcRows || []).map((row: any) => ({
+        ...row,
+        students: row.student_id ? {
+          id:        row.student_id,
+          full_name: row.student_full_name,
+          parent_id: row.student_parent_id,
+          grade:     row.student_grade,
+          section:   row.student_section,
+        } : null,
+        teacher_profiles: row.teacher_id ? {
+          id:        row.teacher_id,
+          full_name: row.teacher_full_name,
+        } : null,
+        schools: row.school_id ? {
+          id:   row.school_id,
+          name: row.school_name,
+        } : null,
+      }));
       
       // --- Paginación inline para lunch_orders (cursor por created_at) ---
       let lunchOrders: any[] = [];
@@ -544,28 +642,32 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         return true;
       }) || [];
 
-      // 🔥 BUSCAR TAMBIÉN TRANSACCIONES PAID PARA EVITAR DUPLICADOS
-      
+      // Buscar transacciones PAID de almuerzos para deduplicar contra lunch_orders.
+      // Paginación por offset (max-rows=1000 del servidor).
       let paidLunchTransactions: any[] = [];
       try {
-        let paidCursor: string | null = null;
+        const PAID_PAGE = 1000;
+        let paidPage = 0;
         while (true) {
-          let pq = supabase
+          const pFrom = paidPage * PAID_PAGE;
+          const pTo = pFrom + PAID_PAGE - 1;
+          let paidQ = supabase
             .from('transactions')
             .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
             .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
+            .not('metadata', 'is', null)
             .order('created_at', { ascending: false })
-            .limit(1000);
-          if (paidCursor) pq = pq.lt('created_at', paidCursor);
-          if (schoolIdFilter) pq = pq.eq('school_id', schoolIdFilter);
-          const { data: pBatch, error: pErr } = await pq;
-          if (pErr) { console.error('❌ paid transactions page error:', pErr); break; }
+            .range(pFrom, pTo);
+          if (schoolIdFilter) paidQ = paidQ.eq('school_id', schoolIdFilter);
+          const { data: pBatch, error: pErr } = await paidQ;
+          if (pErr) { console.error('❌ paid lunch transactions error:', pErr); break; }
           if (!pBatch || pBatch.length === 0) break;
-          paidLunchTransactions.push(...pBatch);
-          if (pBatch.length < 1000) break;
-          paidCursor = pBatch[pBatch.length - 1].created_at;
+          const lunchOnly = pBatch.filter((t: any) => t.metadata?.lunch_order_id);
+          paidLunchTransactions.push(...lunchOnly);
+          if (pBatch.length < PAID_PAGE) break;
+          paidPage++;
         }
       } catch (e) {
         console.error('❌ [BillingCollection] Error fetching paid transactions:', e);
@@ -774,7 +876,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             id, full_name, email, role, school_id,
             schools:school_id(id, name)
           `)
-          .in('id', creatorIds);
+          .in('id', creatorIds)
+          .range(0, 4999);
         
         if (creatorProfiles) {
           creatorProfiles.forEach((p: any) => {
@@ -789,7 +892,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         const { data: creatorTeachers } = await supabase
           .from('teacher_profiles')
           .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
-          .in('id', creatorIds);
+          .in('id', creatorIds)
+          .range(0, 4999);
         
         if (creatorTeachers) {
           creatorTeachers.forEach((tp: any) => {
@@ -867,7 +971,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         const { data, error: parentError } = await supabase
           .from('parent_profiles')
           .select('user_id, full_name, phone_1')
-          .in('user_id', parentIds);
+          .in('user_id', parentIds)
+          .range(0, 4999);
 
         if (parentError) {
           console.error('❌ [BillingCollection] Error fetching parent profiles:', parentError);
@@ -905,13 +1010,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           clientName = transaction.teacher_profiles.full_name;
           clientType = 'teacher';
         } else if (transaction.manual_client_name) {
-          // Cliente manual (sin cuenta)
           clientId = `manual_${transaction.manual_client_name}`;
           clientName = transaction.manual_client_name;
           clientType = 'manual';
         } else {
-          // Transacci�n sin cliente identificado, saltar
-          return;
+          clientId = `unknown_${transaction.school_id || 'none'}`;
+          clientName = 'Sin identificar';
+          clientType = 'manual';
         }
 
         if (!debtorsMap[clientId]) {
@@ -969,14 +1074,23 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       if (studentDebtorIds.length > 0) {
         try {
-          // Buscar recharge_requests pendientes o rechazadas para estos estudiantes
-          const { data: voucherRequests } = await supabase
-            .from('recharge_requests')
-            .select('student_id, status')
-            .in('student_id', studentDebtorIds)
-            .in('request_type', ['lunch_payment', 'debt_payment'])
-            .in('status', ['pending', 'rejected'])
-            .order('created_at', { ascending: false });
+          // Buscar recharge_requests pendientes o rechazadas — con chunking para evitar
+          // 400 Bad Request cuando hay muchos deudores (URL too long en .in()).
+          const VOUCHER_CHUNK = 150;
+          let allVoucherRows: any[] = [];
+          for (let i = 0; i < studentDebtorIds.length; i += VOUCHER_CHUNK) {
+            const chunk = studentDebtorIds.slice(i, i + VOUCHER_CHUNK);
+            const { data: vBatch } = await supabase
+              .from('recharge_requests')
+              .select('student_id, status')
+              .in('student_id', chunk)
+              .in('request_type', ['lunch_payment', 'debt_payment'])
+              .in('status', ['pending', 'rejected'])
+              .order('created_at', { ascending: false })
+              .range(0, 4999);
+            if (vBatch) allVoucherRows = allVoucherRows.concat(vBatch);
+          }
+          const voucherRequests = allVoucherRows;
 
           // Mapa: student_id → mejor estado de voucher
           const voucherMap = new Map<string, 'pending' | 'rejected'>();
@@ -1288,21 +1402,28 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         
         let existingLunchOrderIds = new Set<string>();
         if (lunchOrderIds.length > 0) {
-          // 🔧 FIX: Buscar solo transacciones de tipo purchase con metadata, con l�mite alto
-          const { data: existingTx } = await supabase
-            .from('transactions')
-            .select('metadata')
-            .eq('type', 'purchase')
-            .not('metadata', 'is', null)
-            .limit(100000); // FIX: Evitar truncamiento silencioso
-          
-          if (existingTx) {
-            existingTx.forEach((tx: any) => {
-              if (tx.metadata?.lunch_order_id && lunchOrderIds.includes(tx.metadata.lunch_order_id)) {
-                existingLunchOrderIds.add(tx.metadata.lunch_order_id);
-              }
-            });
+          // Fix: en vez de limit(100000) que genera una URL inmensa, consultamos
+          // con .or() usando los IDs específicos que necesitamos verificar.
+          // Chunked en lotes de 40 para mantener la URL corta.
+          const ANTI_DUP_CHUNK = 40;
+          const allDupTx: any[] = [];
+          for (let i = 0; i < lunchOrderIds.length; i += ANTI_DUP_CHUNK) {
+            const batch = lunchOrderIds.slice(i, i + ANTI_DUP_CHUNK);
+            const orFilter = batch
+              .map((id: string) => `metadata->>lunch_order_id.eq.${id}`)
+              .join(',');
+            const { data: batchTx } = await supabase
+              .from('transactions')
+              .select('metadata')
+              .eq('type', 'purchase')
+              .or(orFilter);
+            if (batchTx) allDupTx.push(...batchTx);
           }
+          allDupTx.forEach((tx: any) => {
+            if (tx.metadata?.lunch_order_id) {
+              existingLunchOrderIds.add(tx.metadata.lunch_order_id);
+            }
+          });
         }
         
         let ticketCounter = 0;
@@ -1471,9 +1592,146 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     }
   };
 
-  const copyMessage = (debtor: Debtor, type: 'all' | 'lunch' | 'cafeteria' = 'all') => {
+  // ────────────────────────────────────────────────────────────────────────
+  // CXC: construir la lista de despacho según filtros del asistente
+  // ────────────────────────────────────────────────────────────────────────
+  // CXC: construir lista de despacho aplicando los filtros del asistente.
+  //
+  // REGLA DE CONSISTENCIA: los montos se derivan siempre de los campos
+  // ya calculados en fetchDebtors (cafeteria_amount / lunch_amount /
+  // total_amount), que a su vez usan Math.abs(transaction.amount) sobre
+  // transacciones con payment_status IN ('pending','partial').
+  // Esto garantiza que el CXC muestre exactamente el mismo número que
+  // aparece en la tabla principal.
+  //
+  // El recálculo desde cero (Math.abs sobre tx crudas) solo se hace
+  // cuando el usuario elige un Rango de Fechas, ya que en ese caso los
+  // campos pre-calculados del deudor no son válidos para el sub-período.
+  // ────────────────────────────────────────────────────────────────────────
+  const buildCxcList = () => {
+    let list = [...filteredDebtors];
+
+    // 1. Filtro de sede adicional del modal
+    if (cxcSchool !== 'all') {
+      list = list.filter(d => d.school_id === cxcSchool);
+    }
+
+    // 2. Filtro de rango de fechas
+    //    → único caso en que recalculamos: los campos pre-calculados no
+    //      sirven para un sub-período específico.
+    if (cxcPeriodType === 'range' && (cxcDateFrom || cxcDateTo)) {
+      const from = cxcDateFrom ? new Date(cxcDateFrom + 'T00:00:00') : null;
+      const to   = cxcDateTo   ? new Date(cxcDateTo   + 'T23:59:59') : null;
+      list = list.map(d => {
+        const txFiltered = d.transactions.filter((t: any) => {
+          const txDate = new Date(t.metadata?.order_created_at || t.created_at);
+          if (from && txDate < from) return false;
+          if (to   && txDate > to)   return false;
+          return true;
+        });
+        if (txFiltered.length === 0) return null;
+        // Recalcular desde cero para el sub-período (mismo método que fetchDebtors)
+        const lunch = txFiltered
+          .filter((t: any) => isLunchTx(t))
+          .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
+        const cafe = txFiltered
+          .filter((t: any) => !isLunchTx(t))
+          .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
+        return { ...d, transactions: txFiltered, total_amount: lunch + cafe, lunch_amount: lunch, cafeteria_amount: cafe };
+      }).filter(Boolean) as Debtor[];
+    }
+
+    // 3. Filtro de rubro
+    //    → usamos los campos pre-calculados del deudor (cafeteria_amount /
+    //      lunch_amount) para que el monto coincida EXACTAMENTE con la tabla.
+    if (cxcRubro === 'cafeteria') {
+      list = list.map(d => {
+        if (d.cafeteria_amount <= 0) return null;
+        const txFiltered = d.transactions.filter((t: any) => !isLunchTx(t));
+        if (txFiltered.length === 0) return null;
+        // Monto = cafeteria_amount pre-calculado (NO re-suma desde las tx)
+        return { ...d, transactions: txFiltered, total_amount: d.cafeteria_amount, lunch_amount: 0 };
+      }).filter(Boolean) as Debtor[];
+    } else if (cxcRubro === 'lunch') {
+      list = list.map(d => {
+        if (d.lunch_amount <= 0) return null;
+        const txFiltered = d.transactions.filter((t: any) => isLunchTx(t));
+        if (txFiltered.length === 0) return null;
+        return { ...d, transactions: txFiltered, total_amount: d.lunch_amount, cafeteria_amount: 0 };
+      }).filter(Boolean) as Debtor[];
+    }
+    // cxcRubro === 'all' → total_amount ya es correcto, no tocar
+
+    // 4. Filtro de tipo de usuario (alumno / profesor / todos)
+    if (cxcClientType === 'student') {
+      list = list.filter(d => d.client_type === 'student');
+    } else if (cxcClientType === 'teacher') {
+      list = list.filter(d => d.client_type === 'teacher');
+    }
+    // 'all' incluye students + teachers + manual
+
+    setCxcList(list);
+    setCxcChecked(new Set());
+  };
+
+  const openCxcModal = () => {
+    setCxcStep(1);
+    setCxcPeriodType('all');
+    setCxcDateFrom('');
+    setCxcDateTo('');
+    setCxcRubro(role === 'supervisor_red' ? 'cafeteria' : 'all');
+    setCxcClientType('all');
+    setCxcSchool('all');
+    setCxcList([]);
+    setCxcChecked(new Set());
+    setCxcHasGenerated(false);
+    setShowCxcModal(true);
+  };
+
+  const cxcTotalAmount = cxcList.reduce((s, d) => s + d.total_amount, 0);
+  const cxcCobradoAmount = cxcList.filter(d => cxcChecked.has(d.id)).reduce((s, d) => s + d.total_amount, 0);
+
+  /**
+   * Carga billing_config para los school_ids dados (una sola consulta).
+   * Devuelve un Map<school_id, fila>.
+   */
+  const fetchBillingConfigBySchools = async (schoolIds: string[]): Promise<Map<string, any>> => {
+    const ids = [...new Set(schoolIds.filter(Boolean))];
+    const m = new Map<string, any>();
+    if (ids.length === 0) return m;
+    try {
+      const { data } = await supabase.from('billing_config').select('*').in('school_id', ids);
+      (data || []).forEach((row: any) => m.set(row.school_id, row));
+    } catch (e) {
+      console.error('[BillingCollection] fetchBillingConfigBySchools:', e);
+    }
+    return m;
+  };
+
+  /**
+   * Elige la plantilla correcta según tipo y cliente.
+   * Prioridad: billing_config de la sede del deudor > estado React (solo disponible si el admin
+   * ya visitó la pestaña Config para esa sede).
+   */
+  const pickTemplate = (
+    type: 'all' | 'lunch' | 'cafeteria',
+    debtor: Debtor,
+    billingRow: any | null
+  ): string => {
+    const r = billingRow || {};
+    const dbStudent   = (r.student_message_template   || r.message_template || '').trim();
+    const dbTeacher   = (r.teacher_message_template   || '').trim();
+    const dbLunch     = (r.lunch_message_template     || '').trim();
+    const dbCafeteria = (r.cafeteria_message_template || '').trim();
+
+    if (type === 'lunch')     return dbLunch     || dbStudent || configLunchTemplate.trim()     || configMessageTemplate.trim();
+    if (type === 'cafeteria') return dbCafeteria || dbStudent || configCafeteriaTemplate.trim() || configMessageTemplate.trim();
+    if (debtor.client_type === 'student') return dbStudent || configStudentTemplate.trim() || configMessageTemplate.trim();
+    return dbTeacher || dbStudent || configTeacherTemplate.trim() || configStudentTemplate.trim() || configMessageTemplate.trim();
+  };
+
+  const copyMessage = async (debtor: Debtor, type: 'all' | 'lunch' | 'cafeteria' = 'all') => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
-    const periodText = period ? `del período: ${period.period_name}` : 'pendiente';
 
     const amount = type === 'lunch' ? debtor.lunch_amount
       : type === 'cafeteria' ? debtor.cafeteria_amount
@@ -1482,43 +1740,58 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     const lunchTransactions = debtor.transactions.filter((t: any) => isLunchTx(t));
     const lunchCount = lunchTransactions.length;
 
-    const template = type === 'lunch' ? (configLunchTemplate.trim() || configMessageTemplate)
-      : type === 'cafeteria' ? (configCafeteriaTemplate.trim() || configMessageTemplate)
-      : debtor.client_type === 'student'
-        ? (configStudentTemplate.trim() || configMessageTemplate)
-        : (configTeacherTemplate.trim() || configStudentTemplate.trim() || configMessageTemplate);
+    // ── 1. Obtener items de POS para el desglose ──
+    const posIds = debtor.transactions
+      .filter((t: any) => !isLunchTx(t) && t.id && !t.id.toString().startsWith('lunch_'))
+      .map((t: any) => t.id);
+
+    const itemsByTxId = new Map<string, any[]>();
+    if (posIds.length > 0) {
+      try {
+        const { data: txItems } = await supabase
+          .from('transaction_items')
+          .select('transaction_id, product_name, quantity, unit_price')
+          .in('transaction_id', posIds)
+          .range(0, 9999);
+        (txItems || []).forEach((item: any) => {
+          const existing = itemsByTxId.get(item.transaction_id) || [];
+          existing.push(item);
+          itemsByTxId.set(item.transaction_id, existing);
+        });
+      } catch (e) {
+        console.error('[copyMessage] Error fetching transaction_items:', e);
+      }
+    }
+
+    // ── 2. Cargar billing_config de la sede del deudor ──
+    const configMap = await fetchBillingConfigBySchools(debtor.school_id ? [debtor.school_id] : []);
+    const billingRow = configMap.get(debtor.school_id) ?? null;
+
+    // ── 3. Elegir plantilla (siempre usa la de la sede correcta) ──
+    const template = pickTemplate(type, debtor, billingRow);
+
+    // ── 4. Construir desglose ──
+    const desglose = buildTransactionDesglose(debtor.transactions, itemsByTxId, type);
 
     let message: string;
-    if (template && template.trim()) {
-      message = resolveMessageTemplate(template, debtor, amount, lunchCount);
+    if (template) {
+      message = resolveMessageTemplate(template, debtor, amount, lunchCount, desglose);
     } else {
-      let clientLine = '';
-      let recipientLine = '';
-
-      if (debtor.client_type === 'student') {
-        clientLine = `El alumno *${debtor.client_name}* tiene un consumo ${periodText}`;
-        recipientLine = `Estimado(a) ${debtor.parent_name || 'Padre/Madre de familia'}`;
-      } else if (debtor.client_type === 'teacher') {
-        clientLine = `El profesor *${debtor.client_name}* tiene un consumo ${periodText}`;
-        recipientLine = `Estimado(a) Profesor(a) ${debtor.client_name}`;
-      } else {
-        clientLine = `*${debtor.client_name}* tiene un consumo ${periodText}`;
-        recipientLine = `Estimado(a) ${debtor.client_name}`;
-      }
-
+      // Fallback solo si la sede no tiene ninguna plantilla guardada
       const typeLabel = type === 'lunch' ? ' de almuerzos' : type === 'cafeteria' ? ' de cafetería' : '';
+      const destinatario = debtor.client_type === 'student' ? (debtor.parent_name || 'Padre/Madre de familia') : debtor.client_name;
+      const periodoLinea = period ? `📅 Período: ${period.period_name}\n` : '';
 
       message = `🔔 *COBRANZA${typeLabel ? typeLabel.toUpperCase() : ''} LIMA CAFÉ 28*
 
-${recipientLine}
+Hola *${destinatario}*, te escribimos de la cafetería.
+Te enviamos el detalle de los consumos pendientes${typeLabel} de *${debtor.client_name}*:
 
-${clientLine}
+${periodoLinea}${desglose}
 
-💰 Monto${typeLabel}: S/ ${amount.toFixed(2)}
+*💰 Total a pagar: S/ ${amount.toFixed(2)}*
 
-📎 Adjuntamos el detalle completo.
-
-Para pagar, contacte con administración.
+Para pagar, contacta con administración.
 Gracias.`;
     }
 
@@ -1580,7 +1853,8 @@ Gracias.`;
         const { data: txItems } = await supabase
           .from('transaction_items')
           .select('transaction_id, product_name, quantity, unit_price, subtotal')
-          .in('transaction_id', realTxIds);
+          .in('transaction_id', realTxIds)
+          .range(0, 9999);
 
         if (txItems) {
           txItems.forEach((item: any) => {
@@ -1715,7 +1989,7 @@ Agradecemos su pronta atención. 🙏`;
     });
   };
 
-  const generateWhatsAppExport = () => {
+  const generateWhatsAppExport = async () => {
     const period = selectedPeriod !== 'all' ? periods.find(p => p.id === selectedPeriod) : null;
     const selectedDebtorsList = filteredDebtors.filter(d => selectedDebtors.has(d.id));
 
@@ -1728,9 +2002,62 @@ Agradecemos su pronta atención. 🙏`;
       return;
     }
 
-    // Generar intervalos aleatorios entre 15 y 300 segundos
+    // ── Batch-fetch transaction_items de todas las transacciones POS ──
+    const allPosIds = selectedDebtorsList.flatMap(d =>
+      d.transactions
+        .filter((t: any) => !isLunchTx(t) && t.id && !t.id.toString().startsWith('lunch_'))
+        .map((t: any) => t.id)
+    );
+
+    const globalItemsByTxId = new Map<string, any[]>();
+    if (allPosIds.length > 0) {
+      // Chunked en lotes de 200 para no generar URLs muy largas
+      const CHUNK = 200;
+      for (let i = 0; i < allPosIds.length; i += CHUNK) {
+        const batch = allPosIds.slice(i, i + CHUNK);
+        try {
+          const { data: txItems } = await supabase
+            .from('transaction_items')
+            .select('transaction_id, product_name, quantity, unit_price')
+            .in('transaction_id', batch)
+            .range(0, 4999);
+          (txItems || []).forEach((item: any) => {
+            const existing = globalItemsByTxId.get(item.transaction_id) || [];
+            existing.push(item);
+            globalItemsByTxId.set(item.transaction_id, existing);
+          });
+        } catch (e) {
+          console.error('[generateWhatsAppExport] Error fetching transaction_items batch:', e);
+        }
+      }
+    }
+
+    // ── Cargar billing_config de todas las sedes involucradas ──
+    const allSchoolIds = selectedDebtorsList.map(d => d.school_id).filter(Boolean);
+    const billingConfigMap = await fetchBillingConfigBySchools(allSchoolIds);
+
+    // ── Construir mensajes con desglose detallado ──
     const messages = selectedDebtorsList.map((debtor, index) => {
-      const delay = Math.floor(Math.random() * (300 - 15 + 1)) + 15; // 15-300 segundos
+      const delay = Math.floor(Math.random() * (300 - 15 + 1)) + 15;
+
+      const desglose = buildTransactionDesglose(debtor.transactions, globalItemsByTxId, 'all');
+
+      const billingRow = billingConfigMap.get(debtor.school_id) ?? null;
+      const template = pickTemplate('all', debtor, billingRow);
+      const periodoLinea = period ? `📅 Período: ${period.period_name}\n` : '';
+
+      let message: string;
+      if (template) {
+        message = resolveMessageTemplate(template, debtor, debtor.total_amount, debtor.transactions.filter((t: any) => isLunchTx(t)).length, desglose);
+      } else {
+        const destinatario = debtor.client_type === 'student'
+          ? (debtor.parent_name || 'Padre/Madre de familia')
+          : debtor.client_name;
+        const desgloseSplit = debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0
+          ? `\n🍽 Almuerzos: S/ ${debtor.lunch_amount.toFixed(2)}\n☕ Cafetería: S/ ${debtor.cafeteria_amount.toFixed(2)}`
+          : '';
+        message = `🔔 *COBRANZA LIMA CAFÉ 28*\n\nHola *${destinatario}*, te escribimos de la cafetería.\nTe enviamos el detalle de los consumos pendientes de *${debtor.client_name}*:\n\n${periodoLinea}${desglose}\n${desgloseSplit}\n*💰 Total a pagar: S/ ${debtor.total_amount.toFixed(2)}*\n\nPara pagar, contacta con administración.\nGracias.`;
+      }
 
       return {
         index: index + 1,
@@ -1741,9 +2068,9 @@ Agradecemos su pronta atención. 🙏`;
         lunch_amount: debtor.lunch_amount.toFixed(2),
         cafeteria_amount: debtor.cafeteria_amount.toFixed(2),
         period: period?.period_name || 'Cuenta Pendiente',
-        message: `🔔 *COBRANZA LIMA CAFÉ 28*\n\nEstimado(a) ${debtor.parent_name}\n\nEl alumno *${debtor.client_name}* tiene un consumo pendiente${period ? ` del per\u00edodo: ${period.period_name}` : ''}\n\n💰 Monto Total: S/ ${debtor.total_amount.toFixed(2)}${debtor.lunch_amount > 0 && debtor.cafeteria_amount > 0 ? `\n🍽 Almuerzos: S/ ${debtor.lunch_amount.toFixed(2)}\n☕ Cafetería: S/ ${debtor.cafeteria_amount.toFixed(2)}` : ''}\n\n📎 Adjuntamos el detalle completo.\n\nPara pagar, contacte con administraci\u00f3n.\nGracias.`,
+        message,
         delay_seconds: delay,
-        pdf_url: '', // Se generar� despu�s
+        pdf_url: '',
       };
     });
 
@@ -1757,8 +2084,8 @@ Agradecemos su pronta atención. 🙏`;
     link.click();
 
     toast({
-      title: '✅ Exportaci�n generada',
-      description: `${messages.length} mensajes con intervalos aleatorios (15-300 seg)`,
+      title: '✅ Exportación generada',
+      description: `${messages.length} mensajes con desglose detallado (intervalos 15-300 seg)`,
     });
   };
 
@@ -1914,63 +2241,40 @@ Agradecemos su pronta atención. 🙏`;
 
       console.log('📊 [Reportes] fetchPaidTransactions ejecutando:', { page, schoolIdFilter, statusFilter, paidDateFrom, paidDateTo });
 
-      // Primero contar el total (query liviana)
-      let countQuery = supabase
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled');
+      // Fix: reemplazamos las dos queries directas con embedded joins
+      // (que causaban 400 Bad Request) por dos RPCs que usan POST.
+      const rpcParams = {
+        p_school_id:   schoolIdFilter ?? null,
+        p_status:      statusFilter !== 'all' ? statusFilter : null,
+        p_date_from:   paidDateFrom ? `${paidDateFrom}T00:00:00` : null,
+        p_date_to:     paidDateTo   ? `${paidDateTo}T23:59:59`   : null,
+        p_search_term: null,
+      };
 
-      if (statusFilter !== 'all') {
-        countQuery = countQuery.eq('payment_status', statusFilter);
-      }
-
-      if (schoolIdFilter) countQuery = countQuery.eq('school_id', schoolIdFilter);
-      if (paidDateFrom) {
-        countQuery = countQuery.gte('created_at', `${paidDateFrom}T00:00:00`);
-      }
-      if (paidDateTo) {
-        countQuery = countQuery.lte('created_at', `${paidDateTo}T23:59:59`);
-      }
-
-      const { count } = await countQuery;
-      console.log('📊 [Reportes] count result:', count);
+      // 1. Contar total
+      const { data: countData, error: countError } = await supabase.rpc(
+        'count_billing_paid_transactions', rpcParams
+      );
+      if (countError) throw countError;
+      const count = Number(countData || 0);
       if (currentPaidRequestId !== fetchPaidRequestId.current) return;
-      setPaidTotalCount(count || 0);
+      setPaidTotalCount(count);
 
-      // Luego cargar solo la página actual
-      const from = (page - 1) * PAID_PER_PAGE;
-      const to = from + PAID_PER_PAGE - 1;
+      // 2. Cargar página actual
+      const offsetVal = (page - 1) * PAID_PER_PAGE;
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        'get_billing_paid_transactions',
+        { ...rpcParams, p_offset: offsetVal, p_limit: PAID_PER_PAGE }
+      );
+      if (rpcError) throw rpcError;
 
-      let query = supabase
-        .from('transactions')
-        .select(`
-          *,
-          students(id, full_name, parent_id),
-          teacher_profiles(id, full_name),
-          schools(id, name)
-        `)
-        .eq('type', 'purchase')
-        .eq('is_deleted', false)
-        .neq('payment_status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (statusFilter !== 'all') {
-        query = query.eq('payment_status', statusFilter);
-      }
-
-      if (schoolIdFilter) query = query.eq('school_id', schoolIdFilter);
-      if (paidDateFrom) {
-        query = query.gte('created_at', `${paidDateFrom}T00:00:00`);
-      }
-      if (paidDateTo) {
-        query = query.lte('created_at', `${paidDateTo}T23:59:59`);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
+      // Rehidratar al formato que espera el resto del componente
+      const data = (rpcData || []).map((row: any) => ({
+        ...row,
+        students:         row.student_id ? { id: row.student_id, full_name: row.student_full_name, parent_id: row.student_parent_id } : null,
+        teacher_profiles: row.teacher_id ? { id: row.teacher_id, full_name: row.teacher_full_name } : null,
+        schools:          row.school_id  ? { id: row.school_id,  name: row.school_name }             : null,
+      }));
 
       // Filtrar transacciones de pedidos cancelados
       const lunchOrderIds = data
@@ -2095,12 +2399,25 @@ Agradecemos su pronta atención. 🙏`;
   };
 
   // Reemplazar variables en un mensaje de plantilla con datos reales
-  const resolveMessageTemplate = (template: string, debtor: any, amount: number, count: number): string => {
+  const resolveMessageTemplate = (
+    template: string,
+    debtor: any,
+    amount: number,
+    count: number,
+    desglose: string = '',
+    billingRow: any = null
+  ): string => {
     const destinatario = debtor.client_type === 'student'
       ? (debtor.parent_name || 'Padre de familia')
       : debtor.client_name || '';
 
-    return template
+    // Usar datos de la fila billing_config específica del deudor si está disponible
+    const bankAccount = billingRow?.bank_account_number || schoolConfig?.bank_account_number || '';
+    const bankCci     = billingRow?.bank_cci             || schoolConfig?.bank_cci             || '';
+    const yapeNum     = billingRow?.yape_number          || schoolConfig?.yape_number          || '';
+    const plinNum     = billingRow?.plin_number          || schoolConfig?.plin_number          || '';
+
+    let result = template
       .replace(/\{nombre_padre\}/g, debtor.parent_name || destinatario)
       .replace(/\{nombre_estudiante\}/g, debtor.client_name || '')
       .replace(/\{nombre\}/g, debtor.client_name || '')
@@ -2110,10 +2427,25 @@ Agradecemos su pronta atención. 🙏`;
       .replace(/\{monto_almuerzo\}/g, (debtor.lunch_amount || 0).toFixed(2))
       .replace(/\{monto_cafeteria\}/g, (debtor.cafeteria_amount || 0).toFixed(2))
       .replace(/\{periodo\}/g, selectedPeriod !== 'all' ? (periods.find(p => p.id === selectedPeriod)?.period_name || '') : '')
-      .replace(/\{numero_cuenta\}/g, schoolConfig?.bank_account_number || '')
-      .replace(/\{numero_cci\}/g, schoolConfig?.bank_cci || '')
-      .replace(/\{numero_yape\}/g, schoolConfig?.yape_number || '')
-      .replace(/\{numero_plin\}/g, schoolConfig?.plin_number || '');
+      .replace(/\{numero_cuenta\}/g, bankAccount)
+      .replace(/\{numero_cci\}/g, bankCci)
+      .replace(/\{numero_yape\}/g, yapeNum)
+      .replace(/\{numero_plin\}/g, plinNum)
+      .replace(/\{desglose\}/g, desglose);
+
+    // Si la plantilla NO tenía {desglose} pero hay detalle disponible, lo agregamos
+    // automáticamente antes del total para que siempre llegue al padre/apoderado.
+    if (desglose && !template.includes('{desglose}')) {
+      // Insertar antes de la línea del monto total (si existe) o al final
+      const totalLine = result.match(/\*?💰.*Total.*\n?/);
+      if (totalLine && totalLine.index !== undefined) {
+        result = result.slice(0, totalLine.index) + desglose + '\n\n' + result.slice(totalLine.index);
+      } else {
+        result = result + '\n\n' + desglose;
+      }
+    }
+
+    return result;
   };
 
   // Guardar solo mensaje + habilitaciones (sin editar números)
@@ -2556,7 +2888,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
         </div>
       )}
 
-      {activeTab !== 'pagos' && activeTab !== 'config' && !loading && (
+      {activeTab === 'cobrar' && !loading && (
         <>
           {/* Acciones masivas */}
           {filteredDebtors.length > 0 && (
@@ -2579,7 +2911,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     </Badge>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <Button
                       variant="outline"
                       size="sm"
@@ -2597,6 +2929,15 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     >
                       <FileText className="h-4 w-4 mr-2" />
                       PDFs Masivos
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-2"
+                      onClick={openCxcModal}
+                      disabled={filteredDebtors.length === 0}
+                    >
+                      <ClipboardList className="h-4 w-4" />
+                      CXC
                     </Button>
                   </div>
                 </div>
@@ -2705,15 +3046,18 @@ Si tienes dudas, comunícate con la administración de tu sede.
             {activeTab === 'cobrar' && (
             <div className="mt-0">
               {/* Lista de deudores */}
-              {filteredDebtors.length === 0 ? (
+              {/* FIX race condition: el empty state SOLO se muestra cuando !loading.
+                  Antes, loading=true + debtors=[] mostraban el spinner Y este mensaje
+                  al mismo tiempo porque este bloque estaba fuera del guard !loading. */}
+              {loading ? null : filteredDebtors.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
                 <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-green-500" />
                 <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                  �Sin deudas pendientes!
+                  ¡Sin deudas pendientes!
                 </h3>
                 <p className="text-gray-500">
-                  No hay consumos sin facturar en el per�odo seleccionado
+                  No hay consumos sin facturar en el período seleccionado
                 </p>
               </CardContent>
             </Card>
@@ -3129,6 +3473,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
                               { var: '{nombre_padre}', desc: 'Padre' },
                               { var: '{nombre_estudiante}', desc: 'Alumno' },
                               { var: '{monto}', desc: 'Monto' },
+                              { var: '{desglose}', desc: 'Detalle consumos' },
+                              { var: '{periodo}', desc: 'Período' },
                               { var: '{numero_cuenta}', desc: 'N° Cuenta' },
                               { var: '{numero_cci}', desc: 'CCI' },
                               { var: '{numero_yape}', desc: 'Yape' },
@@ -3275,6 +3621,382 @@ Si tienes dudas, comunícate con la administración de tu sede.
           </div>
 
       {/* Modal Guía de Pago */}
+      {/* ══════════════════════════════════════════════════════════════════
+          MODAL CXC — Asistente de Cobranza Masiva
+          ══════════════════════════════════════════════════════════════════ */}
+      <Dialog open={showCxcModal} onOpenChange={(open) => { if (!open) setShowCxcModal(false); }}>
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-hidden flex flex-col p-0">
+
+          {/* Header fijo */}
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-indigo-600 text-white rounded-t-lg shrink-0">
+            <div className="flex items-center gap-3">
+              <ClipboardList className="h-6 w-6" />
+              <div>
+                <h2 className="text-lg font-bold">CXC — Cuentas por Cobrar</h2>
+                <p className="text-indigo-200 text-xs">
+                  {cxcStep === 1 ? 'Paso 1 de 3 — Período'
+                    : cxcStep === 2 ? 'Paso 2 de 3 — Rubros'
+                    : cxcList.length === 0 ? 'Paso 3 de 3 — Tipo de usuario'
+                    : `Lista de despacho · ${cxcList.length} deudores · S/ ${cxcTotalAmount.toFixed(2)}`}
+                </p>
+              </div>
+            </div>
+            <button onClick={() => setShowCxcModal(false)} className="text-indigo-200 hover:text-white transition-colors text-xl leading-none">✕</button>
+          </div>
+
+          {/* ── PASO 1: Período ── */}
+          {cxcStep === 1 && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              <p className="text-sm text-gray-600">¿Sobre qué período quieres trabajar la cobranza?</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  onClick={() => setCxcPeriodType('all')}
+                  className={`flex flex-col items-start gap-1 p-4 rounded-xl border-2 text-left transition-all ${cxcPeriodType === 'all' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                >
+                  <span className="font-bold text-gray-900">📋 Todo el histórico</span>
+                  <span className="text-xs text-gray-500">Usa los filtros de fecha y período ya aplicados en la pantalla principal.</span>
+                </button>
+                <button
+                  onClick={() => setCxcPeriodType('range')}
+                  className={`flex flex-col items-start gap-1 p-4 rounded-xl border-2 text-left transition-all ${cxcPeriodType === 'range' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                >
+                  <span className="font-bold text-gray-900">📅 Rango específico</span>
+                  <span className="text-xs text-gray-500">Filtra las transacciones del deudor por un intervalo de fechas personalizado.</span>
+                </button>
+              </div>
+
+              {cxcPeriodType === 'range' && (
+                <div className="grid grid-cols-2 gap-3 mt-2">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-700">Desde</label>
+                    <input
+                      type="date"
+                      value={cxcDateFrom}
+                      onChange={e => setCxcDateFrom(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-700">Hasta</label>
+                    <input
+                      type="date"
+                      value={cxcDateTo}
+                      onChange={e => setCxcDateTo(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-2"
+                  onClick={() => setCxcStep(2)}
+                  disabled={cxcPeriodType === 'range' && !cxcDateFrom && !cxcDateTo}
+                >
+                  Siguiente
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ── PASO 2: Rubros + Sede + Generar ── */}
+          {cxcStep === 2 && cxcList.length === 0 && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              <button onClick={() => setCxcStep(1)} className="flex items-center gap-1 text-xs text-indigo-600 hover:underline mb-1">
+                <ArrowLeft className="h-3 w-3" /> Volver al paso anterior
+              </button>
+
+              {/* Rubro */}
+              <div>
+                <p className="text-sm font-semibold text-gray-700 mb-2">¿Qué rubro deseas cobrar?</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Solo Cafetería — siempre disponible */}
+                  <button
+                    onClick={() => setCxcRubro('cafeteria')}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all ${cxcRubro === 'cafeteria' ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-orange-300'}`}
+                  >
+                    <Coffee className="h-5 w-5 text-orange-600" />
+                    <span className="text-xs font-semibold">Solo Cafetería</span>
+                  </button>
+
+                  {/* Solo Almuerzos — desactivado para supervisor_red */}
+                  <button
+                    onClick={() => role !== 'supervisor_red' && setCxcRubro('lunch')}
+                    disabled={role === 'supervisor_red'}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all
+                      ${role === 'supervisor_red' ? 'opacity-40 cursor-not-allowed border-gray-200' : cxcRubro === 'lunch' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'}`}
+                  >
+                    <UtensilsCrossed className="h-5 w-5 text-green-600" />
+                    <span className="text-xs font-semibold">Solo Almuerzos</span>
+                    {role === 'supervisor_red' && <span className="text-[10px] text-gray-400">No disponible</span>}
+                  </button>
+
+                  {/* Todo — desactivado para supervisor_red */}
+                  <button
+                    onClick={() => role !== 'supervisor_red' && setCxcRubro('all')}
+                    disabled={role === 'supervisor_red'}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all
+                      ${role === 'supervisor_red' ? 'opacity-40 cursor-not-allowed border-gray-200' : cxcRubro === 'all' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                  >
+                    <DollarSign className="h-5 w-5 text-indigo-600" />
+                    <span className="text-xs font-semibold">Todo</span>
+                    {role === 'supervisor_red' && <span className="text-[10px] text-gray-400">No disponible</span>}
+                  </button>
+                </div>
+                {role === 'supervisor_red' && (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 flex items-center gap-1">
+                    ⚠️ Tu rol solo permite ver deudas de Cafetería.
+                  </p>
+                )}
+              </div>
+
+              {/* Sede (si puede ver varias) */}
+              {canViewAllSchools && schools.length > 1 && (
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">¿De qué sede?</p>
+                  <select
+                    value={cxcSchool}
+                    onChange={e => setCxcSchool(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  >
+                    <option value="all">Todas las sedes</option>
+                    {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <div className="flex justify-between pt-2">
+                <Button variant="outline" onClick={() => setCxcStep(1)} className="gap-1">
+                  <ArrowLeft className="h-4 w-4" /> Atrás
+                </Button>
+                <Button
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-2"
+                  onClick={() => setCxcStep(3)}
+                >
+                  Siguiente
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ── PASO 3: Tipo de usuario + Generar ── */}
+          {cxcStep === 3 && cxcList.length === 0 && !cxcHasGenerated && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              <button onClick={() => setCxcStep(2)} className="flex items-center gap-1 text-xs text-indigo-600 hover:underline mb-1">
+                <ArrowLeft className="h-3 w-3" /> Volver al paso anterior
+              </button>
+
+              <div>
+                <p className="text-sm font-semibold text-gray-700 mb-2">¿A quién deseas cobrar?</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setCxcClientType('student')}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all ${cxcClientType === 'student' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+                  >
+                    <GraduationCap className="h-5 w-5 text-blue-600" />
+                    <span className="text-xs font-semibold">Solo Alumnos</span>
+                  </button>
+
+                  <button
+                    onClick={() => setCxcClientType('teacher')}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all ${cxcClientType === 'teacher' ? 'border-amber-500 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                  >
+                    <Briefcase className="h-5 w-5 text-amber-600" />
+                    <span className="text-xs font-semibold">Solo Profesores</span>
+                  </button>
+
+                  <button
+                    onClick={() => setCxcClientType('all')}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all ${cxcClientType === 'all' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                  >
+                    <Users className="h-5 w-5 text-indigo-600" />
+                    <span className="text-xs font-semibold">Todos</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-between pt-2">
+                <Button variant="outline" onClick={() => setCxcStep(2)} className="gap-1">
+                  <ArrowLeft className="h-4 w-4" /> Atrás
+                </Button>
+                <Button
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-2"
+                  onClick={() => { setCxcLoadingList(true); setCxcHasGenerated(true); setTimeout(() => { buildCxcList(); setCxcLoadingList(false); }, 0); }}
+                  disabled={cxcLoadingList}
+                >
+                  {cxcLoadingList ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
+                  Generar lista de despacho
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ── PANTALLA DE OPERACIÓN: Lista de despacho ── */}
+          {cxcStep === 3 && cxcList.length > 0 && (
+            <>
+              {/* Barra de progreso */}
+              <div className="px-6 py-3 border-b bg-gray-50 shrink-0">
+                {/* Etiqueta de contexto: qué período/rubro se está mostrando */}
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                    {cxcPeriodType === 'range' && cxcDateFrom && cxcDateTo
+                      ? `📅 ${cxcDateFrom} → ${cxcDateTo}`
+                      : cxcPeriodType === 'range' && cxcDateFrom
+                      ? `📅 Desde ${cxcDateFrom}`
+                      : cxcPeriodType === 'range' && cxcDateTo
+                      ? `📅 Hasta ${cxcDateTo}`
+                      : '📋 Deuda acumulada histórica'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                    {cxcRubro === 'cafeteria' ? '☕ Solo Cafetería' : cxcRubro === 'lunch' ? '🍽 Solo Almuerzos' : '💰 Todo (cafetería + almuerzos)'}
+                  </span>
+                  {cxcClientType !== 'all' && (
+                    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${cxcClientType === 'student' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {cxcClientType === 'student' ? '🎓 Solo Alumnos' : '👔 Solo Profesores'}
+                    </span>
+                  )}
+                  {cxcSchool !== 'all' && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">
+                      🏫 {schools.find(s => s.id === cxcSchool)?.name || 'Sede específica'}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-sm mb-1.5">
+                  <span className="font-semibold text-gray-700">Progreso de cobranza</span>
+                  <span className="text-gray-500">{cxcChecked.size} / {cxcList.length} cobrados</span>
+                </div>
+                <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-green-500 rounded-full transition-all duration-300"
+                    style={{ width: `${cxcList.length ? (cxcChecked.size / cxcList.length) * 100 : 0}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>Cobrado: <span className="font-semibold text-green-700">S/ {cxcCobradoAmount.toFixed(2)}</span></span>
+                  <span>Pendiente: <span className="font-semibold text-red-600">S/ {(cxcTotalAmount - cxcCobradoAmount).toFixed(2)}</span></span>
+                  <span>Total: <span className="font-semibold text-gray-900">S/ {cxcTotalAmount.toFixed(2)}</span></span>
+                </div>
+              </div>
+
+              {/* Toolbar de filtro rápido */}
+              <div className="px-6 py-2 border-b shrink-0 flex items-center gap-2">
+                <button
+                  onClick={() => { const all = new Set(cxcList.map(d => d.id)); setCxcChecked(all); }}
+                  className="text-xs text-green-700 hover:underline"
+                >Marcar todos</button>
+                <span className="text-gray-300">|</span>
+                <button
+                  onClick={() => setCxcChecked(new Set())}
+                  className="text-xs text-red-500 hover:underline"
+                >Limpiar</button>
+                <span className="text-gray-300">|</span>
+                <button
+                  onClick={() => { setCxcList([]); setCxcHasGenerated(false); setCxcStep(1); }}
+                  className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                ><ArrowLeft className="h-3 w-3" /> Cambiar filtros</button>
+              </div>
+
+              {/* Lista scrolleable */}
+              <div className="flex-1 overflow-y-auto divide-y">
+                {cxcList.map((debtor) => {
+                  const isCobrado = cxcChecked.has(debtor.id);
+                  const isCopying = cxcCopyingId === debtor.id;
+                  return (
+                    <div
+                      key={debtor.id}
+                      className={`flex items-center gap-3 px-5 py-3 transition-colors ${isCobrado ? 'bg-green-50' : 'hover:bg-gray-50'}`}
+                    >
+                      {/* Checkbox de cobrado */}
+                      <button
+                        onClick={() => {
+                          const next = new Set(cxcChecked);
+                          if (next.has(debtor.id)) next.delete(debtor.id); else next.add(debtor.id);
+                          setCxcChecked(next);
+                        }}
+                        className="shrink-0"
+                        title={isCobrado ? 'Marcar como pendiente' : 'Marcar como cobrado'}
+                      >
+                        {isCobrado
+                          ? <CheckSquare className="h-5 w-5 text-green-600" />
+                          : <Square className="h-5 w-5 text-gray-400" />}
+                      </button>
+
+                      {/* Datos */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-semibold text-sm truncate ${isCobrado ? 'text-green-800 line-through' : 'text-gray-900'}`}>
+                          {debtor.client_name}
+                        </p>
+                        {debtor.client_type === 'student' && debtor.parent_name && (
+                          <p className="text-xs text-gray-500 truncate">👤 {debtor.parent_name}</p>
+                        )}
+                        {debtor.parent_phone && (
+                          <p className="text-xs text-gray-500 flex items-center gap-1">
+                            <Phone className="h-3 w-3" />{debtor.parent_phone}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Monto */}
+                      <div className="shrink-0 text-right">
+                        <p className={`font-bold text-sm ${isCobrado ? 'text-green-700' : 'text-red-600'}`}>
+                          S/ {debtor.total_amount.toFixed(2)}
+                        </p>
+                        <p className="text-[10px] text-gray-400">{debtor.transaction_count} tx</p>
+                      </div>
+
+                      {/* Botón copiar mensaje */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isCopying}
+                        className="shrink-0 h-8 gap-1 text-xs"
+                        onClick={async () => {
+                          setCxcCopyingId(debtor.id);
+                          await copyMessage(debtor, cxcRubro === 'all' ? 'all' : cxcRubro === 'lunch' ? 'lunch' : 'cafeteria');
+                          setCxcCopyingId(null);
+                        }}
+                      >
+                        {isCopying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Copy className="h-3 w-3" />}
+                        {isCopying ? '' : 'Copiar'}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3 border-t bg-gray-50 shrink-0 flex items-center justify-between">
+                <span className="text-xs text-gray-500">
+                  {cxcChecked.size === cxcList.length && cxcList.length > 0
+                    ? '✅ ¡Cobranza completada!'
+                    : `${cxcList.length - cxcChecked.size} pendientes`}
+                </span>
+                <Button variant="outline" size="sm" onClick={() => setShowCxcModal(false)}>
+                  Cerrar
+                </Button>
+              </div>
+            </>
+          )}
+
+          {/* Estado vacío: solo se muestra si ya se hizo clic en Generar (cxcLoadingList fue true) */}
+          {cxcStep === 3 && !cxcLoadingList && cxcList.length === 0 && cxcHasGenerated && (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-gray-500 space-y-3">
+              <CheckCircle2 className="h-12 w-12 text-green-400" />
+              <p className="font-semibold text-gray-700">Sin deudores con este filtro</p>
+              <p className="text-xs text-gray-400">Prueba con otro rubro, sede, tipo de usuario o período.</p>
+              <Button variant="outline" size="sm" onClick={() => { setCxcHasGenerated(false); setCxcStep(1); }} className="gap-1 mt-2">
+                <ArrowLeft className="h-3 w-3" /> Cambiar filtros
+              </Button>
+            </div>
+          )}
+
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showPaymentGuide} onOpenChange={setShowPaymentGuide}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>

@@ -1089,9 +1089,9 @@ export const AccessControlModuleV2 = () => {
           onOpenChange={setResetPasswordModalOpen}
           userEmail={userToResetPassword.email}
           userName={userToResetPassword.full_name}
+          recipientKind="staff"
           onSuccess={() => {
-            console.log('✅ Contraseña reseteada exitosamente');
-            fetchUsers(); // Refrescar la lista si es necesario
+            fetchUsers();
           }}
         />
       )}

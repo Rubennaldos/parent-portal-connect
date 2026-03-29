@@ -377,6 +377,11 @@ export default function InventoryMatrixView() {
                             onFocus={(e) => e.target.select()}
                             onBlur={() => handleStockBlur(product.id, school.id)}
                             onKeyDown={(e) => {
+                              // Capa 1 QA: bloquear caracteres no numéricos antes de que lleguen al onChange
+                              if (['-', '+', 'e', 'E', '.', ','].includes(e.key)) {
+                                e.preventDefault();
+                                return;
+                              }
                               if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                             }}
                             className={`w-11 h-6 text-center text-[11px] font-bold rounded border transition-colors
