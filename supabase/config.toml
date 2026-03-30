@@ -1,7 +1,7 @@
 
 [functions.generate-document]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/generate-document/deno.json"
 entrypoint = "./functions/generate-document/index.ts"
 

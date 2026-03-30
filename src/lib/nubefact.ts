@@ -6,6 +6,7 @@ export interface ClienteComprobante {
   nombre: string;
   tipo_doc?: number;   // 0=sin doc, 1=DNI, 6=RUC
   numero_doc?: string;
+  direccion?: string;  // obligatorio para facturas, opcional para boletas
   email?: string;
 }
 

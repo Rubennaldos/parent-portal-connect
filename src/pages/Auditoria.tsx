@@ -7,7 +7,18 @@ import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -44,6 +55,7 @@ import {
   Upload,
   Link,
   X,
+  XOctagon,
   ZoomIn,
   ExternalLink,
   Info,
@@ -201,6 +213,15 @@ const Auditoria = () => {
   const [voucherDetalle, setVoucherDetalle] = useState<AuditoriaVoucher | null>(null);
   // Aprobación override desde Auditoría
   const [aprobandoId, setAprobandoId] = useState<string | null>(null);
+
+  // Rechazo con motivo
+  const [rechazandoVoucher, setRechazandoVoucher] = useState<AuditoriaVoucher | null>(null);
+  const [motivoRechazo, setMotivoRechazo] = useState('');
+  const [guardandoRechazo, setGuardandoRechazo] = useState(false);
+
+  // Selección múltiple
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [aprobandoMasivo, setAprobandoMasivo] = useState(false);
 
   // Logs
   const [logs, setLogs] = useState<HuellaLog[]>([]);
@@ -529,6 +550,213 @@ const Auditoria = () => {
     }
   };
 
+  // ──────────────────────────────────────────────────────────
+  // Rechazo con motivo — desde Auditoría
+  // ──────────────────────────────────────────────────────────
+  const handleConfirmarRechazo = async () => {
+    if (!rechazandoVoucher || !motivoRechazo.trim()) return;
+    const v = rechazandoVoucher;
+    setGuardandoRechazo(true);
+    try {
+      // 1. Buscar la cobranza vinculada
+      let req: { id: string; status: string } | null = null;
+
+      if (v.id_cobranza) {
+        const { data } = await supabase
+          .from('recharge_requests')
+          .select('id, status')
+          .eq('id', v.id_cobranza)
+          .single();
+        req = data;
+      } else if (v.nro_operacion) {
+        const { data } = await supabase
+          .from('recharge_requests')
+          .select('id, status')
+          .eq('reference_code', v.nro_operacion)
+          .in('status', ['pending', 'approved'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        req = data;
+      }
+
+      // 2. Actualizar recharge_requests a rejected con motivo (si existe y no está ya rechazada)
+      if (req && req.status !== 'rejected' && req.status !== 'cancelled') {
+        const { error: rejErr } = await supabase
+          .from('recharge_requests')
+          .update({
+            status: 'rejected',
+            rejection_reason: motivoRechazo.trim(),
+          })
+          .eq('id', req.id);
+        if (rejErr) throw rejErr;
+      }
+
+      // 3. Actualizar auditoria_vouchers a RECHAZADO con el motivo del admin
+      const { error: audErr } = await supabase
+        .from('auditoria_vouchers')
+        .update({
+          estado_ia: 'RECHAZADO',
+          analisis_ia: {
+            ...(v.analisis_ia ?? {}),
+            estado: 'RECHAZADO',
+            motivo: `[RECHAZADO POR ADMIN] ${motivoRechazo.trim()}`,
+            motivo_admin: motivoRechazo.trim(),
+            override_manual: true,
+            rechazado_at: new Date().toISOString(),
+            rechazado_by: user?.id,
+          },
+        })
+        .eq('id', v.id);
+      if (audErr) throw audErr;
+
+      toast({
+        title: '🚫 Comprobante rechazado',
+        description: 'El motivo quedó guardado y será visible para el administrador.',
+      });
+
+      setRechazandoVoucher(null);
+      setMotivoRechazo('');
+      setVoucherDetalle(null);
+      await fetchAll();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al rechazar', description: err.message });
+    } finally {
+      setGuardandoRechazo(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────
+  // Aprobación masiva
+  // ──────────────────────────────────────────────────────────
+  const handleAprobarMasivo = async () => {
+    if (selectedIds.size === 0) return;
+    setAprobandoMasivo(true);
+    let aprobados = 0;
+    let errores = 0;
+
+    const targets = vouchersFiltrados.filter(v => selectedIds.has(v.id));
+
+    for (const v of targets) {
+      try {
+        // Buscar cobranza vinculada
+        let req: { id: string; student_id: string; amount: number; status: string; request_type?: string } | null = null;
+
+        if (v.id_cobranza) {
+          const { data } = await supabase
+            .from('recharge_requests')
+            .select('id, student_id, amount, status, request_type')
+            .eq('id', v.id_cobranza)
+            .single();
+          req = data;
+        } else if (v.nro_operacion) {
+          const { data } = await supabase
+            .from('recharge_requests')
+            .select('id, student_id, amount, status, request_type')
+            .eq('reference_code', v.nro_operacion)
+            .in('status', ['pending', 'rejected'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          req = data;
+        }
+
+        if (!req || req.status === 'cancelled') continue;
+        if (req.status === 'approved') {
+          // Ya aprobada — solo sincronizar auditoría
+          await supabase.from('auditoria_vouchers').update({ estado_ia: 'VALIDO' }).eq('id', v.id);
+          aprobados++;
+          continue;
+        }
+
+        // Override de auditoria si está RECHAZADO
+        if (v.estado_ia === 'RECHAZADO') {
+          await supabase
+            .from('auditoria_vouchers')
+            .update({
+              estado_ia: 'SOSPECHOSO',
+              analisis_ia: {
+                ...(v.analisis_ia ?? {}),
+                estado: 'SOSPECHOSO',
+                motivo: `[APROBACIÓN MASIVA POR ADMIN] ${(v.analisis_ia?.motivo as string) ?? ''}`,
+                override_manual: true,
+                override_at: new Date().toISOString(),
+                override_by: user?.id,
+              },
+            })
+            .eq('id', v.id);
+        }
+
+        // Aprobar cobranza
+        const { data: updated } = await supabase
+          .from('recharge_requests')
+          .update({ status: 'approved', approved_by: user?.id, approved_at: new Date().toISOString() })
+          .eq('id', req.id)
+          .in('status', ['pending', 'rejected'])
+          .select('id');
+
+        if (!updated || updated.length === 0) continue;
+
+        // Ajustar saldo si es recarga
+        if (req.request_type === 'recharge') {
+          await supabase.rpc('adjust_student_balance', {
+            p_student_id: req.student_id,
+            p_amount: req.amount,
+          });
+        }
+
+        // Marcar VALIDO en auditoría
+        await supabase
+          .from('auditoria_vouchers')
+          .update({
+            estado_ia: 'VALIDO',
+            analisis_ia: {
+              ...(v.analisis_ia ?? {}),
+              estado: 'VALIDO',
+              motivo_override: `Aprobado masivamente por admin.`,
+              override_manual: true,
+              override_at: new Date().toISOString(),
+              override_by: user?.id,
+            },
+          })
+          .eq('id', v.id);
+
+        aprobados++;
+      } catch {
+        errores++;
+      }
+    }
+
+    toast({
+      title: `✅ Aprobación masiva completada`,
+      description: `${aprobados} aprobado${aprobados !== 1 ? 's' : ''}${errores > 0 ? `, ${errores} con error` : ''}.`,
+    });
+
+    setSelectedIds(new Set());
+    setAprobandoMasivo(false);
+    await fetchAll();
+  };
+
+  // Helpers de selección múltiple
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      const aprobables = vouchersFiltrados
+        .filter(v => (v.estado_ia === 'SOSPECHOSO' || v.estado_ia === 'RECHAZADO') && !v.analisis_ia?.es_desvio_fondos && (v.id_cobranza || v.nro_operacion))
+        .map(v => v.id);
+      setSelectedIds(new Set(aprobables));
+    } else {
+      setSelectedIds(new Set());
+    }
+  };
+
+  const toggleSelect = (id: string, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-slate-50">
 
@@ -775,6 +1003,20 @@ const Auditoria = () => {
                   Comprobantes analizados por IA
                 </CardTitle>
                 <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  {/* Botón aprobar seleccionados — solo visible cuando hay selección */}
+                  {selectedIds.size > 0 && (
+                    <Button
+                      size="sm"
+                      onClick={handleAprobarMasivo}
+                      disabled={aprobandoMasivo}
+                      className="h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                    >
+                      {aprobandoMasivo
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Aprobando...</>
+                        : <><CheckCircle2 className="h-3.5 w-3.5" /> Aprobar seleccionados ({selectedIds.size})</>
+                      }
+                    </Button>
+                  )}
                   {/* Búsqueda */}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -823,6 +1065,19 @@ const Auditoria = () => {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-gray-50 hover:bg-gray-50">
+                        {/* Checkbox seleccionar todos */}
+                        <TableHead className="w-10 text-center">
+                          <Checkbox
+                            checked={
+                              selectedIds.size > 0 &&
+                              vouchersFiltrados
+                                .filter(v => (v.estado_ia === 'SOSPECHOSO' || v.estado_ia === 'RECHAZADO') && !v.analisis_ia?.es_desvio_fondos && (v.id_cobranza || v.nro_operacion))
+                                .every(v => selectedIds.has(v.id))
+                            }
+                            onCheckedChange={(checked) => toggleSelectAll(!!checked)}
+                            aria-label="Seleccionar todos"
+                          />
+                        </TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Estado IA</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">N° Operación</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Banco</TableHead>
@@ -846,11 +1101,24 @@ const Auditoria = () => {
                         const destinatario = (v.analisis_ia?.destinatario_detectado as string) ?? null;
                         const esSospechoso = v.estado_ia === 'SOSPECHOSO';
                         const esRechazado = v.estado_ia === 'RECHAZADO';
+                        const esAprobable = (esSospechoso || esRechazado) && !v.analisis_ia?.es_desvio_fondos && (v.id_cobranza || v.nro_operacion);
                         return (
                         <TableRow
                           key={v.id}
-                          className={`hover:bg-gray-50/50 ${v._is_duplicate ? 'bg-orange-50/40' : ''}`}
+                          className={`hover:bg-gray-50/50 ${v._is_duplicate ? 'bg-orange-50/40' : ''} ${selectedIds.has(v.id) ? 'bg-indigo-50/60' : ''}`}
                         >
+                          {/* Checkbox por fila */}
+                          <TableCell className="text-center">
+                            {esAprobable ? (
+                              <Checkbox
+                                checked={selectedIds.has(v.id)}
+                                onCheckedChange={(checked) => toggleSelect(v.id, !!checked)}
+                                aria-label={`Seleccionar voucher ${v.nro_operacion ?? v.id}`}
+                              />
+                            ) : (
+                              <span className="block w-4 h-4" />
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1">
                               <EstadoBadge estado={v.estado_ia} />
@@ -966,30 +1234,38 @@ const Auditoria = () => {
                                   <Info className="h-3.5 w-3.5" /> Detalle
                                 </button>
                               </div>
-                              {/* Botón "Aprobar" para SOSPECHOSO y RECHAZADO */}
+                              {/* Botones Aprobar y Rechazar — solo para SOSPECHOSO/RECHAZADO */}
                               {/* NUNCA para desvío de fondos (fraude confirmado) */}
-                              {(esSospechoso || esRechazado) &&
-                                !(v.analisis_ia?.es_desvio_fondos as boolean) &&
-                                (v.id_cobranza || v.nro_operacion) && (
-                                <button
-                                  onClick={() => handleAprobarOverride(v)}
-                                  disabled={aprobandoId === v.id}
-                                  className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border ${
-                                    esSospechoso
-                                      ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 border-amber-300'
-                                      : 'text-orange-700 bg-orange-100 hover:bg-orange-200 border-orange-300'
-                                  }`}
-                                  title={
-                                    esSospechoso
-                                      ? 'El comprobante tiene alertas. Verifica la imagen antes de aprobar.'
-                                      : 'Aprobar manualmente ignorando el rechazo de la IA'
-                                  }
-                                >
-                                  {aprobandoId === v.id
-                                    ? <><Loader2 className="h-3 w-3 animate-spin" /> Aprobando...</>
-                                    : <><CheckCircle2 className="h-3 w-3" /> Aprobar</>
-                                  }
-                                </button>
+                              {esAprobable && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleAprobarOverride(v)}
+                                    disabled={aprobandoId === v.id}
+                                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border ${
+                                      esSospechoso
+                                        ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                                        : 'text-orange-700 bg-orange-100 hover:bg-orange-200 border-orange-300'
+                                    }`}
+                                    title={
+                                      esSospechoso
+                                        ? 'El comprobante tiene alertas. Verifica la imagen antes de aprobar.'
+                                        : 'Aprobar manualmente ignorando el rechazo de la IA'
+                                    }
+                                  >
+                                    {aprobandoId === v.id
+                                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Aprobando...</>
+                                      : <><CheckCircle2 className="h-3 w-3" /> Aprobar</>
+                                    }
+                                  </button>
+                                  <button
+                                    onClick={() => { setRechazandoVoucher(v); setMotivoRechazo(''); }}
+                                    disabled={aprobandoId === v.id}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border text-red-700 bg-red-50 hover:bg-red-100 border-red-300"
+                                    title="Rechazar este comprobante con un motivo"
+                                  >
+                                    <XOctagon className="h-3 w-3" /> Rechazar
+                                  </button>
+                                </div>
                               )}
                               {/* Aviso cuando es desvío de fondos — nunca se aprueba */}
                               {(v.analisis_ia?.es_desvio_fondos as boolean) && (
@@ -1301,6 +1577,73 @@ const Auditoria = () => {
 
       {/* ── FioBot — Asistente Financiero flotante ── */}
       <ChatAuditoria />
+
+      {/* ── Modal de Rechazo con Motivo ── */}
+      <Dialog
+        open={!!rechazandoVoucher}
+        onOpenChange={(open) => { if (!open && !guardandoRechazo) { setRechazandoVoucher(null); setMotivoRechazo(''); } }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <XOctagon className="h-5 w-5" />
+              Rechazar comprobante
+            </DialogTitle>
+            <DialogDescription>
+              {rechazandoVoucher?.nro_operacion
+                ? `N° operación: ${rechazandoVoucher.nro_operacion}`
+                : 'El motivo quedará registrado y será visible para el administrador.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="motivo-rechazo" className="text-sm font-semibold text-gray-700">
+                Motivo de rechazo <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="motivo-rechazo"
+                value={motivoRechazo}
+                onChange={(e) => setMotivoRechazo(e.target.value)}
+                placeholder="Ej: El número de operación no coincide con el del comprobante, imagen alterada, datos incorrectos..."
+                className="min-h-[100px] text-sm resize-none"
+                autoFocus
+              />
+              {motivoRechazo.trim().length === 0 && (
+                <p className="text-xs text-gray-400">El motivo es obligatorio para continuar.</p>
+              )}
+            </div>
+
+            {rechazandoVoucher && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700 space-y-0.5">
+                <p><span className="font-semibold">Banco:</span> {rechazandoVoucher.banco_detectado ?? '—'}</p>
+                <p><span className="font-semibold">Monto:</span> {rechazandoVoucher.monto_detectado != null ? `S/ ${Number(rechazandoVoucher.monto_detectado).toFixed(2)}` : '—'}</p>
+                <p><span className="font-semibold">Estado actual:</span> {rechazandoVoucher.estado_ia}</p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { setRechazandoVoucher(null); setMotivoRechazo(''); }}
+              disabled={guardandoRechazo}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmarRechazo}
+              disabled={guardandoRechazo || !motivoRechazo.trim()}
+            >
+              {guardandoRechazo
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Rechazando...</>
+                : <><XOctagon className="h-4 w-4 mr-2" /> Confirmar rechazo</>
+              }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Visor de imagen in-page (cierra con X o clic fuera) ── */}
       {imagenAbierta && (

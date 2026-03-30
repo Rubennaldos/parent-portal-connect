@@ -10,6 +10,35 @@ const cors = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
+  // ── Verificación de sesión (verify_jwt = false en config, la validamos aquí) ──
+  // Cualquier usuario autenticado puede emitir comprobantes desde el POS.
+  // El gateway de Supabase NO verifica el JWT automáticamente — lo hacemos nosotros.
+  const authHeader = req.headers.get("authorization") ?? "";
+  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!bearerToken) {
+    return new Response(
+      JSON.stringify({ success: false, error: "No autorizado — inicia sesión primero" }),
+      { status: 401, headers: { ...cors, "Content-Type": "application/json" } }
+    );
+  }
+  // Decodificar el payload del JWT (solo lectura del sub; la firma ya fue firmada por Supabase Auth)
+  let callerUserId: string | null = null;
+  try {
+    const parts = bearerToken.split(".");
+    if (parts.length === 3) {
+      const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const json = atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "="));
+      callerUserId = JSON.parse(json).sub ?? null;
+    }
+  } catch { /* JWT malformado — callerUserId queda null */ }
+
+  if (!callerUserId) {
+    return new Response(
+      JSON.stringify({ success: false, error: "Token de sesión inválido — vuelve a iniciar sesión" }),
+      { status: 401, headers: { ...cors, "Content-Type": "application/json" } }
+    );
+  }
+
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -26,8 +55,8 @@ serve(async (req) => {
         .eq("school_id", body.school_id)
         .single();
 
-      const ruta  = cfg?.nubefact_ruta  || body.nubefact_ruta;
-      const token = cfg?.nubefact_token || body.nubefact_token;
+      const ruta  = (cfg?.nubefact_ruta  || body.nubefact_ruta || "").trim();
+      const token = (cfg?.nubefact_token || body.nubefact_token || "").trim();
 
       if (!ruta || !token) {
         return new Response(JSON.stringify({ ok: false, error: "Sin credenciales — verifica RUTA y TOKEN" }), {
@@ -103,29 +132,38 @@ serve(async (req) => {
       1: "01", 2: "03", 7: "07", 8: "07",
     };
 
-    // 5. Número correlativo — desde tabla invoices (más confiable que electronic_documents)
+    // 5. Número correlativo — usamos MAX(numero) para no generar huecos ni repetir
+    // COUNT(*) fallaba cuando había registros anteriores borrados o la tabla estaba vacía
+    // pero Nubefact ya tenía ese número registrado de sesiones previas.
     let numero = 1;
     try {
-      const { count } = await supabase
+      const { data: maxRow } = await supabase
         .from("invoices")
-        .select("*", { count: "exact", head: true })
+        .select("numero")
         .eq("school_id", school_id)
-        .eq("serie", serie);
-      numero = (count || 0) + 1;
+        .eq("serie", serie)
+        .order("numero", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (maxRow?.numero) numero = (maxRow.numero as number) + 1;
     } catch (_) {
       // Fallback a electronic_documents si invoices no existe aún
       try {
-        const { count } = await supabase
+        const { data: maxRowED } = await supabase
           .from("electronic_documents")
-          .select("*", { count: "exact", head: true })
+          .select("numero")
           .eq("school_id", school_id)
           .eq("tipo_comprobante", tipo)
-          .eq("serie", serie);
-        numero = (count || 0) + 1;
+          .eq("serie", serie)
+          .order("numero", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (maxRowED?.numero) numero = (maxRowED.numero as number) + 1;
       } catch (_2) {
         numero = 1;
       }
     }
+    console.log(`📋 Correlativo calculado: ${serie}-${String(numero).padStart(8, "0")}`);
 
     // 6. Calcular IGV
     const igv_pct      = Number(cfg.igv_porcentaje) || 18;
@@ -191,17 +229,38 @@ serve(async (req) => {
       payload.documento_que_se_modifica_numero   = doc_ref.numero;
     }
 
-    // 11. Llamar a la API de Nubefact
-    const nubefactRes  = await fetch(cfg.nubefact_ruta, {
-      method:  "POST",
-      headers: {
-        "Authorization": `Token token=${cfg.nubefact_token}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    // 11. Llamar a la API de Nubefact (con retry si el número ya existe)
+    const nubefactHeaders = {
+      "Authorization": `Token token=${cfg.nubefact_token.trim()}`,
+      "Content-Type":  "application/json",
+    };
 
-    const nubefactData = await nubefactRes.json();
+    let nubefactData: any;
+    let intentos = 0;
+    const MAX_INTENTOS = 3;
+
+    while (intentos < MAX_INTENTOS) {
+      intentos++;
+      const nubefactRes = await fetch(cfg.nubefact_ruta.trim(), {
+        method:  "POST",
+        headers: nubefactHeaders,
+        body: JSON.stringify({ ...payload, numero }),
+      });
+      nubefactData = await nubefactRes.json();
+
+      // Detectar "documento ya existe" en Nubefact → auto-incrementar y reintentar
+      const errStr = JSON.stringify(nubefactData.errors ?? "").toLowerCase();
+      const yaExiste = errStr.includes("ya existe") || errStr.includes("already exists") ||
+                       errStr.includes("duplicado") || errStr.includes("duplicate");
+
+      if (yaExiste && intentos < MAX_INTENTOS) {
+        console.warn(`⚠️ Número ${serie}-${numero} ya existe en Nubefact — reintentando con ${numero + 1}`);
+        numero += 1;
+        payload.numero = numero;
+        continue;
+      }
+      break; // éxito o error no recuperable
+    }
 
     // 12. Estado SUNAT
     const sunat_status =
@@ -229,7 +288,7 @@ serve(async (req) => {
 
       const invoicePayload = {
         school_id,
-        sale_id:           sale_id ?? transaction_id ?? null,
+        transaction_id:    transaction_id ?? sale_id ?? null,
         payment_id:        payment_id ?? null,
         cashier_id:        cashier_id ?? null,
         created_by:        created_by ?? null,

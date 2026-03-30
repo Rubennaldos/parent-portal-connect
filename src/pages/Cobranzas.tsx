@@ -682,6 +682,7 @@ const Cobranzas = () => {
                   <BillingNubefactConfig />
                 </div>
               )}
+
             </div>
           </CardContent>
         </Card>

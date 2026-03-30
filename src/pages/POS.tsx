@@ -178,6 +178,10 @@ interface Product {
 interface CartItem {
   product: Product;
   quantity: number;
+  /** true cuando es una venta libre (sin producto del inventario) */
+  is_custom?: boolean;
+  /** ID único del ítem en el carrito (necesario para ventas libres duplicadas) */
+  cart_id?: string;
 }
 
 // Función para asignar iconos a categorías dinámicamente
@@ -322,6 +326,12 @@ const POS = () => {
   const [currentSplitAmount, setCurrentSplitAmount] = useState('');
   const [currentSplitOperationCode, setCurrentSplitOperationCode] = useState('');
   const [currentSplitPhoneNumber, setCurrentSplitPhoneNumber] = useState('');
+
+  // ── Modal Venta Libre ──────────────────────────────────────────
+  const [showCustomSaleModal, setShowCustomSaleModal] = useState(false);
+  const [customSaleConcept, setCustomSaleConcept] = useState('');
+  const [customSalePrice, setCustomSalePrice] = useState('');
+  const [customSaleQty, setCustomSaleQty] = useState('1');
 
   // Modal para seleccionar tipo de comprobante
   const [showDocumentTypeDialog, setShowDocumentTypeDialog] = useState(false);
@@ -1020,9 +1030,13 @@ const POS = () => {
       return;
     }
 
+    // admin_general y superadmin no tienen sede asignada pero pueden ver todo — tratar como global
+    const isAdminSinSede = !userSchoolId && (role === 'admin_general' || role === 'superadmin');
+    const efectivamenteGlobal = global || isAdminSinSede;
+
     // 🔒 SEGURIDAD: Si no es búsqueda global y no tenemos la sede del cajero,
     // NO mostrar ningún resultado — nunca exponer datos de otras sedes por defecto.
-    if (!global && !userSchoolId) {
+    if (!efectivamenteGlobal && !userSchoolId) {
       console.warn('🔒 [searchRegistered] Bloqueado: modo local sin userSchoolId. No se exponen datos.');
       setRegisteredResults([]);
       return;
@@ -1038,8 +1052,8 @@ const POS = () => {
         .ilike('full_name', `%${query.trim()}%`);
 
       // 🔒 El filtro de sede es OBLIGATORIO en modo local.
-      // Solo se omite cuando global === true (el cajero aceptó la advertencia de auditoría).
-      if (!global) {
+      // Solo se omite cuando global === true o el usuario es admin sin sede asignada.
+      if (!efectivamenteGlobal) {
         studentsQuery = studentsQuery.eq('school_id', userSchoolId!);
       }
 
@@ -1050,13 +1064,13 @@ const POS = () => {
         .ilike('full_name', `%${query.trim()}%`);
 
       // 🔒 Igual para profesores: filtro obligatorio en modo local.
-      if (!global) {
+      if (!efectivamenteGlobal) {
         teachersQuery = teachersQuery.or(`school_1_id.eq.${userSchoolId},school_2_id.eq.${userSchoolId}`);
       }
 
       // Límites diferenciados: modo global permite más resultados pero con techo duro
-      const studentLimit = global ? 20 : 8;
-      const teacherLimit = global ? 10 : 4;
+      const studentLimit = efectivamenteGlobal ? 20 : 8;
+      const teacherLimit = efectivamenteGlobal ? 10 : 4;
 
       const [studentsResult, teachersResult] = await Promise.all([
         studentsQuery.limit(studentLimit),
@@ -1436,8 +1450,40 @@ const POS = () => {
     setCart(cart.filter(item => item.product.id !== productId));
   };
 
+  /** Elimina un ítem del carrito por su cart_id único (necesario para ventas libres) */
+  const removeFromCartByCartId = (cartId: string) => {
+    setCart(prev => prev.filter(item => (item.cart_id ?? item.product.id) !== cartId));
+  };
+
   const getTotal = () => {
     return cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+  };
+
+  /** Agrega una Venta Libre al carrito desde el modal */
+  const handleAddCustomSale = () => {
+    const precio = parseFloat(customSalePrice);
+    const cantidad = parseInt(customSaleQty, 10) || 1;
+    if (!customSaleConcept.trim()) {
+      toast({ variant: 'destructive', title: 'Concepto requerido', description: 'Escribe un nombre para la venta libre.' });
+      return;
+    }
+    if (isNaN(precio) || precio <= 0) {
+      toast({ variant: 'destructive', title: 'Precio inválido', description: 'El precio debe ser mayor a S/ 0.' });
+      return;
+    }
+    const cartId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const customProduct: Product = {
+      id: cartId,
+      name: customSaleConcept.trim(),
+      price: precio,
+      category: 'Venta Libre',
+    };
+    setCart(prev => [...prev, { product: customProduct, quantity: cantidad, is_custom: true, cart_id: cartId }]);
+    setCustomSaleConcept('');
+    setCustomSalePrice('');
+    setCustomSaleQty('1');
+    setShowCustomSaleModal(false);
+    toast({ title: '✅ Agregado al carrito', description: `${customSaleConcept.trim()} × ${cantidad} = S/ ${(precio * cantidad).toFixed(2)}` });
   };
 
   /**
@@ -1503,36 +1549,69 @@ const POS = () => {
     setShowInvoiceClientModal(false);
     setIsGeneratingInvoice(true);
 
-    try {
-      // Procesar la venta primero
-      await processCheckout();
+    // Capturamos el total ANTES de que processCheckout resetee el carrito
+    // (el reset ocurre en setTimeout 500ms, Nubefact puede tardar más).
+    const montoTotal = getTotal();
 
-      // Luego generar el comprobante electrónico
+    try {
+      // ── PASO 1: Procesar la venta ─────────────────────────────────────────
+      // processCheckout guarda document_type y datos del cliente en transactions
+      // aunque Nubefact aún no responda. Retorna el UUID de la transacción.
+      const transactionId = await processCheckout({
+        document_type: clientData.tipo,
+        client_name: clientData.razon_social || undefined,
+        client_dni_ruc:
+          clientData.doc_number && clientData.doc_number !== '-'
+            ? clientData.doc_number
+            : undefined,
+      });
+
+      // Si processCheckout falló internamente (ya mostró su propio toast de error),
+      // salimos sin llamar a Nubefact. La venta no existe, nada que facturar.
+      if (!transactionId) return;
+
+      // ── PASO 2: Llamar a Nubefact ────────────────────────────────────────
+      // La venta ya está registrada. Si Nubefact falla, la transacción
+      // queda sin invoice_id (recuperable luego). NO se borra.
       const result = await generarComprobante({
-        school_id: userSchoolId || '',
-        tipo: clientData.tipo === 'factura' ? 1 : 2,
+        school_id:      userSchoolId || '',
+        transaction_id: transactionId,
+        tipo:           clientData.tipo === 'factura' ? 1 : 2,
         cliente: {
           nombre:     clientData.razon_social,
           tipo_doc:   clientData.doc_type === 'ruc' ? 6 : clientData.doc_type === 'dni' ? 1 : 0,
           numero_doc: clientData.doc_number !== '-' ? clientData.doc_number : undefined,
-          email:      clientData.email,
+          direccion:  clientData.direccion  || undefined,
+          email:      clientData.email      || undefined,
         },
-        monto_total: getTotal(),
+        monto_total: montoTotal,
       });
 
+      // ── PASO 3: Manejar respuesta de Nubefact ────────────────────────────
       if (result.success) {
-        const pdfUrl = result.nubefact?.enlace_del_pdf as string | undefined;
+        const pdfUrl   = result.nubefact?.enlace_del_pdf as string | undefined;
+        const invoiceId = result.documento?.id;
+
         if (pdfUrl) setLastInvoicePdfUrl(pdfUrl);
 
+        // ── PASO 3a: Vincular invoice_id en la transacción ──────────────
+        // Fire-and-forget: si este UPDATE falla, la venta y el comprobante
+        // ya existen; el vínculo se puede recuperar después.
+        if (invoiceId) {
+          supabase
+            .from('transactions')
+            .update({ invoice_id: invoiceId })
+            .eq('id', transactionId)
+            .then(({ error: linkErr }) => {
+              if (linkErr) {
+                console.warn('⚠️ No se pudo vincular invoice_id en la transacción:', linkErr.message);
+              }
+            });
+        }
+
+        // ── PASO 3b: Mostrar resultado al cajero ─────────────────────────
         const serie = result.documento
           ? `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`
-          : null;
-        const waMsg = pdfUrl
-          ? `https://wa.me/?text=${encodeURIComponent(
-              `Hola, aquí tienes tu comprobante electrónico 🧾\n` +
-              (serie ? `N° ${serie}\n` : '') +
-              `PDF: ${pdfUrl}`
-            )}`
           : null;
 
         toast({
@@ -1542,13 +1621,13 @@ const POS = () => {
             : 'Comprobante generado correctamente.',
         });
 
-        // Abrir PDF en nueva pestaña
-        if (pdfUrl) {
-          window.open(pdfUrl, '_blank');
-        }
+        if (pdfUrl) window.open(pdfUrl, '_blank');
 
-        // Mostrar toast con enlace de WhatsApp
-        if (waMsg) {
+        // Toast de compartir por WhatsApp (aparece 800ms después)
+        if (pdfUrl && serie) {
+          const waMsg = `https://wa.me/?text=${encodeURIComponent(
+            `Hola, aquí tienes tu comprobante electrónico 🧾\nN° ${serie}\nPDF: ${pdfUrl}`
+          )}`;
           setTimeout(() => {
             toast({
               title: '📲 Compartir comprobante',
@@ -1566,17 +1645,27 @@ const POS = () => {
             });
           }, 800);
         }
+
       } else {
+        // Nubefact devolvió error — la venta YA está registrada, no se borra.
+        // El cajero ve el aviso; el invoice_id queda NULL para reintentarlo después.
+        console.error('❌ Error Nubefact (transacción conservada):', result.error, { transactionId });
         toast({
-          title: '⚠️ Venta procesada, error en comprobante',
-          description: result.error || 'La venta se realizó pero no se pudo generar el comprobante electrónico.',
+          title: '⚠️ Venta registrada, error en comprobante',
+          description:
+            result.error ||
+            'La venta se registró correctamente, pero no se pudo generar el comprobante electrónico. ' +
+            'Puedes reintentarlo desde el módulo de Facturación.',
           variant: 'destructive',
+          duration: 8000,
         });
       }
+
     } catch (err: any) {
+      console.error('❌ Error en handleGenerateInvoice:', err);
       toast({
-        title: 'Error',
-        description: err.message || 'Error al procesar la venta.',
+        title: 'Error al procesar',
+        description: err.message || 'Ocurrió un error inesperado. Verifica si la venta fue registrada.',
         variant: 'destructive',
       });
     } finally {
@@ -1656,7 +1745,18 @@ const POS = () => {
     setPaymentMethod(null);
   };
 
-  const processCheckout = async () => {
+  /**
+   * Datos del comprobante que vienen del modal InvoiceClientModal.
+   * Solo se pasan cuando el cajero eligió Boleta o Factura.
+   * Si no se pasan, la venta se guarda como 'ticket'.
+   */
+  interface BillingData {
+    document_type: 'ticket' | 'boleta' | 'factura';
+    client_name?: string;
+    client_dni_ruc?: string;
+  }
+
+  const processCheckout = async (billingData?: BillingData) => {
     /** Normaliza el método de pago al formato que espera la tabla `sales` (en inglés) */
     const toSalesMethod = (method: string | null): string => {
       const map: Record<string, string> = {
@@ -1676,6 +1776,9 @@ const POS = () => {
     }
 
     setIsProcessing(true);
+    // ID de la transacción creada — se retorna al final para que el flujo
+    // de facturación electrónica pueda vincular el comprobante.
+    let createdTransactionId: string | null = null;
 
     try {
       const total = getTotal();
@@ -1937,6 +2040,10 @@ const POS = () => {
             cash_amount: mixedCashAmount,
             card_amount: mixedCardAmount,
             yape_amount: mixedYapeAmount,
+            // Datos de facturación (se guardan aunque Nubefact aún no esté conectado)
+            document_type: billingData?.document_type ?? 'ticket',
+            invoice_client_name: billingData?.client_name ?? null,
+            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
           })
           .select()
           .single();
@@ -1953,15 +2060,17 @@ const POS = () => {
           throw transError;
         }
         console.log('✅ Transacción creada:', transaction.id);
+        createdTransactionId = transaction.id;
 
-        // Crear items
+        // Crear items (ventas libres usan product_id = null)
         const items = cart.map(item => ({
           transaction_id: transaction.id,
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           quantity: item.quantity,
           unit_price: item.product.price,
           subtotal: item.product.price * item.quantity,
+          ...(item.is_custom ? { is_custom_sale: true } : {}),
         }));
 
         const { error: itemsError } = await supabase
@@ -1972,7 +2081,7 @@ const POS = () => {
 
         // Registrar en tabla SALES para módulo de Finanzas
         const salesItems = cart.map(item => ({
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           barcode: item.product.barcode || null,
           quantity: item.quantity,
@@ -2028,6 +2137,10 @@ const POS = () => {
             payment_status: 'pending', // 🔥 CRÉDITO: Iniciar como pending
             payment_method: null, // Sin método de pago inicial
             metadata: { source: 'pos' },
+            // Datos de facturación
+            document_type: billingData?.document_type ?? 'ticket',
+            invoice_client_name: billingData?.client_name ?? null,
+            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
           })
           .select()
           .single();
@@ -2038,22 +2151,24 @@ const POS = () => {
         }
 
         console.log('✅ Transacción creada:', transaction.id);
+        createdTransactionId = transaction.id;
 
-        // Insertar items de la transacción
+        // Insertar items de la transacción (ventas libres usan product_id = null)
         const items = cart.map(item => ({
           transaction_id: transaction.id,
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           quantity: item.quantity,
           unit_price: item.product.price,
           subtotal: item.product.price * item.quantity,
+          ...(item.is_custom ? { is_custom_sale: true } : {}),
         }));
 
         await supabase.from('transaction_items').insert(items);
 
         // Registrar en tabla SALES para módulo de Finanzas
         const salesItems = cart.map(item => ({
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           barcode: item.product.barcode || null,
           quantity: item.quantity,
@@ -2119,26 +2234,32 @@ const POS = () => {
             cash_amount: genericMixedCash,
             card_amount: genericMixedCard,
             yape_amount: genericMixedYape,
+            // Datos de facturación
+            document_type: billingData?.document_type ?? 'ticket',
+            invoice_client_name: billingData?.client_name ?? null,
+            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
           })
           .select()
           .single();
 
         if (transError) throw transError;
+        createdTransactionId = transaction.id;
 
         const items = cart.map(item => ({
           transaction_id: transaction.id,
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           quantity: item.quantity,
           unit_price: item.product.price,
           subtotal: item.product.price * item.quantity,
+          ...(item.is_custom ? { is_custom_sale: true } : {}),
         }));
 
         await supabase.from('transaction_items').insert(items);
 
         // **NUEVO: Registrar en tabla SALES para módulo de Finanzas**
         const salesItems = cart.map(item => ({
-          product_id: item.product.id,
+          product_id: item.is_custom ? null : item.product.id,
           product_name: item.product.name,
           barcode: item.product.barcode || null,
           quantity: item.quantity,
@@ -2240,6 +2361,8 @@ const POS = () => {
       setTimeout(() => {
         resetClient();
       }, 500);
+
+      return createdTransactionId;
 
     } catch (error: any) {
       console.error('Error processing checkout:', error);
@@ -3141,50 +3264,72 @@ const POS = () => {
 
             {/* Items del Carrito - Más compacto en móvil */}
             <div className="flex-1 overflow-y-auto p-1.5 sm:p-2">
+              {/* Botón Venta Libre — solo para admin_general y superadmin */}
+              {clientMode && (role === 'admin_general' || role === 'superadmin') && (
+                <button
+                  onClick={() => setShowCustomSaleModal(true)}
+                  className="w-full flex items-center justify-center gap-1.5 border-2 border-dashed border-violet-400 text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg p-1.5 sm:p-2 mb-1.5 font-bold text-[10px] sm:text-sm transition-colors"
+                >
+                  <Plus className="h-3 w-3 sm:h-4 sm:w-4" />
+                  Venta Libre
+                </button>
+              )}
               {cart.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <div className="flex flex-col items-center justify-center h-full text-gray-400 pb-4">
                   <ShoppingCart className="h-8 w-8 sm:h-16 sm:w-16 mb-2 opacity-30" />
                   <p className="font-semibold text-xs sm:text-sm">Carrito vacío</p>
                 </div>
               ) : (
                 <div className="space-y-1 sm:space-y-2">
-                  {cart.map((item) => (
-                    <div
-                      key={item.product.id}
-                      className="bg-white border-2 border-gray-200 rounded-lg p-1 sm:p-2"
-                    >
-                      <div className="flex justify-between items-start mb-0.5 sm:mb-1">
-                        <p className="font-bold text-[9px] sm:text-sm flex-1 leading-tight">{item.product.name}</p>
-                        <button
-                          onClick={() => removeFromCart(item.product.id)}
-                          className="text-red-600 hover:bg-red-50 p-0.5 sm:p-1 rounded-full shrink-0"
-                          title="Eliminar del carrito"
-                        >
-                          <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
-                        </button>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-0.5 sm:gap-1 bg-gray-100 rounded-lg p-0.5">
+                  {cart.map((item) => {
+                    const itemKey = item.cart_id ?? item.product.id;
+                    return (
+                      <div
+                        key={itemKey}
+                        className={`border-2 rounded-lg p-1 sm:p-2 ${item.is_custom ? 'bg-violet-50 border-violet-300' : 'bg-white border-gray-200'}`}
+                      >
+                        <div className="flex justify-between items-start mb-0.5 sm:mb-1">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-[9px] sm:text-sm leading-tight truncate">{item.product.name}</p>
+                            {item.is_custom && (
+                              <span className="text-[8px] sm:text-[10px] text-violet-500 font-semibold">Venta libre</span>
+                            )}
+                          </div>
                           <button
-                            onClick={() => updateQuantity(item.product.id, -1)}
-                            className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-red-50 hover:text-red-600 transition-colors"
+                            onClick={() => removeFromCartByCartId(itemKey)}
+                            className="text-red-600 hover:bg-red-50 p-0.5 sm:p-1 rounded-full shrink-0"
+                            title="Eliminar del carrito"
                           >
-                            <Minus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
-                          </button>
-                          <span className="w-7 sm:w-10 text-center font-bold text-[10px] sm:text-base">{item.quantity}</span>
-                          <button
-                            onClick={() => updateQuantity(item.product.id, 1)}
-                            className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                          >
-                            <Plus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
+                            <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
                           </button>
                         </div>
-                        <p className="text-[10px] sm:text-sm font-bold text-emerald-600">
-                          S/ {(item.product.price * item.quantity).toFixed(2)}
-                        </p>
+                        <div className="flex items-center justify-between">
+                          {item.is_custom ? (
+                            <span className="text-[9px] sm:text-xs text-violet-600 font-medium">× {item.quantity}</span>
+                          ) : (
+                            <div className="flex items-center gap-0.5 sm:gap-1 bg-gray-100 rounded-lg p-0.5">
+                              <button
+                                onClick={() => updateQuantity(item.product.id, -1)}
+                                className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-red-50 hover:text-red-600 transition-colors"
+                              >
+                                <Minus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
+                              </button>
+                              <span className="w-7 sm:w-10 text-center font-bold text-[10px] sm:text-base">{item.quantity}</span>
+                              <button
+                                onClick={() => updateQuantity(item.product.id, 1)}
+                                className="w-5 h-5 sm:w-8 sm:h-8 flex items-center justify-center bg-white rounded-md shadow-sm hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                              >
+                                <Plus className="h-2.5 w-2.5 sm:h-4 sm:w-4" />
+                              </button>
+                            </div>
+                          )}
+                          <p className="text-[10px] sm:text-sm font-bold text-emerald-600">
+                            S/ {(item.product.price * item.quantity).toFixed(2)}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3273,6 +3418,80 @@ const POS = () => {
           </aside>
         </div>
       )}
+
+      {/* ── MODAL VENTA LIBRE ─────────────────────────────────────── */}
+      <Dialog open={showCustomSaleModal} onOpenChange={(open) => {
+        setShowCustomSaleModal(open);
+        if (!open) { setCustomSaleConcept(''); setCustomSalePrice(''); setCustomSaleQty('1'); }
+      }}>
+        <DialogContent className="w-[95vw] max-w-sm rounded-2xl p-0 overflow-hidden">
+          <DialogHeader className="px-4 pt-4 pb-2 border-b border-violet-100">
+            <DialogTitle className="flex items-center gap-2 text-violet-700 font-bold text-base">
+              <FileText className="h-5 w-5" />
+              Venta Libre
+            </DialogTitle>
+            <DialogDescription className="text-xs text-gray-500">
+              Vende un concepto genérico sin producto en inventario. Quedará registrado como deuda si el cliente paga después.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="p-4 space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-700">Concepto de Venta *</label>
+              <Input
+                placeholder='Ej: Azúcar 1kg, Cuota especial, etc.'
+                value={customSaleConcept}
+                onChange={e => setCustomSaleConcept(e.target.value)}
+                className="text-sm"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && handleAddCustomSale()}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-700">Precio Unitario (S/) *</label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={customSalePrice}
+                  onChange={e => setCustomSalePrice(e.target.value)}
+                  className="text-sm"
+                  onKeyDown={e => e.key === 'Enter' && handleAddCustomSale()}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-700">Cantidad</label>
+                <Input
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="1"
+                  value={customSaleQty}
+                  onChange={e => setCustomSaleQty(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            </div>
+            {customSalePrice && customSaleConcept && parseFloat(customSalePrice) > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm font-bold text-emerald-700">
+                Total: S/ {(parseFloat(customSalePrice) * (parseInt(customSaleQty) || 1)).toFixed(2)}
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setShowCustomSaleModal(false)}>
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold"
+                onClick={handleAddCustomSale}
+              >
+                <Plus className="h-4 w-4 mr-1" /> Agregar al carrito
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* MODAL DE MEDIOS DE PAGO (CLIENTE GENÉRICO) */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>

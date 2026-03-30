@@ -372,21 +372,31 @@ IMPORTANTE: NO evalúes si la fecha del voucher es anterior o posterior al enví
         }
 
         const uploadMs = uploadTimeUTC.getTime();
-        const MARGEN_MS = 15 * 60 * 1000; // 15 minutos de tolerancia
+        // 4 horas de tolerancia: cubre transferencias bancarias programadas para más tarde
+        // (BCP, Interbank, BBVA permiten agendar pagos y el voucher muestra la hora futura)
+        const MARGEN_MS = 4 * 60 * 60 * 1000;
+        // Cap de 36 horas: más allá de eso es casi seguro un error de parseo del formato de fecha
+        const CAP_MAX_MS = 36 * 60 * 60 * 1000;
 
-        if (!isNaN(voucherMs) && voucherMs > uploadMs + MARGEN_MS) {
-          // El voucher muestra una fecha posterior al envío — sospechoso
-          const minutosDesfase = Math.round((voucherMs - uploadMs) / 60000);
+        const desfaseMs = voucherMs - uploadMs;
+
+        if (!isNaN(voucherMs) && desfaseMs > MARGEN_MS && desfaseMs < CAP_MAX_MS) {
+          // El voucher muestra una fecha notablemente posterior al envío — sospechoso
+          const minutosDesfase = Math.round(desfaseMs / 60000);
           analisis.alertas = analisis.alertas ?? [];
           analisis.alertas.push(
             `Fecha del comprobante posterior a la hora de subida (${minutosDesfase} min de desfase)`
           );
           if (analisis.estado === "VALIDO") {
             analisis.estado = "SOSPECHOSO";
-            analisis.motivo = `Datos visuales válidos, pero la fecha del comprobante (${fechaStr}) es ${minutosDesfase} min posterior al envío.`;
+            analisis.motivo = `Datos visuales válidos, pero la fecha del comprobante (${fechaStr}) es ${minutosDesfase} min posterior al envío. Si agendaste una transferencia para más tarde, puede ignorarse.`;
           }
           console.warn(
             `⚠️ Fecha futura detectada: voucher=${fechaStr}, upload=${uploadTimeUTC.toISOString()}, desfase=${minutosDesfase}min`
+          );
+        } else if (!isNaN(voucherMs)) {
+          console.log(
+            `✅ Fecha del voucher OK: voucher=${fechaStr}, upload=${uploadTimeUTC.toISOString()}, desfase=${Math.round(desfaseMs / 60000)}min`
           );
         }
       } catch (dateErr) {
