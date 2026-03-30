@@ -1127,8 +1127,8 @@ export default function CashDayDashboard({
         </>
       )}
 
-      {/* ── BOTONES DE ACCIÓN — Solo mientras la caja esté ABIERTA ──────── */}
-      {!isViewReadOnly && !isRangeMode && !isAllSchools && activeSession?.status === 'open' && (
+      {/* ── BOTONES DE ACCIÓN — Solo cajeros activos en día de hoy ──────── */}
+      {!isViewReadOnly && !isRangeMode && !isAllSchools && activeSession && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
           <Button onClick={() => setShowIncomeModal(true)} className="h-14 bg-emerald-600 hover:bg-emerald-700 text-sm font-bold">
             <ArrowDownCircle className="h-5 w-5 mr-1.5" /> Registrar Ingreso
@@ -1142,14 +1142,6 @@ export default function CashDayDashboard({
           <Button onClick={onCloseRequested} className="h-14 text-sm font-bold bg-slate-800 hover:bg-slate-900">
             <Lock className="h-5 w-5 mr-1.5" /> Cerrar Caja
           </Button>
-        </div>
-      )}
-
-      {/* ── CAJA YA CERRADA — mensaje informativo ────────────────────────── */}
-      {!isViewReadOnly && !isRangeMode && !isAllSchools && activeSession?.status === 'closed' && (
-        <div className="flex items-center gap-3 bg-slate-100 border border-slate-300 rounded-xl px-5 py-4 text-slate-600 text-sm">
-          <Lock className="h-5 w-5 text-slate-400 shrink-0" />
-          <p>Esta caja ya fue cerrada. No se puede volver a cerrar.</p>
         </div>
       )}
 

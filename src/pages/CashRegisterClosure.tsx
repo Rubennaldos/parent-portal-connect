@@ -253,7 +253,7 @@ export function CashRegisterClosure() {
       </div>
 
       {/* Resumen Ejecutivo */}
-      <div className={`grid gap-4 ${profile?.role === 'admin' ? 'md:grid-cols-4' : 'md:grid-cols-2'}`}>
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Caja Inicial</CardTitle>
@@ -264,82 +264,60 @@ export function CashRegisterClosure() {
           </CardContent>
         </Card>
 
-        {/* Ingresos totales — visible para todos */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ingresos del Día</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
+            <CardTitle className="text-sm font-medium">Esperado</CardTitle>
+            <TrendingUp className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              S/ {summary?.totalIncome.toFixed(2)}
+            <div className="text-2xl font-bold text-blue-600">
+              S/ {summary?.expectedBalance.toFixed(2)}
             </div>
           </CardContent>
         </Card>
 
-        {/* Monto Esperado y Real — solo para admins */}
-        {profile?.role === 'admin' && (
-          <>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Monto Esperado</CardTitle>
-                <TrendingUp className="h-4 w-4 text-blue-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
-                  S/ {summary?.expectedBalance.toFixed(2)}
-                </div>
-              </CardContent>
-            </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Real</CardTitle>
+            {summary?.actualBalance !== null ? (
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {summary?.actualBalance !== null 
+                ? `S/ ${summary.actualBalance.toFixed(2)}` 
+                : 'Pendiente'}
+            </div>
+          </CardContent>
+        </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Monto Real</CardTitle>
-                {summary?.actualBalance !== null ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                )}
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {summary?.actualBalance !== null
-                    ? `S/ ${summary.actualBalance.toFixed(2)}`
-                    : 'Pendiente'}
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
+        <Card className={hasDifference ? 'border-yellow-500' : ''}>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Diferencia</CardTitle>
+            {hasDifference && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+          </CardHeader>
+          <CardContent>
+            <div className={`text-2xl font-bold ${differenceColor}`}>
+              {summary?.difference !== null 
+                ? `S/ ${summary.difference.toFixed(2)}` 
+                : '-'}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Diferencia — solo visible para admins */}
-      {profile?.role === 'admin' && (
-        <>
-          <Card className={hasDifference ? 'border-yellow-500' : ''}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Diferencia (Descuadre)</CardTitle>
-              {hasDifference && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${differenceColor}`}>
-                {summary?.difference !== null
-                  ? `S/ ${summary.difference.toFixed(2)}`
-                  : '-'}
-              </div>
-            </CardContent>
-          </Card>
-
-          {hasDifference && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                Existe una diferencia de S/ {Math.abs(summary?.difference || 0).toFixed(2)} en el cierre.
-                Se requiere justificación y aprobación.
-              </AlertDescription>
-            </Alert>
-          )}
-        </>
+      {/* Alerta de diferencia */}
+      {hasDifference && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            Existe una diferencia de S/ {Math.abs(summary?.difference || 0).toFixed(2)} en el cierre.
+            Se requiere justificación y aprobación.
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Contenido Principal */}

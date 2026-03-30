@@ -184,19 +184,16 @@ export default function CashReconciliationDialog({
       }
     }
 
-    // ── Solo los ADMINS necesitan justificación y ven el descuadre ────────────
-    // Los cajeros hacen cierre a ciegas: no se bloquea ni se pide justificación.
-    if (isAdmin) {
-      // Si hay descuadre y no hemos mostrado la justificación aún, mostrarla
-      if (hasVariance && !showJustification) {
-        setShowJustification(true);
-        return;
-      }
-      // Si hay descuadre y justificación vacía, bloquear
-      if (hasVariance && !justification.trim()) {
-        toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
-        return;
-      }
+    // Si hay descuadre y no hemos mostrado la justificación aún, mostrarla
+    if (hasVariance && !showJustification) {
+      setShowJustification(true);
+      return;
+    }
+
+    // Si hay descuadre y justificación vacía, bloquear
+    if (hasVariance && !justification.trim()) {
+      toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
+      return;
     }
 
     if (!user) return;
@@ -280,12 +277,7 @@ export default function CashReconciliationDialog({
         .eq('id', session.id);
       if (closeError) throw closeError;
 
-      toast({
-        title: '✅ Caja cerrada exitosamente',
-        description: isAdmin
-          ? 'El cierre y arqueo se guardaron correctamente.'
-          : 'Tu turno fue registrado correctamente.',
-      });
+      toast({ title: '✅ Caja cerrada', description: 'El cierre y arqueo se guardaron correctamente.' });
       onClosed();
       onClose();
     } catch (err: any) {
