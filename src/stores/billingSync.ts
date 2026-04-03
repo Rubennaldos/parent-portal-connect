@@ -76,11 +76,7 @@ function initRealtimeSubscription() {
     );
   }
 
-  channel.subscribe((status: string) => {
-    if (status === 'SUBSCRIBED') {
-      console.log('[BillingSync] Realtime CDC activo — transactions, recharge_requests, students');
-    }
-  });
+  channel.subscribe();
 }
 
 // ─── Store ──────────────────────────────────────────────────────────────────

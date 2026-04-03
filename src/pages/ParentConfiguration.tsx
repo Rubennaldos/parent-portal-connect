@@ -1940,6 +1940,7 @@ const ParentConfiguration = () => {
           onOpenChange={(open) => { setShowResetPassword(open); if (!open) setResetPasswordParent(null); }}
           userName={resetPasswordParent.full_name}
           userEmail={resetPasswordParent.profile?.email || resetPasswordParent.email || ''}
+          userId={resetPasswordParent.user_id || undefined}
           onSuccess={() => setShowResetPassword(false)}
         />
       )}

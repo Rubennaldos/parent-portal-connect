@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet, BadgeCheck, ClipboardList } from 'lucide-react';
+import { Package, Tag, Percent, Plus, Pencil, Trash2, ArrowLeft, Camera, BarChart3, Download, TrendingUp, AlertTriangle, DollarSign, ShoppingCart, Loader2, Building2, FileSpreadsheet, BadgeCheck, ClipboardList, FolderOpen, MoveRight, X, Check, Power, PowerOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
@@ -89,6 +89,16 @@ const Products = () => {
   // Modal de solicitudes para gestor_unidad
   const [showProductRequestModal, setShowProductRequestModal] = useState(false);
 
+  // ─── Gestor de Categorías ────────────────────────────────────────────────────
+  const [showCatManager, setShowCatManager] = useState(false);
+  // Renombrar
+  const [catEditTarget, setCatEditTarget] = useState<string | null>(null);
+  const [catEditName, setCatEditName] = useState('');
+  // Eliminar (con o sin migración)
+  const [catDeleteTarget, setCatDeleteTarget] = useState<string | null>(null);
+  const [catMoveTarget, setCatMoveTarget] = useState('');
+  const [catSaving, setCatSaving] = useState(false);
+
   // Stock control per school
   const [productStockLevels, setProductStockLevels] = useState<Record<string, number>>({});
   const [showStockControlModal, setShowStockControlModal] = useState(false);
@@ -127,6 +137,9 @@ const Products = () => {
     wholesale_price: '',
     school_ids: [] as string[],
     applyToAllSchools: true,
+    // 'global' = disponible para todas las sedes (school_ids = null en BD)
+    // 'specific' = solo para sedes seleccionadas
+    productScope: 'global' as 'global' | 'specific',
   });
 
   const [, forceUpdate] = useState({});
@@ -134,6 +147,7 @@ const Products = () => {
   useEffect(() => {
     fetchSchools();
     fetchUserSchool();
+    fetchCategories();
   }, []);
 
   // Cargar productos una vez que sepamos la sede del usuario
@@ -143,17 +157,21 @@ const Products = () => {
     }
   }, [userSchoolId, role]);
 
+  // Normaliza texto para búsqueda tolerante a tildes y mayúsculas
+  const normalizeSearch = (str: string) =>
+    str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
   // Filtrar productos cuando cambia la búsqueda
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredProducts(products);
     } else {
-      const query = searchQuery.toLowerCase();
-      const filtered = products.filter(p => 
-        p.name.toLowerCase().includes(query) ||
-        p.code.toLowerCase().includes(query) ||
-        p.category.toLowerCase().includes(query) ||
-        p.description?.toLowerCase().includes(query)
+      const query = normalizeSearch(searchQuery);
+      const filtered = products.filter(p =>
+        normalizeSearch(p.name).includes(query) ||
+        normalizeSearch(p.code).includes(query) ||
+        normalizeSearch(p.category).includes(query) ||
+        normalizeSearch(p.description || '').includes(query)
       );
       setFilteredProducts(filtered);
     }
@@ -178,15 +196,20 @@ const Products = () => {
       return;
     }
 
-    const checkCode = async () => {
+      const checkCode = async () => {
       setIsCheckingCode(true);
       try {
+        // Normalizar: trim + uppercase para evitar duplicados invisibles por espacios o casing
+        const normalizedCode = currentCode.trim().toUpperCase();
+
+        // Solo verificar contra productos ACTIVOS — los inactivos (fusionados) no deben bloquear
         let query = supabase
           .from('products')
           .select('id')
-          .eq('code', currentCode);
+          .ilike('code', normalizedCode)   // case-insensitive: abc-1 == ABC-1
+          .eq('active', true);
 
-        // Si estamos editando, excluir el producto actual de la búsqueda
+        // Si estamos editando, excluir el producto actual (su propio código no es "duplicado")
         if (editingProductId) {
           query = query.neq('id', editingProductId);
         }
@@ -207,20 +230,39 @@ const Products = () => {
     return () => clearTimeout(timer);
   }, [currentCode, editingProductId]);
 
+  const fetchCategories = async () => {
+    const { data, error } = await supabase
+      .from('product_categories')
+      .select('name')
+      .order('name');
+    if (!error && data && data.length > 0) {
+      setCategories(data.map(c => c.name));
+    } else {
+      // Fallback: tabla aún no existe en BD o está vacía
+      setCategories([
+        'bebidas','chocolates','dulces','frutas','galletas',
+        'golosinas','jugos','menu','otros','postres',
+        'refrescos','sandwiches','snack','snacks',
+      ]);
+    }
+  };
+
   const fetchProducts = async () => {
     setLoading(true);
 
     let productsData: Product[] = [];
 
     if (role === 'admin_general') {
-      const { data } = await supabase.from('products').select('*').eq('active', true).order('name');
+      // Admin ve TODOS (activos e inactivos) para poder reactivar
+      const { data } = await supabase.from('products').select('*').order('name');
       productsData = (data || []) as Product[];
     } else if (userSchoolId) {
+      // Incluir productos globales (school_ids IS NULL) + los específicos de esta sede
+      // Logística ve todos (activos e inactivos) para poder reactivar
       const { data } = await supabase
         .from('products')
         .select('*')
-        .eq('active', true)
-        .contains('school_ids', [userSchoolId])
+        .or(`school_ids.is.null,school_ids.cs.{${userSchoolId}}`)
         .order('name');
       productsData = (data || []) as Product[];
     } else {
@@ -244,31 +286,7 @@ const Products = () => {
         setProductStockLevels(levels);
       }
     }
-    
-    // Categorías predefinidas COMPLETAS
-    const predefinedCategories = [
-      'bebidas',
-      'dulces',
-      'frutas',
-      'menu',
-      'snacks',
-      'galletas',
-      'chocolates',
-      'golosinas',
-      'jugos',
-      'refrescos',
-      'sandwiches',
-      'postres',
-      'otros'
-    ];
-    
-    // Extraer categorías únicas de los productos existentes
-    const dbCategories = Array.from(new Set(productsData.map(p => p.category).filter(Boolean)));
-    
-    // Combinar predefinidas con las de BD (sin duplicados)
-    const allCategories = Array.from(new Set([...predefinedCategories, ...dbCategories])).sort();
-    setCategories(allCategories);
-    
+
     setLoading(false);
   };
 
@@ -406,6 +424,7 @@ const Products = () => {
       wholesale_price: '',
       school_ids: [],
       applyToAllSchools: true,
+      productScope: 'global' as 'global' | 'specific',
     };
     setCurrentCode('');
     setCodeStatus('none');
@@ -435,6 +454,8 @@ const Products = () => {
       wholesale_price: String(product.wholesale_price || ''),
       school_ids: product.school_ids || [],
       applyToAllSchools: (product.school_ids || []).length === schools.length,
+      // Si school_ids es null o vacío → era global
+      productScope: (!product.school_ids || product.school_ids.length === 0) ? 'global' : 'specific',
     };
     setCurrentCode(product.code || '');
     setEditingProductId(product.id);
@@ -474,18 +495,35 @@ const Products = () => {
       return;
     }
 
+    // Advertencia si el precio de venta es 0 (producto activo con precio cero es un error humano)
+    const parsedSale = parseFloat(f.price_sale);
+    if (parsedSale === 0) {
+      toast({ variant: 'destructive', title: '⚠️ Precio de venta es 0', description: 'El producto quedará activo con precio S/ 0.00. Verifica que sea intencional.' });
+      // No bloqueamos — solo advertimos. El usuario puede guardar igual.
+    }
+
     try {
-      const finalCode = f.hasCode ? f.code : generateAutoCode();
+      // Trim + uppercase del código para evitar duplicados invisibles por espacios o casing
+      const finalCode = f.hasCode ? f.code.trim().toUpperCase() : generateAutoCode();
       const finalCategory = f.newCategory || f.category;
       
       if (f.newCategory && !categories.includes(f.newCategory)) {
         setCategories([...categories, f.newCategory]);
       }
 
-      // Admin general puede elegir sedes; otros admins solo asignan su propia sede
-      const selectedSchools = isAdminGeneral
-        ? (f.applyToAllSchools ? schools.map(s => s.id) : f.school_ids)
-        : (userSchoolId ? [userSchoolId] : []);
+      // Determinar school_ids según el alcance elegido:
+      // - Global (logistica o admin_general con scope='global'): school_ids = null → aparece en TODAS las sedes
+      // - Todas las sedes (admin_general con applyToAllSchools): school_ids = null
+      // - Sedes específicas: array de IDs
+      // - Otros roles: solo su propia sede
+      let selectedSchools: string[] | null;
+      if (canCreateGlobal && f.productScope === 'global') {
+        selectedSchools = null;
+      } else if (isAdminGeneral) {
+        selectedSchools = f.applyToAllSchools ? null : f.school_ids;
+      } else {
+        selectedSchools = userSchoolId ? [userSchoolId] : [];
+      }
 
       const productData = {
         name: f.name,
@@ -608,15 +646,28 @@ const Products = () => {
                     type="button"
                     size="lg"
                     className="w-full mt-2 bg-emerald-600 hover:bg-emerald-700"
-                    onClick={() => {
-                      const newCat = f.newCategory.trim();
-                      if (newCat && !categories.includes(newCat)) {
-                        setCategories(prev => [...prev, newCat].sort());
+                    onClick={async () => {
+                      const newCat = f.newCategory.trim().toLowerCase();
+                      if (!newCat) return;
+                      if (categories.includes(newCat)) {
                         f.category = newCat;
                         f.newCategory = '';
                         forceUpdate({});
-                        toast({ title: "✅ Categoría agregada", description: `Se ha seleccionado "${newCat}"` });
+                        return;
                       }
+                      // Guardar en BD para que persista
+                      const { error } = await supabase
+                        .from('product_categories')
+                        .insert({ name: newCat });
+                      if (error && !error.message.includes('duplicate')) {
+                        toast({ variant: 'destructive', title: 'Error', description: error.message });
+                        return;
+                      }
+                      setCategories(prev => [...prev, newCat].sort());
+                      f.category = newCat;
+                      f.newCategory = '';
+                      forceUpdate({});
+                      toast({ title: "✅ Categoría creada", description: `"${newCat}" guardada y seleccionada` });
                     }}
                   >
                     <Plus className="h-5 w-5 mr-2" />
@@ -863,42 +914,192 @@ const Products = () => {
           </div>
         );
       case 4:
-        // Solo admin_general ve el paso 4 de sedes
-        if (!isAdminGeneral) return null;
+        // Solo usuarios que pueden elegir alcance ven el paso 4
+        if (!canCreateGlobal) return null;
         return (
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold">🏫 Sedes</h3>
-            <div className="flex items-center gap-2 p-3 bg-blue-50 rounded">
-              <Checkbox 
-                checked={f.applyToAllSchools} 
-                onCheckedChange={v => { f.applyToAllSchools = !!v; forceUpdate({}); }} 
-              />
-              <Label>Aplicar a todas las sedes</Label>
+          <div className="space-y-5">
+            <div className="text-center space-y-1 pb-2">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-indigo-100 mb-1">
+                <Building2 className="h-7 w-7 text-indigo-600" />
+              </div>
+              <h3 className="text-xl font-bold">Disponibilidad del Producto</h3>
+              <p className="text-sm text-muted-foreground">¿En qué sedes estará disponible este producto?</p>
             </div>
-            {!f.applyToAllSchools && (
-              <div className="space-y-2 border rounded p-3 max-h-48 overflow-y-auto">
-                {schools.map(school => (
-                  <div key={school.id} className="flex items-center gap-2">
-                    <Checkbox 
-                      checked={f.school_ids.includes(school.id)} 
-                      onCheckedChange={() => {
-                        if (f.school_ids.includes(school.id)) {
-                          f.school_ids = f.school_ids.filter(id => id !== school.id);
-                        } else {
-                          f.school_ids = [...f.school_ids, school.id];
-                        }
-                        forceUpdate({});
-                      }} 
-                    />
-                    <Label>{school.name}</Label>
+
+            {/* Opción 1: Global */}
+            <button
+              type="button"
+              onClick={() => { f.productScope = 'global'; forceUpdate({}); }}
+              className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
+                f.productScope === 'global'
+                  ? 'border-indigo-500 bg-indigo-50'
+                  : 'border-gray-200 hover:border-gray-300 bg-white'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                  f.productScope === 'global' ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'
+                }`}>
+                  {f.productScope === 'global' && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">🌐 Global — Disponible para todas las sedes</p>
+                  <p className="text-sm text-gray-500 mt-0.5">El producto aparecerá en el POS y lista de productos de todas las sedes automáticamente.</p>
+                </div>
+              </div>
+            </button>
+
+            {/* Opción 2: Sede específica */}
+            <button
+              type="button"
+              onClick={() => { f.productScope = 'specific'; forceUpdate({}); }}
+              className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
+                f.productScope === 'specific'
+                  ? 'border-amber-500 bg-amber-50'
+                  : 'border-gray-200 hover:border-gray-300 bg-white'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                  f.productScope === 'specific' ? 'border-amber-500 bg-amber-500' : 'border-gray-300'
+                }`}>
+                  {f.productScope === 'specific' && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">🏫 Sede específica</p>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {isAdminGeneral
+                      ? 'El producto solo aparecerá en las sedes que selecciones abajo.'
+                      : 'El producto se asignará únicamente a tu sede.'}
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            {/* Selector de sedes (solo admin_general en modo specific) */}
+            {f.productScope === 'specific' && isAdminGeneral && (
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <Checkbox
+                    checked={f.applyToAllSchools}
+                    onCheckedChange={v => { f.applyToAllSchools = !!v; forceUpdate({}); }}
+                  />
+                  <Label className="font-medium cursor-pointer">Seleccionar todas las sedes</Label>
+                </div>
+                {!f.applyToAllSchools && (
+                  <div className="space-y-2 border rounded-lg p-3 max-h-48 overflow-y-auto bg-gray-50">
+                    <p className="text-xs text-gray-500 mb-2">Elige las sedes donde aparecerá el producto:</p>
+                    {schools.map(school => (
+                      <div key={school.id} className="flex items-center gap-2 py-1">
+                        <Checkbox
+                          checked={f.school_ids.includes(school.id)}
+                          onCheckedChange={() => {
+                            if (f.school_ids.includes(school.id)) {
+                              f.school_ids = f.school_ids.filter(id => id !== school.id);
+                            } else {
+                              f.school_ids = [...f.school_ids, school.id];
+                            }
+                            forceUpdate({});
+                          }}
+                        />
+                        <Label className="cursor-pointer">{school.name}</Label>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+              </div>
+            )}
+
+            {/* Aviso para logistica en modo specific */}
+            {f.productScope === 'specific' && isLogistica && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                <p><strong>Tu sede:</strong> El producto se asignará automáticamente a tu sede actual.</p>
               </div>
             )}
           </div>
         );
       default:
         return null;
+    }
+  };
+
+  // ─── Renombrar categoría: actualiza la tabla de categorías y todos los productos ─
+  const handleRenameCategory = async () => {
+    if (!catEditTarget || !catEditName.trim()) return;
+    const newName = catEditName.trim().toLowerCase();
+    if (newName === catEditTarget) { setCatEditTarget(null); return; }
+    if (categories.includes(newName)) {
+      toast({ variant: 'destructive', title: 'Error', description: `La categoría "${newName}" ya existe.` });
+      return;
+    }
+    setCatSaving(true);
+    try {
+      // 1. Renombrar en product_categories
+      const { error: errCat } = await supabase
+        .from('product_categories')
+        .update({ name: newName })
+        .eq('name', catEditTarget);
+      if (errCat) throw errCat;
+
+      // 2. Actualizar todos los productos que tenían esa categoría
+      const { error: errProd } = await supabase
+        .from('products')
+        .update({ category: newName })
+        .eq('category', catEditTarget);
+      if (errProd) throw errProd;
+
+      toast({ title: '✅ Categoría renombrada', description: `"${catEditTarget}" → "${newName}"` });
+      setCatEditTarget(null);
+      setCatEditName('');
+      await fetchCategories();
+      await fetchProducts();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
+    } finally {
+      setCatSaving(false);
+    }
+  };
+
+  // ─── Eliminar categoría (con migración si tiene productos) ───────────────────
+  const handleDeleteCategory = async () => {
+    if (!catDeleteTarget) return;
+    const productosEnCategoria = products.filter(p => p.category === catDeleteTarget);
+    if (productosEnCategoria.length > 0 && !catMoveTarget) {
+      toast({ variant: 'destructive', title: 'Elige categoría destino', description: 'Debes seleccionar a dónde mover los productos antes de eliminar.' });
+      return;
+    }
+    setCatSaving(true);
+    try {
+      // 1. Mover productos si los hay
+      if (productosEnCategoria.length > 0 && catMoveTarget) {
+        const { error } = await supabase
+          .from('products')
+          .update({ category: catMoveTarget })
+          .eq('category', catDeleteTarget);
+        if (error) throw error;
+      }
+
+      // 2. Borrar de la tabla product_categories (esto es lo que faltaba)
+      const { error: errCat } = await supabase
+        .from('product_categories')
+        .delete()
+        .eq('name', catDeleteTarget);
+      if (errCat) throw errCat;
+
+      toast({
+        title: '✅ Categoría eliminada',
+        description: productosEnCategoria.length > 0
+          ? `${productosEnCategoria.length} producto(s) movido(s) a "${catMoveTarget}"`
+          : 'Categoría eliminada correctamente',
+      });
+      setCatDeleteTarget(null);
+      setCatMoveTarget('');
+      await fetchCategories();
+      await fetchProducts();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
+    } finally {
+      setCatSaving(false);
     }
   };
 
@@ -963,6 +1164,34 @@ const Products = () => {
     }
   };
 
+  const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
+
+  const handleToggleActive = async (product: Product) => {
+    if (togglingActiveId) return; // guard contra doble clic
+    const newValue = !product.active;
+    const action = newValue ? 'habilitar' : 'deshabilitar';
+    if (!confirm(`¿Confirmas ${action} el producto "${product.name}"?`)) return;
+    setTogglingActiveId(product.id);
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ active: newValue })
+        .eq('id', product.id);
+      if (error) throw error;
+      toast({
+        title: newValue ? '✅ Producto habilitado' : '⛔ Producto deshabilitado',
+        description: newValue
+          ? `"${product.name}" vuelve a estar disponible en el POS`
+          : `"${product.name}" ya no aparece en el POS`,
+      });
+      fetchProducts();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setTogglingActiveId(null);
+    }
+  };
+
   const handleToggleVerified = async (product: Product) => {
     const newValue = !product.is_verified;
     try {
@@ -1017,9 +1246,12 @@ const Products = () => {
 
   const canViewAllSchools = role === 'admin_general';
   const isAdminGeneral = role === 'admin_general';
-  // El wizard tiene 4 pasos para admin_general (incluye selección de sedes)
-  // y 3 pasos para otros admins (la sede se asigna automáticamente)
-  const totalWizardSteps = isAdminGeneral ? 4 : 3;
+  // Logística y admin_general pueden crear productos globales (sin sede)
+  const isLogistica = role === 'logistica';
+  const canCreateGlobal = isAdminGeneral || isLogistica;
+  // El wizard tiene 4 pasos cuando el usuario puede elegir alcance de sede
+  // y 3 pasos para otros roles (la sede se asigna automáticamente)
+  const totalWizardSteps = canCreateGlobal ? 4 : 3;
 
   if (maintenance.blocked) {
     return (
@@ -1271,7 +1503,17 @@ const Products = () => {
                     <CardTitle>Lista de Productos</CardTitle>
                     <CardDescription>{filteredProducts.length} de {products.length} productos</CardDescription>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
+                    {isAdminGeneral && (
+                      <Button
+                        variant="outline"
+                        onClick={() => { setCatEditTarget(null); setCatDeleteTarget(null); setCatMoveTarget(''); setShowCatManager(true); }}
+                        className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                      >
+                        <Tag className="h-4 w-4 mr-2" />
+                        Categorías
+                      </Button>
+                    )}
                     {isAdminGeneral && (
                       <Button 
                         variant="outline" 
@@ -1344,13 +1586,18 @@ const Products = () => {
                     <Card key={product.id} className="hover:shadow-lg transition">
                       <CardHeader>
                         <div className="flex justify-between items-start">
-                          <CardTitle className="text-lg flex items-center gap-1.5">
+                          <CardTitle className={`text-lg flex items-center gap-1.5 ${!product.active ? 'text-gray-400' : ''}`}>
                             {product.name}
                             {product.is_verified && (
                               <BadgeCheck className="h-4 w-4 text-green-500 shrink-0" title="Producto Verificado — Sello Verde" />
                             )}
                           </CardTitle>
                           <div className="flex items-center gap-1 flex-wrap justify-end">
+                            {!product.active && (
+                              <Badge className="bg-red-100 text-red-600 border border-red-200 text-[10px] px-1.5 py-0 h-5">
+                                Inactivo
+                              </Badge>
+                            )}
                             {product.is_verified && (
                               <Badge className="bg-green-100 text-green-700 border border-green-200 text-[10px] px-1.5 py-0 h-5">
                                 Verificado
@@ -1367,16 +1614,29 @@ const Products = () => {
                             const customPrice = productSchoolPrices[product.id];
                             const hasCustomPrice = customPrice && customPrice.price_sale !== product.price_sale;
                             const displayPrice = hasCustomPrice ? customPrice.price_sale : product.price_sale;
+                            // Alerta: precio de venta (de sede o base) por debajo del costo → venta a pérdida
+                            const isBelowCost = product.price_cost > 0 && displayPrice < product.price_cost;
                             
                             return (
                               <>
-                                <div className="text-2xl font-bold text-green-600">
+                                <div className={`text-2xl font-bold ${isBelowCost ? 'text-red-600' : 'text-green-600'}`}>
                                   S/ {displayPrice?.toFixed(2)}
+                                  {isBelowCost && (
+                                    <span className="ml-1 text-xs font-normal text-red-500 align-middle" title="El precio de venta está por debajo del costo — ¡se vende a pérdida!">
+                                      ⚠️ bajo costo
+                                    </span>
+                                  )}
                                 </div>
                                 {hasCustomPrice && (
                                   <div className="text-xs text-gray-500 flex items-center gap-1">
                                     <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">Tu Sede</Badge>
                                     <span>Precio base: S/ {product.price_sale?.toFixed(2)}</span>
+                                  </div>
+                                )}
+                                {isBelowCost && (
+                                  <div className="text-xs text-red-500 flex items-center gap-1 bg-red-50 rounded px-1.5 py-0.5">
+                                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                                    Costo: S/ {product.price_cost?.toFixed(2)} — precio menor al costo
                                   </div>
                                 )}
                               </>
@@ -1398,6 +1658,25 @@ const Products = () => {
                           </div>
                         )}
                         <div className="flex gap-2 flex-wrap">
+                          {/* Toggle habilitar/deshabilitar: admin_general y logistica */}
+                          {(isAdminGeneral || isLogistica) && (
+                            <Button
+                              size="sm"
+                              variant={product.active ? 'outline' : 'secondary'}
+                              onClick={() => handleToggleActive(product)}
+                              disabled={togglingActiveId === product.id}
+                              className={product.active
+                                ? 'text-green-600 border-green-300 hover:bg-green-50'
+                                : 'text-red-500 border-red-200 bg-red-50 hover:bg-red-100'}
+                              title={product.active ? 'Deshabilitar producto' : 'Habilitar producto'}
+                            >
+                              {togglingActiveId === product.id
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : product.active
+                                  ? <><Power className="h-3 w-3 mr-1" />Activo</>
+                                  : <><PowerOff className="h-3 w-3 mr-1" />Inactivo</>}
+                            </Button>
+                          )}
                           {/* Botón de precios: solo admin_general puede editar precios */}
                           {isAdminGeneral && (
                             <Button 
@@ -1651,6 +1930,211 @@ const Products = () => {
         schoolId={userSchoolId}
         schoolName={schools.find(s => s.id === userSchoolId)?.name}
       />
+
+      {/* ── Gestor de Categorías ────────────────────────────────────────────── */}
+      <Dialog open={showCatManager} onOpenChange={open => {
+        if (!open) { setCatEditTarget(null); setCatDeleteTarget(null); setCatMoveTarget(''); }
+        setShowCatManager(open);
+      }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Tag className="h-5 w-5 text-purple-600" />
+              Gestionar Categorías
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* ── Crear nueva categoría directamente ── */}
+          <div className="flex gap-2 pb-2 border-b">
+            <Input
+              placeholder="Nueva categoría (ej: snacks, bebidas...)"
+              className="h-9 text-sm"
+              id="new-cat-input"
+              onKeyDown={async (e) => {
+                if (e.key !== 'Enter') return;
+                const val = (e.target as HTMLInputElement).value.trim().toLowerCase();
+                if (!val) return;
+                if (categories.includes(val)) {
+                  toast({ variant: 'destructive', title: 'Ya existe', description: `La categoría "${val}" ya está en la lista.` });
+                  return;
+                }
+                const { error } = await supabase.from('product_categories').insert({ name: val });
+                if (error) { toast({ variant: 'destructive', title: 'Error', description: error.message }); return; }
+                (e.target as HTMLInputElement).value = '';
+                await fetchCategories();
+                toast({ title: '✅ Categoría creada', description: `"${val}" agregada correctamente` });
+              }}
+            />
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700 shrink-0"
+              onClick={async () => {
+                const input = document.getElementById('new-cat-input') as HTMLInputElement;
+                const val = input?.value.trim().toLowerCase();
+                if (!val) return;
+                if (categories.includes(val)) {
+                  toast({ variant: 'destructive', title: 'Ya existe', description: `La categoría "${val}" ya está en la lista.` });
+                  return;
+                }
+                const { error } = await supabase.from('product_categories').insert({ name: val });
+                if (error) { toast({ variant: 'destructive', title: 'Error', description: error.message }); return; }
+                input.value = '';
+                await fetchCategories();
+                toast({ title: '✅ Categoría creada', description: `"${val}" agregada correctamente` });
+              }}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Crear
+            </Button>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            {categories.map(cat => {
+              const count = products.filter(p => p.category === cat).length;
+              const isEditing = catEditTarget === cat;
+              const isDeleting = catDeleteTarget === cat;
+
+              return (
+                <div key={cat} className="border rounded-xl overflow-hidden">
+                  {/* ── Fila principal ── */}
+                  <div className={`flex items-center gap-3 px-4 py-3 ${isDeleting ? 'bg-red-50' : isEditing ? 'bg-blue-50' : 'bg-white'}`}>
+                    <div className="flex-1 min-w-0">
+                      {isEditing ? (
+                        <Input
+                          autoFocus
+                          value={catEditName}
+                          onChange={e => setCatEditName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleRenameCategory(); if (e.key === 'Escape') setCatEditTarget(null); }}
+                          className="h-8 text-sm"
+                          placeholder="Nuevo nombre..."
+                        />
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold capitalize text-gray-900">{cat}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            count === 0 ? 'bg-gray-100 text-gray-500' : 'bg-purple-100 text-purple-700'
+                          }`}>
+                            {count} {count === 1 ? 'producto' : 'productos'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <Button size="sm" onClick={handleRenameCategory} disabled={catSaving} className="h-8 bg-blue-600 hover:bg-blue-700 px-3">
+                            {catSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setCatEditTarget(null)} className="h-8 px-2">
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </>
+                      ) : isDeleting ? (
+                        <Button size="sm" variant="ghost" onClick={() => { setCatDeleteTarget(null); setCatMoveTarget(''); }} className="h-8 px-2 text-gray-500">
+                          <X className="h-3 w-3" />
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm" variant="outline"
+                            onClick={() => { setCatEditTarget(cat); setCatEditName(cat); setCatDeleteTarget(null); }}
+                            className="h-8 px-3 border-blue-200 text-blue-700 hover:bg-blue-50"
+                            title="Renombrar categoría"
+                          >
+                            <Pencil className="h-3 w-3 mr-1" />
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm" variant="outline"
+                            onClick={() => { setCatDeleteTarget(cat); setCatMoveTarget(''); setCatEditTarget(null); }}
+                            className="h-8 px-3 border-red-200 text-red-600 hover:bg-red-50"
+                            title="Eliminar categoría"
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Eliminar
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Panel de migración (cuando se va a eliminar y tiene productos) ── */}
+                  {isDeleting && (
+                    <div className="border-t bg-red-50 px-4 py-3 space-y-3">
+                      {count > 0 ? (
+                        <>
+                          {/* Lista de productos en esta categoría */}
+                          <div>
+                            <p className="text-xs font-semibold text-red-700 mb-2">
+                              ⚠️ Esta categoría tiene {count} producto(s). Debes moverlos a otra categoría antes de eliminar:
+                            </p>
+                            <div className="max-h-32 overflow-y-auto space-y-1 mb-3 border border-red-200 rounded-lg bg-white p-2">
+                              {products.filter(p => p.category === cat).map(p => (
+                                <div key={p.id} className="flex items-center gap-2 text-xs text-gray-700 py-0.5">
+                                  <Package className="h-3 w-3 text-gray-400 shrink-0" />
+                                  <span className="truncate">{p.name}</span>
+                                  <span className="text-gray-400 shrink-0">S/ {p.price_sale?.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <MoveRight className="h-4 w-4 text-red-500 shrink-0" />
+                              <Select value={catMoveTarget} onValueChange={setCatMoveTarget}>
+                                <SelectTrigger className="h-9 text-sm flex-1">
+                                  <SelectValue placeholder="Mover a categoría..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {categories.filter(c => c !== cat).map(c => (
+                                    <SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="w-full bg-red-600 hover:bg-red-700 text-white"
+                            onClick={handleDeleteCategory}
+                            disabled={catSaving || !catMoveTarget}
+                          >
+                            {catSaving
+                              ? <><Loader2 className="h-3 w-3 animate-spin mr-2" />Procesando...</>
+                              : `Mover productos y eliminar "${cat}"`}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-red-700">
+                            Esta categoría no tiene productos. Se eliminará sin afectar ningún producto.
+                          </p>
+                          <Button
+                            size="sm"
+                            className="w-full bg-red-600 hover:bg-red-700 text-white"
+                            onClick={handleDeleteCategory}
+                            disabled={catSaving}
+                          >
+                            {catSaving
+                              ? <><Loader2 className="h-3 w-3 animate-spin mr-2" />Eliminando...</>
+                              : `Eliminar "${cat}"`}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {categories.length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                <FolderOpen className="h-10 w-10 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No hay categorías registradas</p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

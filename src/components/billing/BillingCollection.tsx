@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { calcBillingFlags } from '@/lib/billingUtils';
+import { InvoiceClientModal, type InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
 import { useRole } from '@/hooks/useRole';
@@ -186,6 +188,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   };
 
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
   const [periods, setPeriods] = useState<BillingPeriod[]>([]);
   const [debtors, setDebtors] = useState<Debtor[]>([]);
@@ -194,6 +197,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   const fetchDebtorsRequestId = useRef(0);
   const fetchPaidRequestId = useRef(0);
+  const lastCheckedRole = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState<'cobrar' | 'pagos' | 'config'>(section || 'cobrar');
 
   // Sincronizar con la sección controlada desde el padre (Cobranzas.tsx)
@@ -275,6 +279,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     notes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [pendingInvoiceData, setPendingInvoiceData] = useState<InvoiceClientData | null>(null);
   
   // 🆕 Pago dividido / mixto: múltiples líneas de pago
   interface PaymentLine {
@@ -315,10 +321,11 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   const checkPermissions = async () => {
     if (!user || !role) return;
+    // Guard: evitar re-verificar si el rol no cambió
+    if (lastCheckedRole.current === role) return;
+    lastCheckedRole.current = role;
 
     try {
-      console.log('🔍 Verificando permisos de Cobranzas/Cobrar para rol:', role);
-
       // Admin General y Supervisor de Red pueden ver todas las sedes
       if (role === 'admin_general' || role === 'supervisor_red') {
         setCanViewAllSchools(true);
@@ -344,8 +351,6 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         return;
       }
 
-      console.log('📦 Permisos obtenidos para Cobrar:', data);
-
       let canViewAll = false;
       let canCollectPerm = false;
 
@@ -360,12 +365,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             canViewAll = false;
           } else if (permission.action === 'cobrar_personalizado') {
             canCollectPerm = true;
-            // TODO: Implementar sedes personalizadas
           }
         }
       });
 
-      console.log('✅ Permisos de Cobrar:', { canCollectPerm, canViewAll });
       setCanViewAllSchools(canViewAll);
       setCanCollect(canCollectPerm);
 
@@ -491,11 +494,21 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     const currentRequestId = ++fetchDebtorsRequestId.current;
     try {
       setLoading(true);
+      setFetchError(null);
 
       const schoolIdFilter = !canViewAllSchools || selectedSchool !== 'all' 
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
+      // Paso 0: Materializar deudas de almuerzos pendientes (lunch_orders sin transacción real).
+      // Silencioso: si falla, el mecanismo de "virtuales" actúa como fallback sin romper nada.
+      try {
+        await supabase.rpc('materialize_pending_lunch_debts', {
+          p_school_id: schoolIdFilter ?? null,
+        });
+      } catch (e) {
+        console.warn('[BillingCollection] materialize_pending_lunch_debts falló, usando virtuales:', e);
+      }
 
       // --- RPC: get_billing_pending_transactions (reemplaza el select con joins embebidos
       //     que causaba 400 Bad Request por URL demasiado larga en PostgREST) ---
@@ -509,10 +522,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       // Paginación por offset: Supabase impone max-rows=1000 a nivel servidor.
       // Usamos .range(offset, offset+999) para pedir de 1000 en 1000.
-      // A diferencia de cursor-based, offset no pierde filas con timestamps iguales.
       const rpcRows: any[] = [];
       const RPC_PAGE = 1000;
       let rpcPage = 0;
+      let rpcFailed = false;
 
       while (true) {
         const from = rpcPage * RPC_PAGE;
@@ -527,11 +540,23 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           }
         ).order('created_at', { ascending: false }).range(from, to);
 
-        if (txErr) { console.error('❌ transactions RPC error:', txErr); break; }
+        if (txErr) {
+          console.error('❌ transactions RPC error:', txErr);
+          rpcFailed = true;
+          break;
+        }
         if (!batch || batch.length === 0) break;
         rpcRows.push(...batch);
         if (batch.length < RPC_PAGE) break;
         rpcPage++;
+      }
+
+      // Si el RPC falló, mostrar error claro y detener el loading sin continuar
+      if (rpcFailed) {
+        if (currentRequestId !== fetchDebtorsRequestId.current) return;
+        setFetchError('No se pudieron cargar las deudas. Recarga la página o contacta al soporte.');
+        setLoading(false);
+        return;
       }
 
       // Rehidratar a formato { ..., students: {...}, teacher_profiles: {...}, schools: {...} }
@@ -643,6 +668,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       }) || [];
 
       // Buscar transacciones PAID de almuerzos para deduplicar contra lunch_orders.
+      // Filtro JSONB directo en BD (evita URL overflow del select masivo anterior).
       // Paginación por offset (max-rows=1000 del servidor).
       let paidLunchTransactions: any[] = [];
       try {
@@ -654,18 +680,20 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
           let paidQ = supabase
             .from('transactions')
             .select('id, metadata, teacher_id, student_id, manual_client_name, description, created_at')
-            .eq('type', 'purchase')
             .eq('payment_status', 'paid')
             .eq('is_deleted', false)
-            .not('metadata', 'is', null)
+            // Filtra en BD: solo filas donde metadata->lunch_order_id NO es null
+            // Evita traer miles de transacciones POS que nunca tienen lunch_order_id
+            .filter('metadata->lunch_order_id', 'not.is', null)
             .order('created_at', { ascending: false })
             .range(pFrom, pTo);
           if (schoolIdFilter) paidQ = paidQ.eq('school_id', schoolIdFilter);
+          // Limitar al mismo rango temporal que la consulta principal
+          if (untilDateUTC) paidQ = paidQ.lte('created_at', untilDateUTC);
           const { data: pBatch, error: pErr } = await paidQ;
           if (pErr) { console.error('❌ paid lunch transactions error:', pErr); break; }
           if (!pBatch || pBatch.length === 0) break;
-          const lunchOnly = pBatch.filter((t: any) => t.metadata?.lunch_order_id);
-          paidLunchTransactions.push(...lunchOnly);
+          paidLunchTransactions.push(...pBatch);
           if (pBatch.length < PAID_PAGE) break;
           paidPage++;
         }
@@ -965,19 +993,22 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         .filter(Boolean))];
 
 
-      // Obtener datos de los padres (solo si hay parentIds)
+      // Obtener datos de los padres — chunked para evitar URL overflow (400 Bad Request)
+      // cuando hay cientos de UUIDs en el .in() de PostgREST (~8KB límite).
       let parentProfiles: any[] = [];
       if (parentIds.length > 0) {
-        const { data, error: parentError } = await supabase
-          .from('parent_profiles')
-          .select('user_id, full_name, phone_1')
-          .in('user_id', parentIds)
-          .range(0, 4999);
-
-        if (parentError) {
-          console.error('❌ [BillingCollection] Error fetching parent profiles:', parentError);
-        } else {
-          parentProfiles = data || [];
+        const PARENT_CHUNK = 150;
+        for (let pi = 0; pi < parentIds.length; pi += PARENT_CHUNK) {
+          const chunk = parentIds.slice(pi, pi + PARENT_CHUNK);
+          const { data: pChunk, error: parentError } = await supabase
+            .from('parent_profiles')
+            .select('user_id, full_name, phone_1')
+            .in('user_id', chunk);
+          if (parentError) {
+            console.error('❌ [BillingCollection] Error fetching parent profiles:', parentError);
+          } else if (pChunk) {
+            parentProfiles = parentProfiles.concat(pChunk);
+          }
         }
       }
 
@@ -1243,7 +1274,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     setShowPaymentModal(true);
   };
 
-  const handleRegisterPayment = async () => {
+  const handleRegisterPayment = async (invoiceData?: InvoiceClientData) => {
     if (!currentDebtor || !user) return;
 
     // Determinar método y monto según modo (simple vs dividido)
@@ -1355,6 +1386,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       if (realTransactions.length > 0) {
         const realIds = realTransactions.map((t: any) => t.id);
 
+        // Recalcular billing flags con el tipo de documento real
+        const updatedBillingFlags = calcBillingFlags(paymentData.document_type || 'ticket', finalPaymentMethod);
+
         const { error: updateError } = await supabase
           .from('transactions')
           .update({
@@ -1362,6 +1396,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             payment_method: finalPaymentMethod,
             operation_number: finalOperationNumber || null,
             created_by: user.id,
+            ...updatedBillingFlags,
           })
           .in('id', realIds);
 
@@ -1455,6 +1490,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
               school_id: vt.school_id,
               created_by: user.id,
               ticket_code: ticketCode,
+              ...calcBillingFlags(paymentData.document_type || 'ticket', finalPaymentMethod),
             };
             
             // Agregar metadata con lunch_order_id + payment breakdown si aplica
@@ -1566,6 +1602,83 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         currentDebtor.school_id ?? undefined
       );
 
+      // ── Emision inmediata de Boleta/Factura si se solicitó ────────────
+      if (invoiceData && (paymentData.document_type === 'boleta' || paymentData.document_type === 'factura')) {
+        try {
+          const UUID_RE_CB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const allTxIds = (currentDebtor.transactions ?? [])
+            .filter((t: any) => (t.payment_status === 'pending' || t.payment_status === 'partial') && UUID_RE_CB.test(t.id))
+            .map((t: any) => t.id as string);
+
+          const tipoNubefact = invoiceData.tipo === 'factura' ? 1 : 2;
+          const r2 = (n: number) => Math.round(n * 100) / 100;
+          const total = r2(finalPaidAmount);
+
+          // IGV dinámico desde billing_config de la sede
+          let igvPct = 18;
+          if (currentDebtor.school_id) {
+            const { data: bcfg } = await supabase
+              .from('billing_config')
+              .select('igv_porcentaje')
+              .eq('school_id', currentDebtor.school_id)
+              .single();
+            if (bcfg?.igv_porcentaje != null && Number(bcfg.igv_porcentaje) > 0) {
+              igvPct = Number(bcfg.igv_porcentaje);
+            }
+          }
+          const base = r2(total / (1 + igvPct / 100));
+          const igv  = r2(total - base);
+
+          const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
+            body: {
+              school_id: currentDebtor.school_id,
+              tipo: tipoNubefact,
+              cliente: {
+                doc_type:     invoiceData.doc_type === 'sin_documento' ? '-' : invoiceData.doc_type,
+                doc_number:   invoiceData.doc_number || '-',
+                razon_social: invoiceData.razon_social || 'Consumidor Final',
+                direccion:    invoiceData.direccion || '-',
+              },
+              items: [{
+                unidad_de_medida: 'NIU',
+                codigo: 'COBRO',
+                descripcion: `Cobro deuda - ${currentDebtor.client_name || 'Cliente'}`,
+                cantidad: 1,
+                valor_unitario: base,
+                precio_unitario: total,
+                descuento: '',
+                subtotal: base,
+                tipo_de_igv: 1,
+                igv,
+                total,
+                anticipo_regularizacion: false,
+              }],
+              monto_total: total,
+              payment_method: paymentData.payment_method,
+            },
+          });
+
+          if (!emitErr && emitResult?.success && emitResult.documento?.id) {
+            if (allTxIds.length > 0) {
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
+                .in('id', allTxIds);
+            }
+            toast({ title: 'Comprobante emitido', description: `${invoiceData.tipo === 'factura' ? 'Factura' : 'Boleta'} generada correctamente.` });
+          } else {
+            console.warn('Emision fallida, queda en pending para batch nocturno:', emitErr || emitResult?.error);
+            toast({
+              variant: 'destructive',
+              title: 'Pago registrado, comprobante pendiente',
+              description: 'El pago se registro correctamente pero la boleta/factura no se pudo emitir. Se emitira en el batch nocturno.',
+            });
+          }
+        } catch (emitError) {
+          console.warn('Error en emision inmediata (no critico):', emitError);
+        }
+      }
+
       // Cerrar modal y limpiar
       setShowPaymentModal(false);
       setCurrentDebtor(null);
@@ -1576,6 +1689,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         document_type: 'ticket',
         notes: '',
       });
+      setPendingInvoiceData(null);
       
       // Recargar deudores para actualizar la lista
       await fetchDebtors();
@@ -2239,7 +2353,6 @@ Agradecemos su pronta atención. 🙏`;
 
       const statusFilter = paidStatusFilter || 'all';
 
-      console.log('📊 [Reportes] fetchPaidTransactions ejecutando:', { page, schoolIdFilter, statusFilter, paidDateFrom, paidDateTo });
 
       // Fix: reemplazamos las dos queries directas con embedded joins
       // (que causaban 400 Bad Request) por dos RPCs que usan POST.
@@ -2885,6 +2998,19 @@ Si tienes dudas, comunícate con la administración de tu sede.
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-red-600" />
           <p className="ml-3 text-gray-600">Cargando deudores...</p>
+        </div>
+      )}
+
+      {activeTab !== 'pagos' && activeTab !== 'config' && !loading && fetchError && (
+        <div className="flex flex-col items-center justify-center py-12 gap-3">
+          <AlertCircle className="h-10 w-10 text-red-500" />
+          <p className="text-red-700 font-semibold text-center">{fetchError}</p>
+          <button
+            className="text-sm text-blue-600 underline"
+            onClick={() => { setFetchError(null); fetchDebtors(); }}
+          >
+            Reintentar
+          </button>
         </div>
       )}
 
@@ -4351,7 +4477,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
             {/* Tipo de Documento */}
             <div className="space-y-3">
-              <Label className="text-lg font-semibold">📄 Tipo de Documento</Label>
+              <Label className="text-lg font-semibold">Tipo de Documento</Label>
               <div className="grid grid-cols-3 gap-3">
                 <Button
                   type="button"
@@ -4359,29 +4485,30 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   className={`h-16 text-base ${paymentData.document_type === 'ticket' ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                   onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'ticket' }))}
                 >
-                  🎫 Ticket
+                  Ticket
                 </Button>
-                <div className="relative">
-                  <Button type="button" variant="outline" className="h-16 text-base opacity-50 cursor-not-allowed w-full" disabled>
-                    📄 Boleta
-                  </Button>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
-                  </div>
-                </div>
-                <div className="relative">
-                  <Button type="button" variant="outline" className="h-16 text-base opacity-50 cursor-not-allowed w-full" disabled>
-                    📋 Factura
-                  </Button>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <Badge variant="destructive" className="text-xs">Requiere API SUNAT</Badge>
-                  </div>
-                </div>
+                <Button
+                  type="button"
+                  variant={paymentData.document_type === 'boleta' ? 'default' : 'outline'}
+                  className={`h-16 text-base ${paymentData.document_type === 'boleta' ? 'bg-green-600 hover:bg-green-700' : ''}`}
+                  onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'boleta' }))}
+                >
+                  Boleta
+                </Button>
+                <Button
+                  type="button"
+                  variant={paymentData.document_type === 'factura' ? 'default' : 'outline'}
+                  className={`h-16 text-base ${paymentData.document_type === 'factura' ? 'bg-purple-600 hover:bg-purple-700' : ''}`}
+                  onClick={() => setPaymentData(prev => ({ ...prev, document_type: 'factura' }))}
+                >
+                  Factura
+                </Button>
               </div>
-              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                ⚠️ <strong>Boleta</strong> y <strong>Factura</strong> requieren conexión con la API de SUNAT. 
-                Por ahora solo está disponible <strong>Ticket</strong> (comprobante interno).
-              </p>
+              {paymentData.document_type !== 'ticket' && (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded p-2">
+                  Se emitira {paymentData.document_type === 'boleta' ? 'una Boleta' : 'una Factura'} al confirmar el cobro. Se te pediran los datos del cliente.
+                </p>
+              )}
             </div>
 
             {/* Notas */}
@@ -4405,7 +4532,13 @@ Si tienes dudas, comunícate con la administración de tu sede.
               Cancelar
             </Button>
             <Button 
-              onClick={handleRegisterPayment} 
+              onClick={() => {
+                if (paymentData.document_type !== 'ticket') {
+                  setShowInvoiceModal(true);
+                } else {
+                  handleRegisterPayment();
+                }
+              }}
               disabled={saving || (
                 useSplitPayment 
                   ? paymentLines.reduce((s, l) => s + (l.amount || 0), 0) <= 0
@@ -4431,6 +4564,22 @@ Si tienes dudas, comunícate con la administración de tu sede.
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de datos de cliente para Boleta/Factura */}
+      <InvoiceClientModal
+        open={showInvoiceModal}
+        onClose={() => setShowInvoiceModal(false)}
+        defaultType={paymentData.document_type === 'factura' ? 'factura' : 'boleta'}
+        lockedType
+        totalAmount={useSplitPayment
+          ? paymentLines.reduce((s, l) => s + (l.amount || 0), 0)
+          : paymentData.paid_amount}
+        onConfirm={(data) => {
+          setPendingInvoiceData(data);
+          setShowInvoiceModal(false);
+          handleRegisterPayment(data);
+        }}
+      />
 
       {/* Modal de Detalles Completos */}
       <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>

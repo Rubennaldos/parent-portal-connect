@@ -162,10 +162,17 @@ export default function CashReconciliationDialog({
     raw.replace(',', '.').replace(/[^0-9.]/g, '');
 
   const handleCerrarCaja = async () => {
-    // ── Guard de doble clic — respuesta inmediata en el ms 1 ────────────────
+    // Guard de doble clic
     if (saving) return;
 
-    // ── V4: Limpiar y validar inputs ANTES de parsear ────────────────────────
+    // Guard de doble cierre: sesión ya cerrada (seguridad extra)
+    if (session.status === 'closed') {
+      toast({ title: 'Esta caja ya fue cerrada', description: 'No se puede volver a cerrar una caja ya cerrada.' });
+      onClose();
+      return;
+    }
+
+    // V4: Limpiar y validar inputs ANTES de parsear
     const cashRaw    = sanitizeAmount(declaredCash.trim());
     const tarjetaRaw = sanitizeAmount(declaredTarjeta.trim());
 
@@ -184,16 +191,19 @@ export default function CashReconciliationDialog({
       }
     }
 
-    // Si hay descuadre y no hemos mostrado la justificación aún, mostrarla
-    if (hasVariance && !showJustification) {
-      setShowJustification(true);
-      return;
-    }
-
-    // Si hay descuadre y justificación vacía, bloquear
-    if (hasVariance && !justification.trim()) {
-      toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
-      return;
+    // ── CAJEROS hacen cierre a ciegas: nunca se les pide justificación ────────
+    // ── ADMINS ven el descuadre y deben justificarlo antes de cerrar ──────────
+    if (isAdmin) {
+      // Primer clic con descuadre → mostrar el área de justificación
+      if (hasVariance && !showJustification) {
+        setShowJustification(true);
+        return;
+      }
+      // Segundo clic → bloquear si no escribió la justificación
+      if (hasVariance && !justification.trim()) {
+        toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
+        return;
+      }
     }
 
     if (!user) return;
@@ -277,7 +287,12 @@ export default function CashReconciliationDialog({
         .eq('id', session.id);
       if (closeError) throw closeError;
 
-      toast({ title: '✅ Caja cerrada', description: 'El cierre y arqueo se guardaron correctamente.' });
+      toast({
+        title: '✅ Caja cerrada exitosamente',
+        description: isAdmin
+          ? 'El cierre y arqueo se guardaron correctamente.'
+          : 'Tu turno fue registrado correctamente.',
+      });
       onClosed();
       onClose();
     } catch (err: any) {

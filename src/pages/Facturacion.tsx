@@ -9,12 +9,13 @@ import { Button } from '@/components/ui/button';
 import { UserProfileMenu } from '@/components/admin/UserProfileMenu';
 import {
   FileText, ArrowLeft, Receipt, Settings, BarChart3,
-  Loader2, AlertCircle, AlertTriangle, Building2, Download, BookOpen,
+  Loader2, AlertCircle, AlertTriangle, Building2, Download, BookOpen, CalendarCheck,
 } from 'lucide-react';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 import { InvoicesList } from '@/components/billing/InvoicesList';
 import { BillingNubefactConfig } from '@/components/billing/BillingNubefactConfig';
+import { CierreMensual } from '@/components/billing/CierreMensual';
 
 // ── Resumen estadístico ──────────────────────────────────────────────────────
 const InvoiceSummary = () => {
@@ -205,9 +206,10 @@ const Facturacion = () => {
   }
 
   const tabs = [
-    { id: 'resumen',      label: 'Resumen',        icon: <BarChart3 className="h-4 w-4" /> },
-    { id: 'comprobantes', label: 'Comprobantes',   icon: <FileText className="h-4 w-4" /> },
-    { id: 'config_sunat', label: 'Config. SUNAT',  icon: <Settings className="h-4 w-4" /> },
+    { id: 'resumen',        label: 'Resumen',         icon: <BarChart3 className="h-4 w-4" /> },
+    { id: 'comprobantes',   label: 'Comprobantes',    icon: <FileText className="h-4 w-4" /> },
+    { id: 'cierre_mensual', label: 'Cierre Mensual',  icon: <CalendarCheck className="h-4 w-4" /> },
+    { id: 'config_sunat',   label: 'Config. SUNAT',   icon: <Settings className="h-4 w-4" /> },
   ];
 
   return (
@@ -266,9 +268,10 @@ const Facturacion = () => {
 
             {/* Contenido */}
             <div className="mt-4 sm:mt-6">
-              {activeTab === 'resumen' && <InvoiceSummary />}
-              {activeTab === 'comprobantes' && <InvoicesList />}
-              {activeTab === 'config_sunat' && <BillingNubefactConfig />}
+              {activeTab === 'resumen'        && <InvoiceSummary />}
+              {activeTab === 'comprobantes'   && <InvoicesList />}
+              {activeTab === 'cierre_mensual' && <CierreMensual />}
+              {activeTab === 'config_sunat'   && <BillingNubefactConfig />}
             </div>
           </CardContent>
         </Card>

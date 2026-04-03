@@ -352,6 +352,7 @@ export async function getMeta(key: string): Promise<any | null> {
 // ═══════════════════════════════════════════════════════════════════
 
 import { supabase } from './supabase';
+import { calcBillingFlags } from './billingUtils';
 
 /**
  * Precarga todos los datos necesarios para el POS offline.
@@ -502,6 +503,10 @@ export async function syncOfflineTransactions(): Promise<{
         txData.payment_method = offlineTx.payment_method || 'efectivo';
         txData.description = `Venta Genérica POS - S/ ${offlineTx.total.toFixed(2)} [OFFLINE]`;
       }
+
+      // Billing flags: usa el document_type guardado offline o 'ticket' por defecto
+      const offlineDocType = (offlineTx as any).document_type ?? 'ticket';
+      Object.assign(txData, calcBillingFlags(offlineDocType, txData.payment_method));
 
       const { data: transaction, error: txError } = await supabase
         .from('transactions')

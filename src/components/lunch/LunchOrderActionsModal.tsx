@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertCircle } from 'lucide-react';
@@ -168,6 +169,8 @@ export function LunchOrderActionsModal({
             .from('transactions')
             .update({
               payment_status: 'cancelled',
+              is_taxable: false,
+              billing_status: 'excluded',
               metadata: {
                 ...(originalTransaction.metadata || {}),
                 cancelled_at: new Date().toISOString(),
@@ -201,6 +204,7 @@ export function LunchOrderActionsModal({
                 original_transaction_id: originalTransaction.id,
                 source: 'lunch_order_cancel',
               },
+              ...BILLING_EXCLUDED,
             });
 
           if (transactionError) {

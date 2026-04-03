@@ -65,6 +65,10 @@ interface RechargeModalProps {
   breakdownItems?: BreakdownItem[];
   /** IDs de todos los estudiantes incluidos en un pago combinado */
   combinedStudentIds?: string[];
+  /** Tipo de comprobante solicitado por el padre (boleta/factura) */
+  invoiceType?: 'boleta' | 'factura' | null;
+  /** Datos del cliente para emitir boleta/factura */
+  invoiceClientData?: Record<string, unknown> | null;
 }
 
 interface PaymentConfig {
@@ -102,6 +106,8 @@ export function RechargeModal({
   paidTransactionIds,
   breakdownItems,
   combinedStudentIds,
+  invoiceType,
+  invoiceClientData,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
 
@@ -488,6 +494,8 @@ export function RechargeModal({
         description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
         lunch_order_ids: lunchOrderIds || null,
         paid_transaction_ids: paidTransactionIds || null,
+        invoice_type: invoiceType || null,
+        invoice_client_data: invoiceClientData || null,
       });
       if (insertError) throw insertError;
 

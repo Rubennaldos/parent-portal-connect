@@ -267,30 +267,31 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
     setCancellingOrderId(order.id);
     setConfirmCancelOrder(null);
     try {
-      // 1. Cancelar el pedido
-      const { error: orderError } = await supabase
-        .from('lunch_orders')
-        .update({
-          is_cancelled: true,
-          status: 'cancelled',
-          cancelled_by: parentId,
-          cancelled_at: new Date().toISOString(),
-        })
-        .eq('id', order.id);
+      // RPC atómico: cancela pedido + transacción en una sola operación de BD.
+      // Si la transacción ya está boleteada en SUNAT (billing_status='sent'),
+      // el RPC cancela solo el pedido y avisa que se requiere nota de crédito.
+      const { data: result, error: rpcError } = await supabase
+        .rpc('cancel_lunch_order', {
+          p_order_id:     order.id,
+          p_cancelled_by: parentId,
+        });
 
-      if (orderError) throw orderError;
+      if (rpcError) throw rpcError;
+      if (!result?.success) throw new Error(result?.error || 'No se pudo anular el pedido.');
 
-      // 2. Cancelar la transacción vinculada — SOLO si aún no fue pagada
-      // (si ya está 'paid' o tiene voucher en revisión, NO tocar la transacción)
-      const { error: txError } = await supabase
-        .from('transactions')
-        .update({ payment_status: 'cancelled' })
-        .contains('metadata', { lunch_order_id: order.id })
-        .eq('payment_status', 'pending');
+      if (result.already_billed) {
+        // La transacción ya fue boleteada en SUNAT → advertir al padre
+        toast({
+          title: '⚠️ Pedido anulado con aviso',
+          description: 'El pedido fue anulado pero el pago ya fue boleteado en SUNAT. Comunícate con la administración para la nota de crédito.',
+          duration: 8000,
+        });
+      } else if (result.tx_cancelled) {
+        toast({ title: '✅ Pedido anulado', description: 'El pedido fue anulado y la deuda/pago cancelados correctamente.' });
+      } else {
+        toast({ title: '✅ Pedido anulado', description: 'El pedido fue anulado.' });
+      }
 
-      if (txError) console.error('⚠️ Error actualizando transacción:', txError);
-
-      toast({ title: '✅ Pedido anulado', description: 'El pedido fue anulado y la deuda cancelada.' });
       await fetchOrders();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudo anular el pedido.' });

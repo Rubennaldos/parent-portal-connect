@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Save, CheckCircle2, AlertCircle, Building2, FileText, Key, FlaskConical, Receipt, XCircle, ExternalLink, TestTube2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Loader2, Save, CheckCircle2, AlertCircle, Building2, FileText, Key, FlaskConical, Receipt, XCircle, ExternalLink, TestTube2, ToggleLeft, ToggleRight, Clock, Zap } from 'lucide-react';
 
 interface TestResult {
   tipo: string;
@@ -51,6 +51,9 @@ export const BillingNubefactConfig = () => {
   const [lastBoleta, setLastBoleta] = useState<{ serie: string; numero: number } | null>(null);
   const [lastFactura, setLastFactura] = useState<{ serie: string; numero: number } | null>(null);
   const [selectedSchool, setSelectedSchool] = useState('');
+  const [autoBilling, setAutoBilling] = useState(false);
+  const [savingAuto, setSavingAuto] = useState(false);
+  const [lastCronLog, setLastCronLog] = useState<{ executed_at: string; status: string; groups_processed: number; total_amount: number } | null>(null);
   const [config, setConfig] = useState<BillingConfig>({
     school_id: '',
     nubefact_ruta: '',
@@ -107,7 +110,16 @@ export const BillingNubefactConfig = () => {
 
     if (data) {
       setConfig(data);
-      // No cambiar demoMode al cargar — el usuario lo controla manualmente
+      setAutoBilling(data.auto_billing_enabled ?? false);
+      // Cargar último log del cron
+      supabase
+        .from('auto_billing_logs')
+        .select('executed_at, status, groups_processed, total_amount')
+        .eq('school_id', schoolId)
+        .order('executed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data: log }) => setLastCronLog(log ?? null));
     } else {
       setConfig({
         school_id: schoolId,
@@ -150,7 +162,7 @@ export const BillingNubefactConfig = () => {
       const body: any = {
         school_id: selectedSchool,
         tipo,
-        demo_mode: demoMode,   // ← flag que controla envío a SUNAT
+        demo_mode: true,   // El panel de pruebas SIEMPRE es demo — nunca va a SUNAT real
         monto_total: tipo === 1 ? 118.00 : 50.00,
         cliente: tipo === 1
           ? { nombre: 'EMPRESA DE PRUEBA S.A.C.', tipo_doc: 6, numero_doc: '20100130492' }
@@ -482,6 +494,94 @@ export const BillingNubefactConfig = () => {
           </p>
         </CardContent>
       </Card>
+
+      {/* Auto-billing toggle */}
+      {config.id && (
+        <Card className="border-2 border-indigo-200 bg-indigo-50/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wide text-indigo-800">
+              <Clock className="h-4 w-4" />
+              Facturacion Automatica — Cron 10 PM
+            </CardTitle>
+            <p className="text-xs text-indigo-700">
+              Genera boletas resumen automaticamente cada noche a las 10:00 PM (hora Lima) para todos los pagos digitales pendientes del dia.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-white">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Facturacion automatica</p>
+                <p className="text-xs text-gray-500">
+                  {autoBilling ? 'Activa — los pagos digitales se boletean cada noche' : 'Desactivada — usa el Cierre Mensual manual'}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={savingAuto}
+                onClick={async () => {
+                  setSavingAuto(true);
+                  const newVal = !autoBilling;
+                  const { error } = await supabase
+                    .from('billing_config')
+                    .update({ auto_billing_enabled: newVal })
+                    .eq('school_id', selectedSchool);
+                  if (!error) {
+                    setAutoBilling(newVal);
+                    toast({
+                      title: newVal ? 'Cron activado' : 'Cron desactivado',
+                      description: newVal
+                        ? 'Las boletas resumen se generaran automaticamente cada noche.'
+                        : 'Debes usar el Cierre Mensual manualmente.',
+                    });
+                  } else {
+                    toast({ title: 'Error', description: error.message, variant: 'destructive' });
+                  }
+                  setSavingAuto(false);
+                }}
+                className="gap-2"
+              >
+                {savingAuto ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : autoBilling ? (
+                  <ToggleRight className="h-8 w-8 text-indigo-600" />
+                ) : (
+                  <ToggleLeft className="h-8 w-8 text-gray-400" />
+                )}
+              </Button>
+            </div>
+
+            {lastCronLog && (
+              <div className="p-3 rounded-lg border bg-white text-xs space-y-1">
+                <p className="font-semibold text-gray-600">Ultima ejecucion:</p>
+                <div className="flex items-center gap-3">
+                  <Badge className={
+                    lastCronLog.status === 'success' ? 'bg-green-100 text-green-800' :
+                    lastCronLog.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
+                  }>
+                    {lastCronLog.status === 'success' ? 'Exitoso' : lastCronLog.status === 'partial' ? 'Parcial' : 'Error'}
+                  </Badge>
+                  <span className="text-gray-500">
+                    {new Date(lastCronLog.executed_at).toLocaleString('es-PE', { timeZone: 'America/Lima' })}
+                  </span>
+                  <span className="text-gray-700 font-medium">
+                    {lastCronLog.groups_processed} grupos — S/ {Number(lastCronLog.total_amount).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+              <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-800">
+                El cron requiere que pg_cron y pg_net esten habilitados en Supabase (Database &gt; Extensions). 
+                Si no estan activos, el toggle no tendra efecto.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Panel de pruebas */}
       {config.id && (

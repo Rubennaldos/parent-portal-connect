@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebouncedSync } from '@/stores/billingSync';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,8 @@ import {
   UtensilsCrossed,
   Calendar,
   CreditCard,
-  BookOpen
+  BookOpen,
+  User
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -55,6 +56,9 @@ import { EditStudentModal } from '@/components/parent/EditStudentModal';
 import { useOnboardingCheck } from '@/hooks/useOnboardingCheck';
 import { MaintenanceScreen } from '@/components/parent/MaintenanceScreen';
 import { ErickaTutorial } from '@/components/parent/ErickaTutorial';
+import { BalanceHero } from '@/components/parent/BalanceHero';
+import { HeroActions } from '@/components/parent/HeroActions';
+import { ServicesGrid } from '@/components/parent/ServicesGrid';
 
 interface Student {
   id: string;
@@ -98,6 +102,18 @@ const Index = () => {
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
   const [pendingRechargesMap, setPendingRechargesMap] = useState<Record<string, number>>({}); // ⏳ Recargas pendientes por estudiante
   const [loading, setLoading] = useState(true);
+
+  // ── CARRUSEL ────────────────────────────────────────────────────────────────
+  // ID del hijo actualmente visible en el carrusel (persiste en localStorage)
+  const [activeStudentId, setActiveStudentId] = useState<string | null>(() => {
+    try { return localStorage.getItem('parentPortalActiveStudentId') || null; }
+    catch { return null; }
+  });
+  // Lock de 300ms: evita que un deslizamiento rápido abra modales del hijo incorrecto
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  // Ref al contenedor del carrusel para leer scrollLeft
+  const carouselRef = useRef<HTMLDivElement>(null);
+  // ────────────────────────────────────────────────────────────────────────────
   const [parentName, setParentName] = useState<string>('');
   const [parentProfileData, setParentProfileData] = useState<any>(null); // 👤 Datos del perfil del padre
   const [showAddStudent, setShowAddStudent] = useState(false);
@@ -360,10 +376,28 @@ const Index = () => {
       
       if (error) throw error;
       
-      // Si no ha completado el onboarding de cuenta libre, mostrar el modal
-      if (!data?.free_account_onboarding_completed) {
-        setShowOnboarding(true);
+      // Si ya completó el onboarding, no mostrar el modal
+      if (data?.free_account_onboarding_completed) return;
+
+      // Protección extra: si el padre ya tiene hijos registrados, nunca
+      // mostrar el onboarding aunque la BD diga false (evita el bug de
+      // padres existentes al agregar la columna con DEFAULT false)
+      const { count: studentCount } = await supabase
+        .from('students')
+        .select('id', { count: 'exact', head: true })
+        .eq('parent_id', user.id);
+
+      if (studentCount && studentCount > 0) {
+        // Actualizar silenciosamente en BD para no volver a entrar aquí
+        await supabase
+          .from('profiles')
+          .update({ free_account_onboarding_completed: true })
+          .eq('id', user.id);
+        return;
       }
+
+      // Padre nuevo sin hijos → mostrar onboarding
+      setShowOnboarding(true);
     } catch (e) {
       console.error("Error checking onboarding status:", e);
     }
@@ -440,6 +474,19 @@ const Index = () => {
       if (error) throw error;
       
       setStudents(data || []);
+
+      // Inicializar el hijo activo del carrusel:
+      // Si hay un ID guardado en localStorage y sigue siendo válido → usarlo.
+      // Si no, seleccionar el primero de la lista.
+      if (data && data.length > 0) {
+        setActiveStudentId(prev => {
+          const validIds = new Set(data.map(s => s.id));
+          if (prev && validIds.has(prev)) return prev; // mantener el guardado
+          const first = data[0].id;
+          try { localStorage.setItem('parentPortalActiveStudentId', first); } catch { /* noop */ }
+          return first;
+        });
+      }
       
       // ✅ Calcular deudas con delay para cada estudiante
       if (data && data.length > 0) {
@@ -458,38 +505,50 @@ const Index = () => {
     }
   };
 
-  // ✅ Calcular deuda de cada estudiante (sin delay — se muestra en tiempo real)
+  // ✅ Calcular deuda de cada estudiante — 1 sola query para todos los hijos (no N+1)
   const calculateStudentDebts = async (studentsData: Student[]) => {
     const debtsMap: Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }> = {};
-    
+
+    // Inicializar mapa con ceros (incluye alumnos sin deudas y con free_account=false)
     for (const student of studentsData) {
-      if (student.free_account === false) {
-        debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
-        continue;
-      }
-
-      try {
-        const { data: transactions } = await supabase
-          .from('transactions')
-          .select('amount, metadata')
-          .eq('student_id', student.id)
-          .eq('type', 'purchase')
-          .in('payment_status', ['pending', 'partial'])
-          .eq('is_deleted', false);
-
-        const lunchDebt = transactions
-          ?.filter(t => (t.metadata as any)?.lunch_order_id)
-          .reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-        const kioskDebt = transactions
-          ?.filter(t => !(t.metadata as any)?.lunch_order_id)
-          .reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0;
-        debtsMap[student.id] = { lunchDebt, kioskDebt, totalDebt: lunchDebt + kioskDebt };
-      } catch (error) {
-        console.error(`Error calculating debt for student ${student.id}:`, error);
-        debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
-      }
+      debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
     }
-    
+
+    // Solo consultar alumnos que puedan tener deuda (excluir free_account=false)
+    const billableIds = studentsData
+      .filter(s => s.free_account !== false)
+      .map(s => s.id);
+
+    if (billableIds.length === 0) {
+      setStudentDebts(debtsMap);
+      return;
+    }
+
+    try {
+      // UNA sola query para todos los hijos (antes era 1 query por hijo)
+      const { data: allPendingTx } = await supabase
+        .from('transactions')
+        .select('student_id, amount, metadata')
+        .in('student_id', billableIds)
+        .eq('type', 'purchase')
+        .in('payment_status', ['pending', 'partial'])
+        .eq('is_deleted', false);
+
+      // Agregar en memoria — O(n), sin round-trips adicionales
+      for (const tx of allPendingTx ?? []) {
+        if (!debtsMap[tx.student_id]) continue;
+        const abs = Math.abs(tx.amount);
+        if ((tx.metadata as any)?.lunch_order_id) {
+          debtsMap[tx.student_id].lunchDebt += abs;
+        } else {
+          debtsMap[tx.student_id].kioskDebt += abs;
+        }
+        debtsMap[tx.student_id].totalDebt += abs;
+      }
+    } catch (error) {
+      console.error('Error calculating student debts:', error);
+    }
+
     setStudentDebts(debtsMap);
   };
 
@@ -516,22 +575,26 @@ const Index = () => {
   };
 
   // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
-  // ✅ Sin delay — se muestra en tiempo real
+  // Reutiliza los IDs ya cargados en `students` state para evitar una query extra a students.
   const fetchPendingPaymentsCount = async () => {
     if (!user) return;
     try {
-      const { data: studentsList } = await supabase
-        .from('students')
-        .select('id')
-        .eq('parent_id', user.id)
-        .eq('is_active', true);
+      // Usar IDs del estado si ya están cargados; si no, hacer la query mínima
+      const studentIds = students.length > 0
+        ? students.map(s => s.id)
+        : await (async () => {
+            const { data } = await supabase
+              .from('students')
+              .select('id')
+              .eq('parent_id', user.id)
+              .eq('is_active', true);
+            return (data ?? []).map(s => s.id);
+          })();
 
-      if (!studentsList || studentsList.length === 0) {
+      if (studentIds.length === 0) {
         setPendingPaymentsCount(0);
         return;
       }
-
-      const studentIds = studentsList.map(s => s.id);
 
       const { count, error } = await supabase
         .from('transactions')
@@ -541,9 +604,7 @@ const Index = () => {
         .in('payment_status', ['pending', 'partial'])
         .eq('is_deleted', false);
 
-      if (!error) {
-        setPendingPaymentsCount(count || 0);
-      }
+      if (!error) setPendingPaymentsCount(count || 0);
     } catch (err) {
       console.error('Error fetching pending payments count:', err);
     }
@@ -555,6 +616,34 @@ const Index = () => {
       description: 'Las recargas se gestionan desde la pestaña Carrito.',
     });
   };
+
+  // ── CARRUSEL: detectar qué hijo está centrado después de un scroll ──────────
+  const handleCarouselScroll = useCallback(() => {
+    const el = carouselRef.current;
+    if (!el || students.length === 0) return;
+    // Cada tarjeta ocupa scrollWidth / nCards del área de scroll total
+    const cardWidth = el.scrollWidth / students.length;
+    const newIndex  = Math.round(el.scrollLeft / cardWidth);
+    const clamped   = Math.max(0, Math.min(newIndex, students.length - 1));
+    const newId     = students[clamped]?.id;
+    if (newId && newId !== activeStudentId) {
+      setIsTransitioning(true);
+      setActiveStudentId(newId);
+      try { localStorage.setItem('parentPortalActiveStudentId', newId); } catch { /* noop */ }
+      setTimeout(() => setIsTransitioning(false), 300);
+    }
+  }, [students, activeStudentId]);
+
+  // Scroll programático al hijo guardado cuando el carrusel monta o cambia students
+  const scrollToActiveStudent = useCallback(() => {
+    const el = carouselRef.current;
+    if (!el || students.length === 0 || !activeStudentId) return;
+    const index = students.findIndex(s => s.id === activeStudentId);
+    if (index < 0) return;
+    const cardWidth = el.scrollWidth / students.length;
+    el.scrollTo({ left: cardWidth * index, behavior: 'instant' });
+  }, [students, activeStudentId]);
+  // ────────────────────────────────────────────────────────────────────────────
 
   const openRechargeModal = (student: Student) => {
     setSelectedStudent(student);
@@ -803,27 +892,31 @@ const Index = () => {
 
       {/* Main Content - Padding responsivo */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
-        {/* Pestaña Alumnos */}
+        {/* ── PESTAÑA ALUMNOS — Carrusel estilo Yape ── */}
         <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
-          <div className="space-y-6 sm:space-y-8">
-            {/* Título - Más pequeño en móvil */}
-            <div className="mb-4 sm:mb-6 md:mb-8">
-              <h2 className="text-2xl sm:text-2xl md:text-3xl font-light text-stone-800 tracking-wide mb-1 sm:mb-2">Mis Hijos</h2>
-              <p className="text-stone-400 font-normal text-xs sm:text-sm tracking-wide">Gestión centralizada de cuentas escolares</p>
+          <div className="space-y-4 sm:space-y-5">
+
+            {/* Título */}
+            <div className="px-1">
+              <h2 className="text-xl sm:text-2xl font-light text-stone-800 tracking-wide mb-0.5">Mis Hijos</h2>
+              <p className="text-stone-400 text-xs sm:text-sm tracking-wide">
+                {students.length > 1 ? 'Desliza para cambiar de hijo' : 'Gestión centralizada de cuentas escolares'}
+              </p>
             </div>
 
             {students.length === 0 ? (
+              /* Estado vacío — idéntico al original */
               <Card className="border border-dashed border-stone-300/50 bg-white shadow-sm">
                 <CardContent className="flex flex-col items-center justify-center py-12 sm:py-16 md:py-20 px-4">
-                  <GraduationCap className="h-12 w-12 sm:h-13 sm:w-13 md:h-14 md:w-14 text-stone-300 mb-4 sm:mb-5 md:mb-6" />
+                  <GraduationCap className="h-12 w-12 sm:h-14 sm:w-14 text-stone-300 mb-4 sm:mb-6" />
                   <h3 className="text-lg sm:text-xl font-normal text-stone-800 mb-2 sm:mb-3 tracking-wide text-center">
                     No hay estudiantes registrados
                   </h3>
-                  <p className="text-stone-500 mb-6 sm:mb-7 md:mb-8 text-center max-w-md text-xs sm:text-sm leading-relaxed px-2">
+                  <p className="text-stone-500 mb-6 sm:mb-8 text-center max-w-md text-xs sm:text-sm leading-relaxed px-2">
                     Agrega a tu primer hijo para empezar a usar el kiosco escolar
                   </p>
-                  <Button 
-                    size="lg" 
+                  <Button
+                    size="lg"
                     onClick={() => setShowAddStudent(true)}
                     className="bg-gradient-to-r from-emerald-600/90 via-[#8B7355] to-[#6B5744] hover:from-emerald-700/90 hover:via-[#6B5744] hover:to-[#5B4734] text-white shadow-md transition-all duration-300 h-12 sm:h-auto text-sm sm:text-base"
                   >
@@ -834,36 +927,104 @@ const Index = () => {
               </Card>
             ) : (
               <>
-                {/* Grid - 1 columna en móvil, 2 en tablet, 3 en desktop */}
-                <div className="grid gap-4 sm:gap-5 md:gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                {/* ── MÓDULO DE SALDO (BalanceHero) + BOTONES HERO ── */}
+                {(() => {
+                  const active = students.find(s => s.id === activeStudentId) ?? students[0];
+                  return (
+                    <>
+                      <BalanceHero
+                        studentId={active?.id ?? null}
+                        studentName={active?.full_name ?? ''}
+                        photoUrl={active?.photo_url ?? null}
+                        balance={active?.balance ?? 0}
+                        lunchDebt={studentDebts[active?.id]?.lunchDebt ?? 0}
+                        kioskDebt={studentDebts[active?.id]?.kioskDebt ?? 0}
+                        isLoading={loading}
+                      />
+                      {/* Botones gigantes estilo Yape — re-renderizan con activeStudentId */}
+                      <HeroActions
+                        activeStudentName={active?.full_name ?? ''}
+                        schoolName={active?.school?.name}
+                        onAlmuerzos={() => setActiveTab('almuerzos')}
+                        onPagos={() => setActiveTab('carrito')}
+                        pendingPaymentsCount={pendingPaymentsCount}
+                        almuerzosEnMantenimiento={!!maintenanceAlmuerzos}
+                        isTransitioning={isTransitioning}
+                      />
+                      {/* Cuadrícula de servicios secundarios estilo Yape */}
+                      <ServicesGrid
+                        onViewHistory={() => { if (!isTransitioning) openHistoryModal(active); }}
+                      />
+                    </>
+                  );
+                })()}
+
+                {/* ── CARRUSEL HORIZONTAL ── */}
+                {/* overflow-x-scroll + snap-x: nativo, sin dependencias */}
+                <div
+                  ref={carouselRef}
+                  onScroll={handleCarouselScroll}
+                  onLoad={scrollToActiveStudent}
+                  className="flex overflow-x-auto snap-x snap-mandatory scroll-smooth gap-3 sm:gap-4 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2"
+                  style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
+                >
                   {students.map((student) => (
-                    <StudentCard
+                    <div
                       key={student.id}
-                      student={student}
-                      totalDebt={studentDebts[student.id]?.totalDebt || 0}
-                      lunchDebt={studentDebts[student.id]?.lunchDebt || 0}
-                      kioskDebt={studentDebts[student.id]?.kioskDebt || 0}
-                      pendingRechargeAmount={pendingRechargesMap[student.id] || 0} // ⏳ Recarga pendiente
-                      onRecharge={() => openRechargeModal(student)}
-                      onViewHistory={() => openHistoryModal(student)}
-                      onViewMenu={() => openMenuModal(student)}
-                      onOpenSettings={() => openSettingsModal(student)}
-                      onPhotoClick={() => openPhotoModal(student)}
-                      onEdit={() => { setStudentToEdit(student); setShowEditStudent(true); }}
-                    />
+                      data-student-id={student.id}
+                      className="snap-center flex-shrink-0 w-[87vw] sm:w-[380px]"
+                    >
+                      <StudentCard
+                        student={student}
+                        totalDebt={studentDebts[student.id]?.totalDebt || 0}
+                        lunchDebt={studentDebts[student.id]?.lunchDebt || 0}
+                        kioskDebt={studentDebts[student.id]?.kioskDebt || 0}
+                        pendingRechargeAmount={pendingRechargesMap[student.id] || 0}
+                        onRecharge={() => { if (!isTransitioning) openRechargeModal(student); }}
+                        onViewHistory={() => { if (!isTransitioning) openHistoryModal(student); }}
+                        onViewMenu={() => { if (!isTransitioning) openMenuModal(student); }}
+                        onOpenSettings={() => { if (!isTransitioning) openSettingsModal(student); }}
+                        onPhotoClick={() => { if (!isTransitioning) openPhotoModal(student); }}
+                        onEdit={() => { if (!isTransitioning) { setStudentToEdit(student); setShowEditStudent(true); } }}
+                      />
+                    </div>
                   ))}
+
+                  {/* Tarjeta para agregar hijo — al final del carrusel */}
+                  <div className="snap-center flex-shrink-0 w-[60vw] sm:w-[200px] flex items-center justify-center">
+                    <button
+                      onClick={() => setShowAddStudent(true)}
+                      className="flex flex-col items-center gap-2 px-6 py-8 rounded-2xl border-2 border-dashed border-stone-300 hover:border-emerald-500 hover:bg-emerald-50/40 transition-all duration-200 text-stone-400 hover:text-emerald-600 w-full h-full min-h-[140px]"
+                    >
+                      <Plus className="h-7 w-7" />
+                      <span className="text-xs font-medium text-center leading-tight">Agregar otro estudiante</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Card para agregar más estudiantes */}
-                <Card 
-                  className="border border-dashed border-stone-300/50 hover:border-emerald-500/50 hover:bg-emerald-50/30 transition-all duration-300 cursor-pointer shadow-sm"
-                  onClick={() => setShowAddStudent(true)}
-                >
-                  <CardContent className="flex items-center justify-center py-6 sm:py-7 md:py-8">
-                    <Plus className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600 mr-2" />
-                    <span className="text-emerald-700 font-normal tracking-wide text-sm sm:text-base">Agregar otro estudiante</span>
-                  </CardContent>
-                </Card>
+                {/* ── DOTS INDICADORES ── */}
+                {students.length > 1 && (
+                  <div className="flex justify-center gap-1.5 pt-0.5">
+                    {students.map((student) => (
+                      <button
+                        key={student.id}
+                        aria-label={`Ver ${student.full_name}`}
+                        onClick={() => {
+                          const el = carouselRef.current;
+                          if (!el) return;
+                          const index = students.findIndex(s => s.id === student.id);
+                          const cardWidth = el.scrollWidth / students.length;
+                          el.scrollTo({ left: cardWidth * index, behavior: 'smooth' });
+                        }}
+                        className={`rounded-full transition-all duration-300 ${
+                          student.id === activeStudentId
+                            ? 'w-5 h-2 bg-emerald-600'
+                            : 'w-2 h-2 bg-stone-300 hover:bg-stone-400'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -886,7 +1047,7 @@ const Index = () => {
                 </TabsTrigger>
                 <TabsTrigger value="historial" className="text-xs sm:text-sm py-2 sm:py-3 gap-1.5">
                   <History className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  Historial
+                  Pagos Realizados
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="pendientes">
@@ -940,6 +1101,19 @@ const Index = () => {
                 </TabsContent>
               </Tabs>
             </div>
+          ) : null}
+        </div>
+
+        {/* ── PESTAÑA HISTORIAL — Pagos Realizados (acceso directo desde nav) ── */}
+        {/* El código de PaymentsTab y PaymentHistoryTab sigue intacto en el tab 'carrito' */}
+        <div className={activeTab !== 'historial' ? 'hidden' : ''}>
+          {user?.id && maintenancePagos ? (
+            <MaintenanceScreen
+              title={maintenancePagos.title}
+              message={maintenancePagos.message}
+            />
+          ) : user?.id ? (
+            <PaymentHistoryTab userId={user.id} isActive={activeTab === 'historial'} />
           ) : null}
         </div>
 
@@ -1073,75 +1247,78 @@ const Index = () => {
         } : null}
       />
 
-      {/* Navegación Inferior Fija - Optimizada para móvil */}
+      {/* ── NAVEGACIÓN INFERIOR — 3 ítems (Inicio · Historial · Perfil) ── */}
+      {/* Las pestañas 'almuerzos' y 'carrito' siguen existiendo en el código,
+          solo se acceden vía los HeroActions buttons. */}
       <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-stone-200/50 shadow-lg z-50">
-        <div className="max-w-7xl mx-auto px-1 sm:px-2">
-          <div className="grid grid-cols-4 gap-0.5 sm:gap-1">
+        <div className="max-w-7xl mx-auto px-2 sm:px-4">
+          <div className="grid grid-cols-3">
+
+            {/* Inicio */}
             <button
               id="nav-tab-alumnos"
               onClick={() => setActiveTab('alumnos')}
-              className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
-                activeTab === 'alumnos'
-                  ? 'text-emerald-700 bg-emerald-50'
-                  : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
+              className={`flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
+                activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito'
+                  ? 'text-emerald-700'
+                  : 'text-stone-400 hover:text-emerald-600'
               }`}
             >
-              <Home className="h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1" />
-              <span className="text-[10px] sm:text-xs font-normal tracking-wide">Mis Hijos</span>
+              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
+                activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito'
+                  ? 'bg-emerald-100'
+                  : ''
+              }`}>
+                <Home className="h-5 w-5 sm:h-6 sm:w-6" />
+              </div>
+              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Inicio</span>
             </button>
 
+            {/* Historial — Pagos Realizados */}
             <button
-              id="nav-tab-almuerzos"
-              onClick={() => {
-                setActiveTab('almuerzos');
-              }}
-              className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
-                activeTab === 'almuerzos'
-                  ? 'text-emerald-700 bg-emerald-50'
-                  : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
+              id="nav-tab-historial"
+              onClick={() => setActiveTab('historial')}
+              className={`relative flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
+                activeTab === 'historial'
+                  ? 'text-emerald-700'
+                  : 'text-stone-400 hover:text-emerald-600'
               }`}
             >
-              <UtensilsCrossed className="h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1" />
-              <span className="text-[10px] sm:text-xs font-normal tracking-wide">Almuerzos</span>
-            </button>
-
-            <button
-              id="nav-tab-carrito"
-              onClick={() => setActiveTab('carrito')}
-              className={`relative flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
-                activeTab === 'carrito'
-                  ? 'text-emerald-700 bg-emerald-50'
-                  : pendingPaymentsCount > 0
-                    ? 'text-red-500 hover:text-red-600 hover:bg-red-50/30'
-                    : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
-              }`}
-            >
-              {pendingPaymentsCount > 0 && (
-                <span className="absolute top-1.5 right-1/4 flex h-4 w-4 sm:h-5 sm:w-5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                  <span className="relative inline-flex items-center justify-center rounded-full h-4 w-4 sm:h-5 sm:w-5 bg-red-500 text-white text-[8px] sm:text-[9px] font-bold">
+              {/* Badge de pagos pendientes en el historial */}
+              {pendingPaymentsCount > 0 && activeTab !== 'historial' && (
+                <span className="absolute top-2 right-[28%] flex">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500 text-white text-[8px] font-bold">
                     {pendingPaymentsCount > 9 ? '9+' : pendingPaymentsCount}
                   </span>
                 </span>
               )}
-              <ShoppingCart className={`h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1 ${pendingPaymentsCount > 0 && activeTab !== 'carrito' ? 'animate-bounce' : ''}`} />
-              <span className={`text-[10px] sm:text-xs font-normal tracking-wide ${pendingPaymentsCount > 0 && activeTab !== 'carrito' ? 'font-semibold text-red-600' : ''}`}>
-                Carrito
-              </span>
+              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
+                activeTab === 'historial' ? 'bg-emerald-100' : ''
+              }`}>
+                <History className="h-5 w-5 sm:h-6 sm:w-6" />
+              </div>
+              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Historial</span>
             </button>
 
+            {/* Perfil */}
             <button
               id="nav-tab-mas"
               onClick={() => setActiveTab('mas')}
-              className={`flex flex-col items-center justify-center py-2.5 sm:py-3 transition-all duration-200 rounded-lg ${
+              className={`flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
                 activeTab === 'mas'
-                  ? 'text-emerald-700 bg-emerald-50'
-                  : 'text-stone-400 hover:text-emerald-600 hover:bg-emerald-50/30'
+                  ? 'text-emerald-700'
+                  : 'text-stone-400 hover:text-emerald-600'
               }`}
             >
-              <MenuIcon className="h-5 w-5 sm:h-6 sm:w-6 mb-0.5 sm:mb-1" />
-              <span className="text-[10px] sm:text-xs font-normal tracking-wide">Más</span>
+              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
+                activeTab === 'mas' ? 'bg-emerald-100' : ''
+              }`}>
+                <User className="h-5 w-5 sm:h-6 sm:w-6" />
+              </div>
+              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Perfil</span>
             </button>
+
           </div>
         </div>
       </nav>

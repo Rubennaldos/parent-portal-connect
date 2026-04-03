@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   Merge, Search, Plus, X, ArrowRight, Package, Loader2,
-  AlertTriangle, CheckCircle2, Building2, BadgeCheck
+  AlertTriangle, CheckCircle2, Building2, BadgeCheck, RefreshCw,
 } from 'lucide-react';
 
 interface Product {
@@ -38,19 +38,19 @@ interface SchoolPrice {
   price_sale: string;
 }
 
-const CATEGORIES = [
-  'bebidas','dulces','frutas','menu','snacks','galletas',
-  'chocolates','golosinas','jugos','refrescos','sandwiches','postres','otros'
-];
+// Normaliza texto: quita tildes y pasa a minúsculas para búsqueda tolerante
+const normalize = (str: string) =>
+  str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 export const ProductMergeTab = () => {
   const { toast } = useToast();
 
   // Data
-  const [products, setProducts]   = useState<Product[]>([]);
-  const [schools, setSchools]     = useState<School[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [merging, setMerging]     = useState(false);
+  const [products, setProducts]     = useState<Product[]>([]);
+  const [schools, setSchools]       = useState<School[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [merging, setMerging]       = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
   // Left column search
@@ -60,9 +60,9 @@ export const ProductMergeTab = () => {
   const [selected, setSelected] = useState<Product[]>([]);
 
   // New product form
-  const [newName, setNewName]         = useState('');
-  const [newCategory, setNewCategory] = useState('otros');
-  const [newCode, setNewCode]         = useState('');
+  const [newName, setNewName]           = useState('');
+  const [newCategory, setNewCategory]   = useState('otros');
+  const [newCode, setNewCode]           = useState('');
   const [newPriceSale, setNewPriceSale] = useState('');
   const [newPriceCost, setNewPriceCost] = useState('');
   const [schoolPrices, setSchoolPrices] = useState<SchoolPrice[]>([]);
@@ -71,29 +71,42 @@ export const ProductMergeTab = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [{ data: prods }, { data: schs }] = await Promise.all([
+    const [{ data: prods }, { data: schs }, { data: cats }] = await Promise.all([
       supabase
         .from('products')
         .select('id,name,code,category,price_sale,price_cost,active,school_ids,is_verified')
         .eq('active', true)
         .order('name'),
       supabase.from('schools').select('id,name').order('name'),
+      supabase.from('product_categories').select('name').order('name'),
     ]);
     setProducts(prods || []);
     setSchools(schs || []);
-    // Inicializar precios por sede vacíos
+    // Siempre inicializar precios por sede para TODAS las sedes
     setSchoolPrices((schs || []).map(s => ({ school_id: s.id, price_sale: '' })));
+    // Categorías desde BD; fallback a lista base si la tabla no existe aún
+    if (cats && cats.length > 0) {
+      setCategories(cats.map(c => c.name));
+    } else {
+      setCategories([
+        'bebidas','chocolates','dulces','frutas','galletas',
+        'golosinas','jugos','menu','otros','postres',
+        'refrescos','sandwiches','snack','snacks',
+      ]);
+    }
     setLoading(false);
   };
 
-  // Productos disponibles en la columna izquierda (excluir los ya seleccionados)
+  // Normalización de búsqueda: ignora tildes y mayúsculas
   const availableProducts = useMemo(() => {
     const selectedIds = new Set(selected.map(p => p.id));
+    const q = normalize(search);
     return products.filter(p =>
       !selectedIds.has(p.id) &&
-      (p.name.toLowerCase().includes(search.toLowerCase()) ||
-       p.code.toLowerCase().includes(search.toLowerCase()) ||
-       p.category.toLowerCase().includes(search.toLowerCase()))
+      (!q ||
+        normalize(p.name).includes(q) ||
+        normalize(p.code).includes(q) ||
+        normalize(p.category).includes(q))
     );
   }, [products, selected, search]);
 
@@ -114,21 +127,37 @@ export const ProductMergeTab = () => {
     setSelected(prev => prev.filter(p => p.id !== id));
   };
 
+  // Sanitiza un input de precio: reemplaza coma por punto, elimina todo lo que no sea dígito o punto
+  const sanitizePrice = (raw: string): string =>
+    raw.replace(',', '.').replace(/[^0-9.]/g, '');
+
   const updateSchoolPrice = (schoolId: string, value: string) => {
+    const clean = sanitizePrice(value);
     setSchoolPrices(prev =>
-      prev.map(sp => sp.school_id === schoolId ? { ...sp, price_sale: value } : sp)
+      prev.map(sp => sp.school_id === schoolId ? { ...sp, price_sale: clean } : sp)
     );
   };
 
+  // Generar código de barras automático — timestamp completo + 4 chars random = sin colisiones
+  const generateCode = () => {
+    const random = Math.random().toString(36).slice(-4).toUpperCase();
+    const code = `PRD${Date.now()}${random}`;
+    setNewCode(code);
+  };
+
   const handleMerge = async () => {
-    if (selected.length === 0) {
-      toast({ variant: 'destructive', title: 'Selecciona al menos un producto' }); return;
+    if (selected.length < 2) {
+      toast({ variant: 'destructive', title: 'Se necesitan al menos 2 productos', description: 'La fusión requiere mínimo 2 productos para tener sentido.' });
+      return;
     }
     if (!newName.trim()) {
-      toast({ variant: 'destructive', title: 'El nombre del nuevo producto es obligatorio' }); return;
+      toast({ variant: 'destructive', title: 'Falta el nombre', description: 'El nombre del producto maestro es obligatorio.' });
+      return;
     }
-    if (!newPriceSale || isNaN(parseFloat(newPriceSale))) {
-      toast({ variant: 'destructive', title: 'El precio de venta es obligatorio' }); return;
+    const cleanPrice = sanitizePrice(newPriceSale);
+    if (!cleanPrice || isNaN(parseFloat(cleanPrice)) || parseFloat(cleanPrice) <= 0) {
+      toast({ variant: 'destructive', title: 'Precio inválido', description: 'El precio base debe ser mayor a 0.' });
+      return;
     }
     setShowConfirm(true);
   };
@@ -137,18 +166,25 @@ export const ProductMergeTab = () => {
     setMerging(true);
     setShowConfirm(false);
     try {
+      // Sanitizar antes de enviar a BD — elimina comas, espacios, texto
       const validSchoolPrices = schoolPrices
-        .filter(sp => sp.price_sale.trim() !== '' && !isNaN(parseFloat(sp.price_sale)))
-        .map(sp => ({ school_id: sp.school_id, price_sale: parseFloat(sp.price_sale) }));
+        .filter(sp => {
+          const clean = sanitizePrice(sp.price_sale);
+          return clean !== '' && !isNaN(parseFloat(clean)) && parseFloat(clean) > 0;
+        })
+        .map(sp => ({ school_id: sp.school_id, price_sale: parseFloat(sanitizePrice(sp.price_sale)) }));
 
-      const { data, error } = await supabase.rpc('merge_products', {
+      // Código: trim + uppercase para evitar duplicados invisibles (abc-1 vs ABC-1)
+      const finalCode = newCode.trim().toUpperCase();
+
+      const { error } = await supabase.rpc('merge_products', {
         p_old_product_ids: selected.map(p => p.id),
         p_new_product_data: {
           name:       newName.trim(),
-          code:       newCode.trim(),
+          code:       finalCode,
           category:   newCategory,
-          price_sale: parseFloat(newPriceSale),
-          price_cost: parseFloat(newPriceCost) || 0,
+          price_sale: parseFloat(sanitizePrice(newPriceSale)),
+          price_cost: parseFloat(sanitizePrice(newPriceCost)) || 0,
         },
         p_school_prices: validSchoolPrices,
       });
@@ -175,12 +211,6 @@ export const ProductMergeTab = () => {
       setMerging(false);
     }
   };
-
-  // Sedes involucradas en los productos seleccionados
-  const involvedSchools = useMemo(() => {
-    const ids = new Set(selected.flatMap(p => p.school_ids || []));
-    return schools.filter(s => ids.has(s.id));
-  }, [selected, schools]);
 
   if (loading) return (
     <div className="flex justify-center items-center py-24">
@@ -222,7 +252,8 @@ export const ProductMergeTab = () => {
                 />
               </div>
 
-              <div className="border rounded-lg overflow-y-auto max-h-[420px] divide-y">
+              {/* Lista más alta para ver más productos */}
+              <div className="border rounded-lg overflow-y-auto max-h-[520px] divide-y">
                 {availableProducts.length === 0 ? (
                   <div className="text-center py-10 text-slate-400">
                     <Package className="h-8 w-8 mx-auto mb-2 opacity-30" />
@@ -281,15 +312,15 @@ export const ProductMergeTab = () => {
                 )}
               </h3>
 
-              {/* Lista de seleccionados */}
-              <div className="border rounded-lg overflow-y-auto max-h-[140px] divide-y bg-orange-50 min-h-[60px]">
+              {/* Lista de seleccionados — altura aumentada */}
+              <div className="border rounded-lg overflow-y-auto max-h-[240px] divide-y bg-orange-50 min-h-[80px]">
                 {selected.length === 0 ? (
-                  <p className="text-center py-4 text-slate-400 text-sm">
+                  <p className="text-center py-6 text-slate-400 text-sm">
                     Presiona "+" en un producto de la izquierda para agregarlo aquí
                   </p>
                 ) : (
                   selected.map(p => (
-                    <div key={p.id} className="flex items-center justify-between px-3 py-2 hover:bg-orange-100">
+                    <div key={p.id} className="flex items-center justify-between px-3 py-2.5 hover:bg-orange-100">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1">
                           {p.is_verified && <BadgeCheck className="h-3.5 w-3.5 text-green-600 shrink-0" />}
@@ -332,15 +363,35 @@ export const ProductMergeTab = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {CATEGORIES.map(c => (
+                        {categories.map(c => (
                           <SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {/* Código de barras con botón generar */}
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold">Código de Barras</Label>
-                    <Input placeholder="Ej: 7751234567890" value={newCode} onChange={e => setNewCode(e.target.value)} className="bg-white" />
+                    <div className="flex gap-1.5">
+                      <Input
+                        placeholder="Ej: 7751234567890"
+                        value={newCode}
+                        onChange={e => setNewCode(e.target.value)}
+                        className="bg-white flex-1 min-w-0"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={generateCode}
+                        title="Generar código automáticamente"
+                        className="shrink-0 h-9 w-9 p-0 bg-white"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Deja vacío o usa <RefreshCw className="inline h-2.5 w-2.5" /> para generar uno automático</p>
                   </div>
                 </div>
 
@@ -355,14 +406,14 @@ export const ProductMergeTab = () => {
                   </div>
                 </div>
 
-                {/* Precios por sede (solo las involucradas en productos seleccionados) */}
-                {involvedSchools.length > 0 && (
+                {/* Precios por sede — SIEMPRE muestra todas las sedes */}
+                {schools.length > 0 && (
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold flex items-center gap-1">
-                      <Building2 className="h-3 w-3" /> Precio por sede (opcional — deja vacío para usar el precio base)
+                      <Building2 className="h-3 w-3" /> Precio por sede <span className="font-normal text-slate-400">(opcional — vacío = usa precio base)</span>
                     </Label>
-                    <div className="space-y-1.5">
-                      {involvedSchools.map(school => (
+                    <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                      {schools.map(school => (
                         <div key={school.id} className="flex items-center gap-2">
                           <span className="text-xs text-slate-600 flex-1 truncate">{school.name}</span>
                           <div className="flex items-center gap-1 shrink-0">
@@ -421,13 +472,17 @@ export const ProductMergeTab = () => {
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm">
-                <p>Estás a punto de fusionar <strong>{selected.length} producto(s)</strong> en uno nuevo:</p>
+                <p>
+                  ¿Estás seguro de fusionar estos <strong>{selected.length} productos</strong> en{' '}
+                  <strong>"{newName}"</strong>?{' '}
+                  Esta acción <span className="text-red-600 font-semibold">desactivará los otros {selected.length - 1} producto(s)</span> permanentemente.
+                </p>
                 <div className="bg-slate-50 rounded-lg p-3 space-y-1">
-                  <p><strong>Nuevo:</strong> {newName} — S/ {parseFloat(newPriceSale || '0').toFixed(2)}</p>
-                  <p className="text-slate-500">Código: {newCode || '(sin código)'} · Categoría: {newCategory}</p>
+                  <p><strong>Producto maestro:</strong> {newName} — S/ {parseFloat(sanitizePrice(newPriceSale) || '0').toFixed(2)}</p>
+                  <p className="text-slate-500">Código: {newCode.trim().toUpperCase() || '(sin código)'} · Categoría: {newCategory}</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-slate-500">Productos que se inactivarán:</p>
+                  <p className="text-red-600 font-semibold text-xs">Se desactivarán ({selected.length} productos):</p>
                   {selected.map(p => (
                     <div key={p.id} className="flex items-center gap-2 text-xs text-slate-600">
                       <X className="h-3 w-3 text-red-400" />

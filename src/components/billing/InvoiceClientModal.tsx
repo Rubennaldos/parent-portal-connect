@@ -6,11 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import {
   Loader2, Search, CheckCircle2, AlertCircle, Receipt, FileText,
-  User, Building2, MapPin, X, ChevronRight, Info,
+  User, Building2, MapPin, X, ChevronRight, Info, Save,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Consulta DNI/RUC via nuestra función serverless en Vercel (/api/consult-dni)
@@ -58,6 +60,12 @@ interface Props {
   totalAmount?: number;
   /** school_id para usar las credenciales Nubefact de la sede al consultar */
   schoolId?: string;
+  /**
+   * ID del padre/usuario autenticado (profiles.id).
+   * Si se pasa, el modal cargará sus datos fiscales guardados y
+   * ofrecerá la opción de guardarlos para la próxima vez.
+   */
+  parentId?: string;
 }
 
 interface SUNATResult {
@@ -80,6 +88,7 @@ export const InvoiceClientModal = ({
   onConfirm,
   totalAmount,
   schoolId,
+  parentId,
 }: Props) => {
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -95,10 +104,38 @@ export const InvoiceClientModal = ({
   const [sunatError, setSunatError] = useState('');
   const [manualMode, setManualMode] = useState(false);
 
+  // Estado para guardar datos fiscales en el perfil del padre
+  const [wantSaveProfile, setWantSaveProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  // Datos guardados cargados desde el perfil
+  const [savedProfileData, setSavedProfileData] = useState<{
+    ruc?: string; razon_social?: string; direccion?: string; email?: string;
+  } | null>(null);
+
+  // Cargar datos fiscales guardados del perfil cuando se abre el modal
+  useEffect(() => {
+    if (!open || !parentId) return;
+    supabase
+      .from('profiles')
+      .select('saved_ruc, saved_razon_social, saved_direccion_fiscal, saved_email_fiscal, preferred_invoice_type')
+      .eq('id', parentId)
+      .single()
+      .then(({ data }) => {
+        if (!data) return;
+        setSavedProfileData({
+          ruc: data.saved_ruc ?? undefined,
+          razon_social: data.saved_razon_social ?? undefined,
+          direccion: data.saved_direccion_fiscal ?? undefined,
+          email: data.saved_email_fiscal ?? undefined,
+        });
+      });
+  }, [open, parentId]);
+
   // Resetear al abrir
   useEffect(() => {
     if (open) {
-      setInvoiceType(defaultType || 'boleta');
+      const tipo = defaultType || 'boleta';
+      setInvoiceType(tipo);
       setDocNumber('');
       setRazonSocial(defaultName);
       setDireccion('');
@@ -106,24 +143,42 @@ export const InvoiceClientModal = ({
       setSunatResult(null);
       setSunatError('');
       setManualMode(false);
+      setWantSaveProfile(false);
       // Para boleta sin doc por defecto
-      setDocType(defaultType === 'factura' ? 'ruc' : 'sin_documento');
+      setDocType(tipo === 'factura' ? 'ruc' : 'sin_documento');
+      // Pre-rellenar con datos guardados si es factura y hay datos del perfil
+      if (tipo === 'factura' && savedProfileData) {
+        if (savedProfileData.ruc)         setDocNumber(savedProfileData.ruc);
+        if (savedProfileData.razon_social) setRazonSocial(savedProfileData.razon_social);
+        if (savedProfileData.direccion)    setDireccion(savedProfileData.direccion);
+        if (savedProfileData.email)        setEmail(savedProfileData.email);
+      }
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open, defaultType, defaultName]);
 
-  // Cuando cambia tipo de comprobante, ajustar doc_type
+  // Cuando cambia tipo de comprobante, ajustar doc_type y pre-rellenar desde perfil
   useEffect(() => {
     if (invoiceType === 'factura') {
       setDocType('ruc');
+      // Pre-rellenar desde el perfil del padre si hay datos guardados
+      if (parentId && savedProfileData) {
+        if (savedProfileData.ruc)          setDocNumber(savedProfileData.ruc);
+        if (savedProfileData.razon_social)  setRazonSocial(savedProfileData.razon_social);
+        if (savedProfileData.direccion)     setDireccion(savedProfileData.direccion);
+        if (savedProfileData.email)         setEmail(savedProfileData.email);
+      } else {
+        setRazonSocial('');
+        setDireccion('');
+      }
     } else {
       if (docType === 'ruc') setDocType('sin_documento');
+      setRazonSocial(defaultName);
+      setDireccion('');
     }
     setSunatResult(null);
     setSunatError('');
-    setDocNumber('');
-    setRazonSocial(invoiceType === 'boleta' ? defaultName : '');
-    setDireccion('');
+    setDocNumber(invoiceType === 'factura' && savedProfileData?.ruc ? savedProfileData.ruc : '');
   }, [invoiceType]);
 
   // Búsqueda automática al completar dígitos
@@ -161,10 +216,31 @@ export const InvoiceClientModal = ({
     }
   };
 
-  const handleConfirm = () => {
-    // Validaciones
+  const handleConfirm = async () => {
+    const cleanDoc = docNumber.replace(/\D/g, '');
+
+    // ── Validación estricta de documento ──
+    if (docType === 'dni') {
+      if (cleanDoc.length !== 8) {
+        toast({ title: 'DNI inválido', description: 'El DNI debe tener exactamente 8 dígitos.', variant: 'destructive' });
+        return;
+      }
+    }
+    if (docType === 'ruc') {
+      if (cleanDoc.length !== 11) {
+        toast({ title: 'RUC inválido', description: 'El RUC debe tener exactamente 11 dígitos.', variant: 'destructive' });
+        return;
+      }
+      // RUC válido en Perú empieza con 10 (persona natural con RUC) o 20 (empresa)
+      if (!cleanDoc.startsWith('10') && !cleanDoc.startsWith('20')) {
+        toast({ title: 'RUC inválido', description: 'El RUC debe comenzar con 10 (persona natural) o 20 (empresa).', variant: 'destructive' });
+        return;
+      }
+    }
+
+    // ── Validaciones adicionales por tipo de comprobante ──
     if (invoiceType === 'factura') {
-      if (!docNumber || docNumber.replace(/\D/g, '').length !== 11) {
+      if (!cleanDoc || cleanDoc.length !== 11) {
         toast({ title: 'RUC requerido', description: 'Para facturas necesitas ingresar un RUC de 11 dígitos.', variant: 'destructive' });
         return;
       }
@@ -178,10 +254,31 @@ export const InvoiceClientModal = ({
       }
     }
 
+    // Guardar datos fiscales en el perfil del padre (si lo pidió)
+    if (wantSaveProfile && parentId && invoiceType === 'factura') {
+      setSavingProfile(true);
+      const { error: saveErr } = await supabase
+        .from('profiles')
+        .update({
+          saved_ruc: docNumber.replace(/\D/g, '') || null,
+          saved_razon_social: razonSocial.trim() || null,
+          saved_direccion_fiscal: direccion.trim() || null,
+          saved_email_fiscal: email.trim() || null,
+          preferred_invoice_type: 'factura',
+        })
+        .eq('id', parentId);
+      setSavingProfile(false);
+      if (saveErr) {
+        console.warn('⚠️ No se pudieron guardar los datos fiscales:', saveErr.message);
+      } else {
+        toast({ title: '✅ Datos guardados', description: 'Tus datos de facturación se guardaron para la próxima vez.' });
+      }
+    }
+
     onConfirm({
       tipo: invoiceType,
       doc_type: docType,
-      doc_number: docNumber.replace(/\D/g, '') || '-',
+      doc_number: cleanDoc || '-',
       razon_social: razonSocial.trim() || 'Consumidor Final',
       direccion: direccion.trim(),
       email: email.trim() || undefined,
@@ -448,6 +545,31 @@ export const InvoiceClientModal = ({
               </p>
             </div>
           )}
+
+          {/* Banner de datos pre-cargados desde el perfil */}
+          {parentId && isFactura && savedProfileData?.ruc && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex items-start gap-2">
+              <CheckCircle2 className="h-4 w-4 text-indigo-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-indigo-700">
+                Datos pre-cargados desde tu perfil. Puedes editarlos si cambiaron.
+              </p>
+            </div>
+          )}
+
+          {/* Opción de guardar datos fiscales en el perfil (solo para padres en modo factura) */}
+          {parentId && isFactura && (
+            <div className="flex items-center gap-2.5 py-2 px-3 bg-gray-50 rounded-lg border border-gray-200">
+              <Checkbox
+                id="save-profile"
+                checked={wantSaveProfile}
+                onCheckedChange={(v) => setWantSaveProfile(!!v)}
+              />
+              <label htmlFor="save-profile" className="text-xs text-gray-600 cursor-pointer select-none">
+                <span className="font-semibold">Guardar mis datos de facturación</span> para la próxima vez
+              </label>
+              <Save className="h-3.5 w-3.5 text-gray-400 ml-auto shrink-0" />
+            </div>
+          )}
         </div>
 
         {/* Botones */}
@@ -457,10 +579,13 @@ export const InvoiceClientModal = ({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={!canConfirm || searching}
+            disabled={!canConfirm || searching || savingProfile}
             className={`flex-1 gap-2 ${isFactura ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
-            {isFactura ? <FileText className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}
+            {savingProfile
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : isFactura ? <FileText className="h-4 w-4" /> : <Receipt className="h-4 w-4" />
+            }
             Emitir {isFactura ? 'Factura' : 'Boleta'}
             <ChevronRight className="h-4 w-4" />
           </Button>

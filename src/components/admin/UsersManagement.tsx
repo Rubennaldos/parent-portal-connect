@@ -306,12 +306,12 @@ export function UsersManagement() {
     await loadSessions(user.id);
   };
 
-  // Auto-refresh: encender/apagar polling cada 5 segundos
+  // Auto-refresh: encender/apagar polling cada 30 segundos
   useEffect(() => {
     if (sessionsAutoRefresh && sessionsUser) {
       sessionsIntervalRef.current = setInterval(() => {
         loadSessions(sessionsUser.id, true);
-      }, 5000);
+      }, 30000);
     } else {
       if (sessionsIntervalRef.current) clearInterval(sessionsIntervalRef.current);
     }

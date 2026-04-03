@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { 
   UtensilsCrossed, 
@@ -532,7 +533,7 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
         console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
         const transactionData: any = {
           type: 'purchase',
-          amount: -Math.abs(totalPrice), // Negativo = cargo/deuda
+          amount: -Math.abs(totalPrice),
           description,
           created_by: userId,
           school_id: userSchoolId || selectedMenu.school_id,
@@ -544,7 +545,8 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
             source: userType === 'parent' ? 'unified_calendar_v2_parent' : 'unified_calendar_v2_teacher',
             order_date: selectedMenu.date,
             menu_name: selectedMenu.category?.name || 'Menú'
-          }
+          },
+          ...BILLING_EXCLUDED,
         };
 
         if (userType === 'parent') {

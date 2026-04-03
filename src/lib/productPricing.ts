@@ -78,20 +78,19 @@ export async function getProductsForSchool(schoolId: string | null): Promise<any
         .from('products')
         .select('*')
         .eq('active', true)
-        .order('total_sales', { ascending: false, nullsFirst: false })
         .order('name', { ascending: true });
 
       if (error) throw error;
       return data || [];
     }
 
-    // Obtener productos base SOLO de esta sede
-    // Solo traer productos explícitamente asignados a esta sede
+    // Traer productos de esta sede + productos globales (school_ids IS NULL)
+    // Un producto global aparece en todas las sedes sin necesidad de asignación explícita
     const { data: products, error: productsError } = await supabase
       .from('products')
       .select('*')
       .eq('active', true)
-      .contains('school_ids', [schoolId]);
+      .or(`school_ids.is.null,school_ids.cs.{${schoolId}}`);
 
     if (productsError) throw productsError;
 

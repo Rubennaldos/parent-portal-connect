@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED, calcBillingFlags } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -596,7 +597,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               transactions.push({
                 student_id: studentId,
                 type: 'purchase',
-                amount: -config.lunch_price, // Negativo = deuda
+                amount: -config.lunch_price,
                 payment_status: 'pending',
                 description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
                 created_at: new Date().toISOString(),
@@ -605,7 +606,8 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                   lunch_order_id: lunchOrderId || null,
                   source: 'parent_lunch_calendar',
                   order_date: dateStr
-                }
+                },
+                ...BILLING_EXCLUDED,
               });
             } else {
               console.log(`💰 Estudiante ${student.full_name} es PREPAGADO - Creando transacción pendiente (NO se toca el saldo de recargas)`);
@@ -639,7 +641,8 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                   lunch_order_id: lunchOrderId || null,
                   source: 'parent_lunch_calendar',
                   order_date: dateStr
-                }
+                },
+                ...BILLING_EXCLUDED,
               });
             }
           }

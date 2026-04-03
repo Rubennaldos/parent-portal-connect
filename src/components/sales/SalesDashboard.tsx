@@ -118,31 +118,36 @@ export function SalesDashboard({ selectedSchool = 'all', canViewAllSchools }: Sa
       const { start, end } = getDateRange();
 
       // Construir query base
+      // 'purchase' = ventas POS atómicas nuevas, 'sale' = registros legacy
       let transactionsQuery = supabase
         .from('transactions')
         .select(`
-          *,
-          student:students(full_name, school_id, school:schools(name)),
+          id,
+          amount,
+          created_at,
+          school_id,
+          student_id,
+          student:students(full_name),
           items:transaction_items(quantity, unit_price, product:products(name))
         `)
-        .eq('type', 'sale')
+        .in('type', ['purchase', 'sale'])
         .eq('is_deleted', false)
         .neq('payment_status', 'cancelled')
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString());
 
-      // Filtrar por sede si no es "all"
+      // Filtrar por sede en transactions.school_id (columna real)
       if (selectedSchool && selectedSchool !== 'all') {
-        transactionsQuery = transactionsQuery.eq('students.school_id', selectedSchool);
+        transactionsQuery = transactionsQuery.eq('school_id', selectedSchool);
       }
 
       const { data: transactions, error } = await transactionsQuery;
 
       if (error) throw error;
 
-      // Calcular métricas
+      // Calcular métricas — Math.abs porque amount es negativo en compras
       const totalSales = transactions?.length || 0;
-      const totalAmount = transactions?.reduce((sum, t) => sum + (t.amount || 0), 0) || 0;
+      const totalAmount = transactions?.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0) || 0;
       const avgTicket = totalSales > 0 ? totalAmount / totalSales : 0;
 
       // Productos más vendidos
@@ -180,7 +185,7 @@ export function SalesDashboard({ selectedSchool = 'all', canViewAllSchools }: Sa
           salesByDayMap[day] = { sales: 0, amount: 0 };
         }
         salesByDayMap[day].sales += 1;
-        salesByDayMap[day].amount += t.amount || 0;
+        salesByDayMap[day].amount += Math.abs(t.amount || 0);
       });
 
       const salesByDayData = Object.entries(salesByDayMap)
@@ -201,7 +206,7 @@ export function SalesDashboard({ selectedSchool = 'all', canViewAllSchools }: Sa
           studentSales[studentName] = { purchases: 0, spent: 0 };
         }
         studentSales[studentName].purchases += 1;
-        studentSales[studentName].spent += t.amount || 0;
+        studentSales[studentName].spent += Math.abs(t.amount || 0);
       });
 
       const salesByStudentData = Object.entries(studentSales)

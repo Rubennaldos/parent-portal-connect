@@ -39,6 +39,8 @@ interface PaymentRecord {
   description: string | null;
   studentName: string;
   approverName: string | null;
+  // Comprobantes SUNAT individuales (puede haber más de uno si el voucher cubrió varias deudas)
+  sunat_invoices?: { pdf_url: string | null; full_number: string | null; invoice_type: string | null }[];
 }
 
 interface PaymentHistoryTabProps {
@@ -82,7 +84,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         .select(`
           id, student_id, amount, payment_method, reference_code,
           voucher_url, status, rejection_reason, approved_at, approved_by,
-          created_at, request_type, description,
+          created_at, request_type, description, paid_transaction_ids,
           students(full_name)
         `)
         .eq('parent_id', userId)
@@ -133,6 +135,68 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           approverName: r.approved_by ? (approverMap[r.approved_by] ?? 'Administrador') : null,
         };
       });
+
+      // ── Buscar comprobante SUNAT individual para vouchers aprobados ───────────
+      // Ruta: recharge_requests.paid_transaction_ids → transactions.invoice_id → invoices.pdf_url
+      const approvedWithTxIds = raw.filter(
+        r => r.status === 'approved' && Array.isArray(r.paid_transaction_ids) && r.paid_transaction_ids.length > 0
+      );
+
+      if (approvedWithTxIds.length > 0) {
+        const allTxIds = [...new Set(approvedWithTxIds.flatMap((r: any) => r.paid_transaction_ids as string[]))];
+
+        const { data: txWithInvoice } = await supabase
+          .from('transactions')
+          .select('id, invoice_id')
+          .in('id', allTxIds)
+          .not('invoice_id', 'is', null);
+
+        if (txWithInvoice && txWithInvoice.length > 0) {
+          const invoiceIds = [...new Set(txWithInvoice.map((t: any) => t.invoice_id as string))];
+
+          const { data: invoicesData } = await supabase
+            .from('invoices')
+            .select('id, pdf_url, full_number, invoice_type')
+            .in('id', invoiceIds);
+
+          if (invoicesData) {
+            // Mapas para lookup rápido
+            const txToInvoiceId = new Map<string, string>(
+              txWithInvoice.map((t: any) => [t.id, t.invoice_id])
+            );
+            const invoiceMap = new Map(invoicesData.map((inv: any) => [inv.id, inv]));
+
+            // Enriquecer cada registro con TODOS los comprobantes únicos
+            // (un voucher puede cubrir varias deudas → varias facturas distintas)
+            mapped.forEach(rec => {
+              const rawRec = raw.find(r => r.id === rec.id) as any;
+              if (!rawRec?.paid_transaction_ids) return;
+
+              // Recolectar todos los invoice_ids únicos para este voucher
+              const seenInvoiceIds = new Set<string>();
+              const invoices: { pdf_url: string | null; full_number: string | null; invoice_type: string | null }[] = [];
+
+              (rawRec.paid_transaction_ids as string[])
+                .filter(id => txToInvoiceId.has(id))
+                .forEach(txId => {
+                  const invoiceId = txToInvoiceId.get(txId)!;
+                  if (seenInvoiceIds.has(invoiceId)) return; // deduplicar
+                  seenInvoiceIds.add(invoiceId);
+                  const inv = invoiceMap.get(invoiceId);
+                  if (inv) {
+                    invoices.push({
+                      pdf_url:      inv.pdf_url ?? null,
+                      full_number:  inv.full_number ?? null,
+                      invoice_type: inv.invoice_type ?? null,
+                    });
+                  }
+                });
+
+              if (invoices.length > 0) rec.sunat_invoices = invoices;
+            });
+          }
+        }
+      }
 
       setRecords(mapped);
     } catch (err) {
@@ -435,6 +499,40 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                     {format(new Date(record.approved_at), "d 'de' MMMM yyyy", { locale: es })}
                     {record.approverName && ` por ${record.approverName}`}
                   </p>
+                </div>
+              )}
+
+              {/* Comprobantes SUNAT individuales — uno por cada boleta/factura emitida */}
+              {record.status === 'approved' && record.sunat_invoices && record.sunat_invoices.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded px-2 py-1.5 mb-2 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5 text-indigo-600 flex-shrink-0" />
+                    <p className="text-[11px] text-indigo-700 font-medium">
+                      {record.sunat_invoices.length === 1 ? 'Comprobante SUNAT emitido' : `${record.sunat_invoices.length} comprobantes SUNAT emitidos`}
+                    </p>
+                  </div>
+                  {record.sunat_invoices.map((inv, idx) => (
+                    <div key={idx} className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] text-indigo-600 min-w-0 truncate">
+                        {inv.invoice_type === 'factura' ? 'Factura' : 'Boleta'}
+                        {inv.full_number && ` ${inv.full_number}`}
+                      </p>
+                      {inv.pdf_url ? (
+                        <a href={inv.pdf_url} target="_blank" rel="noopener noreferrer">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-[10px] gap-1 text-indigo-700 border-indigo-300 hover:bg-indigo-100 flex-shrink-0"
+                          >
+                            <Download className="h-3 w-3" />
+                            PDF
+                          </Button>
+                        </a>
+                      ) : (
+                        <span className="text-[10px] text-indigo-400 flex-shrink-0">Sin PDF</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 

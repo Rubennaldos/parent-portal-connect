@@ -10,10 +10,29 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Loader2, Search, FileText, Receipt, Download, ExternalLink,
   CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw,
-  Building2, Filter, ChevronDown, Mail, RotateCcw,
+  ChevronDown, ChevronUp, Mail, RotateCcw, Users,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+// ── Tipos para el panel de trazabilidad ──────────────────────────────────────
+interface InvoiceDetailRow {
+  tx_id:          string;
+  amount:         number;
+  payment_method: string | null;
+  type:           string;
+  created_at:     string;
+  alumno:         string | null;
+  padre:          string | null;
+}
+
+const PM_LABELS: Record<string, string> = {
+  yape: 'Yape', yape_qr: 'Yape QR', yape_numero: 'Yape N°',
+  plin: 'Plin', plin_qr: 'Plin QR', plin_numero: 'Plin N°',
+  transferencia: 'Transferencia', transfer: 'Transferencia',
+  tarjeta: 'Tarjeta', card: 'Tarjeta',
+  efectivo: 'Efectivo', saldo: 'Saldo', mixto: 'Mixto', digital: 'Digital',
+};
 
 interface Invoice {
   id: string;
@@ -80,6 +99,83 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
   const [totalPages, setTotalPages] = useState(1);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = compact ? 10 : 20;
+
+  // ── Estado del panel de trazabilidad ─────────────────────────────────────
+  const [expandedId, setExpandedId]     = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState<Set<string>>(new Set());
+  const [detailCache, setDetailCache]   = useState<Map<string, InvoiceDetailRow[]>>(new Map());
+
+  /** Trae las transacciones vinculadas a una boleta y enriquece con alumno/padre */
+  const fetchDetail = async (invoiceId: string) => {
+    if (detailCache.has(invoiceId)) return; // ya en caché
+    setDetailLoading(prev => new Set([...prev, invoiceId]));
+    try {
+      // 1. Transacciones de esta boleta
+      const { data: txRows, error: txErr } = await supabase
+        .from('transactions')
+        .select('id, amount, payment_method, type, created_at, student_id')
+        .eq('invoice_id', invoiceId)
+        .order('created_at', { ascending: true });
+
+      if (txErr) throw txErr;
+      if (!txRows || txRows.length === 0) {
+        setDetailCache(prev => new Map(prev).set(invoiceId, []));
+        return;
+      }
+
+      // 2. Nombres de alumnos + parent_id (para llegar al padre)
+      const studentIds = [...new Set(txRows.map((r: any) => r.student_id).filter(Boolean))];
+      let studentMap = new Map<string, { name: string; parent_id: string | null }>();
+      if (studentIds.length > 0) {
+        const { data: students } = await supabase
+          .from('students')
+          .select('id, full_name, parent_id')
+          .in('id', studentIds);
+        (students ?? []).forEach((s: any) => studentMap.set(s.id, { name: s.full_name, parent_id: s.parent_id }));
+      }
+
+      // 3. Nombres de los padres (profiles)
+      const parentIds = [...new Set([...studentMap.values()].map(s => s.parent_id).filter(Boolean))] as string[];
+      let parentMap = new Map<string, string>();
+      if (parentIds.length > 0) {
+        const { data: parents } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', parentIds);
+        (parents ?? []).forEach((p: any) => parentMap.set(p.id, p.full_name));
+      }
+
+      // 4. Armar filas finales
+      const rows: InvoiceDetailRow[] = txRows.map((tx: any) => {
+        const student = tx.student_id ? studentMap.get(tx.student_id) : null;
+        const parentName = student?.parent_id ? parentMap.get(student.parent_id) ?? null : null;
+        return {
+          tx_id:          tx.id,
+          amount:         Math.abs(tx.amount),
+          payment_method: tx.payment_method,
+          type:           tx.type,
+          created_at:     tx.created_at,
+          alumno:         student?.name ?? null,
+          padre:          parentName,
+        };
+      });
+
+      setDetailCache(prev => new Map(prev).set(invoiceId, rows));
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al cargar detalle', description: err.message });
+    } finally {
+      setDetailLoading(prev => { const n = new Set(prev); n.delete(invoiceId); return n; });
+    }
+  };
+
+  const toggleDetail = (invoiceId: string) => {
+    if (expandedId === invoiceId) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(invoiceId);
+      fetchDetail(invoiceId);
+    }
+  };
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
@@ -212,7 +308,9 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
           <option value="all">Todos los estados</option>
           <option value="accepted">Aceptadas SUNAT</option>
           <option value="pending">Pendientes</option>
+          <option value="processing">Procesando</option>
           <option value="rejected">Rechazadas</option>
+          <option value="error">Error de sistema</option>
           <option value="cancelled">Anuladas</option>
         </select>
         {(role === 'admin_general' || role === 'superadmin') && !schoolIdFilter && schools.length > 0 && (
@@ -243,10 +341,15 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
       ) : (
         <div className="space-y-2">
           {invoices.map((inv) => {
-            const status = STATUS_CONFIG[inv.sunat_status] || STATUS_CONFIG['pending'];
-            const type   = TYPE_CONFIG[inv.invoice_type]   || TYPE_CONFIG['boleta'];
+            const status     = STATUS_CONFIG[inv.sunat_status] || STATUS_CONFIG['pending'];
+            const type       = TYPE_CONFIG[inv.invoice_type]   || TYPE_CONFIG['boleta'];
+            const isExpanded = expandedId === inv.id;
+            const isLoadingDetail = detailLoading.has(inv.id);
+            const detailRows = detailCache.get(inv.id) ?? null;
+            const isResumen  = inv.client_name === 'Consumidor Final';
+
             return (
-              <Card key={inv.id} className="border hover:shadow-md transition-shadow">
+              <Card key={inv.id} className={`border transition-shadow ${isExpanded ? 'shadow-md' : 'hover:shadow-md'}`}>
                 <CardContent className="p-3 sm:p-4">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     {/* Número y tipo */}
@@ -267,7 +370,7 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
                         <p className="text-sm text-gray-700 font-medium truncate mt-0.5">{inv.client_name}</p>
                         <p className="text-xs text-gray-400">
                           {inv.client_document_type?.toUpperCase()} {inv.client_document_number} •{' '}
-                          {format(new Date(inv.emission_date), 'dd MMM yyyy', { locale: es })}
+                          {format(parseISO(inv.emission_date), 'dd MMM yyyy', { locale: es })}
                           {inv.schools?.name && ` • ${inv.schools.name}`}
                         </p>
                       </div>
@@ -282,24 +385,14 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
                     {/* Acciones */}
                     <div className="flex items-center gap-2 shrink-0">
                       {inv.pdf_url && (
-                        <a
-                          href={inv.pdf_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Ver PDF"
-                        >
+                        <a href={inv.pdf_url} target="_blank" rel="noopener noreferrer" title="Ver PDF">
                           <Button variant="outline" size="sm" className="gap-1 text-blue-600 border-blue-300 hover:bg-blue-50">
                             <Download className="h-3.5 w-3.5" /> PDF
                           </Button>
                         </a>
                       )}
                       {inv.xml_url && (
-                        <a
-                          href={inv.xml_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Descargar XML"
-                        >
+                        <a href={inv.xml_url} target="_blank" rel="noopener noreferrer" title="Descargar XML">
                           <Button variant="outline" size="sm" className="gap-1 text-gray-600">
                             <ExternalLink className="h-3.5 w-3.5" /> XML
                           </Button>
@@ -307,8 +400,7 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
                       )}
                       {inv.client_email && inv.pdf_url && (
                         <Button
-                          variant="outline"
-                          size="sm"
+                          variant="outline" size="sm"
                           onClick={() => handleSendEmail(inv)}
                           title={`Enviar a ${inv.client_email}`}
                           className="gap-1 text-emerald-600 border-emerald-300 hover:bg-emerald-50"
@@ -316,12 +408,105 @@ export const InvoicesList = ({ schoolIdFilter, compact = false }: Props) => {
                           <Mail className="h-3.5 w-3.5" />
                         </Button>
                       )}
+                      {/* Botón de trazabilidad — solo boletas con invoice_id vinculado */}
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => toggleDetail(inv.id)}
+                        title="Ver pagos vinculados a esta boleta"
+                        className={`gap-1 ${isExpanded
+                          ? 'text-indigo-700 border-indigo-400 bg-indigo-50'
+                          : 'text-indigo-600 border-indigo-300 hover:bg-indigo-50'}`}
+                      >
+                        {isLoadingDetail
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : isExpanded
+                            ? <ChevronUp className="h-3.5 w-3.5" />
+                            : <ChevronDown className="h-3.5 w-3.5" />}
+                        <Users className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </div>
 
                   {/* Nota si hay error o modo demo */}
                   {inv.notes && (
                     <p className="text-xs text-amber-600 mt-2 bg-amber-50 rounded px-2 py-1">{inv.notes}</p>
+                  )}
+
+                  {/* ── Panel de Trazabilidad de Auditoría ─────────────────────── */}
+                  {isExpanded && (
+                    <div className="mt-3 border-t pt-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Users className="h-4 w-4 text-indigo-500" />
+                        <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">
+                          Pagos vinculados a esta boleta
+                        </span>
+                        {isResumen && (
+                          <Badge className="text-[10px] px-1.5 py-0 bg-gray-100 text-gray-500">
+                            Boleta Resumen
+                          </Badge>
+                        )}
+                      </div>
+
+                      {isLoadingDetail ? (
+                        <div className="flex items-center justify-center py-4">
+                          <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+                        </div>
+                      ) : !detailRows || detailRows.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic py-2 text-center">
+                          No hay transacciones vinculadas a esta boleta en la base de datos.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="overflow-x-auto rounded-md border border-gray-100">
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wide">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-semibold">Alumno</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Padre / Tutor</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Método</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Tipo</th>
+                                  <th className="px-3 py-2 text-right font-semibold">Monto S/</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {detailRows.map((row) => (
+                                  <tr key={row.tx_id} className="hover:bg-indigo-50/40">
+                                    <td className="px-3 py-2 text-gray-800">
+                                      {row.alumno ?? <span className="text-gray-400 italic">—</span>}
+                                    </td>
+                                    <td className="px-3 py-2 text-gray-600">
+                                      {row.padre ?? <span className="text-gray-400 italic">—</span>}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span className="inline-block bg-blue-50 text-blue-700 rounded px-1.5 py-0.5 font-medium">
+                                        {PM_LABELS[row.payment_method ?? ''] ?? row.payment_method ?? '—'}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-gray-500 capitalize">{row.type}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-gray-800">
+                                      {row.amount.toFixed(2)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot className="bg-indigo-50 border-t border-indigo-100">
+                                <tr>
+                                  <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-indigo-700">
+                                    Total vinculado ({detailRows.length} pago{detailRows.length !== 1 ? 's' : ''})
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-bold text-indigo-800">
+                                    {detailRows.reduce((s, r) => s + r.amount, 0).toFixed(2)}
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-1.5 text-right">
+                            ID boleta: <span className="font-mono">{inv.id}</span>
+                          </p>
+                        </>
+                      )}
+                    </div>
                   )}
                 </CardContent>
               </Card>

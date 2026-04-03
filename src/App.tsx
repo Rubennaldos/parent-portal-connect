@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PermissionProtectedRoute } from "@/components/PermissionProtectedRoute";
+import { SystemGuard } from "@/components/SystemGuard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { VersionChecker } from "@/components/VersionChecker";
 import { lazy, Suspense } from "react";
@@ -22,6 +23,8 @@ import Teacher from "./pages/Teacher";
 // Eliminamos imports innecesarios para simplificar
 import SuperAdmin from "./pages/SuperAdmin";
 import Dashboard from "./pages/Dashboard";
+import MaintenancePage from "./pages/MaintenancePage";
+import MaintenanceAdminPage from "./pages/MaintenanceAdminPage";
 import Admin from "./pages/Admin";
 import POS from "./pages/POS";
 import Comedor from "./pages/Comedor";
@@ -63,9 +66,14 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <AuthProvider>
+            <SystemGuard>
             <Routes>
             {/* Única puerta de entrada: Auth unificado */}
             <Route path="/auth" element={<Auth />} />
+
+            {/* Pantallas de mantenimiento — accesibles sin autenticación */}
+            <Route path="/mantenimiento"       element={<MaintenancePage />} />
+            <Route path="/mantenimiento-admin" element={<MaintenanceAdminPage />} />
             
             {/* Redirecciones de rutas antiguas para no romper nada */}
             <Route path="/register" element={<Navigate to="/auth" replace />} />
@@ -305,6 +313,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </SystemGuard>
           {/* 🤖 Widget flotante de Soporte IA — Para personal de sedes (admin_general, gestor_unidad, operador_caja) */}
           <Suspense fallback={null}>
             <SupportChatWidget />

@@ -2,14 +2,16 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useDebouncedSync } from '@/stores/billingSync';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { RechargeModal } from './RechargeModal';
+import { InvoiceClientModal, type InvoiceClientData, type InvoiceType } from '@/components/billing/InvoiceClientModal';
 
 interface PendingTransaction {
   id: string;
@@ -57,6 +59,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   // ── Modo pago combinado (todos los hijos juntos) ──
   const [combinedMode, setCombinedMode] = useState(false);
+
+  // ── Comprobante (Boleta/Factura) ──
+  const [invoiceType, setInvoiceType] = useState<InvoiceType | null>(null);
+  const [invoiceClientData, setInvoiceClientData] = useState<InvoiceClientData | null>(null);
+  const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
+  const [showInvoiceClientModal, setShowInvoiceClientModal] = useState(false);
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
@@ -324,7 +332,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     }
     setCombinedMode(true);
     setSelectedDebt(null);
-    setShowPaymentModal(true);
+    setShowInvoiceSelector(true);
   };
 
   /**
@@ -332,12 +340,21 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
    */
   const handlePayDebt = (debt: StudentDebt) => {
     const allIds = debt.pending_transactions.map(t => t.id);
-    // Si no hay selección explícita, inicializar con todo seleccionado
     if (!selectedTxByStudent.has(debt.student_id)) {
       setSelectedTxByStudent(prev => new Map(prev).set(debt.student_id, new Set(allIds)));
     }
     setSelectedDebt(debt);
-    setShowPaymentModal(true);
+    setShowInvoiceSelector(true);
+  };
+
+  const proceedToPayment = (type: InvoiceType | null) => {
+    setInvoiceType(type);
+    setShowInvoiceSelector(false);
+    if (type === 'factura') {
+      setShowInvoiceClientModal(true);
+    } else {
+      setShowPaymentModal(true);
+    }
   };
 
   /**
@@ -720,6 +737,76 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         );
       })}
 
+      {/* ── Selector de tipo de comprobante ── */}
+      <Dialog open={showInvoiceSelector} onOpenChange={(open) => {
+        if (!open) {
+          setShowInvoiceSelector(false);
+          if (!showPaymentModal) {
+            setSelectedDebt(null);
+            setCombinedMode(false);
+          }
+        }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-center">Tipo de comprobante</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Button
+              variant="outline"
+              className="w-full h-14 text-base justify-start gap-3 hover:bg-blue-50 hover:border-blue-300"
+              onClick={() => proceedToPayment(null)}
+            >
+              <Receipt className="h-5 w-5 text-blue-600" />
+              <div className="text-left">
+                <p className="font-medium">Sin comprobante</p>
+                <p className="text-xs text-gray-500">Se generara automaticamente una boleta resumen</p>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full h-14 text-base justify-start gap-3 hover:bg-green-50 hover:border-green-300"
+              onClick={() => proceedToPayment('boleta')}
+            >
+              <Receipt className="h-5 w-5 text-green-600" />
+              <div className="text-left">
+                <p className="font-medium">Boleta</p>
+                <p className="text-xs text-gray-500">Comprobante a nombre del padre/madre</p>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full h-14 text-base justify-start gap-3 hover:bg-purple-50 hover:border-purple-300"
+              onClick={() => proceedToPayment('factura')}
+            >
+              <FileText className="h-5 w-5 text-purple-600" />
+              <div className="text-left">
+                <p className="font-medium">Factura</p>
+                <p className="text-xs text-gray-500">Requiere RUC y razon social</p>
+              </div>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal de datos del cliente para factura ── */}
+      <InvoiceClientModal
+        open={showInvoiceClientModal}
+        onClose={() => {
+          setShowInvoiceClientModal(false);
+          setSelectedDebt(null);
+          setCombinedMode(false);
+        }}
+        defaultType="factura"
+        lockedType
+        parentId={userId}
+        onConfirm={(data) => {
+          setInvoiceClientData(data);
+          setShowInvoiceClientModal(false);
+          setShowPaymentModal(true);
+        }}
+      />
+
       {/* ── Modal de Pago (individual) ── */}
       {!combinedMode && selectedDebt && (() => {
         const payData = getPaymentData(selectedDebt);
@@ -729,11 +816,15 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             onClose={() => {
               setShowPaymentModal(false);
               setSelectedDebt(null);
+              setInvoiceType(null);
+              setInvoiceClientData(null);
               fetchDebts();
             }}
             onCancel={() => {
               setShowPaymentModal(false);
               setSelectedDebt(null);
+              setInvoiceType(null);
+              setInvoiceClientData(null);
             }}
             studentName={selectedDebt.student_name}
             studentId={selectedDebt.student_id}
@@ -749,6 +840,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               description: tx.description,
               amount: tx.amount,
             }))}
+            invoiceType={invoiceType}
+            invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
           />
         );
       })()}
@@ -762,11 +855,15 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             onClose={() => {
               setShowPaymentModal(false);
               setCombinedMode(false);
+              setInvoiceType(null);
+              setInvoiceClientData(null);
               fetchDebts();
             }}
             onCancel={() => {
               setShowPaymentModal(false);
               setCombinedMode(false);
+              setInvoiceType(null);
+              setInvoiceClientData(null);
             }}
             studentName={combined.combinedNames}
             studentId={debts[0]?.student_id || ''}
@@ -780,6 +877,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             paidTransactionIds={combined.allTransactionIds}
             breakdownItems={combined.allBreakdownItems}
             combinedStudentIds={combined.allStudentIds}
+            invoiceType={invoiceType}
+            invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
           />
         );
       })()}

@@ -1,5 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
+import { supabaseConfig } from '@/config/supabase.config';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
 import { useRole } from '@/hooks/useRole';
@@ -33,8 +38,14 @@ import {
   Receipt,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Building2,
-  Filter
+  Filter,
+  Users,
+  List,
+  FileDown,
+  Sheet,
 } from "lucide-react";
 import { 
   Dialog,
@@ -84,9 +95,10 @@ interface Transaction {
   deleted_at?: string;
   deleted_by?: string;
   deletion_reason?: string;
+  invoice_client_name?: string;
+  invoice_client_dni_ruc?: string;
+  // alias de compatibilidad (undefined cuando no existe en BD)
   client_name?: string;
-  client_dni?: string;
-  client_ruc?: string;
   document_type?: 'ticket' | 'boleta' | 'factura';
   payment_status?: string;
   payment_method?: string;
@@ -99,7 +111,6 @@ interface Transaction {
   student?: {
     id: string;
     full_name: string;
-    balance: number;
   };
   teacher?: {
     id: string;
@@ -119,6 +130,34 @@ interface TransactionItem {
   unit_price: number;
   subtotal: number;
 }
+
+const PAGE_SIZE = 50;
+
+// Campos mínimos para el listado.
+// NOTA: la columna se llama "invoice_client_name" en transactions (no "client_name").
+const TRANSACTION_SELECT = `
+  id,
+  amount,
+  created_at,
+  type,
+  payment_status,
+  payment_method,
+  ticket_code,
+  description,
+  is_deleted,
+  invoice_client_name,
+  invoice_client_dni_ruc,
+  document_type,
+  created_by,
+  school_id,
+  student_id,
+  teacher_id,
+  metadata,
+  balance_after,
+  student:students(id, full_name),
+  teacher:teacher_profiles(id, full_name),
+  school:schools(id, name, code)
+`.trim();
 
 export const SalesList = () => {
   const { user } = useAuth();
@@ -147,15 +186,33 @@ export const SalesList = () => {
   const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  // Rango de fechas
+  const [dateFrom, setDateFrom] = useState<Date>(new Date());
+  const [dateTo, setDateTo]     = useState<Date>(new Date());
+  // Vista: 'flat' = lista plana clásica, 'grouped' = agrupado por alumno
+  const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('grouped');
+  // Control de filas expandidas en vista agrupada
+  const [expandedStudents, setExpandedStudents] = useState<Set<string>>(new Set());
   
   // Filtro de tipo de venta (POS, Almuerzos, Todas)
   const [salesFilter, setSalesFilter] = useState<'all' | 'pos' | 'lunch'>('all');
+
+  // Filtro de tipo de persona (Todos, Alumno, Profesor)
+  const [personFilter, setPersonFilter] = useState<'all' | 'alumno' | 'profesor'>('all');
   
   // Filtro de sedes
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
-  const canViewAllSchools = canViewAllSchoolsFromHook; // ✅ Usar desde el hook
+  const canViewAllSchools = canViewAllSchoolsFromHook;
+
+  // Paginación server-side
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  // Exportación: estado de carga independiente para no bloquear la lista
+  const [isExporting, setIsExporting] = useState(false);
   
   // Selección múltiple
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -180,6 +237,7 @@ export const SalesList = () => {
   
   // Validación de contraseña para cajeros
   const [showPasswordValidation, setShowPasswordValidation] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [pendingAnnulTransaction, setPendingAnnulTransaction] = useState<Transaction | null>(null);
   
@@ -208,11 +266,16 @@ export const SalesList = () => {
     }
   }, [canViewAllSchools, userSchoolId]);
 
+  // Resetear página a 1 cuando cambia cualquier filtro de consulta
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, dateFrom, dateTo, selectedSchool, userSchoolId, salesFilter, personFilter]);
+
   useEffect(() => {
     if (!permissions.loading && permissions.canView) {
       fetchTransactions();
     }
-  }, [activeTab, selectedDate, selectedSchool, userSchoolId, permissions.loading, permissions.canView]);
+  }, [activeTab, dateFrom, dateTo, selectedSchool, userSchoolId, currentPage, permissions.loading, permissions.canView]);
 
   useEffect(() => {
     if (txSyncTs > 0 && !permissions.loading && permissions.canView) {
@@ -335,9 +398,8 @@ export const SalesList = () => {
     try {
       const { data, error } = await supabase
         .from('schools')
-        .select('*')
+        .select('id, name, code')
         .order('name');
-      
       if (error) throw error;
       setSchools(data || []);
     } catch (error) {
@@ -379,17 +441,20 @@ export const SalesList = () => {
 
       const studentIds = (matchingStudents || []).map((s: any) => s.id);
 
+      // Respetar el rango de fechas activo
+      const searchStart = new Date(dateFrom);
+      searchStart.setHours(0, 0, 0, 0);
+      const searchEnd = new Date(dateTo);
+      searchEnd.setHours(23, 59, 59, 999);
+
       let query = supabase
         .from('transactions')
-        .select(`
-          *,
-          student:students(id, full_name, balance),
-          teacher:teacher_profiles(id, full_name),
-          school:schools(id, name, code)
-        `)
-        .eq('type', 'purchase')
+        .select(TRANSACTION_SELECT)
+        .in('type', ['purchase', 'sale'])
         .eq('is_deleted', false)
         .neq('payment_status', 'cancelled')
+        .gte('created_at', searchStart.toISOString())
+        .lte('created_at', searchEnd.toISOString())
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -406,7 +471,7 @@ export const SalesList = () => {
         query = query.or(
           `ticket_code.ilike.%${term.trim()}%,` +
           `description.ilike.%${term.trim()}%,` +
-          `client_name.ilike.%${term.trim()}%`
+          `invoice_client_name.ilike.%${term.trim()}%`
         );
       }
 
@@ -439,123 +504,73 @@ export const SalesList = () => {
     }
   };
 
-  const fetchTransactions = async () => {    const currentRequestId = ++fetchTxRequestId.current;
+  // Construye los filtros compartidos de la query principal (sede, fechas, pestaña)
+  const buildBaseQuery = (forCount = false) => {
+    const start = new Date(dateFrom);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateTo);
+    end.setHours(23, 59, 59, 999);
+
+    let q = supabase
+      .from('transactions')
+      .select(forCount ? '*' : TRANSACTION_SELECT, forCount ? { count: 'exact', head: true } : { count: 'exact' })
+      .in('type', ['purchase', 'sale'])   // cubre ventas POS nuevas y legacy
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (canViewAllSchools) {
+      if (selectedSchool !== 'all') q = q.eq('school_id', selectedSchool);
+    } else {
+      q = q.eq('school_id', userSchoolId!);
+    }
+
+    if (activeTab === 'deleted') {
+      q = q.or('payment_status.eq.cancelled,is_deleted.eq.true');
+    } else {
+      q = q.eq('is_deleted', false).neq('payment_status', 'cancelled');
+    }
+
+    return q;
+  };
+
+  const fetchTransactions = async () => {
+    const currentRequestId = ++fetchTxRequestId.current;
     try {
-      if (!canViewAllSchools && !userSchoolId) {
-        setLoading(false);
-        return;
-      }
+      if (!canViewAllSchools && !userSchoolId) { setLoading(false); return; }
 
       setLoading(true);
-      
-      console.log('🚀 fetchTransactions INICIADO con salesFilter:', salesFilter);
-      
-      // Ajustar fechas para timezone de Perú (UTC-5)
-      // Buscar todo el día en hora local + margen para timezone
-      const start = new Date(selectedDate);
-      start.setHours(0, 0, 0, 0);
-      const startDate = start.toISOString();
-      
-      const end = new Date(selectedDate);
-      end.setHours(23, 59, 59, 999);
-      const endDate = end.toISOString();
 
-      console.log('🔍 INICIANDO BÚSQUEDA DE TRANSACCIONES:', {
-        date: format(selectedDate, 'dd/MM/yyyy'),
-        activeTab,
-        selectedSchool,
-        salesFilter,
-        canViewAllSchools,
-        userSchoolId,
-        userRole: role
-      });
+      const from = (currentPage - 1) * PAGE_SIZE;
+      const to   = from + PAGE_SIZE - 1;
 
-      let query = supabase
-        .from('transactions')
-        .select(`
-          *,
-          student:students(id, full_name, balance),
-          teacher:teacher_profiles(id, full_name),
-          school:schools(id, name, code)
-        `)
-        .eq('type', 'purchase')
-        .gte('created_at', startDate)
-        .lte('created_at', endDate)
-        .order('created_at', { ascending: false });
+      const { data, error, count } = await buildBaseQuery()
+        .range(from, to) as any;
 
-      console.log('🎯 Filtro aplicado:', salesFilter);
+      if (error) throw error;
 
-      // Filtrar por sede si corresponde
-      console.log('🏫 Evaluando filtro de sedes:', {
-        canViewAllSchools,
-        userSchoolId,
-        selectedSchool
-      });
-
-      if (canViewAllSchools) {
-        // Si tiene permiso para ver todas las sedes
-        if (selectedSchool !== 'all') {
-          console.log('✅ Admin con acceso total - Filtrando por sede seleccionada:', selectedSchool);
-          query = query.eq('school_id', selectedSchool);
-        } else {
-          console.log('✅ Admin con acceso total - Mostrando TODAS las sedes');
-        }
-      } else {
-        // Si NO tiene permiso, OBLIGATORIAMENTE filtra por su sede
-        console.log('🔒 Admin de sede - FORZANDO filtro por su sede:', userSchoolId);
-        query = query.eq('school_id', userSchoolId!);
-      }
-
-      // Filtrar según pestaña
-      if (activeTab === 'deleted') {
-        query = query.or('payment_status.eq.cancelled,is_deleted.eq.true');
-      } else if (activeTab === 'today') {
-        query = query.eq('is_deleted', false).neq('payment_status', 'cancelled');
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('❌ Error:', error);
-        throw error;
-      }
-
-      console.log('📦 Total transacciones desde BD:', data?.length || 0);
-      console.log('📅 Rango de fechas:', { startDate, endDate });
-      console.log('🔍 Primeras 3 transacciones:', data?.slice(0, 3));
-
-      // Cargar información de los cajeros (profiles) por separado
+      // Enriquecer con datos del cajero (campo no disponible en el select principal)
       if (data && data.length > 0) {
-        const createdByIds = [...new Set(data.map((t: any) => t.created_by).filter(Boolean))];
-        
+        const createdByIds = [...new Set((data as any[]).map((t) => t.created_by).filter(Boolean))];
         if (createdByIds.length > 0) {
-          const { data: profilesData, error: profilesError } = await supabase
+          const { data: profilesData } = await supabase
             .from('profiles')
             .select('id, email, full_name')
             .in('id', createdByIds);
-          
-          if (!profilesError && profilesData) {
-            // Mapear los perfiles a las transacciones
-            const profilesMap = new Map(profilesData.map(p => [p.id, p]));
-            data.forEach((transaction: any) => {
-              if (transaction.created_by) {
-                transaction.profiles = profilesMap.get(transaction.created_by);
-              }
-            });
+          if (profilesData) {
+            const map = new Map(profilesData.map(p => [p.id, p]));
+            (data as any[]).forEach(t => { if (t.created_by) t.profiles = map.get(t.created_by); });
           }
         }
       }
-      
+
       if (currentRequestId !== fetchTxRequestId.current) return;
       setTransactions(data || []);
+      setTotalCount(count ?? 0);
     } catch (error: any) {
       if (currentRequestId !== fetchTxRequestId.current) return;
       console.error('Error fetching transactions:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudieron cargar las ventas',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudieron cargar las ventas' });
     } finally {
       if (currentRequestId === fetchTxRequestId.current) setLoading(false);
     }
@@ -601,7 +616,7 @@ export const SalesList = () => {
   // ========== EDITAR DATOS DEL CLIENTE ==========
   const handleOpenEditClient = (transaction: Transaction) => {
     setSelectedTransaction(transaction);
-    setEditClientName(transaction.client_name || transaction.student?.full_name || transaction.teacher?.full_name || 'CLIENTE GENÉRICO');
+    setEditClientName(transaction.invoice_client_name || transaction.student?.full_name || transaction.teacher?.full_name || 'CLIENTE GENÉRICO');
     setEditClientDNI(transaction.client_dni || '');
     setEditClientRUC(transaction.client_ruc || '');
     setEditDocumentType(transaction.document_type || 'ticket');
@@ -616,9 +631,8 @@ export const SalesList = () => {
       const { error } = await supabase
         .from('transactions')
         .update({
-          client_name: editClientName.trim() || null,
-          client_dni: editClientDNI.trim() || null,
-          client_ruc: editClientRUC.trim() || null,
+          invoice_client_name:    editClientName.trim() || null,
+          invoice_client_dni_ruc: editClientDNI.trim() || editClientRUC.trim() || null,
           document_type: editDocumentType,
         })
         .eq('id', selectedTransaction.id);
@@ -654,8 +668,9 @@ export const SalesList = () => {
     
     // Si es cajero u operador de caja, requiere contraseña de admin primero
     if (role === 'cajero' || role === 'operador_caja') {
-      console.log('✅ Es cajero/operador, pidiendo contraseña');
+      console.log('✅ Es cajero/operador, pidiendo autorización de admin');
       setPendingAnnulTransaction(transaction);
+      setAdminEmail('');
       setAdminPassword('');
       setShowPasswordValidation(true);
     } else {
@@ -667,52 +682,92 @@ export const SalesList = () => {
     }
   };
 
-  // Validar contraseña de admin para cajeros
+  // Validar credenciales del admin para que el cajero pueda anular
+  // Usa un cliente temporal sin persistencia — no afecta la sesión del cajero
   const handleValidatePassword = async () => {
-    if (!adminPassword.trim()) {
+    if (!adminEmail.trim() || !adminPassword.trim()) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Ingresa la contraseña del administrador',
+        title: 'Completa los campos',
+        description: 'Ingresa el correo y la contraseña del administrador',
       });
       return;
     }
 
     setIsProcessing(true);
     try {
-      // Buscar un admin con esa contraseña
-      const { data: adminUser, error } = await supabase.rpc('validate_admin_password', {
-        p_password: adminPassword
+      // Cliente temporal con memoria (no toca la sesión del cajero)
+      const tempClient = createClient(
+        supabaseConfig.url,
+        supabaseConfig.anonKey,
+        { auth: { persistSession: false, autoRefreshToken: false } }
+      );
+
+      const { data: authData, error: authError } = await tempClient.auth.signInWithPassword({
+        email: adminEmail.trim().toLowerCase(),
+        password: adminPassword.trim(),
       });
 
-      if (error || !adminUser) {
+      if (authError || !authData?.user) {
         toast({
           variant: 'destructive',
-          title: 'Contraseña Incorrecta',
-          description: 'La contraseña del administrador no es válida',
+          title: 'Credenciales incorrectas',
+          description: 'El correo o la contraseña del administrador no son válidos',
         });
         return;
       }
 
-      // Contraseña correcta, abrir modal de anulación
-      toast({
-        title: '✅ Autorizado',
-        description: 'Contraseña verificada correctamente',
-      });
-      
+      // Verificar que sea admin/gestor con acceso a esta sede
+      const { data: profile, error: profileError } = await tempClient
+        .from('profiles')
+        .select('role, school_id')
+        .eq('id', authData.user.id)
+        .single();
+
+      // Cerrar la sesión temporal inmediatamente
+      await tempClient.auth.signOut();
+
+      if (profileError || !profile) {
+        toast({ variant: 'destructive', title: 'Error', description: 'No se pudo verificar el perfil del admin' });
+        return;
+      }
+
+      const rolesAdmin = ['admin_general', 'gestor_unidad', 'admin_sede', 'supervisor_red', 'superadmin'];
+      if (!rolesAdmin.includes(profile.role)) {
+        toast({
+          variant: 'destructive',
+          title: 'No autorizado',
+          description: 'El usuario ingresado no tiene rol de administrador',
+        });
+        return;
+      }
+
+      // Si es gestor_unidad, debe ser de la misma sede que el cajero
+      if (profile.role === 'gestor_unidad' && userSchoolId && profile.school_id !== userSchoolId) {
+        toast({
+          variant: 'destructive',
+          title: 'Admin de otra sede',
+          description: 'Ese administrador pertenece a una sede diferente. Usa el admin de tu sede.',
+        });
+        return;
+      }
+
+      // ✅ Autorizado
+      toast({ title: '✅ Autorizado', description: `Admin verificado: ${adminEmail.trim()}` });
       setShowPasswordValidation(false);
       setSelectedTransaction(pendingAnnulTransaction);
       setAnnulReason('');
       setShowAnnul(true);
+      setAdminEmail('');
       setAdminPassword('');
       setPendingAnnulTransaction(null);
 
     } catch (error: any) {
-      console.error('Error validating password:', error);
+      console.error('Error validando admin:', error);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo validar la contraseña',
+        title: 'Error de conexión',
+        description: 'No se pudo conectar para verificar. Intenta de nuevo.',
       });
     } finally {
       setIsProcessing(false);
@@ -787,7 +842,7 @@ export const SalesList = () => {
         refund_method: refundMethod || null,
         cancelled_by: user?.id,
         cancellation_reason: annulReason.trim(),
-        client_name: selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'Cliente genérico',
+        client_name: selectedTransaction.invoice_client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'Cliente genérico',
         ticket_code: selectedTransaction.ticket_code,
       }).then(({ error }) => {
         if (error) console.error('⚠️ Error insertando alerta:', error);
@@ -930,22 +985,26 @@ export const SalesList = () => {
   // Búsqueda inteligente — si hay resultados globales los usa, si no usa los del día
   const baseTransactions = globalSearchResults !== null ? globalSearchResults : transactions;
   const filteredTransactions = baseTransactions.filter(t => {
-    // Primero filtrar por tipo de venta
-    if (salesFilter === 'pos' && isLunchTransaction(t)) return false;  // POS: excluir almuerzos
-    if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false; // Almuerzos: excluir POS
+    // Filtro tipo de venta (Cafetería / Almuerzo)
+    if (salesFilter === 'pos'   && isLunchTransaction(t))  return false;
+    if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false;
 
-    // En búsqueda global ya vienen filtrados por nombre desde Supabase; solo aplicar filtro de tipo
+    // Filtro tipo de persona (Alumno / Profesor / Todos)
+    if (personFilter === 'alumno'   && !t.student_id)  return false;
+    if (personFilter === 'profesor' && !t.teacher_id)  return false;
+
+    // En búsqueda global ya vienen filtrados por nombre desde Supabase
     if (globalSearchResults !== null) return true;
 
-    // Luego filtrar por búsqueda local (solo cuando no hay búsqueda global)
+    // Filtro de búsqueda local
     if (!searchTerm.trim()) return true;
 
     const search = searchTerm.toLowerCase();
     return (
       t.ticket_code?.toLowerCase().includes(search) ||
       t.student?.full_name?.toLowerCase().includes(search) ||
-      t.teacher?.full_name?.toLowerCase().includes(search) || // ✅ Incluir nombre de profesor en búsqueda
-      t.client_name?.toLowerCase().includes(search) ||
+      t.teacher?.full_name?.toLowerCase().includes(search) ||
+      t.invoice_client_name?.toLowerCase().includes(search) ||
       t.description?.toLowerCase().includes(search) ||
       Math.abs(t.amount).toString().includes(search)
     );
@@ -957,7 +1016,20 @@ export const SalesList = () => {
       .reduce((sum, t) => sum + Math.abs(t.amount), 0);
   };
 
-  // Mostrar loading mientras verifica permisos
+  // ── Agrupación por alumno/cliente ──────────────────────────────────────────
+  const studentGroups = useMemo(() => {
+    const map: Record<string, { key: string; name: string; txs: Transaction[]; total: number }> = {};
+    filteredTransactions.forEach(t => {
+      const name = t.student?.full_name || t.teacher?.full_name || t.invoice_client_name || 'Venta General';
+      const key  = t.student_id || t.teacher_id || t.invoice_client_name || 'generic';
+      if (!map[key]) map[key] = { key, name, txs: [], total: 0 };
+      map[key].txs.push(t);
+      map[key].total += Math.abs(t.amount || 0);
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  }, [filteredTransactions]);
+
+  // Guards condicionales DESPUÉS de todos los Hooks
   if (permissions.loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -968,9 +1040,6 @@ export const SalesList = () => {
       </div>
     );
   }
-
-  // Ya no bloqueamos el acceso aquí, eso lo hace PermissionProtectedRoute en App.tsx
-  // Solo usamos los permisos para mostrar/ocultar funcionalidades específicas
 
   if (maintenance.blocked) {
     return (
@@ -986,6 +1055,268 @@ export const SalesList = () => {
     );
   }
 
+  const toggleStudentRow = (key: string) => {
+    setExpandedStudents(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  // ── Helper: obtiene TODO el rango sin paginación para exportación de auditoría ──
+  const fetchAllForExport = async (): Promise<Transaction[]> => {
+    if (!canViewAllSchools && !userSchoolId) return [];
+
+    const start = new Date(dateFrom); start.setHours(0, 0, 0, 0);
+    const end   = new Date(dateTo);   end.setHours(23, 59, 59, 999);
+
+    let q = supabase
+      .from('transactions')
+      .select(TRANSACTION_SELECT)
+      .in('type', ['purchase', 'sale'])
+      .eq('is_deleted', false)
+      .neq('payment_status', 'cancelled')
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (canViewAllSchools) {
+      if (selectedSchool !== 'all') q = q.eq('school_id', selectedSchool);
+    } else {
+      q = q.eq('school_id', userSchoolId!);
+    }
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Enriquecer con cajeros
+    if (data && data.length > 0) {
+      const ids = [...new Set((data as any[]).map(t => t.created_by).filter(Boolean))];
+      if (ids.length > 0) {
+        const { data: profs } = await supabase
+          .from('profiles').select('id, email, full_name').in('id', ids);
+        if (profs) {
+          const map = new Map(profs.map(p => [p.id, p]));
+          (data as any[]).forEach(t => { if (t.created_by) t.profiles = map.get(t.created_by); });
+        }
+      }
+    }
+    return (data || []) as Transaction[];
+  };
+
+  // ── Exportar PDF profesional ─────────────────────────────────────────────
+  const downloadPDF = async () => {
+    setIsExporting(true);
+    let exportData: Transaction[];
+    try {
+      exportData = await fetchAllForExport();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al exportar', description: err.message });
+      setIsExporting(false);
+      return;
+    } finally {
+      setIsExporting(false);
+    }
+
+    if (exportData.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin datos', description: 'No hay ventas para exportar en el rango seleccionado.' });
+      return;
+    }
+
+    // Agrupación y total desde datos de la BD (no del estado de UI)
+    const exportGroups: Record<string, { key: string; name: string; txs: Transaction[]; total: number }> = {};
+    exportData.forEach(t => {
+      const name = t.student?.full_name || t.teacher?.full_name || t.invoice_client_name || 'Venta General';
+      const key  = t.student_id || t.teacher_id || t.invoice_client_name || 'generic';
+      if (!exportGroups[key]) exportGroups[key] = { key, name, txs: [], total: 0 };
+      exportGroups[key].txs.push(t);
+      exportGroups[key].total += Math.abs(t.amount || 0);
+    });
+    const groupList = Object.values(exportGroups).sort((a, b) => b.total - a.total);
+    const grandTotal = exportData.reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const rangeLabel = dateFrom.toDateString() === dateTo.toDateString()
+      ? format(dateFrom, "dd/MM/yyyy")
+      : `${format(dateFrom, "dd/MM/yyyy")} — ${format(dateTo, "dd/MM/yyyy")}`;
+
+    // ── Encabezado ──
+    doc.setFillColor(139, 69, 19);
+    doc.rect(0, 0, 210, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('LIMA CAFE', 14, 13);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Reporte de Ventas — Comprobante de Arqueo', 14, 21);
+    doc.text(rangeLabel, 196, 21, { align: 'right' });
+
+    // ── Resumen ──
+    doc.setTextColor(50, 50, 50);
+    doc.setFontSize(9);
+    doc.text(`Generado: ${format(new Date(), "dd/MM/yyyy HH:mm")}`, 14, 38);
+    doc.text(`Total transacciones: ${exportData.length}`, 14, 44);
+    doc.text(`Total ventas: S/ ${grandTotal.toFixed(2)}`, 14, 50);
+
+    // ── Tabla agrupada por alumno ──
+    const rows: (string | { content: string; styles?: Record<string, unknown> })[][] = [];
+
+    groupList.forEach(g => {
+      g.txs.forEach((t, i) => {
+        rows.push([
+          i === 0 ? g.name : '',
+          format(new Date(t.created_at), 'dd/MM HH:mm'),
+          t.ticket_code || '—',
+          t.payment_method || '—',
+          t.description || '—',
+          `S/ ${Math.abs(t.amount || 0).toFixed(2)}`,
+        ]);
+      });
+      rows.push([
+        { content: `Subtotal ${g.name}`, styles: { fontStyle: 'bold', fillColor: [245, 245, 245] } },
+        { content: '', styles: { fillColor: [245, 245, 245] } },
+        { content: '', styles: { fillColor: [245, 245, 245] } },
+        { content: '', styles: { fillColor: [245, 245, 245] } },
+        { content: '', styles: { fillColor: [245, 245, 245] } },
+        { content: `S/ ${g.total.toFixed(2)}`, styles: { fontStyle: 'bold', halign: 'right', fillColor: [245, 245, 245] } },
+      ]);
+    });
+
+    rows.push([
+      { content: 'TOTAL GENERAL', styles: { fontStyle: 'bold', fillColor: [139, 69, 19], textColor: [255, 255, 255] } },
+      { content: '', styles: { fillColor: [139, 69, 19] } },
+      { content: '', styles: { fillColor: [139, 69, 19] } },
+      { content: '', styles: { fillColor: [139, 69, 19] } },
+      { content: '', styles: { fillColor: [139, 69, 19] } },
+      { content: `S/ ${grandTotal.toFixed(2)}`, styles: { fontStyle: 'bold', halign: 'right', fillColor: [139, 69, 19], textColor: [255, 255, 255] } },
+    ]);
+
+    autoTable(doc, {
+      startY: 58,
+      head: [['Alumno / Cliente', 'Fecha y Hora', 'Ticket', 'Método de Pago', 'Detalle', 'Monto']],
+      body: rows,
+      theme: 'striped',
+      headStyles: { fillColor: [139, 69, 19], textColor: 255, fontStyle: 'bold', fontSize: 9 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 38 },
+        1: { cellWidth: 24 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 'auto' },
+        5: { halign: 'right', cellWidth: 22 },
+      },
+      didDrawCell: (data) => {
+        if (data.section === 'body' && data.column.index === 0 && data.cell.raw !== '') {
+          doc.setDrawColor(139, 69, 19);
+          doc.setLineWidth(0.3);
+          doc.line(data.cell.x, data.cell.y, 210 - 14, data.cell.y);
+        }
+      },
+    });
+
+    // ── Pie de página ──
+    const finalY = (doc as any).lastAutoTable?.finalY || 200;
+    doc.setDrawColor(139, 69, 19);
+    doc.setLineWidth(0.5);
+    doc.line(14, finalY + 8, 196, finalY + 8);
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text('Este documento es un comprobante interno de arqueo. No tiene validez tributaria.', 105, finalY + 14, { align: 'center' });
+    doc.text('Lima Cafe — Sistema de Gestión Escolar', 105, finalY + 19, { align: 'center' });
+
+    doc.save(`arqueo_ventas_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+    toast({ title: '✅ PDF generado', description: 'El comprobante de arqueo se descargó correctamente.' });
+  };
+
+  // ── Exportar Excel Arqueo — query fresca (no depende del estado de UI) ──────
+  const downloadExcel = async () => {
+    setIsExporting(true);
+    let exportData: Transaction[];
+    try {
+      exportData = await fetchAllForExport();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al exportar', description: err.message });
+      setIsExporting(false);
+      return;
+    } finally {
+      setIsExporting(false);
+    }
+
+    if (exportData.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin datos', description: 'No hay ventas para exportar en el rango seleccionado.' });
+      return;
+    }
+
+    const rangeLabel = dateFrom.toDateString() === dateTo.toDateString()
+      ? format(dateFrom, 'dd/MM/yyyy')
+      : `${format(dateFrom, 'dd/MM/yyyy')} — ${format(dateTo, 'dd/MM/yyyy')}`;
+
+    const sedeLabel = !canViewAllSchools && userSchoolId
+      ? (schools.find(s => s.id === userSchoolId)?.name ?? 'Mi Sede')
+      : selectedSchool === 'all'
+        ? 'Todas las Sedes'
+        : (schools.find(s => s.id === selectedSchool)?.name ?? selectedSchool);
+
+    const totalVentas = exportData.reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+    const cantidadTx  = exportData.length;
+    const promedio    = cantidadTx > 0 ? totalVentas / cantidadTx : 0;
+
+    const wb = XLSX.utils.book_new();
+    const ws: XLSX.WorkSheet = {};
+    const set = (cell: string, v: unknown) => { ws[cell] = { v }; };
+
+    set('A1', 'ARQUEO DE CAJA — DATOS DIRECTOS DE BASE DE DATOS');
+    set('A2', `Sede: ${sedeLabel}`);
+    set('A3', `Período: ${rangeLabel}   |   Generado: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`);
+
+    set('A5', 'TOTAL VENTAS');   set('B5', `S/ ${totalVentas.toFixed(2)}`);
+    set('C5', 'TRANSACCIONES');  set('D5', cantidadTx);
+    set('E5', 'PROMEDIO');       set('F5', `S/ ${promedio.toFixed(2)}`);
+
+    const headers = ['ID Ticket', 'Cliente', 'Sede', 'Fecha / Hora', 'Categoría', 'Cajero', 'Método de Pago', 'Monto (S/)'];
+    headers.forEach((h, i) => set(`${String.fromCharCode(65 + i)}7`, h));
+
+    exportData.forEach((t, idx) => {
+      const row = 8 + idx;
+      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'Cliente Genérico';
+      const categoria  = isLunchTransaction(t) ? 'Almuerzo' : 'Cafetería';
+      const cajero     = (t as any).profiles?.full_name || (t as any).profiles?.email || 'Sistema';
+      const metodo     = t.payment_method
+        ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1)
+        : 'Efectivo';
+
+      set(`A${row}`, t.ticket_code || '—');
+      set(`B${row}`, clientName);
+      set(`C${row}`, t.school?.name ?? sedeLabel);
+      set(`D${row}`, format(new Date(t.created_at), 'dd/MM/yyyy HH:mm'));
+      set(`E${row}`, categoria);
+      set(`F${row}`, cajero);
+      set(`G${row}`, metodo);
+      ws[`H${row}`] = { v: Math.abs(t.amount || 0), t: 'n' };
+    });
+
+    const lastRow = 8 + cantidadTx;
+    set(`G${lastRow}`, 'TOTAL GENERAL');
+    ws[`H${lastRow}`] = { v: totalVentas, t: 'n' };
+
+    ws['!ref'] = `A1:H${lastRow}`;
+    ws['!cols'] = [
+      { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 18 },
+      { wch: 14 }, { wch: 24 }, { wch: 16 }, { wch: 12 },
+    ];
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Arqueo');
+    XLSX.writeFile(wb, `arqueo_ventas_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`);
+    toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas desde la base de datos.` });
+  };
+
   return (
     <div className="space-y-4">
       <Card className="border shadow-sm">
@@ -998,52 +1329,109 @@ export const SalesList = () => {
               </CardTitle>
               <CardDescription className="flex items-center gap-2 mt-1">
                 <CalendarIcon className="h-3 w-3" />
-                {format(selectedDate, "EEEE, dd 'de' MMMM yyyy", { locale: es })}
+                {dateFrom.toDateString() === dateTo.toDateString()
+                  ? format(dateFrom, "EEEE, dd 'de' MMMM yyyy", { locale: es })
+                  : `${format(dateFrom, "dd/MM/yyyy")} — ${format(dateTo, "dd/MM/yyyy")}`}
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {/* Filtro de Fecha */}
-              <div className="flex items-center bg-muted rounded-lg p-1 mr-2">
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8"
-                  onClick={() => setSelectedDate(prev => subDays(prev, 1))}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                
+
+              {/* ── Rango de fechas ── */}
+              <div className="flex items-center gap-1.5 bg-muted rounded-lg px-2 py-1">
+                <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground font-medium">Desde</span>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-8 font-bold px-2 hover:bg-transparent"
-                    >
-                      {format(selectedDate, "dd/MM/yyyy")}
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-bold">
+                      {format(dateFrom, "dd/MM/yyyy")}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="end">
+                  <PopoverContent className="w-auto p-0" align="start">
                     <Calendar
                       mode="single"
-                      selected={selectedDate}
-                      onSelect={(date) => date && setSelectedDate(date)}
+                      selected={dateFrom}
+                      onSelect={(d) => { if (d) { setDateFrom(d); if (d > dateTo) setDateTo(d); } }}
                       initialFocus
                       locale={es}
+                      disabled={(d) => d > new Date()}
                     />
                   </PopoverContent>
                 </Popover>
-
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8"
-                  onClick={() => setSelectedDate(prev => addDays(prev, 1))}
-                  disabled={startOfDay(selectedDate).getTime() >= startOfDay(new Date()).getTime()}
+                <span className="text-xs text-muted-foreground font-medium">Hasta</span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-bold">
+                      {format(dateTo, "dd/MM/yyyy")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dateTo}
+                      onSelect={(d) => { if (d) { setDateTo(d); if (d < dateFrom) setDateFrom(d); } }}
+                      initialFocus
+                      locale={es}
+                      disabled={(d) => d > new Date() || d < dateFrom}
+                    />
+                  </PopoverContent>
+                </Popover>
+                {/* Acceso rápido: Hoy */}
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 px-2 text-[10px] text-blue-600 hover:bg-blue-50"
+                  onClick={() => { const t = new Date(); setDateFrom(t); setDateTo(t); }}
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  Hoy
                 </Button>
               </div>
+
+              {/* ── Toggle Vista ── */}
+              <div className="flex items-center bg-muted rounded-lg p-0.5">
+                <Button
+                  variant={viewMode === 'grouped' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 px-2 text-xs gap-1"
+                  onClick={() => setViewMode('grouped')}
+                  title="Vista agrupada por persona"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Agrupado
+                </Button>
+                <Button
+                  variant={viewMode === 'flat' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 px-2 text-xs gap-1"
+                  onClick={() => setViewMode('flat')}
+                  title="Vista detallada (una fila por venta)"
+                >
+                  <List className="h-3.5 w-3.5" />
+                  Detalle
+                </Button>
+              </div>
+
+              {/* ── PDF ── */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadPDF}
+                className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1"
+                disabled={isExporting || totalCount === 0}
+              >
+                <FileDown className="h-4 w-4" />
+                {isExporting ? 'Preparando…' : 'PDF Arqueo'}
+              </Button>
+
+              {/* ── Excel ── */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadExcel}
+                className="border-green-300 text-green-700 hover:bg-green-50 gap-1"
+                disabled={isExporting || totalCount === 0}
+              >
+                <Sheet className="h-4 w-4" />
+                {isExporting ? 'Preparando…' : 'Excel Arqueo'}
+              </Button>
 
               {selectedIds.size > 0 && (
                 <>
@@ -1112,7 +1500,7 @@ export const SalesList = () => {
           <div className="relative mb-6">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
-              placeholder="🔍 Buscar: ticket, cliente, monto... (busca en todos los días)"
+              placeholder="🔍 Buscar: ticket, cliente, monto..."
               className="pl-10 h-12 text-base border-2 focus:border-emerald-500"
               value={searchTerm}
               onChange={(e) => {
@@ -1137,7 +1525,7 @@ export const SalesList = () => {
               )}
               {globalSearchResults !== null && !globalSearchLoading && (
                 <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-800">
-                  🌐 {filteredTransactions.length} resultados (todos los días)
+                  🌐 {filteredTransactions.length} resultados en rango seleccionado
                 </Badge>
               )}
               {searchTerm && globalSearchResults === null && !globalSearchLoading && (
@@ -1186,6 +1574,42 @@ export const SalesList = () => {
                   {salesFilter === 'pos' && '🛒 Solo Cafetería'}
                   {salesFilter === 'lunch' && '🍽️ Solo Almuerzos'}
                 </Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── Filtro de Tipo de Persona (Alumno / Profesor / Todos) ── */}
+          <Card className="mb-6 bg-gradient-to-r from-indigo-50 to-violet-50 border-indigo-200">
+            <CardContent className="p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 shrink-0">
+                  <Users className="h-5 w-5 text-indigo-600" />
+                  <Label className="font-semibold text-indigo-900">Tipo de Persona:</Label>
+                </div>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'all',      label: '📊 Todos',    color: 'indigo' },
+                    { value: 'alumno',   label: '🎓 Alumno',   color: 'blue'   },
+                    { value: 'profesor', label: '👨‍🏫 Profesor', color: 'violet' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setPersonFilter(opt.value as 'all' | 'alumno' | 'profesor')}
+                      className={`px-4 py-1.5 rounded-full text-sm font-semibold border-2 transition-all ${
+                        personFilter === opt.value
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                          : 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {personFilter !== 'all' && (
+                  <Badge className="ml-1 bg-indigo-100 text-indigo-800 border border-indigo-300">
+                    {filteredTransactions.length} resultado{filteredTransactions.length !== 1 ? 's' : ''}
+                  </Badge>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1300,7 +1724,102 @@ export const SalesList = () => {
                     </p>
                   )}
                 </div>
+              ) : viewMode === 'grouped' ? (
+                /* ──────────────────────────────────────────────────────
+                   VISTA AGRUPADA POR ALUMNO
+                   Un bloque por alumno, expandible con sus transacciones
+                ─────────────────────────────────────────────────────── */
+                <div className="space-y-2">
+                  {studentGroups.map(group => {
+                    const isOpen = expandedStudents.has(group.key);
+                    return (
+                      <div key={group.key} className="border rounded-xl overflow-hidden shadow-sm">
+                        {/* ── Fila resumen del alumno ── */}
+                        <button
+                          onClick={() => toggleStudentRow(group.key)}
+                          className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-slate-50 transition text-left"
+                        >
+                          <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                            <User className="h-4 w-4 text-amber-700" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-slate-800 truncate">{group.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {group.txs.length} {group.txs.length === 1 ? 'transacción' : 'transacciones'}
+                              {' · '}
+                              {format(new Date(group.txs[group.txs.length - 1].created_at), "dd/MM/yyyy", { locale: es })}
+                              {group.txs.length > 1 && ` al ${format(new Date(group.txs[0].created_at), "dd/MM/yyyy", { locale: es })}`}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-lg font-black text-emerald-700">S/ {group.total.toFixed(2)}</p>
+                          </div>
+                          <div className="text-slate-400 shrink-0">
+                            {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </div>
+                        </button>
+
+                        {/* ── Detalle expandido ── */}
+                        {isOpen && (
+                          <div className="divide-y bg-slate-50 border-t">
+                            {group.txs.map(t => (
+                              <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white transition text-sm">
+                                <div className="text-slate-400 font-mono text-xs w-28 shrink-0">
+                                  {format(new Date(t.created_at), "dd/MM/yyyy HH:mm")}
+                                </div>
+                                <Badge variant="outline" className="font-mono text-xs shrink-0">
+                                  {t.ticket_code || '—'}
+                                </Badge>
+                                {t.school && (
+                                  <Badge variant="secondary" className="text-[10px] shrink-0">
+                                    {t.school.name}
+                                  </Badge>
+                                )}
+                                <span className="text-slate-500 text-xs truncate flex-1">
+                                  {t.payment_method ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1) : 'Efectivo'}
+                                  {t.description ? ` · ${t.description}` : ''}
+                                </span>
+                                <span className="font-bold text-emerald-700 shrink-0">
+                                  S/ {Math.abs(t.amount || 0).toFixed(2)}
+                                </span>
+                                <Button
+                                  size="sm" variant="ghost"
+                                  className="h-6 w-6 p-0 text-slate-400 hover:text-slate-700 shrink-0"
+                                  onClick={() => {
+                                    setSelectedTransaction(t);
+                                    setShowDetails(true);
+                                    fetchTransactionItems(t.id);
+                                  }}
+                                  title="Ver detalle completo"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </Button>
+                                {/* Anular desde vista agrupada */}
+                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && (
+                                  <Button
+                                    size="sm" variant="ghost"
+                                    className="h-6 w-6 p-0 text-red-400 hover:text-red-700 hover:bg-red-50 shrink-0"
+                                    onClick={() => handleOpenAnnul(t)}
+                                    title="Anular venta"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                            {/* Subtotal del alumno */}
+                            <div className="flex justify-end px-4 py-2 bg-emerald-50">
+                              <span className="text-xs text-emerald-700 font-semibold mr-2">Subtotal {group.name}:</span>
+                              <span className="text-sm font-black text-emerald-800">S/ {group.total.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
+                /* ── VISTA PLANA (original) ── */
                 <div className="grid grid-cols-1 gap-3">
                   {filteredTransactions.map((t) => (
                     <Card 
@@ -1356,7 +1875,7 @@ export const SalesList = () => {
                             <div className="flex items-center gap-2 mb-2">
                               <User className="h-5 w-5 text-emerald-600" />
                               <span className="text-base font-bold text-slate-900">
-                                CLIENTE: {t.client_name || t.student?.full_name || t.teacher?.full_name || 'GENÉRICO'}
+                                CLIENTE: {t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'GENÉRICO'}
                               </span>
                             </div>
                             
@@ -1432,41 +1951,101 @@ export const SalesList = () => {
               )}
             </TabsContent>
           </Tabs>
+
+          {/* ── Controles de paginación server-side ── */}
+          {!loading && totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between mt-4 px-1">
+              <p className="text-sm text-slate-500">
+                Mostrando{' '}
+                <span className="font-semibold text-slate-700">
+                  {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, totalCount)}
+                </span>{' '}
+                de{' '}
+                <span className="font-semibold text-slate-700">{totalCount}</span> ventas
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Anterior
+                </Button>
+                <span className="text-sm font-semibold text-slate-600 px-2">
+                  Página {currentPage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  className="gap-1"
+                >
+                  Siguiente
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* MODAL: Validación de Contraseña para Cajeros */}
-      <Dialog open={showPasswordValidation} onOpenChange={setShowPasswordValidation}>
+      {/* MODAL: Autorización de Admin para Cajeros */}
+      <Dialog open={showPasswordValidation} onOpenChange={open => {
+        if (!open) { setAdminEmail(''); setAdminPassword(''); setPendingAnnulTransaction(null); }
+        setShowPasswordValidation(open);
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600">
               <AlertTriangle className="h-5 w-5" />
-              Autorización Requerida
+              Autorización de Administrador
             </DialogTitle>
             <DialogDescription>
-              Como cajero, necesitas la contraseña de un administrador para anular ventas.
+              Para anular ventas necesitas que el administrador de tu sede ingrese sus credenciales.
             </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            {/* Info de la venta a anular */}
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
               <p className="text-sm text-amber-800">
                 <strong>Ticket:</strong> {pendingAnnulTransaction?.ticket_code}
               </p>
               <p className="text-sm text-amber-800">
                 <strong>Monto:</strong> S/ {pendingAnnulTransaction ? Math.abs(pendingAnnulTransaction.amount).toFixed(2) : '0.00'}
               </p>
+              <p className="text-xs text-amber-600 mt-1">
+                El administrador debe ingresar sus credenciales de acceso al portal.
+              </p>
             </div>
 
+            {/* Email del admin */}
             <div>
-              <Label htmlFor="adminPassword">Contraseña del Administrador</Label>
+              <Label htmlFor="adminEmail" className="font-semibold">Correo del Administrador</Label>
+              <Input
+                id="adminEmail"
+                type="email"
+                value={adminEmail}
+                onChange={(e) => setAdminEmail(e.target.value)}
+                placeholder="admin@colegio.com"
+                autoFocus
+                className="mt-1"
+              />
+            </div>
+
+            {/* Contraseña del admin */}
+            <div>
+              <Label htmlFor="adminPassword" className="font-semibold">Contraseña del Administrador</Label>
               <Input
                 id="adminPassword"
                 type="password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
-                placeholder="Ingresa la contraseña"
+                placeholder="••••••••"
                 onKeyDown={(e) => e.key === 'Enter' && handleValidatePassword()}
+                className="mt-1"
               />
             </div>
           </div>
@@ -1476,6 +2055,7 @@ export const SalesList = () => {
               variant="outline" 
               onClick={() => {
                 setShowPasswordValidation(false);
+                setAdminEmail('');
                 setAdminPassword('');
                 setPendingAnnulTransaction(null);
               }}
@@ -1484,9 +2064,10 @@ export const SalesList = () => {
             </Button>
             <Button 
               onClick={handleValidatePassword} 
-              disabled={isProcessing || !adminPassword.trim()}
+              disabled={isProcessing || !adminPassword.trim() || !adminEmail.trim()}
+              className="bg-amber-600 hover:bg-amber-700"
             >
-              {isProcessing ? 'Validando...' : 'Validar'}
+              {isProcessing ? 'Verificando...' : '🔓 Autorizar Anulación'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1653,14 +2234,14 @@ export const SalesList = () => {
                 ticketCode={selectedTransaction.ticket_code}
                 date={new Date(selectedTransaction.created_at)}
                 cashierEmail={selectedTransaction.profiles?.full_name || selectedTransaction.profiles?.email || 'Sistema'}
-                clientName={selectedTransaction.client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'CLIENTE GENÉRICO'}
+                clientName={selectedTransaction.invoice_client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'CLIENTE GENÉRICO'}
                 documentType={selectedTransaction.document_type || 'ticket'}
                 items={transactionItems}
                 total={Math.abs(selectedTransaction.amount)}
-                clientDNI={selectedTransaction.client_dni}
-                clientRUC={selectedTransaction.client_ruc}
+                clientDNI={selectedTransaction.invoice_client_dni_ruc}
+                clientRUC={selectedTransaction.invoice_client_dni_ruc}
                 isReprint={false}
-                showOnScreen={true} // ✅ Se muestra como ticket en pantalla
+                showOnScreen={true}
               />
             )}
           </div>
@@ -1683,12 +2264,12 @@ export const SalesList = () => {
           ticketCode={selectedTransaction.ticket_code}
           date={new Date(selectedTransaction.created_at)}
           cashierEmail={selectedTransaction.profiles?.full_name || selectedTransaction.profiles?.email || 'Sistema'}
-          clientName={selectedTransaction.client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'CLIENTE GENÉRICO'}
+          clientName={selectedTransaction.invoice_client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'CLIENTE GENÉRICO'}
           documentType={selectedTransaction.document_type || 'ticket'}
           items={transactionItems}
           total={Math.abs(selectedTransaction.amount)}
-          clientDNI={selectedTransaction.client_dni}
-          clientRUC={selectedTransaction.client_ruc}
+          clientDNI={selectedTransaction.invoice_client_dni_ruc}
+          clientRUC={selectedTransaction.invoice_client_dni_ruc}
           isReprint={true}
         />
       )}

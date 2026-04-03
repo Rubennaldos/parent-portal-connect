@@ -17,12 +17,12 @@ serve(async (req) => {
     console.log('🔐 Edge Function: reset-user-password iniciada')
 
     // 1. Obtener el cuerpo de la petición
-    const { userEmail, newPassword } = await req.json()
+    const { userEmail, newPassword, userId: bodyUserId } = await req.json()
 
     // 2. Validaciones básicas
-    if (!userEmail || !newPassword) {
+    if ((!userEmail && !bodyUserId) || !newPassword) {
       return new Response(
-        JSON.stringify({ error: 'Email y contraseña son requeridos' }),
+        JSON.stringify({ error: 'Email o userId, y contraseña son requeridos' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -93,25 +93,47 @@ serve(async (req) => {
     }
 
     console.log(`✅ Caller verificado: ${callerUser.id} (${callerProfile.role})`)
-    console.log(`🔍 Buscando usuario: ${userEmail}`)
 
-    // 4. Buscar el ID del usuario directamente desde public.profiles (más rápido que listUsers)
-    const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
-      .from('profiles')
-      .select('id, email')
-      .ilike('email', userEmail.trim())
-      .single()
+    // 4. Resolver el ID del usuario objetivo
+    let targetUserId: string
 
-    if (targetProfileError || !targetProfile) {
-      console.error('❌ Usuario no encontrado en profiles:', targetProfileError)
-      return new Response(
-        JSON.stringify({ error: `Usuario no encontrado: ${userEmail}` }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (bodyUserId) {
+      // Si viene el userId directamente, lo usamos sin buscar por email (más robusto)
+      console.log(`🔍 Usando userId directo: ${bodyUserId}`)
+      targetUserId = bodyUserId
+    } else {
+      // Fallback: buscar por email en profiles
+      console.log(`🔍 Buscando por email: ${userEmail}`)
+      const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email')
+        .ilike('email', userEmail.trim())
+        .single()
+
+      if (targetProfileError || !targetProfile) {
+        // Segundo intento: buscar en parent_profiles para obtener el user_id
+        console.warn('⚠️ No encontrado en profiles, intentando parent_profiles...')
+        const { data: parentProfile, error: parentProfileError } = await supabaseAdmin
+          .from('parent_profiles')
+          .select('user_id')
+          .ilike('email', userEmail.trim())
+          .not('user_id', 'is', null)
+          .single()
+
+        if (parentProfileError || !parentProfile?.user_id) {
+          console.error('❌ Usuario no encontrado en profiles ni parent_profiles:', targetProfileError)
+          return new Response(
+            JSON.stringify({ error: `Usuario no encontrado: ${userEmail}` }),
+            { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
+        targetUserId = parentProfile.user_id
+        console.log(`✅ Usuario encontrado en parent_profiles: ${targetUserId}`)
+      } else {
+        targetUserId = targetProfile.id
+        console.log(`✅ Usuario encontrado en profiles: ${targetUserId}`)
+      }
     }
-
-    const targetUserId = targetProfile.id
-    console.log(`✅ Usuario encontrado: ${targetUserId}`)
     console.log('🔄 Actualizando contraseña...')
 
     // 5. Actualizar la contraseña usando Admin API

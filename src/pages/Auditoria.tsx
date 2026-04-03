@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -34,18 +34,15 @@ import {
   FileSearch,
   MousePointerClick,
   Hash,
-  Image,
   Calendar,
   Building2,
   Loader2,
   CheckCircle2,
   Clock,
   Sparkles,
-  Upload,
   Link,
   X,
   ZoomIn,
-  ExternalLink,
   Info,
 } from 'lucide-react';
 import {
@@ -53,6 +50,17 @@ import {
   type ResultadoAuditoria,
 } from '@/services/auditService';
 import { ChatAuditoria } from '@/components/audit/ChatAuditoria';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 // ──────────────────────────────────────────────────────────
 // Tipos
@@ -78,6 +86,8 @@ interface AuditoriaVoucher {
   _school_name?: string | null;
   _analista_name?: string | null;
   _is_duplicate?: boolean; // true si hay otro registro con el mismo nro_operacion
+  /** Estado actual de recharge_requests (si hay id_cobranza) */
+  _rr_status?: string | null;
 }
 
 interface HuellaLog {
@@ -195,6 +205,16 @@ const Auditoria = () => {
   const [vouchers, setVouchers] = useState<AuditoriaVoucher[]>([]);
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [filtroBusqueda, setFiltroBusqueda] = useState('');
+  const [filtroSede, setFiltroSede] = useState<string>('todos');
+  const [schoolsList, setSchoolsList] = useState<Array<{ id: string; name: string }>>([]);
+  /** Ocultar filas cuya cobranza vinculada ya está anulada (cancelled) */
+  const [ocultarAnuladas, setOcultarAnuladas] = useState(true);
+  const [selectedVoucherIds, setSelectedVoucherIds] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [rechazandoId, setRechazandoId] = useState<string | null>(null);
+  const [rejectDialog, setRejectDialog] = useState<{ voucher: AuditoriaVoucher; reason: string } | null>(null);
+  /** Filas a rechazar en bloque (mismo motivo); null = rechazo de una sola fila vía rejectDialog */
+  const [bulkRejectList, setBulkRejectList] = useState<AuditoriaVoucher[] | null>(null);
   // Visor de imagen in-page
   const [imagenAbierta, setImagenAbierta] = useState<string | null>(null);
   // Panel de detalle de voucher
@@ -227,8 +247,17 @@ const Auditoria = () => {
 
   const fetchAll = async () => {
     setLoading(true);
-    await Promise.all([fetchVouchers(), fetchLogs(), fetchStats()]);
+    await Promise.all([fetchSchoolsList(), fetchVouchers(), fetchLogs(), fetchStats()]);
     setLoading(false);
+  };
+
+  const fetchSchoolsList = async () => {
+    try {
+      const { data } = await supabase.from('schools').select('id, name').order('name');
+      setSchoolsList(data ?? []);
+    } catch {
+      setSchoolsList([]);
+    }
   };
 
   const fetchStats = async () => {
@@ -273,6 +302,21 @@ const Auditoria = () => {
       if (error) throw error;
       const rows = data ?? [];
 
+      // ── Estados de cobranza (evita mostrar anulados si el admin ya canceló) ──
+      const cobranzaIds = [...new Set(rows.map(r => r.id_cobranza).filter(Boolean))] as string[];
+      const statusByCobranza = new Map<string, string>();
+      const chunkSize = 120;
+      for (let i = 0; i < cobranzaIds.length; i += chunkSize) {
+        const chunk = cobranzaIds.slice(i, i + chunkSize);
+        const { data: rrRows } = await supabase
+          .from('recharge_requests')
+          .select('id, status')
+          .in('id', chunk);
+        for (const rr of rrRows ?? []) {
+          statusByCobranza.set(rr.id, rr.status);
+        }
+      }
+
       // ── Enriquecer con nombres de sede ──
       const schoolIds = [...new Set(rows.map(r => r.school_id).filter(Boolean))] as string[];
       const schoolMap = new Map<string, string>();
@@ -310,7 +354,9 @@ const Auditoria = () => {
         _school_name: r.school_id ? (schoolMap.get(r.school_id) ?? null) : null,
         _analista_name: r.subido_por ? (analistaMap.get(r.subido_por) ?? r.subido_por) : null,
         _is_duplicate: r.nro_operacion ? (nroCount.get(r.nro_operacion) ?? 0) > 1 : false,
+        _rr_status: r.id_cobranza ? (statusByCobranza.get(r.id_cobranza) ?? null) : null,
       })));
+      setSelectedVoucherIds(new Set());
     } catch (err: any) {
       console.error('Error cargando vouchers:', err);
       toast({ variant: 'destructive', title: 'Error', description: err.message });
@@ -365,21 +411,80 @@ const Auditoria = () => {
     }
   };
 
-  // Filtro local por búsqueda de texto en vouchers
-  const vouchersFiltrados = vouchers.filter(v => {
-    if (!filtroBusqueda) return true;
-    const q = filtroBusqueda.toLowerCase();
-    return (
-      v.nro_operacion?.toLowerCase().includes(q) ||
-      v.banco_detectado?.toLowerCase().includes(q) ||
-      v.hash_imagen?.toLowerCase().includes(q)
-    );
-  });
+  /** Fila elegible para acciones masivas / check (aprobar o rechazar cobranza pendiente) */
+  const filaElegibleAcciones = (v: AuditoriaVoucher) => {
+    const esSospechoso = v.estado_ia === 'SOSPECHOSO';
+    const esRechazado = v.estado_ia === 'RECHAZADO';
+    if (!esSospechoso && !esRechazado) return false;
+    if (v.analisis_ia?.es_desvio_fondos as boolean) return false;
+    if (!v.id_cobranza && !v.nro_operacion) return false;
+    const st = v._rr_status;
+    if (st === 'approved') return false;
+    if (st === 'cancelled') return false;
+    return st === 'pending' || st === 'rejected' || st == null;
+  };
+
+  const vouchersFiltrados = useMemo(() => {
+    return vouchers.filter(v => {
+      // Ocultar cobranzas ya procesadas (anuladas O rechazadas por admin)
+      if (ocultarAnuladas && (v._rr_status === 'cancelled' || v._rr_status === 'rejected')) return false;
+      if (filtroSede !== 'todos' && v.school_id !== filtroSede) return false;
+      if (!filtroBusqueda) return true;
+      const q = filtroBusqueda.toLowerCase();
+      return (
+        v.nro_operacion?.toLowerCase().includes(q) ||
+        v.banco_detectado?.toLowerCase().includes(q) ||
+        v.hash_imagen?.toLowerCase().includes(q) ||
+        (v._school_name?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [vouchers, filtroBusqueda, filtroSede, ocultarAnuladas]);
+
+  const filasElegiblesLista = useMemo(
+    () => vouchersFiltrados.filter(filaElegibleAcciones),
+    [vouchersFiltrados]
+  );
+
+  const selectedElegiblesCount = useMemo(
+    () => filasElegiblesLista.filter(v => selectedVoucherIds.has(v.id)).length,
+    [filasElegiblesLista, selectedVoucherIds]
+  );
+
+  /** Estado del checkbox "seleccionar todos": true=todos, false=ninguno, "indeterminate"=algunos */
+  const selectAllState = useMemo((): boolean | 'indeterminate' => {
+    if (filasElegiblesLista.length === 0) return false;
+    const selected = filasElegiblesLista.filter(v => selectedVoucherIds.has(v.id)).length;
+    if (selected === 0) return false;
+    if (selected === filasElegiblesLista.length) return true;
+    return 'indeterminate';
+  }, [filasElegiblesLista, selectedVoucherIds]);
+
+  const toggleSelectAllElegibles = (checked: boolean) => {
+    if (!checked) {
+      setSelectedVoucherIds(new Set());
+      return;
+    }
+    setSelectedVoucherIds(new Set(filasElegiblesLista.map(v => v.id)));
+  };
+
+  const toggleSelectOne = (id: string, checked: boolean) => {
+    setSelectedVoucherIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   // ──────────────────────────────────────────────────────────
   // Aprobación override — desde Auditoría, sin pasar por Cobranzas
   // ──────────────────────────────────────────────────────────
-  const handleAprobarOverride = async (v: AuditoriaVoucher) => {
+  const handleAprobarOverride = async (
+    v: AuditoriaVoucher,
+    opts?: { silent?: boolean; skipFinalFetch?: boolean }
+  ): Promise<boolean> => {
+    const silent = opts?.silent ?? false;
+    const skipFinalFetch = opts?.skipFinalFetch ?? false;
     setAprobandoId(v.id);
     try {
       // 1. Buscar la cobranza — primero por id_cobranza, si no hay, por nro_operacion
@@ -392,7 +497,7 @@ const Auditoria = () => {
       if (v.id_cobranza) {
         const res = await supabase
           .from('recharge_requests')
-          .select('id, student_id, amount, status, request_type')
+          .select('id, student_id, amount, status, request_type, lunch_order_ids, paid_transaction_ids, payment_method, reference_code, voucher_url')
           .eq('id', v.id_cobranza)
           .single();
         reqData = res.data;
@@ -401,7 +506,7 @@ const Auditoria = () => {
         // Sin filtro de status: puede estar pending o rejected
         const res = await supabase
           .from('recharge_requests')
-          .select('id, student_id, amount, status, request_type')
+          .select('id, student_id, amount, status, request_type, lunch_order_ids, paid_transaction_ids, payment_method, reference_code, voucher_url')
           .eq('reference_code', v.nro_operacion)
           .in('status', ['pending', 'rejected'])
           .order('created_at', { ascending: false })
@@ -417,30 +522,137 @@ const Auditoria = () => {
         throw new Error('No se encontró la cobranza vinculada. Puede que ya haya sido procesada o que no tenga un ID de cobranza asociado.');
       }
 
+      // ── Helper: saldar transacciones pendientes de almuerzo/deuda ──
+      // Compartido entre el path "ya aprobado" (Bug E) y el path de aprobación nueva (Bug D)
+      const saldarTransaccionesPendientes = async (r: typeof req) => {
+        if (!r || (r.request_type !== 'lunch_payment' && r.request_type !== 'debt_payment')) return;
+
+        const paymentMeta = {
+          payment_approved: true,
+          payment_source: r.request_type === 'debt_payment' ? 'debt_voucher_payment' : 'lunch_voucher_payment',
+          recharge_request_id: r.id,
+          reference_code: r.reference_code,
+          approved_by: user?.id,
+          approved_at: new Date().toISOString(),
+          voucher_url: r.voucher_url,
+        };
+
+        const txIdsToUpdate = new Set<string>();
+
+        // A) Por lunch_order_ids
+        if (r.lunch_order_ids && r.lunch_order_ids.length > 0) {
+          for (const orderId of r.lunch_order_ids) {
+            const { data: matchingTxs } = await supabase
+              .from('transactions')
+              .select('id')
+              .eq('type', 'purchase')
+              .in('payment_status', ['pending', 'partial'])
+              .contains('metadata', { lunch_order_id: orderId });
+            (matchingTxs || []).forEach((tx: any) => txIdsToUpdate.add(tx.id));
+          }
+        }
+        // B) Por paid_transaction_ids
+        if (r.paid_transaction_ids && r.paid_transaction_ids.length > 0) {
+          r.paid_transaction_ids.forEach((id: string) => txIdsToUpdate.add(id));
+        }
+        // C) Fallback por student_id
+        if (txIdsToUpdate.size === 0 && r.student_id) {
+          const { data: fallbackTxs } = await supabase
+            .from('transactions')
+            .select('id, amount')
+            .eq('student_id', r.student_id)
+            .eq('type', 'purchase')
+            .in('payment_status', ['pending', 'partial'])
+            .order('created_at', { ascending: true });
+          if (fallbackTxs && fallbackTxs.length > 0) {
+            let remaining = r.amount;
+            for (const tx of fallbackTxs) {
+              if (remaining <= 0.01) break;
+              txIdsToUpdate.add(tx.id);
+              remaining -= Math.abs(tx.amount);
+            }
+          }
+        }
+
+        if (txIdsToUpdate.size === 0) {
+          console.warn('[Auditoria] saldarTransaccionesPendientes: no se encontraron tx pendientes para', r.id);
+          return;
+        }
+
+        const { data: currentTxs, error: readErr } = await supabase
+          .from('transactions')
+          .select('id, metadata, payment_status')
+          .in('id', Array.from(txIdsToUpdate));
+
+        if (readErr) {
+          console.error('[Auditoria] Error leyendo transacciones:', readErr);
+          return;
+        }
+
+        for (const tx of (currentTxs || [])) {
+          if (tx.payment_status === 'paid') continue;
+          await supabase
+            .from('transactions')
+            .update({
+              payment_status: 'paid',
+              payment_method: r.payment_method || 'voucher',
+              metadata: { ...(tx.metadata || {}), ...paymentMeta, last_payment_rejected: false },
+            })
+            .eq('id', tx.id)
+            .in('payment_status', ['pending', 'partial']);
+        }
+
+        // Confirmar lunch_orders activas
+        const orderIdsToConfirm = new Set<string>(r.lunch_order_ids || []);
+        if (txIdsToUpdate.size > 0) {
+          const { data: updatedTxMeta } = await supabase
+            .from('transactions').select('metadata').in('id', Array.from(txIdsToUpdate));
+          (updatedTxMeta || []).forEach((tx: any) => {
+            if (tx.metadata?.lunch_order_id) orderIdsToConfirm.add(tx.metadata.lunch_order_id);
+          });
+        }
+        if (orderIdsToConfirm.size > 0) {
+          const { data: activeOrders } = await supabase
+            .from('lunch_orders').select('id')
+            .in('id', Array.from(orderIdsToConfirm))
+            .eq('is_cancelled', false).neq('status', 'cancelled');
+          const activeIds = (activeOrders || []).map((o: any) => o.id);
+          if (activeIds.length > 0) {
+            await supabase.from('lunch_orders').update({ status: 'confirmed' }).in('id', activeIds);
+          }
+        }
+        console.log(`[Auditoria] saldarTransaccionesPendientes: ${txIdsToUpdate.size} tx procesadas para ${r.id}`);
+      };
+
       // Si ya fue aprobada previamente → sincronizar auditoria_vouchers a VALIDO
-      // Esto pasa cuando se aprobó desde el módulo de Cobranzas y el registro
-      // de Auditoría quedó con estado_ia = SOSPECHOSO o RECHAZADO sin actualizarse.
+      // ── BUG E FIX: también reparar transactions pendientes que no se actualizaron ──
       if (req.status === 'approved') {
+        // Intentar saldar transacciones que puedan haber quedado pendientes
+        await saldarTransaccionesPendientes(req);
         await supabase
           .from('auditoria_vouchers')
           .update({ estado_ia: 'VALIDO' })
           .eq('id', v.id);
-        toast({
-          title: '✅ Cobranza ya aprobada',
-          description: 'Esta cobranza ya había sido aprobada en el módulo de Cobranzas. Se actualizó el estado en Auditoría.',
-        });
+        if (!silent) {
+          toast({
+            title: '✅ Cobranza ya aprobada',
+            description: 'Esta cobranza ya había sido aprobada. Se verificaron y saldaron las deudas pendientes.',
+          });
+        }
         setVoucherDetalle(null);
-        await fetchAll();
+        if (!skipFinalFetch) await fetchAll();
         setAprobandoId(null);
-        return;
+        return true;
       }
 
       // Si está cancelled, tampoco se puede reactivar
       if (req.status === 'cancelled') {
-        toast({ variant: 'destructive', title: '🚫 Cobranza cancelada', description: 'Esta cobranza fue cancelada y no puede aprobarse.' });
+        if (!silent) {
+          toast({ variant: 'destructive', title: '🚫 Cobranza cancelada', description: 'Esta cobranza fue cancelada y no puede aprobarse.' });
+        }
         setAprobandoId(null);
         setVoucherDetalle(null);
-        return;
+        return false;
       }
 
       // status es 'pending' o 'rejected' → podemos proceder con el override
@@ -483,18 +695,24 @@ const Auditoria = () => {
 
       if (updateErr) throw updateErr;
       if (!updated || updated.length === 0) {
-        toast({ variant: 'destructive', title: 'Ya fue procesada', description: 'Otro admin la aprobó o rechazó al mismo tiempo.' });
+        if (!silent) {
+          toast({ variant: 'destructive', title: 'Ya fue procesada', description: 'Otro admin la aprobó o rechazó al mismo tiempo.' });
+        }
         setAprobandoId(null);
-        return;
+        return false;
       }
 
-      // 3. Para recargas: ajustar saldo del alumno
+      // 3. Efecto contable según tipo de pago
       if (req.request_type === 'recharge') {
+        // Para recargas: ajustar saldo del alumno
         const { error: balanceErr } = await supabase.rpc('adjust_student_balance', {
           p_student_id: req.student_id,
           p_amount: req.amount,
         });
         if (balanceErr) throw balanceErr;
+      } else if (req.request_type === 'lunch_payment' || req.request_type === 'debt_payment') {
+        // ── BUG D FIX: Para pagos de deuda/almuerzo, marcar transactions como pagadas ──
+        await saldarTransaccionesPendientes(req);
       }
 
       // 4. Marcar en auditoria_vouchers como VALIDO (el admin verificó y aprobó)
@@ -513,19 +731,252 @@ const Auditoria = () => {
         })
         .eq('id', v.id);
 
-      toast({
-        title: '✅ Aprobado manualmente',
-        description: `Cobranza de S/ ${req.amount.toFixed(2)} aprobada tras revisión manual en Auditoría.`,
-      });
+      if (!silent) {
+        toast({
+          title: '✅ Aprobado manualmente',
+          description: `Cobranza de S/ ${req.amount.toFixed(2)} aprobada tras revisión manual en Auditoría.`,
+        });
+      }
 
       setVoucherDetalle(null);
-      // Refrescar con datos enriquecidos (sede, analista, duplicados)
-      await fetchAll();
-
+      if (!skipFinalFetch) await fetchAll();
+      return true;
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error al aprobar', description: err.message });
+      if (!silent) {
+        toast({ variant: 'destructive', title: 'Error al aprobar', description: err.message });
+      }
+      return false;
     } finally {
       setAprobandoId(null);
+    }
+  };
+
+  const resolverCobranzaParaVoucher = async (v: AuditoriaVoucher) => {
+    let reqData = null;
+    let reqErr = null;
+    if (v.id_cobranza) {
+      const res = await supabase
+        .from('recharge_requests')
+        .select('id, student_id, amount, status, request_type, lunch_order_ids, paid_transaction_ids')
+        .eq('id', v.id_cobranza)
+        .single();
+      reqData = res.data;
+      reqErr = res.error;
+    } else if (v.nro_operacion) {
+      const res = await supabase
+        .from('recharge_requests')
+        .select('id, student_id, amount, status, request_type, lunch_order_ids, paid_transaction_ids')
+        .eq('reference_code', v.nro_operacion)
+        .in('status', ['pending', 'rejected'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      reqData = res.data;
+      reqErr = res.error;
+    }
+    return { req: reqData, err: reqErr };
+  };
+
+  const handleRechazarDesdeAuditoria = async (
+    v: AuditoriaVoucher,
+    reason: string,
+    opts?: { silent?: boolean; skipFinalFetch?: boolean; skipCloseDialog?: boolean }
+  ) => {
+    const silent = opts?.silent ?? false;
+    const skipFinalFetch = opts?.skipFinalFetch ?? false;
+    if (!user) return;
+    const motivo = reason.trim() || 'Rechazado desde módulo Auditoría';
+    setRechazandoId(v.id);
+    try {
+      const { req, err } = await resolverCobranzaParaVoucher(v);
+      if (err || !req) {
+        throw new Error('No se encontró la cobranza vinculada.');
+      }
+      if (req.status === 'approved') {
+        if (!silent) {
+          toast({ variant: 'destructive', title: 'Ya aprobada', description: 'No se puede rechazar una cobranza ya aprobada.' });
+        }
+        return;
+      }
+      if (req.status === 'cancelled') {
+        if (!silent) {
+          toast({ title: 'Ya anulada', description: 'La cobranza ya estaba anulada. Solo se actualizará el registro de auditoría.' });
+        }
+      }
+
+      const rejectionMeta = {
+        last_payment_rejected: true,
+        rejection_reason: motivo,
+        rejected_at: new Date().toISOString(),
+        rejected_request_id: req.id,
+      };
+
+      if (req.status === 'pending') {
+        const { data: rejectResult, error: rejErr } = await supabase
+          .from('recharge_requests')
+          .update({
+            status: 'rejected',
+            rejection_reason: motivo,
+            approved_by: user.id,
+            approved_at: new Date().toISOString(),
+          })
+          .eq('id', req.id)
+          .eq('status', 'pending')
+          .select('id');
+        if (rejErr) throw rejErr;
+        if (!rejectResult?.length) {
+          if (!silent) {
+            toast({ title: 'Estado cambiado', description: 'Otro usuario procesó esta cobranza. Revisa la lista.' });
+          }
+        } else {
+          if ((req.request_type === 'lunch_payment' || req.request_type === 'debt_payment') && req.lunch_order_ids?.length) {
+            for (const orderId of req.lunch_order_ids) {
+              const { data: existingTx } = await supabase
+                .from('transactions')
+                .select('id, metadata')
+                .eq('type', 'purchase')
+                .contains('metadata', { lunch_order_id: orderId })
+                .maybeSingle();
+              if (existingTx) {
+                await supabase
+                  .from('transactions')
+                  .update({ metadata: { ...(existingTx.metadata || {}), ...rejectionMeta } })
+                  .eq('id', existingTx.id);
+              }
+            }
+          }
+          if (req.request_type === 'debt_payment' && req.paid_transaction_ids?.length) {
+            const handledByLunch = new Set<string>();
+            if (req.lunch_order_ids) {
+              for (const orderId of req.lunch_order_ids) {
+                const { data: ltx } = await supabase
+                  .from('transactions')
+                  .select('id')
+                  .contains('metadata', { lunch_order_id: orderId })
+                  .maybeSingle();
+                if (ltx) handledByLunch.add(ltx.id);
+              }
+            }
+            const remaining = req.paid_transaction_ids.filter((id: string) => !handledByLunch.has(id));
+            for (const txId of remaining) {
+              const { data: existingTx } = await supabase
+                .from('transactions')
+                .select('id, metadata')
+                .eq('id', txId)
+                .maybeSingle();
+              if (existingTx) {
+                await supabase
+                  .from('transactions')
+                  .update({ metadata: { ...(existingTx.metadata || {}), ...rejectionMeta } })
+                  .eq('id', txId);
+              }
+            }
+          }
+        }
+      }
+
+      await supabase
+        .from('auditoria_vouchers')
+        .update({
+          estado_ia: 'RECHAZADO',
+          analisis_ia: {
+            ...(v.analisis_ia ?? {}),
+            estado: 'RECHAZADO',
+            motivo: `[RECHAZO ADMIN AUDITORÍA] ${motivo}`,
+            rechazo_auditoria: true,
+            rechazado_por: user.id,
+            rechazado_at: new Date().toISOString(),
+          },
+        })
+        .eq('id', v.id);
+
+      if (!silent) {
+        toast({
+          title: 'Rechazo registrado',
+          description: req.status === 'pending' ? 'Cobranza rechazada y auditoría actualizada.' : 'Auditoría marcada como rechazada.',
+        });
+      }
+      if (!opts?.skipCloseDialog) {
+        setRejectDialog(null);
+        setBulkRejectList(null);
+      }
+      setVoucherDetalle(null);
+      if (!skipFinalFetch) await fetchAll();
+    } catch (err: any) {
+      if (!silent) {
+        toast({ variant: 'destructive', title: 'Error al rechazar', description: err.message });
+      }
+    } finally {
+      setRechazandoId(null);
+    }
+  };
+
+  const handleBulkAprobar = async () => {
+    const ids = [...selectedVoucherIds];
+    const toProcess = vouchersFiltrados.filter(v => ids.includes(v.id) && filaElegibleAcciones(v));
+    if (toProcess.length === 0) {
+      toast({ variant: 'destructive', title: 'Nada seleccionado', description: 'Marca filas elegibles (sospechoso/rechazado IA con cobranza pendiente).' });
+      return;
+    }
+    setBulkWorking(true);
+    let ok = 0;
+    let fail = 0;
+    for (const v of toProcess) {
+      const success = await handleAprobarOverride(v, { silent: true, skipFinalFetch: true });
+      if (success) ok++;
+      else fail++;
+    }
+    setSelectedVoucherIds(new Set());
+    await fetchAll();
+    setBulkWorking(false);
+    toast({
+      title: 'Aprobación masiva finalizada',
+      description: `${ok} correcto(s)${fail ? `, ${fail} omitido(s) o con error` : ''}.`,
+    });
+  };
+
+  const handleBulkRechazarClick = () => {
+    const ids = [...selectedVoucherIds];
+    const toProcess = vouchersFiltrados.filter(v => ids.includes(v.id) && filaElegibleAcciones(v));
+    if (toProcess.length === 0) {
+      toast({ variant: 'destructive', title: 'Nada seleccionado', description: 'Marca filas elegibles para rechazar.' });
+      return;
+    }
+    setBulkRejectList(toProcess.length > 1 ? toProcess : null);
+    setRejectDialog({
+      voucher: toProcess[0],
+      reason: toProcess.length > 1 ? 'Rechazo masivo desde Auditoría' : '',
+    });
+  };
+
+  const confirmarRechazoDialog = async () => {
+    const reason = rejectDialog?.reason?.trim() ?? '';
+    if (!rejectDialog) return;
+    const list =
+      bulkRejectList && bulkRejectList.length > 0 ? bulkRejectList : [rejectDialog.voucher];
+    setBulkWorking(true);
+    try {
+      if (list.length > 1) {
+        for (const v of list) {
+          await handleRechazarDesdeAuditoria(v, reason, {
+            silent: true,
+            skipFinalFetch: true,
+            skipCloseDialog: true,
+          });
+        }
+        setSelectedVoucherIds(new Set());
+        setRejectDialog(null);
+        setBulkRejectList(null);
+        await fetchAll();
+        toast({
+          title: 'Rechazo masivo finalizado',
+          description: `Procesadas ${list.length} fila(s).`,
+        });
+        return;
+      }
+      await handleRechazarDesdeAuditoria(rejectDialog.voucher, reason);
+    } finally {
+      setBulkWorking(false);
     }
   };
 
@@ -768,7 +1219,7 @@ const Auditoria = () => {
 
         {tab === 'vouchers' && (
           <Card className="border-0 shadow-sm">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 space-y-3">
               <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
                 <CardTitle className="text-base font-semibold text-gray-800 flex items-center gap-2">
                   <Hash className="h-4 w-4 text-indigo-500" />
@@ -806,6 +1257,54 @@ const Auditoria = () => {
                   </Button>
                 </div>
               </div>
+              <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between border-t border-gray-100 pt-3">
+                <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:items-center">
+                  <Select value={filtroSede} onValueChange={setFiltroSede}>
+                    <SelectTrigger className="h-9 w-full sm:w-[220px] text-sm">
+                      <SelectValue placeholder="Sede" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas las sedes</SelectItem>
+                      {schoolsList.map(s => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-1.5 h-9">
+                    <Checkbox
+                      id="ocultar-anuladas-aud"
+                      checked={ocultarAnuladas}
+                      onCheckedChange={c => setOcultarAnuladas(c === true)}
+                    />
+                    <Label htmlFor="ocultar-anuladas-aud" className="text-xs font-medium text-gray-600 cursor-pointer">
+                      Ocultar anuladas / rechazadas
+                    </Label>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                    disabled={bulkWorking || selectedElegiblesCount === 0}
+                    onClick={handleBulkAprobar}
+                  >
+                    {bulkWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                    Aprobar seleccionados ({selectedElegiblesCount})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-9 gap-1.5"
+                    disabled={bulkWorking || selectedElegiblesCount === 0}
+                    onClick={handleBulkRechazarClick}
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Rechazar seleccionados
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {loading ? (
@@ -823,6 +1322,14 @@ const Auditoria = () => {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-gray-50 hover:bg-gray-50">
+                        <TableHead className="w-10 pr-0 text-xs font-semibold text-gray-600">
+                          <Checkbox
+                            checked={selectAllState}
+                            onCheckedChange={c => toggleSelectAllElegibles(c === true)}
+                            disabled={bulkWorking || filasElegiblesLista.length === 0}
+                            aria-label="Seleccionar todas las filas elegibles"
+                          />
+                        </TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Estado IA</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">N° Operación</TableHead>
                         <TableHead className="text-xs font-semibold text-gray-600">Banco</TableHead>
@@ -851,6 +1358,18 @@ const Auditoria = () => {
                           key={v.id}
                           className={`hover:bg-gray-50/50 ${v._is_duplicate ? 'bg-orange-50/40' : ''}`}
                         >
+                          <TableCell className="w-10 pr-0 align-top pt-3">
+                            {filaElegibleAcciones(v) ? (
+                              <Checkbox
+                                checked={selectedVoucherIds.has(v.id)}
+                                onCheckedChange={c => toggleSelectOne(v.id, c === true)}
+                                disabled={bulkWorking}
+                                aria-label="Seleccionar fila"
+                              />
+                            ) : (
+                              <span className="text-gray-200 text-xs select-none">—</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1">
                               <EstadoBadge estado={v.estado_ia} />
@@ -971,25 +1490,45 @@ const Auditoria = () => {
                               {(esSospechoso || esRechazado) &&
                                 !(v.analisis_ia?.es_desvio_fondos as boolean) &&
                                 (v.id_cobranza || v.nro_operacion) && (
-                                <button
-                                  onClick={() => handleAprobarOverride(v)}
-                                  disabled={aprobandoId === v.id}
-                                  className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border ${
-                                    esSospechoso
-                                      ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 border-amber-300'
-                                      : 'text-orange-700 bg-orange-100 hover:bg-orange-200 border-orange-300'
-                                  }`}
-                                  title={
-                                    esSospechoso
-                                      ? 'El comprobante tiene alertas. Verifica la imagen antes de aprobar.'
-                                      : 'Aprobar manualmente ignorando el rechazo de la IA'
-                                  }
-                                >
-                                  {aprobandoId === v.id
-                                    ? <><Loader2 className="h-3 w-3 animate-spin" /> Aprobando...</>
-                                    : <><CheckCircle2 className="h-3 w-3" /> Aprobar</>
-                                  }
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => handleAprobarOverride(v)}
+                                    disabled={aprobandoId === v.id || bulkWorking}
+                                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border ${
+                                      esSospechoso
+                                        ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 border-amber-300'
+                                        : 'text-orange-700 bg-orange-100 hover:bg-orange-200 border-orange-300'
+                                    }`}
+                                    title={
+                                      esSospechoso
+                                        ? 'El comprobante tiene alertas. Verifica la imagen antes de aprobar.'
+                                        : 'Aprobar manualmente ignorando el rechazo de la IA'
+                                    }
+                                  >
+                                    {aprobandoId === v.id
+                                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Aprobando...</>
+                                      : <><CheckCircle2 className="h-3 w-3" /> Aprobar</>
+                                    }
+                                  </button>
+                                  {filaElegibleAcciones(v) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setBulkRejectList(null);
+                                        setRejectDialog({ voucher: v, reason: '' });
+                                      }}
+                                      disabled={rechazandoId === v.id || bulkWorking}
+                                      className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md disabled:opacity-50 border text-red-700 bg-red-50 hover:bg-red-100 border-red-200"
+                                      title="Rechazar la cobranza y marcar el voucher en auditoría"
+                                    >
+                                      {rechazandoId === v.id ? (
+                                        <><Loader2 className="h-3 w-3 animate-spin" /> Rechazando...</>
+                                      ) : (
+                                        <><XCircle className="h-3 w-3" /> Rechazar</>
+                                      )}
+                                    </button>
+                                  )}
+                                </>
                               )}
                               {/* Aviso cuando es desvío de fondos — nunca se aprueba */}
                               {(v.analisis_ia?.es_desvio_fondos as boolean) && (
@@ -1258,23 +1797,44 @@ const Auditoria = () => {
                   </Button>
                 )}
 
-                {/* Aprobar de todas formas — si no es desvío de fondos */}
-                {v.estado_ia === 'RECHAZADO' && !esFraude && (v.id_cobranza || v.nro_operacion) && (
+                {/* Aprobar / Rechazar — sospechoso o rechazado por IA, sin desvío de fondos */}
+                {(v.estado_ia === 'SOSPECHOSO' || v.estado_ia === 'RECHAZADO') &&
+                  !esFraude &&
+                  (v.id_cobranza || v.nro_operacion) &&
+                  filaElegibleAcciones(v) && (
                   <div className="space-y-1.5">
                     <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      <strong>Solo si verificaste el comprobante:</strong> esta acción aprueba el pago aunque la IA lo rechazó. Queda registrado en los logs.
+                      <strong>Solo si verificaste el comprobante:</strong>{' '}
+                      {v.estado_ia === 'RECHAZADO'
+                        ? 'esta acción aprueba el pago aunque la IA lo rechazó.'
+                        : 'puedes aprobar el pago o rechazarlo con un motivo registrado.'}
                     </p>
-                    <Button
-                      size="sm"
-                      className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
-                      disabled={aprobandoId === v.id}
-                      onClick={() => handleAprobarOverride(v)}
-                    >
-                      {aprobandoId === v.id
-                        ? <><Loader2 className="h-4 w-4 animate-spin" /> Aprobando...</>
-                        : <><CheckCircle2 className="h-4 w-4" /> Aprobar de todas formas</>
-                      }
-                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        size="sm"
+                        className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
+                        disabled={aprobandoId === v.id || bulkWorking}
+                        onClick={() => handleAprobarOverride(v)}
+                      >
+                        {aprobandoId === v.id
+                          ? <><Loader2 className="h-4 w-4 animate-spin" /> Aprobando...</>
+                          : <><CheckCircle2 className="h-4 w-4" /> {v.estado_ia === 'RECHAZADO' ? 'Aprobar de todas formas' : 'Aprobar pago'}</>
+                        }
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="w-full gap-1.5"
+                        disabled={rechazandoId === v.id || bulkWorking}
+                        onClick={() => {
+                          setBulkRejectList(null);
+                          setRejectDialog({ voucher: v, reason: '' });
+                          setVoucherDetalle(null);
+                        }}
+                      >
+                        <XCircle className="h-4 w-4" /> Rechazar cobranza
+                      </Button>
+                    </div>
                   </div>
                 )}
 
@@ -1298,6 +1858,64 @@ const Auditoria = () => {
           </div>
         );
       })()}
+
+      {/* ── Diálogo: motivo de rechazo (una fila o varias) ── */}
+      <Dialog
+        open={!!rejectDialog}
+        onOpenChange={open => {
+          if (!open) {
+            setRejectDialog(null);
+            setBulkRejectList(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rechazar comprobante</DialogTitle>
+            <DialogDescription>
+              {bulkRejectList && bulkRejectList.length > 1
+                ? `Se aplicará el mismo motivo a ${bulkRejectList.length} cobranzas seleccionadas.`
+                : 'Indica el motivo del rechazo; queda guardado en el registro.'}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Ej.: Datos no coinciden, voucher ilegible, duplicado..."
+            value={rejectDialog?.reason ?? ''}
+            onChange={e =>
+              rejectDialog && setRejectDialog({ ...rejectDialog, reason: e.target.value })
+            }
+            rows={4}
+            className="resize-none text-sm"
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRejectDialog(null);
+                setBulkRejectList(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={bulkWorking || !rejectDialog?.reason?.trim()}
+              onClick={() => void confirmarRechazoDialog()}
+            >
+              {bulkWorking ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Procesando...
+                </>
+              ) : (
+                'Confirmar rechazo'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── FioBot — Asistente Financiero flotante ── */}
       <ChatAuditoria />

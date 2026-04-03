@@ -186,6 +186,35 @@ serve(async (req) => {
       return json({ error: "Se requiere imageUrl para analizar el voucher" }, 400);
     }
 
+    // ── 2b. No gastar IA ni escribir en auditoría si la cobranza ya no está pendiente ──
+    // (evita filas en Auditoría cuando el admin anuló/aprobó mientras otro abría el modal)
+    if (idCobranza) {
+      const { data: rrRow } = await supabase
+        .from("recharge_requests")
+        .select("status")
+        .eq("id", idCobranza)
+        .maybeSingle();
+      const st = rrRow?.status;
+      if (st === "cancelled" || st === "approved") {
+        return json({
+          ok: true,
+          skip_analisis: true,
+          skip_motivo:
+            st === "cancelled"
+              ? "Esta solicitud ya fue anulada — no se analizó ni se guardó en Auditoría."
+              : "Esta solicitud ya fue aprobada — no se analizó de nuevo.",
+          auditoriaId: null,
+          estado_ia: null,
+          banco_detectado: null,
+          monto_detectado: null,
+          nro_operacion: null,
+          fecha_pago_detectada: null,
+          destinatario_detectado: null,
+          analisis_ia: { motivo: "omitido_por_estado_cobranza", status_cobranza: st },
+        });
+      }
+    }
+
     // Hora de subida para mostrar contexto al admin (solo informativa para la IA)
     // La comparación real de fechas se hace en código más abajo, con UTC puro
     const uploadTimeUTC = fechaSubida ? new Date(fechaSubida) : new Date();
@@ -262,52 +291,129 @@ IMPORTANTE: NO evalúes si la fecha del voucher es anterior o posterior al enví
     } catch (parseError) {
       console.error("❌ GPT no devolvió JSON válido:", contenidoRaw.substring(0, 200));
 
-      // ── Intento de extracción parcial por regex como fallback ──
-      // Si GPT devolvió texto plano (no JSON), intentamos rescatar datos básicos.
-      const extractMonto = (t: string) => {
-        const m = t.match(/S\/\s*([\d,]+\.?\d*)/i);
-        return m ? parseFloat(m[1].replace(",", "")) : null;
-      };
-      const extractNroOp = (t: string) => {
-        const m = t.match(/\b(\d{6,15})\b/);
-        return m ? m[1] : null;
-      };
-
-      const montoExtraido = extractMonto(contenidoRaw);
-      const nroExtraido   = extractNroOp(contenidoRaw);
-
-      // Detectar si GPT rechazó analizar por política (imagen de contenido)
-      const esPoliticaGPT = contenidoRaw.toLowerCase().includes("i'm sorry") ||
+      // Detectar si GPT rechazó analizar por política de contenido
+      const esPoliticaGPT =
+        contenidoRaw.toLowerCase().includes("i'm sorry") ||
         contenidoRaw.toLowerCase().includes("i cannot") ||
         contenidoRaw.toLowerCase().includes("lo siento") ||
-        contenidoRaw.toLowerCase().includes("no puedo");
+        contenidoRaw.toLowerCase().includes("no puedo") ||
+        contenidoRaw.toLowerCase().includes("can't assist") ||
+        contenidoRaw.toLowerCase().includes("unable to") ||
+        contenidoRaw.toLowerCase().includes("content policy") ||
+        contenidoRaw.toLowerCase().includes("política de contenido");
 
-      const motivoFallback = esPoliticaGPT
-        ? "GPT rechazó analizar la imagen (política de contenido). Revisar manualmente si la imagen es legible."
-        : "La IA devolvió una respuesta que no se pudo procesar (error de parseo). Intentar re-analizar o revisar manualmente.";
+      // ── REINTENTO AUTOMÁTICO si GPT rechazó por política de contenido ──
+      // El prompt original menciona "forense", "edición", "Photoshop", "fraude" — esas
+      // palabras a veces activan el filtro de seguridad de OpenAI sobre ciertas imágenes.
+      // El reintento usa un prompt completamente neutro de solo extracción de datos.
+      let retryExitoso = false;
+      if (esPoliticaGPT) {
+        console.warn("🔄 GPT rechazó por política de contenido. Reintentando con prompt neutro...");
+        try {
+          const retryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${openaiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "gpt-4o",
+              max_tokens: 600,
+              temperature: 0,
+              messages: [
+                {
+                  role: "system",
+                  content: `Eres un asistente contable. Tu única tarea es leer y extraer texto de imágenes de comprobantes de pago (recibos, vouchers, capturas de Yape, Plin, transferencias bancarias). Responde ÚNICAMENTE con JSON válido, sin texto adicional.`,
+                },
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text: `Lee este comprobante de pago y extrae los datos que puedas leer. Responde SOLO con este JSON (completa con null si no puedes leer un campo):
+{"monto": <número decimal o null>, "moneda_detectada": <"PEN" o null>, "banco": <nombre del banco/app o null>, "nro_operacion": <código de operación como string o null>, "fecha": <fecha en formato ISO 8601 o null>, "destinatario_detectado": <nombre del destinatario tal como aparece o null>, "estado": "SOSPECHOSO", "confianza": 0.5, "motivo": "Extracción básica de datos — requiere revisión manual del comprobante", "alertas": ["Análisis visual de autenticidad omitido — revisar manualmente"], "datos_extraidos": {}, "analisis_visual": {"zona_monto": "no analizado", "zona_fecha": "no analizado", "zona_destinatario": "no analizado", "anomalias_detectadas": []}}`,
+                    },
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: imageUrl,
+                        detail: "low",
+                      },
+                    },
+                  ],
+                },
+              ],
+            }),
+          });
 
-      analisis = {
-        monto: montoExtraido,
-        moneda_detectada: null,
-        banco: null,
-        nro_operacion: nroExtraido,
-        fecha: null,
-        destinatario_detectado: null,
-        estado: "SOSPECHOSO",
-        confianza: 0,
-        motivo: motivoFallback,
-        alertas: [
-          esPoliticaGPT
-            ? "GPT rechazó analizar por política de contenido — re-intentar o revisar manual"
-            : "Respuesta de IA no parseada — re-intentar el análisis puede resolver esto",
-        ],
-        datos_extraidos: {
-          respuesta_cruda: contenidoRaw.substring(0, 500),
-          extraccion_fallback: (montoExtraido || nroExtraido)
-            ? `Monto rescatado: ${montoExtraido ?? "—"} | N° rescatado: ${nroExtraido ?? "—"}`
-            : "No se pudo extraer datos parciales",
-        },
-      };
+          if (retryResponse.ok) {
+            const retryData = await retryResponse.json();
+            const retryContent = retryData.choices?.[0]?.message?.content ?? "";
+            const retryJson = retryContent
+              .replace(/```json\s*/gi, "")
+              .replace(/```\s*/gi, "")
+              .trim();
+            const retryAnalisis = JSON.parse(retryJson);
+            analisis = {
+              ...retryAnalisis,
+              estado: "SOSPECHOSO",
+              confianza: retryAnalisis.confianza ?? 0.4,
+              alertas: [
+                ...(Array.isArray(retryAnalisis.alertas) ? retryAnalisis.alertas : []),
+                "Análisis forense no disponible para esta imagen — datos extraídos con método simplificado. Revisar manualmente.",
+              ],
+            };
+            retryExitoso = true;
+            console.log("✅ Reintento exitoso con prompt simplificado. Datos extraídos.");
+          } else {
+            console.warn("⚠️ El reintento con prompt neutro también falló:", await retryResponse.text());
+          }
+        } catch (retryErr) {
+          console.warn("⚠️ Error en el reintento:", retryErr instanceof Error ? retryErr.message : String(retryErr));
+        }
+      }
+
+      if (!retryExitoso) {
+        // ── Fallback final: extracción parcial por regex ──
+        const extractMonto = (t: string) => {
+          const m = t.match(/S\/\s*([\d,]+\.?\d*)/i);
+          return m ? parseFloat(m[1].replace(",", "")) : null;
+        };
+        const extractNroOp = (t: string) => {
+          const m = t.match(/\b(\d{6,15})\b/);
+          return m ? m[1] : null;
+        };
+
+        const montoExtraido = extractMonto(contenidoRaw);
+        const nroExtraido   = extractNroOp(contenidoRaw);
+
+        const motivoFallback = esPoliticaGPT
+          ? "GPT rechazó analizar la imagen (política de contenido). Revisar manualmente si la imagen es legible."
+          : "La IA devolvió una respuesta que no se pudo procesar. Intentar re-analizar o revisar manualmente.";
+
+        analisis = {
+          monto: montoExtraido,
+          moneda_detectada: null,
+          banco: null,
+          nro_operacion: nroExtraido,
+          fecha: null,
+          destinatario_detectado: null,
+          estado: "SOSPECHOSO",
+          confianza: 0,
+          motivo: motivoFallback,
+          alertas: [
+            esPoliticaGPT
+              ? "GPT rechazó analizar por política de contenido — re-intentar o revisar manualmente"
+              : "Respuesta de IA no parseada — re-intentar el análisis puede resolver esto",
+          ],
+          datos_extraidos: {
+            respuesta_cruda: contenidoRaw.substring(0, 500),
+            extraccion_fallback: (montoExtraido || nroExtraido)
+              ? `Monto rescatado: ${montoExtraido ?? "—"} | N° rescatado: ${nroExtraido ?? "—"}`
+              : "No se pudo extraer datos parciales",
+          },
+        };
+      }
     }
 
     // ── 5b. Comparación N° operación cliente vs IA ──────────────────────

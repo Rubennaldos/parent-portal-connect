@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -1358,7 +1359,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
             order_date: currentDateStr,
             category_name: selectedCategory.name,
             quantity,
-          }
+          },
+          ...BILLING_EXCLUDED,
         }])
         .select('id')
         .single();
@@ -1683,7 +1685,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       // (si ya está 'paid' o tiene voucher en revisión, NO tocar la transacción)
       const { error: txError } = await supabase
         .from('transactions')
-        .update({ payment_status: 'cancelled' })
+        .update({ payment_status: 'cancelled', is_taxable: false, billing_status: 'excluded' })
         .contains('metadata', { lunch_order_id: orderId })
         .eq('payment_status', 'pending');
 

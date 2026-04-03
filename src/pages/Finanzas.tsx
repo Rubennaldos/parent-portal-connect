@@ -116,13 +116,13 @@ export default function Finanzas() {
     fetchSchools();
     fetchData();
 
-    // Auto-refresh cada 10 segundos si está activado
+    // Auto-refresh cada 60 segundos si está activado
     let interval: NodeJS.Timeout;
     if (autoRefresh) {
       interval = setInterval(() => {
         fetchData();
         setLastUpdate(new Date());
-      }, 10000); // 10 segundos
+      }, 60000); // 60 segundos
     }
 
     return () => {

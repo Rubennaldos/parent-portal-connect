@@ -80,6 +80,7 @@ import {
 import { InvoiceClientModal, type InvoiceClientData, type InvoiceType } from '@/components/billing/InvoiceClientModal';
 import { generarComprobante } from '@/lib/nubefact';
 import { supabase } from '@/lib/supabase';
+import { calcBillingFlags } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { getProductsForSchool } from '@/lib/productPricing';
@@ -229,6 +230,16 @@ const getCategoryIcon = (categoryName: string) => {
   return PackageOpen;
 };
 
+interface LastSalePrintData {
+  ticketCode: string;
+  clientName: string;
+  cart: any[];
+  total: number;
+  paymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
+  saleType: 'general' | 'credit' | 'teacher';
+  schoolId: string;
+}
+
 const POS = () => {
   const { signOut, user } = useAuth();
   const { role } = useRole();
@@ -261,6 +272,9 @@ const POS = () => {
 
   // Estado para la sede del usuario (cajero)
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
+  // Para admin_general/superadmin sin sede asignada: selector de sede
+  const [adminSchoolList, setAdminSchoolList] = useState<{id:string;name:string}[]>([]);
+  const [adminSchoolListLoading, setAdminSchoolListLoading] = useState(false);
   const maintenance = useMaintenanceGuard('pos_admin', userSchoolId);
 
   // ── Guard de caja ────────────────────────────────────────────────
@@ -314,6 +328,11 @@ const POS = () => {
   // NUEVO: Campo "Con cuánto paga" para calcular vuelto
   const [cashGiven, setCashGiven] = useState('');
 
+  // Clave de idempotencia para la venta en curso.
+  // Se genera al primer clic en COBRAR y persiste entre reintentos de red.
+  // Se resetea al confirmar la venta o al modificar el carrito.
+  const [saleIdempotencyKey, setSaleIdempotencyKey] = useState<string | null>(null);
+
   // NUEVO: Pago Mixto
   interface PaymentSplit {
     method: string;
@@ -350,6 +369,9 @@ const POS = () => {
   // Estado de ticket generado
   const [showTicketPrint, setShowTicketPrint] = useState(false);
   const [ticketData, setTicketData] = useState<any>(null);
+
+  // Último ticket vendido — permite reimprimir sin llamar al servidor
+  const [lastSalePrintData, setLastSalePrintData] = useState<LastSalePrintData | null>(null);
 
   // --- CATEGORÍAS DINÁMICAS ---
   const [orderedCategories, setOrderedCategories] = useState<Array<{ id: string; label: string; icon: any }>>([
@@ -433,6 +455,44 @@ const POS = () => {
   useEffect(() => {
     fetchProducts();
     fetchCombos();
+  }, []);
+
+  // ── Real-time: sincronización automática de cambios en productos ──
+  // Si logística deshabilita o fusiona un producto, el POS lo refleja
+  // inmediatamente sin que el cajero tenga que recargar la página.
+  useEffect(() => {
+    const channel = supabase
+      .channel('pos-products-sync')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'products' },
+        (payload) => {
+          const updated = payload.new as { id: string; active: boolean };
+
+          if (!updated.active) {
+            // Producto desactivado: quitarlo de la lista de productos
+            setProducts(prev => prev.filter(p => p.id !== updated.id));
+
+            // Si el cajero ya lo tenía en el carrito, también quitarlo
+            setCart(prev => {
+              const affected = prev.find(item => item.product.id === updated.id);
+              if (!affected) return prev;
+              toast({
+                variant: 'destructive',
+                title: '⚠️ Producto retirado del carrito',
+                description: `"${affected.product.name}" fue desactivado por logística y se retiró automáticamente del carrito.`,
+              });
+              return prev.filter(item => item.product.id !== updated.id);
+            });
+          } else {
+            // Producto reactivado o actualizado: refrescar lista completa
+            fetchProducts();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   // ── OFFLINE: Precarga y Sincronización ──────────────────────────
@@ -550,26 +610,42 @@ const POS = () => {
     setFilteredProducts(filtered);
   }, [productSearch, selectedCategory, products]);
 
-  // Buscar estudiantes
+  // Buscar estudiantes — debounce 350ms para evitar una query por cada letra
   useEffect(() => {
-    if (clientMode === 'student' && studentSearch.trim().length >= 2) {
-      searchStudents(studentSearch);
-      setShowStudentResults(true);
-    } else {
+    if (clientMode !== 'student') {
       setStudents([]);
       setShowStudentResults(false);
+      return;
     }
+    if (studentSearch.trim().length < 2) {
+      setStudents([]);
+      setShowStudentResults(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchStudents(studentSearch);
+      setShowStudentResults(true);
+    }, 350);
+    return () => clearTimeout(timer);
   }, [studentSearch, clientMode]);
 
-  // Buscar profesores
+  // Buscar profesores — debounce 350ms para evitar una query por cada letra
   useEffect(() => {
-    if (clientMode === 'teacher' && teacherSearch.trim().length >= 2) {
-      searchTeachers(teacherSearch);
-      setShowTeacherResults(true);
-    } else {
+    if (clientMode !== 'teacher') {
       setTeachers([]);
       setShowTeacherResults(false);
+      return;
     }
+    if (teacherSearch.trim().length < 2) {
+      setTeachers([]);
+      setShowTeacherResults(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchTeachers(teacherSearch);
+      setShowTeacherResults(true);
+    }, 350);
+    return () => clearTimeout(timer);
   }, [teacherSearch, clientMode]);
 
   // Efecto para Escucha Global de Teclado (Pistola de Código de Barras + Atajos)
@@ -859,7 +935,8 @@ const POS = () => {
           const { data: products } = await supabase
             .from('products')
             .select('id, name, price_sale, has_stock')
-            .in('id', productIds);
+            .in('id', productIds)
+            .eq('active', true);
 
           const combo_items = (items || []).map(item => ({
             quantity: item.quantity,
@@ -1258,6 +1335,8 @@ const POS = () => {
     setRegisteredSearch('');
     setRegisteredResults([]);
     setIsGlobalSearch(false);
+    // Resetear clave de idempotencia (la próxima venta genera la suya propia)
+    setSaleIdempotencyKey(null);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
 
@@ -1396,6 +1475,7 @@ const POS = () => {
   };
 
   const addToCart = (product: Product) => {
+    setSaleIdempotencyKey(null); // carrito modificado → nueva clave en el próximo cobro
     const existing = cart.find(item => item.product.id === product.id);
     
     if (existing) {
@@ -1437,6 +1517,7 @@ const POS = () => {
   };
 
   const updateQuantity = (productId: string, delta: number) => {
+    setSaleIdempotencyKey(null); // cantidad modificada → nueva clave en el próximo cobro
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const newQuantity = item.quantity + delta;
@@ -1447,11 +1528,13 @@ const POS = () => {
   };
 
   const removeFromCart = (productId: string) => {
+    setSaleIdempotencyKey(null);
     setCart(cart.filter(item => item.product.id !== productId));
   };
 
   /** Elimina un ítem del carrito por su cart_id único (necesario para ventas libres) */
   const removeFromCartByCartId = (cartId: string) => {
+    setSaleIdempotencyKey(null);
     setCart(prev => prev.filter(item => (item.cart_id ?? item.product.id) !== cartId));
   };
 
@@ -1517,6 +1600,14 @@ const POS = () => {
 
   const handleCheckoutClick = () => {
     if (!canCheckout()) return;
+
+    // Generar la clave de idempotencia UNA SOLA VEZ por intento de cobro.
+    // Si el cajero presiona COBRAR de nuevo tras un error de red, conserva la
+    // misma clave para que el RPC detecte el duplicado y no doble-cobre.
+    // La clave ya se reseteó si el carrito fue modificado.
+    if (!saleIdempotencyKey) {
+      setSaleIdempotencyKey(`${userSchoolId}-${user?.id}-${Date.now()}`);
+    }
 
     // Decidir qué modal mostrar según el tipo de cliente
     if (clientMode === 'student' || clientMode === 'teacher') {
@@ -1594,17 +1685,20 @@ const POS = () => {
 
         if (pdfUrl) setLastInvoicePdfUrl(pdfUrl);
 
-        // ── PASO 3a: Vincular invoice_id en la transacción ──────────────
+        // ── PASO 3a: Vincular invoice_id y marcar billing_status='sent' ──
         // Fire-and-forget: si este UPDATE falla, la venta y el comprobante
         // ya existen; el vínculo se puede recuperar después.
-        if (invoiceId) {
+        if (invoiceId || transactionId) {
           supabase
             .from('transactions')
-            .update({ invoice_id: invoiceId })
+            .update({
+              ...(invoiceId ? { invoice_id: invoiceId } : {}),
+              billing_status: 'sent',
+            })
             .eq('id', transactionId)
             .then(({ error: linkErr }) => {
               if (linkErr) {
-                console.warn('⚠️ No se pudo vincular invoice_id en la transacción:', linkErr.message);
+                console.warn('⚠️ No se pudo vincular invoice_id / billing_status en la transacción:', linkErr.message);
               }
             });
         }
@@ -1788,35 +1882,34 @@ const POS = () => {
         return;
       }
 
-      let ticketCode = '';
+      // ─────────────────────────────────────────────────────────────────────
+      // 🔒 VERIFICACIÓN DE PRODUCTOS ACTIVOS
+      // Antes de procesar el pago, confirmar que todos los productos del
+      // carrito siguen activos en la BD (pudieron ser fusionados o
+      // desactivados por logística mientras el cajero preparaba la venta).
+      // ─────────────────────────────────────────────────────────────────────
+      const cartProductIds = cart.map(item => item.product.id);
+      const { data: activeCheck } = await supabase
+        .from('products')
+        .select('id, name, active')
+        .in('id', cartProductIds);
 
-      console.log('🔵 INICIANDO CHECKOUT', {
-        clientMode,
-        selectedStudent: selectedStudent?.full_name,
-        selectedTeacher: selectedTeacher?.full_name,
-        total,
-        userId: user?.id
-      });
-
-      // ✅ Generar correlativo ÚNICO para TODOS los usuarios
-      try {
-        const { data: ticketNumber, error: ticketError } = await supabase
-          .rpc('get_next_ticket_number', { p_user_id: user?.id });
-
-        if (ticketError) {
-          console.error('❌ Error generando correlativo:', ticketError);
-          // Fallback temporal
-          ticketCode = `TMP-${Date.now()}`;
-        } else {
-          console.log('✅ Correlativo generado:', ticketNumber);
-          ticketCode = ticketNumber;
-        }
-      } catch (err) {
-        console.error('❌ Error en correlativo:', err);
-        ticketCode = `TMP-${Date.now()}`;
+      const inactiveItems = (activeCheck || []).filter(p => !p.active);
+      if (inactiveItems.length > 0) {
+        const names = inactiveItems.map(p => `"${p.name}"`).join(', ');
+        toast({
+          variant: 'destructive',
+          title: '⛔ Producto(s) no disponibles',
+          description: `${names} ya no está disponible. Retíralo del carrito antes de cobrar.`,
+        });
+        setIsProcessing(false);
+        return;
       }
 
-      // Obtener school_id del cajero (para impresión)
+      // ticketCode y createdTransactionId son rellenados por el RPC atómico (ver abajo)
+      let ticketCode = '';
+
+      // Obtener school_id del cajero (para impresión y para la validación de códigos duplicados)
       const { data: cashierProfile } = await supabase
         .from('profiles')
         .select('school_id')
@@ -1890,407 +1983,222 @@ const POS = () => {
       }
       // ─────────────────────────────────────────────────────────────────────
 
-      // Preparar datos del ticket
-      const clientName = clientMode === 'student' ? selectedStudent?.full_name :
-                        clientMode === 'teacher' ? selectedTeacher?.full_name :
-                        'CLIENTE GENÉRICO';
+      // ══════════════════════════════════════════════════════════════════
+      // 🎯 RPC ATÓMICO: complete_pos_sale_v2
+      //
+      // Reemplaza las 5 llamadas anteriores (ticket + balance + transaction
+      // + items + stock) por UNA sola transacción en la base de datos.
+      //
+      // Garantías:
+      //  • Precios recalculados en BD (no del navegador)
+      //  • SELECT FOR UPDATE → sin race conditions de stock ni saldo
+      //  • Todo-o-nada: si falla el stock → rollback del cobro y del ticket
+      //  • Fecha del servidor en America/Lima, no el reloj de la cajera
+      // ══════════════════════════════════════════════════════════════════
 
-      const ticketInfo: any = {
-        code: ticketCode,
-        clientName: clientName,
-        clientType: clientMode,
-        items: cart,
-        total: total,
-        paymentMethod: clientMode === 'generic' ? paymentMethod : 'credito',
-        documentType: clientMode === 'generic' ? (requiresInvoice ? 'factura' : 'ticket') : 'ticket',
-        timestamp: new Date(),
-        cashierEmail: user?.email || 'No disponible',
-      };
+      // Construir líneas del carrito (solo lo mínimo necesario; precios los calcula el RPC)
+      const rpcLines = cart.map(item => ({
+        ...(item.is_custom ? {} : { product_id: item.product.id }),
+        quantity: item.quantity,
+        is_custom: item.is_custom ?? false,
+        custom_name: item.is_custom ? item.product.name : undefined,
+        custom_price: item.is_custom ? item.product.price : undefined,
+      }));
 
-      // Si es estudiante
-      if (clientMode === 'student' && selectedStudent) {
-        // ══════════════════════════════════════════════════════════
-        // 🔒 PASO 1: Leer datos FRESCOS del estudiante desde la BD
-        //    (evita usar datos viejos si el admin aprobó una recarga)
-        // ══════════════════════════════════════════════════════════
-        const { data: freshStudent, error: freshErr } = await supabase
-          .from('students')
-          .select('balance, free_account, kiosk_disabled')
-          .eq('id', selectedStudent.id)
-          .single();
+      // Metadata de pago (no monetaria — solo auditoría)
+      const paymentMeta: Record<string, any> = {};
+      if (paymentMethod) paymentMeta.payment_method_detail = paymentMethod;
+      if (transactionCode) paymentMeta.operation_number = transactionCode.trim().toUpperCase();
+      if (yapeNumber) paymentMeta.yape_number = yapeNumber;
+      if (plinNumber) paymentMeta.plin_number = plinNumber;
+      if (cashGiven) paymentMeta.cash_given = parseFloat(cashGiven);
+      if (paymentSplits.length > 0) paymentMeta.payment_splits = paymentSplits;
 
-        if (freshErr) {
-          console.error('Error leyendo saldo fresco:', freshErr);
-          throw new Error('No se pudo verificar el saldo del estudiante. Intenta de nuevo.');
-        }
+      // Clave de idempotencia: generada en handleCheckoutClick y persistida en estado.
+      // Si el cajero reintenta tras un error de RED, el RPC detecta el duplicado y
+      // devuelve el resultado anterior (sin volver a cobrar).
+      // Si el error fue de LÓGICA (saldo, stock) se debe usar la misma clave porque
+      // el carrito no cambió; solo se resetea si el cajero modifica el carrito.
+      const idempotencyKey = saleIdempotencyKey ?? `${userSchoolId}-${user.id}-${Date.now()}`;
 
-        if (freshStudent?.kiosk_disabled) {
-          throw new Error('Este alumno tiene el kiosco desactivado. Solo puede pedir almuerzos.');
-        }
-
-        const currentBalance = freshStudent?.balance ?? selectedStudent.balance;
-        const isFreeAccount = freshStudent?.free_account !== false; // true o null = cuenta libre
-
-        // ══════════════════════════════════════════════════════════
-        // 💰 PASO 3: Decidir cómo cobrar — LÓGICA:
-        //
-        //   ¿Tiene saldo >= total?
-        //     SÍ → Descontar del saldo (sea cuenta libre o no)
-        //     NO → ¿Es cuenta libre?
-        //           SÍ → Crear deuda (pending)
-        //           NO → Saldo insuficiente (bloquear)
-        // ══════════════════════════════════════════════════════════
-        const shouldUseBalance = currentBalance >= total;
-
-        // Lógica de deuda: SOLO cuenta libre puede crear deuda.
-        // Con Recargas (free_account=false) NUNCA crea deuda — solo gasta saldo.
-        const canProceedAsDebt = isFreeAccount;
-
-        if (!shouldUseBalance && !canProceedAsDebt) {
-          if (!isFreeAccount) {
-            throw new Error(
-              `💳 Saldo insuficiente.\n` +
-              `Saldo actual: S/ ${currentBalance.toFixed(2)}\n` +
-              `Total compra: S/ ${total.toFixed(2)}\n` +
-              `Recarga la cuenta para poder comprar.`
-            );
-          }
-          throw new Error(
-            `💳 Saldo insuficiente.\n` +
-            `Saldo actual: S/ ${currentBalance.toFixed(2)}\n` +
-            `Total compra: S/ ${total.toFixed(2)}\n` +
-            `Faltan: S/ ${(total - currentBalance).toFixed(2)}`
-          );
-        }
-
-        const newBalance = shouldUseBalance 
-          ? currentBalance - total 
-          : currentBalance; // Cuenta libre sin saldo → no tocar balance
-
-        console.log('💳 PROCESANDO VENTA ESTUDIANTE', {
-          studentId: selectedStudent.id,
-          isFreeAccount,
-          shouldUseBalance,
-          total,
-          saldoFresco: currentBalance,
-          newBalance,
-          modo: shouldUseBalance ? 'DESCONTAR SALDO' : 'DEUDA (cuenta libre)',
-        });
-
-        // ══════════════════════════════════════════════════════════
-        // 📝 PASO 4: Crear transacción
-        // ══════════════════════════════════════════════════════════
-        const studentPaymentDetails: any = { source: 'pos' };
-        if (paymentMethod) studentPaymentDetails.payment_method_detail = paymentMethod;
-        if (transactionCode) studentPaymentDetails.operation_number = transactionCode.trim().toUpperCase();
-        if (yapeNumber) studentPaymentDetails.yape_number = yapeNumber;
-        if (plinNumber) studentPaymentDetails.plin_number = plinNumber;
-        if (cashGiven) studentPaymentDetails.cash_given = parseFloat(cashGiven);
-        if (paymentSplits.length > 0) studentPaymentDetails.payment_splits = paymentSplits;
-        if (shouldUseBalance) studentPaymentDetails.paid_from_balance = true;
-
-        // Calcular montos por método para pago mixto
-        const isMixedPayment = paymentMethod === 'mixto' && paymentSplits.length > 0;
-        const mixedCashAmount = isMixedPayment
-          ? paymentSplits.filter(p => p.method === 'efectivo').reduce((s, p) => s + p.amount, 0)
-          : 0;
-        const mixedCardAmount = isMixedPayment
-          ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
-          : 0;
-        const mixedYapeAmount = isMixedPayment
-          ? paymentSplits.filter(p => p.method === 'yape' || p.method === 'transferencia').reduce((s, p) => s + p.amount, 0)
-          : 0;
-
-        // ══════════════════════════════════════════════════════════
-        // 💰 PASO 4a: Si hay que descontar saldo, hacerlo PRIMERO (antes de la transacción)
-        // ══════════════════════════════════════════════════════════
-        let actualNewBalance = newBalance;
-        if (shouldUseBalance) {
-          const { data: updatedBalance, error: rpcError } = await supabase
-            .rpc('adjust_student_balance', {
-              p_student_id: selectedStudent.id,
-              p_amount: -total,
-            });
-
-          if (rpcError) throw rpcError;
-          actualNewBalance = updatedBalance ?? newBalance;
-          console.log(`✅ Saldo descontado atómicamente: → S/ ${actualNewBalance.toFixed(2)}`);
-        }
-
-        // Descripción clara
-        const txDescription = shouldUseBalance
-          ? `Compra POS (Saldo) - S/ ${total.toFixed(2)}`
-          : `Compra POS (Cuenta Libre - Deuda) - S/ ${total.toFixed(2)}`;
-
-        const { data: transaction, error: transError} = await supabase
-          .from('transactions')
-          .insert({
-            student_id: selectedStudent.id,
-            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra (no la sede del alumno)
-            type: 'purchase',
-            amount: -total,
-            description: txDescription,
-            balance_after: actualNewBalance,
-            created_by: user?.id,
-            ticket_code: ticketCode,
-            payment_status: shouldUseBalance ? 'paid' : 'pending',
-            payment_method: shouldUseBalance ? (paymentMethod || 'saldo') : null,
-            metadata: studentPaymentDetails,
-            paid_with_mixed: isMixedPayment,
-            cash_amount: mixedCashAmount,
-            card_amount: mixedCardAmount,
-            yape_amount: mixedYapeAmount,
-            // Datos de facturación (se guardan aunque Nubefact aún no esté conectado)
-            document_type: billingData?.document_type ?? 'ticket',
-            invoice_client_name: billingData?.client_name ?? null,
-            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
-          })
-          .select()
-          .single();
-
-        if (transError) {
-          console.error('❌ Error creando transacción:', transError);
-          if (shouldUseBalance) {
-            // Revertir el descuento de saldo si la transacción falla
-            await supabase.rpc('adjust_student_balance', {
-              p_student_id: selectedStudent.id,
-              p_amount: total,
-            });
-          }
-          throw transError;
-        }
-        console.log('✅ Transacción creada:', transaction.id);
-        createdTransactionId = transaction.id;
-
-        // Crear items (ventas libres usan product_id = null)
-        const items = cart.map(item => ({
-          transaction_id: transaction.id,
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          quantity: item.quantity,
-          unit_price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-          ...(item.is_custom ? { is_custom_sale: true } : {}),
-        }));
-
-        const { error: itemsError } = await supabase
-          .from('transaction_items')
-          .insert(items);
-
-        if (itemsError) throw itemsError;
-
-        // Registrar en tabla SALES para módulo de Finanzas
-        const salesItems = cart.map(item => ({
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          barcode: item.product.barcode || null,
-          quantity: item.quantity,
-          price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-        }));
-
-        await supabase
-          .from('sales')
-          .insert({
-            transaction_id: transaction.id,
-            student_id: selectedStudent.id,
-            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra
-            cashier_id: user?.id,
-            total: total,
-            subtotal: total,
-            discount: 0,
-            payment_method: toSalesMethod(shouldUseBalance ? (paymentMethod || 'saldo') : 'debt'),
-            cash_received: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
-            change_given: shouldUseBalance && (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
-            items: salesItems,
-          });
-
-        // Actualizar estado local con el saldo ya descontado
-        if (shouldUseBalance) {
-          setSelectedStudent({
-            ...selectedStudent,
-            balance: actualNewBalance
-          });
-        }
-
-        ticketInfo.newBalance = actualNewBalance;
-        ticketInfo.amountToDeduct = shouldUseBalance ? total : 0;
-        ticketInfo.isFreeAccount = isFreeAccount;
-        ticketInfo.paidFromBalance = shouldUseBalance;
-      } else if (clientMode === 'teacher' && selectedTeacher) {
-        // Profesor - Cuenta libre sin límites
-        console.log('👨‍🏫 Procesando compra de profesor');
-
-        // Crear transacción
-        const { data: transaction, error: transError } = await supabase
-          .from('transactions')
-          .insert({
-            student_id: null,
-            teacher_id: selectedTeacher.id,
-            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra (no la sede del profesor)
-            type: 'purchase',
-            amount: -total,
-            description: `Compra Profesor: ${selectedTeacher.full_name} - ${cart.length} items`,
-            balance_after: 0, // Profesores no tienen balance
-            created_by: user?.id,
-            ticket_code: ticketCode,
-            payment_status: 'pending', // 🔥 CRÉDITO: Iniciar como pending
-            payment_method: null, // Sin método de pago inicial
-            metadata: { source: 'pos' },
-            // Datos de facturación
-            document_type: billingData?.document_type ?? 'ticket',
-            invoice_client_name: billingData?.client_name ?? null,
-            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
-          })
-          .select()
-          .single();
-
-        if (transError) {
-          console.error('❌ Error creando transacción de profesor:', transError);
-          throw transError;
-        }
-
-        console.log('✅ Transacción creada:', transaction.id);
-        createdTransactionId = transaction.id;
-
-        // Insertar items de la transacción (ventas libres usan product_id = null)
-        const items = cart.map(item => ({
-          transaction_id: transaction.id,
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          quantity: item.quantity,
-          unit_price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-          ...(item.is_custom ? { is_custom_sale: true } : {}),
-        }));
-
-        await supabase.from('transaction_items').insert(items);
-
-        // Registrar en tabla SALES para módulo de Finanzas
-        const salesItems = cart.map(item => ({
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          barcode: item.product.barcode || null,
-          quantity: item.quantity,
-          price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-        }));
-
-        await supabase
-          .from('sales')
-          .insert({
-            transaction_id: transaction.id,            // ✅ UUID real de la transacción
-            teacher_id: selectedTeacher.id,
-            school_id: userSchoolId, // 🌐 Sede del kiosco donde se hizo la compra
-            cashier_id: user?.id,
-            total: total,
-            subtotal: total,
-            discount: 0,
-            payment_method: 'teacher_account',
-            cash_received: null,
-            change_given: null,
-            items: salesItems,
-          });
-
-        ticketInfo.isFreeAccount = true;
-        ticketInfo.teacherName = selectedTeacher.full_name;
-      } else {
-        // Cliente genérico - Solo registrar la venta (PAGADA)
-        const genericPaymentDetails: any = { source: 'pos' };
-        if (transactionCode) genericPaymentDetails.operation_number = transactionCode.trim().toUpperCase();
-        if (yapeNumber) genericPaymentDetails.yape_number = yapeNumber;
-        if (plinNumber) genericPaymentDetails.plin_number = plinNumber;
-        if (cashGiven) genericPaymentDetails.cash_given = parseFloat(cashGiven);
-        if (paymentSplits.length > 0) genericPaymentDetails.payment_splits = paymentSplits;
-
-        // ✅ Calcular montos por método para pago mixto
-        const isMixedGeneric = paymentMethod === 'mixto' && paymentSplits.length > 0;
-        const genericMixedCash = isMixedGeneric
-          ? paymentSplits.filter(p => p.method === 'efectivo').reduce((s, p) => s + p.amount, 0)
-          : 0;
-        const genericMixedCard = isMixedGeneric
-          ? paymentSplits.filter(p => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0)
-          : 0;
-        const genericMixedYape = isMixedGeneric
-          ? paymentSplits.filter(p => p.method === 'yape' || p.method === 'transferencia').reduce((s, p) => s + p.amount, 0)
-          : 0;
-
-        const { data: transaction, error: transError } = await supabase
-          .from('transactions')
-          .insert({
-            student_id: null,
-            school_id: userSchoolId, // ✅ Agregar school_id del cajero
-            type: 'purchase',
-            amount: -total,
-            description: `Compra Cliente Genérico - ${cart.length} items`,
-            balance_after: 0,
-            created_by: user?.id,
-            ticket_code: ticketCode,
-            payment_status: 'paid', // 🔥 Cliente genérico PAGA en el momento
-            payment_method: paymentMethod || 'efectivo', // Método de pago real
-            metadata: genericPaymentDetails,
-            // ✅ Columnas para pago mixto (usadas por calculate_daily_totals)
-            paid_with_mixed: isMixedGeneric,
-            cash_amount: genericMixedCash,
-            card_amount: genericMixedCard,
-            yape_amount: genericMixedYape,
-            // Datos de facturación
-            document_type: billingData?.document_type ?? 'ticket',
-            invoice_client_name: billingData?.client_name ?? null,
-            invoice_client_dni_ruc: billingData?.client_dni_ruc ?? null,
-          })
-          .select()
-          .single();
-
-        if (transError) throw transError;
-        createdTransactionId = transaction.id;
-
-        const items = cart.map(item => ({
-          transaction_id: transaction.id,
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          quantity: item.quantity,
-          unit_price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-          ...(item.is_custom ? { is_custom_sale: true } : {}),
-        }));
-
-        await supabase.from('transaction_items').insert(items);
-
-        // **NUEVO: Registrar en tabla SALES para módulo de Finanzas**
-        const salesItems = cart.map(item => ({
-          product_id: item.is_custom ? null : item.product.id,
-          product_name: item.product.name,
-          barcode: item.product.barcode || null,
-          quantity: item.quantity,
-          price: item.product.price,
-          subtotal: item.product.price * item.quantity,
-        }));
-
-        const { error: salesErr } = await supabase
-          .from('sales')
-          .insert({
-            transaction_id: transaction.id,
-            student_id: null,
-            school_id: cashierProfile?.school_id || null,
-            cashier_id: user?.id,
-            total: total,
-            subtotal: total,
-            discount: 0,
-            payment_method: toSalesMethod(paymentMethod || 'efectivo'),
-            cash_received: (paymentMethod === 'efectivo' || !paymentMethod) ? (parseFloat(cashGiven) || total) : null,
-            change_given: (paymentMethod === 'efectivo' || !paymentMethod) ? ((parseFloat(cashGiven) || total) - total) : null,
-            items: salesItems,
-          });
-        if (salesErr) console.error('[Sales] Error insertando venta genérica:', salesErr.message);
-      }
-
-      // Mostrar notificación rápida (sin modal)
-      console.log('🎫 VENTA COMPLETADA', {
-        ticketCode,
-        clientName: ticketInfo.clientName
+      const { data: rpcResult, error: rpcError } = await supabase.rpc('complete_pos_sale_v2', {
+        p_school_id:        userSchoolId,
+        p_cashier_id:       user.id,          // El RPC lo ignora y usa auth.uid() internamente
+        p_lines:            rpcLines,
+        p_client_mode:      clientMode,
+        p_student_id:       clientMode === 'student' ? (selectedStudent?.id ?? null) : null,
+        p_teacher_id:       clientMode === 'teacher' ? (selectedTeacher?.id ?? null) : null,
+        p_payment_method:   paymentMethod || 'efectivo',
+        p_payment_metadata: paymentMeta,
+        p_billing_data: billingData
+          ? { document_type: billingData.document_type, client_name: billingData.client_name, client_dni_ruc: billingData.client_dni_ruc }
+          : { document_type: 'ticket' },
+        p_idempotency_key:  idempotencyKey,
+        p_cash_given:       cashGiven ? parseFloat(cashGiven) : null,
+        p_payment_splits:   paymentSplits.length > 0 ? paymentSplits : [],
+        // Admin global / superadmin: nunca enviar sesión de caja (evita UUID viejo + fuerza bypass en RPC).
+        // Cajeros y gestores: deben amarrar venta a la caja abierta.
+        p_cash_session_id:
+          role === 'admin_general' || role === 'superadmin'
+            ? null
+            : (posOpenRegister?.id ?? null),
       });
 
+      if (rpcError) {
+        const msg = rpcError.message || '';
+        if (msg.includes('INSUFFICIENT_STOCK')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Sin Stock',
+            description: msg.split('INSUFFICIENT_STOCK: ')[1] || 'Stock insuficiente para completar la venta.',
+          });
+        } else if (msg.includes('INSUFFICIENT_BALANCE')) {
+          const detail = msg.split('INSUFFICIENT_BALANCE: ')[1] || '';
+          toast({
+            variant: 'destructive',
+            title: '💳 Saldo Insuficiente',
+            description: detail || 'El alumno no tiene saldo suficiente. Recarga la cuenta.',
+          });
+        } else if (msg.includes('KIOSK_DISABLED')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Kiosco Desactivado',
+            description: 'Este alumno tiene el kiosco desactivado. Solo puede pedir almuerzos.',
+          });
+        } else if (msg.includes('PRODUCT_NOT_FOUND')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Producto No Disponible',
+            description: 'Uno o más productos ya no están disponibles. Refresca el catálogo.',
+          });
+        } else if (msg.includes('STUDENT_NOT_FOUND')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Alumno No Encontrado',
+            description: 'No se pudo verificar el alumno en la base de datos.',
+          });
+        } else if (msg.includes('NO_OPEN_SESSION')) {
+          toast({
+            variant: 'destructive',
+            title: '🔒 Sin Sesión de Caja',
+            description: 'No hay una sesión de caja abierta. Abre la caja antes de registrar ventas.',
+          });
+        } else if (msg.includes('SPLITS_MISMATCH')) {
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Pago Mixto Descuadrado',
+            description: msg.split('SPLITS_MISMATCH: ')[1] || 'La suma del pago mixto no coincide con el total. Revisa los montos.',
+          });
+        } else if (msg.includes('UNAUTHORIZED_SCHOOL')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Sede No Autorizada',
+            description: 'Tu usuario no está habilitado para registrar ventas en esta sede.',
+          });
+        } else if (msg.includes('UNAUTHORIZED_CUSTOM_SALE')) {
+          toast({
+            variant: 'destructive',
+            title: '⛔ Sin Permiso',
+            description: 'Las ventas libres solo las puede registrar un administrador.',
+          });
+        } else if (msg.includes('UNAUTHORIZED')) {
+          toast({
+            variant: 'destructive',
+            title: '🔒 Sesión Inválida',
+            description: 'Tu sesión ha expirado. Cierra sesión, vuelve a ingresar e intenta de nuevo.',
+          });
+        } else {
+          throw rpcError;
+        }
+        setIsProcessing(false);
+        return;
+      }
+
+      const rpcData = rpcResult as any;
+      if (!rpcData?.ok) {
+        throw new Error(rpcData?.error || 'Error desconocido del servidor al procesar la venta.');
+      }
+
+      // Extraer resultados del RPC (valores calculados en la BD, nunca en el navegador)
+      ticketCode             = rpcData.ticket_code   as string;
+      createdTransactionId   = rpcData.transaction_id as string;
+      const serverTotal      = rpcData.total          as number;
+      const serverPayStatus  = rpcData.payment_status as string;
+      const paidFromBalance  = serverPayStatus === 'paid' && clientMode === 'student';
+      const actualNewBalance = rpcData.balance_after  as number;
+
+      // Actualizar saldo local para que la UI refleje el descuento sin recargar
+      if (clientMode === 'student' && paidFromBalance && selectedStudent) {
+        setSelectedStudent({ ...selectedStudent, balance: actualNewBalance });
+      }
+
+      const clientName = clientMode === 'student' ? selectedStudent?.full_name :
+                         clientMode === 'teacher' ? selectedTeacher?.full_name :
+                         'CLIENTE GENÉRICO';
+
+      const ticketInfo: any = {
+        code:           ticketCode,
+        clientName,
+        clientType:     clientMode,
+        items:          cart,
+        total:          serverTotal,      // ← total del servidor, no del navegador
+        paymentMethod:  clientMode === 'generic' ? paymentMethod : 'credito',
+        documentType:   clientMode === 'generic' ? (requiresInvoice ? 'factura' : 'ticket') : 'ticket',
+        timestamp:      new Date(),
+        cashierEmail:   user?.email || 'No disponible',
+        newBalance:     actualNewBalance,
+        amountToDeduct: paidFromBalance ? serverTotal : 0,
+        isFreeAccount:  clientMode === 'student' ? (selectedStudent?.free_account !== false) : false,
+        paidFromBalance,
+        teacherName:    clientMode === 'teacher' ? selectedTeacher?.full_name : undefined,
+      };
+
+      // Notificación y sincronización
+      console.log('🎫 VENTA COMPLETADA [v2 atómica]', { ticketCode, clientName, total: serverTotal });
+
+      /* ====================================================================
+         CÓDIGO ANTERIOR COMENTADO — no borrar hasta confirmar que el RPC
+         funciona en producción. Para reactivar: descomentar este bloque y
+         comentar el bloque "RPC ATÓMICO" de arriba.
+         ====================================================================
+
+      // Preparar datos del ticket (VIEJO — total venía del cliente, no del servidor)
+      // const clientName = clientMode === 'student' ? selectedStudent?.full_name :
+      //                   clientMode === 'teacher' ? selectedTeacher?.full_name :
+      //                   'CLIENTE GENÉRICO';
+      // const ticketInfo: any = {
+      //   code: ticketCode,   // ticketCode generado aquí antes del insert
+      //   clientName: clientName,
+      //   clientType: clientMode,
+      //   items: cart,
+      //   total: total,       // ← PROBLEMA: total calculado en el navegador
+      //   ...
+      // };
+
+         ====================================================================
+         FIN CÓDIGO ANTERIOR COMENTADO
+         ==================================================================== */
+
+      /* ====================================================================
+         CÓDIGO ANTERIOR (flujo multi-paso) — COMENTADO.
+         Reemplazado por el RPC atómico complete_pos_sale_v2 de arriba.
+         No borrar hasta confirmar que el RPC funciona en producción.
+         ====================================================================
+
+      // Si es estudiante
+      // if (clientMode === 'student' && selectedStudent) {
+      //   const { data: freshStudent, error: freshErr } = await supabase
+      //     .from('students')
+      //     .select('balance, free_account, kiosk_disabled')
+      //     .eq('id', selectedStudent.id)
+      //     .single();
+
+      //   if (freshErr) { throw ... }
+      //   ... (todo el flujo estudiante/profesor/genérico comentado aquí)
+      //   Ver historial de git para el código completo si necesitas revertir.
+         ==================================================================== */
+
+      // Notificación y sincronización (el stock ya se descontó dentro del RPC)
       toast({
         title: '✅ Venta Realizada',
         description: `Ticket: ${ticketCode}`,
@@ -2298,57 +2206,54 @@ const POS = () => {
       });
       emitSync(['transactions', 'balances', 'dashboard', 'debtors']);
 
-      // 📦 Descontar stock de los productos que tienen control de stock activado
-      if (userSchoolId) {
-        const stockItems = cart.filter(item => item.product.stock_control_enabled);
-        if (stockItems.length > 0) {
-          // Fire-and-forget: no bloquea la venta si el descuento falla
-          void (async () => {
-            for (const item of stockItems) {
-              const { error } = await supabase.rpc('deduct_product_stock', {
-                p_product_id: item.product.id,
-                p_school_id:  userSchoolId,
-                p_quantity:   item.quantity,
-              });
-              if (error) console.warn('⚠️ Error al descontar stock:', error);
-            }
-          })();
-        }
-      }
-
       // 🖨️ IMPRIMIR AUTOMÁTICAMENTE según configuración
       const schoolIdForPrint = selectedStudent?.school_id || selectedTeacher?.school_1_id || cashierProfile?.school_id;
-      
+
+      // Determinar tipo de venta y método de pago (se calcula aquí para usar también en reimpresión)
+      let resolvedSaleType: 'general' | 'credit' | 'teacher';
+      let resolvedPaymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
+
+      if (clientMode === 'teacher') {
+        resolvedSaleType = 'teacher';
+        resolvedPaymentMethod = 'teacher';
+      } else if (clientMode === 'student') {
+        resolvedSaleType = 'credit';
+        resolvedPaymentMethod = 'credit';
+      } else {
+        resolvedSaleType = 'general';
+        if (paymentMethod === 'tarjeta') resolvedPaymentMethod = 'card';
+        else if (paymentMethod === 'yape') resolvedPaymentMethod = 'yape';
+        else if (paymentMethod === 'transferencia') resolvedPaymentMethod = 'transferencia';
+        else if (paymentMethod === 'mixto') resolvedPaymentMethod = 'mixto';
+        else resolvedPaymentMethod = 'cash';
+      }
+
+      // Snapshot del carrito antes de que resetClient() lo vacíe
+      const cartSnapshot = [...cart];
+
       if (schoolIdForPrint) {
-        // Determinar tipo de venta y método de pago basado en clientMode
-        let saleType: 'general' | 'credit' | 'teacher';
-        let paymentMethodForPrint: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
-        
-        if (clientMode === 'teacher') {
-          saleType = 'teacher';
-          paymentMethodForPrint = 'teacher';
-        } else if (clientMode === 'student') {
-          saleType = 'credit';
-          paymentMethodForPrint = 'credit';
-        } else {
-          saleType = 'general';
-          // Mapeo correcto: 'tarjeta' → 'card', resto pasan directo
-          if (paymentMethod === 'tarjeta') paymentMethodForPrint = 'card';
-          else if (paymentMethod === 'yape') paymentMethodForPrint = 'yape';
-          else if (paymentMethod === 'transferencia') paymentMethodForPrint = 'transferencia';
-          else if (paymentMethod === 'mixto') paymentMethodForPrint = 'mixto';
-          else paymentMethodForPrint = 'cash';
-        }
-        
         printPOSSale({
           ticketCode,
           clientName: ticketInfo.clientName,
-          cart,
-          total,
-          paymentMethod: paymentMethodForPrint,
-          saleType: saleType,
+          cart: cartSnapshot,
+          total: serverTotal,
+          paymentMethod: resolvedPaymentMethod,
+          saleType: resolvedSaleType,
           schoolId: schoolIdForPrint
         }).catch(err => console.error('Error en impresión:', err));
+      }
+
+      // Guardar datos para botón "Reimprimir Último Ticket"
+      if (schoolIdForPrint) {
+        setLastSalePrintData({
+          ticketCode,
+          clientName: ticketInfo.clientName,
+          cart: cartSnapshot,
+          total: serverTotal,
+          paymentMethod: resolvedPaymentMethod,
+          saleType: resolvedSaleType,
+          schoolId: schoolIdForPrint,
+        });
       }
 
       // Guardar datos del ticket para imprimir si es necesario
@@ -2357,6 +2262,10 @@ const POS = () => {
       // Cerrar modales
       setShowPaymentDialog(false);
       
+      // Venta confirmada: la clave de idempotencia ya cumplió su propósito.
+      // Resetearla aquí antes de que resetClient() lo haga por las dudas.
+      setSaleIdempotencyKey(null);
+
       // Resetear POS automáticamente para siguiente venta
       setTimeout(() => {
         resetClient();
@@ -2433,8 +2342,27 @@ const POS = () => {
     setInsufficientBalance(!!insufficient);
   }, [selectedStudent, cart]);
 
+  // admin_general y superadmin pueden operar sin sesión de caja (supervisión/emergencia).
+  const isSuperAdmin = role === 'admin_general' || role === 'superadmin';
+
+  // Si es admin global sin sede asignada, cargar lista de sedes una sola vez
+  useEffect(() => {
+    if (!isSuperAdmin || userSchoolId || adminSchoolList.length > 0) return;
+    setAdminSchoolListLoading(true);
+    supabase
+      .from('schools')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => {
+        setAdminSchoolList(data || []);
+        setAdminSchoolListLoading(false);
+      });
+  }, [isSuperAdmin, userSchoolId, adminSchoolList.length]);
+
   // ─── GUARD: Bloquear POS si no hay caja abierta ─────────────────
   const needsCashDeclaration =
+    !isSuperAdmin &&
     !cashGuardLoading &&
     userSchoolId &&
     !posOpenRegister &&
@@ -2457,8 +2385,55 @@ const POS = () => {
     );
   }
 
-  // Bloqueo total: sin sesión abierta, el POS no muestra productos ni permite clics
-  const posBlocked = !!(userSchoolId && !cashGuardLoading && (!posOpenRegister || posHasUnclosed));
+  // ─── GUARD: Admin global sin sede asignada → pedir que elija una ────
+  if (isSuperAdmin && !userSchoolId) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
+              <svg className="h-8 w-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Seleccionar Sede</h2>
+            <p className="text-sm text-gray-500">
+              Como administrador global, elige la sede en la que vas a operar el POS ahora.
+            </p>
+          </div>
+          {adminSchoolListLoading ? (
+            <div className="flex justify-center py-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {adminSchoolList.map(school => (
+                <button
+                  key={school.id}
+                  onClick={() => {
+                    setUserSchoolId(school.id);
+                    localStorage.setItem('pos_user_school_id', school.id);
+                  }}
+                  className="w-full text-left px-4 py-3 rounded-xl border-2 border-gray-200 hover:border-amber-400 hover:bg-amber-50 transition-all font-medium text-gray-800"
+                >
+                  {school.name}
+                </button>
+              ))}
+              {adminSchoolList.length === 0 && (
+                <p className="text-center text-sm text-gray-400 py-4">No hay sedes activas disponibles.</p>
+              )}
+            </div>
+          )}
+          <Button variant="outline" className="w-full" onClick={() => navigate('/dashboard')}>
+            Volver al Panel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // cajero, operador_caja y gestor_unidad siempre necesitan sesión abierta.
+  const posBlocked = !isSuperAdmin && !!(userSchoolId && !cashGuardLoading && (!posOpenRegister || posHasUnclosed));
 
   if (posBlocked) {
     return (
@@ -3408,6 +3383,30 @@ const POS = () => {
                   >
                     {isProcessing ? 'PROCESANDO...' : 'COBRAR'}
                   </Button>
+
+                  {/* Botón de contingencia: reimprimir último ticket sin llamar al servidor */}
+                  {lastSalePrintData && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        printPOSSale({
+                          ticketCode:    lastSalePrintData.ticketCode,
+                          clientName:    lastSalePrintData.clientName,
+                          cart:          lastSalePrintData.cart,
+                          total:         lastSalePrintData.total,
+                          paymentMethod: lastSalePrintData.paymentMethod,
+                          saleType:      lastSalePrintData.saleType,
+                          schoolId:      lastSalePrintData.schoolId,
+                        }).catch(err => console.error('Error reimprimiendo:', err));
+                      }}
+                      className="w-full h-8 text-xs text-slate-500 border-slate-300 hover:border-slate-400 hover:text-slate-700 rounded-lg gap-1.5"
+                      title={`Reimprimir ticket ${lastSalePrintData.ticketCode}`}
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      Reimprimir #{lastSalePrintData.ticketCode}
+                    </Button>
+                  )}
                 </>
               ) : (
                 <div className="text-center py-4 sm:py-8 text-gray-400">

@@ -37,6 +37,7 @@ import { PrinterConfiguration } from '@/components/admin/PrinterConfiguration';
 import StudentsManagement from '@/components/admin/StudentsManagement';
 import ErrorDashboard from '@/components/admin/ErrorDashboard';
 import DevBacklogMonitor from '@/components/admin/DevBacklogMonitor';
+import { SystemStatusControl } from '@/components/admin/SystemStatusControl';
 import { VersionBadge } from '@/components/VersionBadge';
 import { APP_CONFIG } from '@/config/app.config';
 
@@ -201,6 +202,9 @@ const SuperAdmin = () => {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Control Global de Sistemas */}
+            <SystemStatusControl />
           </TabsContent>
 
           {/* Control de Acceso Tab - NUEVO */}

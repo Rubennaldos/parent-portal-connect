@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -544,7 +545,8 @@ export function UnifiedLunchCalendar({ userType, userId, userSchoolId }: Unified
               source: `unified_calendar_${userType}`,
               order_date: item.date,
               menu_name: item.categoryName,
-            }
+            },
+            ...BILLING_EXCLUDED,
           };
 
           const { error: txError } = await supabase

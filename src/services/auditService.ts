@@ -30,10 +30,28 @@ import { supabase } from "@/lib/supabase";
 // ──────────────────────────────────────────────────────────
 
 const NOMBRES_AUTORIZADOS: string[] = [
+  // ── UFRASAC (nombre principal) ──
   "ufrasac catering sac",
   "ufrasac catering",
   "empresa ufrasac",
   "ufrasac",
+  // ── Lc28 Concesionarios (proveedor autorizado de Nordic y otras sedes) ──
+  // Cada banco/app trunca el nombre de forma diferente — añadir todas las variantes conocidas.
+  // Formato Interbank / BCP (nombre completo con "Y" y "S A C"):
+  "lc28 concesionarios y eventos s a c",
+  "lc28 concesionarios y eventos",
+  // Formato Yape / Plin / apps (con "&" y "S."):
+  "lc28 concesionarios & eventos s.",
+  "lc28 concesionarios & eventos",
+  // Variante corta (si el banco trunca solo el inicio del nombre):
+  "lc28 concesionarios",
+  // ⚠️ Algunos bancos (Interbank) omiten el prefijo "Lc28" y solo muestran el resto del nombre:
+  "concesionarios y eventos s a c",
+  "concesionarios y eventos s.a.c",
+  "concesionarios y eventos sac",
+  "concesionarios y eventos",
+  "concesionarios & eventos s.",
+  "concesionarios & eventos",
 ];
 
 // Monedas aceptadas — solo Soles peruanos
@@ -137,6 +155,9 @@ export interface ResultadoAuditoria {
   es_desvio_fondos?: boolean;
   /** Si autoAprobar=true y estado=VALIDO, indica si se actualizó la cobranza */
   cobranza_actualizada?: boolean;
+  /** El Edge Function omitió IA (ej. cobranza ya anulada o aprobada) */
+  skip_analisis?: boolean;
+  skip_motivo?: string;
   error?: string;
 }
 
@@ -418,6 +439,22 @@ export async function procesarVoucherConIA(
       console.error("❌ Error del Edge Function:", mensajeError);
       return _errorResult(`Error al analizar voucher: ${mensajeError}`);
     }
+
+    if (respuestaEdge.skip_analisis) {
+      return {
+        ok: true,
+        skip_analisis: true,
+        skip_motivo: (respuestaEdge.skip_motivo as string) ?? "Análisis omitido por estado de la cobranza.",
+        estado_ia: "VALIDO",
+        banco_detectado: null,
+        monto_detectado: null,
+        nro_operacion: null,
+        fecha_pago_detectada: null,
+        destinatario_detectado: null,
+        analisis_ia: { motivo: "omitido", ...(respuestaEdge.analisis_ia as object) },
+        es_duplicado: false,
+      };
+    }
   } catch (fetchError: unknown) {
     const msg = fetchError instanceof Error ? fetchError.message : String(fetchError);
     console.error("❌ Error de red llamando al Edge Function:", msg);
@@ -667,6 +704,21 @@ export async function procesarVoucherConIA(
 
     if (updateError) {
       console.error("❌ Error actualizando estado en auditoria_vouchers:", updateError.message);
+    } else {
+      // Verificar que el estado realmente quedó grabado en la BD (no solo en memoria)
+      const { data: verificacion } = await supabase
+        .from("auditoria_vouchers")
+        .select("estado_ia")
+        .eq("id", auditoriaIdServidor)
+        .maybeSingle();
+
+      if (verificacion && verificacion.estado_ia !== estadoIA) {
+        console.error(
+          `❌ Discrepancia en auditoria_vouchers: BD tiene "${verificacion.estado_ia}" pero debería ser "${estadoIA}". El registro no se pudo actualizar (posiblemente por RLS).`
+        );
+      } else {
+        console.log(`💾 Registro auditoria_vouchers confirmado en BD: ID=${auditoriaIdServidor}, estado=${estadoIA}`);
+      }
     }
   } else if (auditoriaIdServidor) {
     // El estado no cambió pero actualizamos el analisis_ia con los datos enriquecidos
@@ -674,6 +726,7 @@ export async function procesarVoucherConIA(
       .from("auditoria_vouchers")
       .update({ analisis_ia: analisisIAFinal })
       .eq("id", auditoriaIdServidor);
+    console.log(`💾 Registro auditoria_vouchers actualizado: ID=${auditoriaIdServidor}, estado=${estadoIA}`);
   } else if (!auditoriaIdServidor) {
     // El Edge Function falló al guardar → intentar guardar desde el frontend como respaldo
     console.warn("⚠️ Guardando como respaldo desde el frontend...");
@@ -690,9 +743,12 @@ export async function procesarVoucherConIA(
       schoolId: schoolId ?? null,
       usuarioId: usuarioId ?? null,
     });
+    if (auditoriaId) {
+      console.log(`💾 Registro guardado como respaldo desde frontend: ID=${auditoriaId}, estado=${estadoIA}`);
+    } else {
+      console.error("❌ No se pudo guardar el registro de auditoría ni desde el servidor ni desde el frontend.");
+    }
   }
-
-  console.log(`💾 Registro auditoria_vouchers confirmado: ID=${auditoriaId}, estado=${estadoIA}`);
 
   // ── e) Registrar huella digital ──
   const accion =

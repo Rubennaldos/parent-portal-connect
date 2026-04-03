@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
+import { calcBillingFlags, BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
@@ -765,7 +766,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                 category_name: selectedCategory.name,
                 quantity,
                 is_additional: true,
-              }
+              },
+              ...BILLING_EXCLUDED,
             };
             if (targetType === 'students') transactionData.student_id = selectedPerson.id;
             else transactionData.teacher_id = selectedPerson.id;
@@ -786,7 +788,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               order_date: selectedMenu.date,
               category_name: selectedCategory.name,
               quantity
-            }
+            },
+            ...BILLING_EXCLUDED,
           };
 
           if (targetType === 'students') {
@@ -816,7 +819,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             order_date: selectedMenu.date,
             category_name: selectedCategory.name,
             quantity
-          }
+          },
+          ...BILLING_EXCLUDED,
         };
 
         const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);
@@ -850,7 +854,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               ...paymentDetails,
               operationNumber: paymentDetails.operationNumber?.trim().toUpperCase() || '',
             }
-          }
+          },
+          ...calcBillingFlags('ticket', cashPaymentMethod),
         };
 
         const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);

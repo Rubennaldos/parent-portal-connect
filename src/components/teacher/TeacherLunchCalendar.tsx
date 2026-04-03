@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -308,15 +309,16 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           type: 'purchase',
           amount: -config.lunch_price,
           description: `Almuerzo - ${format(new Date(selectedDate), "d 'de' MMMM", { locale: es })}`,
-          payment_status: 'pending', // 📝 Deuda pendiente
-          payment_method: null, // Sin método de pago hasta que se cobre
+          payment_status: 'pending',
+          payment_method: null,
           school_id: schoolId,
           ticket_code: ticketCode,
           metadata: {
             lunch_order_id: insertedOrder.id,
             source: 'teacher_lunch_calendar',
             order_date: selectedDate
-          }
+          },
+          ...BILLING_EXCLUDED,
         });
 
       if (transactionError) throw transactionError;

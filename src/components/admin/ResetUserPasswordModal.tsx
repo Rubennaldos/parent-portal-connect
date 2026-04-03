@@ -13,6 +13,8 @@ interface ResetUserPasswordModalProps {
   onOpenChange: (open: boolean) => void;
   userEmail?: string;
   userName?: string;
+  /** UUID del usuario en auth.users / profiles.id — si se provee, la Edge Function lo usa directamente sin buscar por email */
+  userId?: string;
   emails?: { email: string; label?: string }[];
   onSuccess?: () => void;
   /** 'parent' = textos para padres de familia; 'staff' = admins, cajeros, profesores, etc. */
@@ -24,6 +26,7 @@ export const ResetUserPasswordModal = ({
   onOpenChange,
   userEmail,
   userName,
+  userId,
   emails,
   onSuccess,
   recipientKind = 'parent',
@@ -98,7 +101,7 @@ export const ResetUserPasswordModal = ({
       if (!session) throw new Error('No hay sesión activa');
 
       const { data, error } = await supabase.functions.invoke('reset-user-password', {
-        body: { userEmail: selectedEmail, newPassword },
+        body: { userEmail: selectedEmail, newPassword, userId },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { supabase } from '@/lib/supabase';
+import { calcBillingFlags, BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -1080,6 +1081,13 @@ export default function LunchOrders() {
 
       // Crear transacción si es necesario
       if (needsTransaction) {
+        // Billing flags: si ya está pagado con método digital → taxable; si es deuda → excluded
+        if (transactionData.payment_status === 'paid' && transactionData.payment_method) {
+          Object.assign(transactionData, calcBillingFlags('ticket', transactionData.payment_method));
+        } else {
+          Object.assign(transactionData, BILLING_EXCLUDED);
+        }
+
         const { error: transactionError } = await supabase
           .from('transactions')
           .insert([transactionData]);
@@ -1453,11 +1461,13 @@ export default function LunchOrders() {
         cancelledTransactionAmount = Math.abs(transaction.amount);
         cancelledTransactionMethod = transaction.payment_method;
         
-        // Anular la transacción (cambiar a 'cancelled')
+        // Anular la transacción (cambiar a 'cancelled') y excluir de facturación
         const { error: cancelTransError } = await supabase
           .from('transactions')
           .update({ 
             payment_status: 'cancelled',
+            is_taxable: false,
+            billing_status: 'excluded',
             metadata: {
               ...transaction.metadata,
               cancellation_reason: cancelReason.trim(),
@@ -1465,7 +1475,7 @@ export default function LunchOrders() {
               cancelled_at: new Date().toISOString(),
               original_payment_status: transaction.payment_status,
               original_payment_method: transaction.payment_method,
-              requires_refund: cancelledTransactionWasPaid, // 🆕 Marcar si requiere reembolso
+              requires_refund: cancelledTransactionWasPaid,
               refund_amount: cancelledTransactionWasPaid ? cancelledTransactionAmount : 0,
             }
           })

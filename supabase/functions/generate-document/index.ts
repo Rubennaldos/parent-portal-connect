@@ -97,6 +97,7 @@ serve(async (req) => {
       payment_method,
       related_invoice_id,
       cancellation_reason,
+      emission_date,   // 'YYYY-MM-DD' opcional — si se omite usa hoy
     } = body;
 
     // 1. Obtener configuración Nubefact de la sede
@@ -112,6 +113,10 @@ serve(async (req) => {
         { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
+
+    // Si billing_config.demo_mode = true SIEMPRE es demo, sin importar lo que diga el body.
+    // El body puede forzar demo=true pero NUNCA puede forzar demo=false si la sede está en demo.
+    const effectiveDemoMode: boolean = demo_mode === true || cfg.demo_mode === true;
 
     // 2. Mapeo tipos internos → tipos Nubefact
     // Interno: 1=factura, 2=boleta, 7=NC-boleta, 8=NC-factura
@@ -165,14 +170,30 @@ serve(async (req) => {
     }
     console.log(`📋 Correlativo calculado: ${serie}-${String(numero).padStart(8, "0")}`);
 
-    // 6. Calcular IGV
-    const igv_pct      = Number(cfg.igv_porcentaje) || 18;
+    // 6. Calcular IGV — carga dinámica desde billing_config
+    // Perú: 18% estándar, 10.5% para MYPES Restaurantes (Régimen Especial)
+    // El valor SIEMPRE viene de billing_config; si no está configurado, se loga un warning.
+    let igv_pct: number;
+    if (cfg.igv_porcentaje != null && Number(cfg.igv_porcentaje) > 0) {
+      igv_pct = Number(cfg.igv_porcentaje);
+    } else {
+      igv_pct = 18; // Fallback estándar
+      console.warn(`[generate-document] ADVERTENCIA: igv_porcentaje no configurado para school_id=${school_id}. Usando 18% por defecto. Configure el IGV correcto en billing_config.`);
+    }
     const igv_monto    = monto_total - (monto_total / (1 + igv_pct / 100));
     const base_imponible = monto_total - igv_monto;
 
-    // 7. Fecha
-    const hoy   = new Date();
-    const fecha = `${String(hoy.getDate()).padStart(2, "0")}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${hoy.getFullYear()}`;
+    // 7. Fecha — usa emission_date si viene del cuerpo (Cierre Mensual, 3 días de gracia)
+    //    o hoy si no se especifica (POS en tiempo real)
+    let fecha: string;
+    if (emission_date && /^\d{4}-\d{2}-\d{2}$/.test(emission_date)) {
+      const [y, m, d] = emission_date.split("-");
+      fecha = `${d}-${m}-${y}`;  // Nubefact espera DD-MM-YYYY
+    } else {
+      // Lima = UTC-5. Usar hora Lima para que la fecha coincida con lo que Nubefact valida.
+      const hoyLima = new Date(Date.now() - 5 * 60 * 60 * 1000);
+      fecha = `${String(hoyLima.getUTCDate()).padStart(2, "0")}-${String(hoyLima.getUTCMonth() + 1).padStart(2, "0")}-${hoyLima.getUTCFullYear()}`;
+    }
 
     // 8. Items del comprobante (Nubefact format)
     const itemsNubefact = items ?? [{
@@ -216,8 +237,8 @@ serve(async (req) => {
       total_gravada:                  +base_imponible.toFixed(2),
       total_igv:                      +igv_monto.toFixed(2),
       total:                          +monto_total.toFixed(2),
-      enviar_automaticamente_a_la_sunat:  !demo_mode,
-      enviar_automaticamente_al_cliente:  !demo_mode && !!(cliente?.email),
+      enviar_automaticamente_a_la_sunat:  !effectiveDemoMode,
+      enviar_automaticamente_al_cliente:  !effectiveDemoMode && !!(cliente?.email),
       items: itemsNubefact,
     };
 
@@ -266,7 +287,7 @@ serve(async (req) => {
     const sunat_status =
       nubefactData.aceptada_por_sunat ? "accepted" :
       nubefactData.errors             ? "rejected" :
-      demo_mode                       ? "pending"  : "processing";
+      effectiveDemoMode               ? "pending"  : "processing";
 
     // 13. Guardar en tabla `invoices` (nueva, principal)
     let savedInvoice: any = null;
@@ -320,9 +341,10 @@ serve(async (req) => {
         related_invoice_id:     related_invoice_id ?? null,
         cancellation_reason:    cancellation_reason ?? null,
         payment_method:         payment_method ?? null,
-        emission_date:          new Date().toISOString().split("T")[0],
-        sent_to_sunat_at:       !demo_mode ? new Date().toISOString() : null,
-        notes:                  demo_mode ? "MODO DEMO — no enviado a SUNAT" : null,
+        emission_date:          emission_date ?? new Date().toISOString().split("T")[0],
+        is_demo:                effectiveDemoMode,
+        sent_to_sunat_at:       !effectiveDemoMode ? new Date().toISOString() : null,
+        notes:                  effectiveDemoMode ? "MODO DEMO — no enviado a SUNAT" : null,
       };
 
       const { data: inv, error: invErr } = await supabase
@@ -333,6 +355,21 @@ serve(async (req) => {
 
       if (invErr) {
         console.error("Error guardando en invoices:", invErr);
+        // Si el error es por duplicado (constraint), intentar recuperar el registro existente
+        // usando serie+numero como clave única del comprobante.
+        if (invErr.code === "23505") {
+          const { data: existing } = await supabase
+            .from("invoices")
+            .select()
+            .eq("serie", serie)
+            .eq("numero", numero)
+            .eq("school_id", school_id)
+            .single();
+          if (existing) {
+            console.log("Invoice ya existía, recuperado por serie+numero:", existing.id);
+            savedInvoice = existing;
+          }
+        }
       } else {
         savedInvoice = inv;
 
@@ -378,6 +415,30 @@ serve(async (req) => {
       });
     } catch (_) {
       // No crítico si electronic_documents no existe
+    }
+
+    // Si Nubefact devolvió errores → success: false para que el frontend haga rollback
+    // sin marcar las transacciones como 'sent'.
+    const nubefactOk = !nubefactData.errors && (
+      nubefactData.aceptada_por_sunat === true ||
+      !!nubefactData.enlace_del_pdf   ||
+      effectiveDemoMode               // en demo no hay enlace_del_pdf pero tampoco error real
+    );
+
+    if (!nubefactOk) {
+      const errMsg = typeof nubefactData.errors === "string"
+        ? nubefactData.errors
+        : JSON.stringify(nubefactData.errors ?? nubefactData);
+      console.error(`❌ Nubefact rechazó ${serie}-${numero}: ${errMsg}`);
+      return new Response(
+        JSON.stringify({
+          success:   false,
+          error:     errMsg,
+          documento: savedInvoice ?? null,
+          nubefact:  nubefactData,
+        }),
+        { headers: { ...cors, "Content-Type": "application/json" } }
+      );
     }
 
     return new Response(

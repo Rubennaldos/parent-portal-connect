@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -894,6 +895,7 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
             category_name: category.name,
             quantity: 1,
           },
+          ...BILLING_EXCLUDED,
         };
 
         if (personType === 'students') {
