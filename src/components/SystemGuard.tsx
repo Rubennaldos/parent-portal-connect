@@ -17,7 +17,7 @@ import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRole } from '@/hooks/useRole';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 const PARENT_ROLES = new Set(['parent']);
 const ADMIN_ROLES  = new Set([
@@ -35,6 +35,7 @@ const ALWAYS_OPEN = new Set([
 export function SystemGuard({ children }: { children: React.ReactNode }) {
   const navigate  = useNavigate();
   const location  = useLocation();
+  const { user }                           = useAuth();
   const { role, loading: roleLoading }     = useRole();
   const { status, loading: statusLoading } = useSystemStatus();
 
@@ -44,40 +45,30 @@ export function SystemGuard({ children }: { children: React.ReactNode }) {
       if (ALWAYS_OPEN.has(location.pathname)) return;
       if (!role || EXEMPT_ROLES.has(role)) return;
 
-      // Leer el email del usuario actual para chequear bypass
-      const session = supabase.auth.getSession();
-      session.then(({ data }) => {
-        try {
-          const userEmail = data.session?.user?.email ?? '';
+      // Email síncrono desde AuthContext (ya disponible, sin async)
+      const userEmail = user?.email?.toLowerCase().trim() ?? '';
 
-          // Bypass: si el email está en la lista de bypass, no redirigir
-          const parentBypassed = (status.parent_bypass_emails ?? [])
-            .map((e: string) => e.toLowerCase().trim())
-            .includes(userEmail.toLowerCase());
-          const adminBypassed  = (status.admin_bypass_emails ?? [])
-            .map((e: string) => e.toLowerCase().trim())
-            .includes(userEmail.toLowerCase());
+      // Bypass: si el email está en la lista, nunca redirigir
+      const parentBypassed = (status.parent_bypass_emails ?? [])
+        .map((e: string) => e.toLowerCase().trim())
+        .includes(userEmail);
+      const adminBypassed = (status.admin_bypass_emails ?? [])
+        .map((e: string) => e.toLowerCase().trim())
+        .includes(userEmail);
 
-          if (PARENT_ROLES.has(role) && !status.is_parent_portal_enabled && !parentBypassed) {
-            navigate('/mantenimiento', { replace: true });
-            return;
-          }
+      if (PARENT_ROLES.has(role) && !status.is_parent_portal_enabled && !parentBypassed) {
+        navigate('/mantenimiento', { replace: true });
+        return;
+      }
 
-          if (ADMIN_ROLES.has(role) && !status.is_admin_panel_enabled && !adminBypassed) {
-            navigate('/mantenimiento-admin', { replace: true });
-            return;
-          }
-        } catch {
-          // Silencio: ante cualquier error interno dejar pasar
-        }
-      }).catch(() => {
-        // Silencio: si no podemos leer la sesión, dejar pasar
-      });
+      if (ADMIN_ROLES.has(role) && !status.is_admin_panel_enabled && !adminBypassed) {
+        navigate('/mantenimiento-admin', { replace: true });
+        return;
+      }
     } catch {
       // Silencio: ante cualquier error dejar pasar al usuario
     }
-  // Se ejecuta cada vez que status cambia (Realtime lo empuja en < 1 seg)
-  }, [role, roleLoading, status, statusLoading, location.pathname, navigate]);
+  }, [role, roleLoading, user, status, statusLoading, location.pathname, navigate]);
 
   return <>{children}</>;
 }

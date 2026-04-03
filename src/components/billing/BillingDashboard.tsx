@@ -44,19 +44,7 @@ interface School {
 
 type DebtCategory = 'all' | 'almuerzo' | 'cafeteria';
 
-interface UnifiedDebt {
-  id: string;
-  amount: number;
-  school_id: string;
-  school_name: string;
-  student_id?: string;
-  teacher_id?: string;
-  manual_client_name?: string;
-  student_name?: string;
-  teacher_name?: string;
-  created_at: string;
-  category: 'almuerzo' | 'cafeteria';
-}
+// UnifiedDebt eliminada — el RPC devuelve las métricas ya calculadas
 
 interface AdminRankEntry {
   admin_id: string;
@@ -155,32 +143,9 @@ const emptyStats: DashboardStats = {
   collectionBySchool: [],
 };
 
-function isLunchTransaction(t: any): boolean {
-  if (t.metadata?.lunch_order_id) return true;
-  if (t.metadata?.source === 'lunch_order') return true;
-  if (t.metadata?.source === 'lunch') return true;
-  return false;
-}
+// isLunchTransaction eliminada — la categorización ocurre en el RPC get_billing_dashboard_stats
 
-// Paginación por cursor para superar el límite de 1000 filas de Supabase
-async function fetchAllPaginated(
-  buildQuery: (cursor: string | null) => any,
-  cursorField = 'created_at',
-  pageSize = 1000
-): Promise<any[]> {
-  const all: any[] = [];
-  let cursor: string | null = null;
-  while (true) {
-    const query = buildQuery(cursor);
-    const { data, error } = await query.order(cursorField, { ascending: false }).limit(pageSize);
-    if (error) { console.error('Paginated fetch error:', error); break; }
-    if (!data || data.length === 0) break;
-    all.push(...data);
-    if (data.length < pageSize) break;
-    cursor = data[data.length - 1][cursorField];
-  }
-  return all;
-}
+// fetchAllPaginated eliminado — las stats se calculan en Postgres via get_billing_dashboard_stats RPC
 
 export const BillingDashboard = () => {
   const { user } = useAuth();
@@ -380,421 +345,51 @@ export const BillingDashboard = () => {
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
-      const now = new Date();
-      const today = now.toISOString().split('T')[0];
-      const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
-      const weekStart = new Date(now);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      const { data: rpcData, error } = await supabase.rpc('get_billing_dashboard_stats', {
+        p_school_id: schoolIdFilter ?? null,
+        p_date_from: appliedDateFrom,
+        p_date_to:   appliedDateTo,
+      });
 
-      // ========== FETCH EN PARALELO: 4 queries independientes ==========
-      const periodStart = appliedDateFrom + 'T00:00:00-05:00';
-      const periodEnd   = appliedDateTo   + 'T23:59:59-05:00';
-
-      const [pendingData, lunchOrders, paidWithLunch, paidData] = await Promise.all([
-        // 1. Transacciones pendientes DENTRO del rango de fechas
-        fetchAllPaginated((cursor) => {
-          let q = supabase
-            .from('transactions')
-            .select('id, amount, school_id, student_id, teacher_id, manual_client_name, created_at, description, metadata, students(full_name, parent_id), teacher_profiles(full_name), schools(name)')
-            .in('payment_status', ['pending', 'partial'])
-            .eq('type', 'purchase')
-            .eq('is_deleted', false)
-            .gte('created_at', periodStart)
-            .lte('created_at', periodEnd);
-          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-          if (cursor) q = q.lt('created_at', cursor);
-          return q;
-        }),
-        // 2. Lunch orders pagar_luego DENTRO del rango de fechas
-        fetchAllPaginated((cursor) => {
-          let q = supabase
-            .from('lunch_orders')
-            .select('id, order_date, created_at, student_id, teacher_id, manual_name, payment_method, school_id, category_id, quantity, final_price, base_price, students(id, full_name, parent_id, school_id), teacher_profiles(id, full_name, school_id_1), schools(id, name)')
-            .in('status', ['confirmed', 'delivered'])
-            .eq('is_cancelled', false)
-            .eq('payment_method', 'pagar_luego')
-            .gte('order_date', appliedDateFrom)
-            .lte('order_date', appliedDateTo);
-          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-          if (cursor) q = q.lt('created_at', cursor);
-          return q;
-        }),
-        // 3. Transacciones pagadas (para deduplicar por lunch_order_id) DENTRO del rango
-        // Filtro de metadata se hace en memoria para evitar 400 de PostgREST con ->>
-        fetchAllPaginated((cursor) => {
-          let q = supabase
-            .from('transactions')
-            .select('metadata, created_at, description, student_id, teacher_id, manual_client_name')
-            .eq('type', 'purchase')
-            .eq('payment_status', 'paid')
-            .eq('is_deleted', false)
-            .gte('created_at', periodStart)
-            .lte('created_at', periodEnd);
-          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-          if (cursor) q = q.lt('created_at', cursor);
-          return q;
-        }),
-        // 4. Solo deudas cobradas del período: almuerzos pagados + ventas a crédito cobradas
-        // Excluimos ventas directas del POS (source='pos') porque esas no son cobranzas
-        fetchAllPaginated((cursor) => {
-          let q = supabase
-            .from('transactions')
-            .select('id, amount, payment_method, created_at, school_id, metadata, schools(name)')
-            .eq('type', 'purchase')
-            .eq('payment_status', 'paid')
-            .eq('is_deleted', false)
-            .gte('created_at', periodStart)
-            .lte('created_at', periodEnd);
-          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-          if (cursor) q = q.lt('created_at', cursor);
-          return q;
-        }),
-      ]);
+      if (error) {
+        console.error('Error fetching dashboard stats RPC:', error);
+        return;
+      }
 
       if (currentRequestId !== requestIdRef.current) return;
 
-      // Deduplicar: IDs de lunch_orders que ya tienen transacción (por metadata)
-      const existingLunchOrderIds = new Set<string>();
-      pendingData.forEach((t: any) => {
-        if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
-      });
-      paidWithLunch.forEach((t: any) => {
-        if (t.metadata?.lunch_order_id) existingLunchOrderIds.add(t.metadata.lunch_order_id);
-      });
-
-      // Deduplicar también por descripción + persona + fecha (mismo método que tab Cobrar)
-      const allTxForMatching = [...pendingData, ...paidWithLunch];
-      lunchOrders.forEach((order: any) => {
-        if (existingLunchOrderIds.has(order.id)) return;
-        const orderDate = order.order_date;
-        if (!orderDate) return;
-        const orderDateFormatted = new Date(orderDate + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' });
-        const orderYear = orderDate.substring(0, 4);
-
-        const hasMatch = allTxForMatching.some((t: any) => {
-          const desc = t.description || '';
-          if (!desc.toLowerCase().includes('almuerzo')) return false;
-          const sameTeacher = order.teacher_id && t.teacher_id === order.teacher_id;
-          const sameStudent = order.student_id && t.student_id === order.student_id;
-          const sameManual = order.manual_name && t.manual_client_name &&
-            order.manual_name.toLowerCase().trim() === t.manual_client_name.toLowerCase().trim();
-          if (!sameTeacher && !sameStudent && !sameManual) return false;
-          const transYear = t.created_at?.substring(0, 4);
-          if (transYear !== orderYear) return false;
-          if (desc.includes(orderDateFormatted)) {
-            const diffDays = Math.abs((new Date(t.created_at).getTime() - new Date(orderDate + 'T12:00:00').getTime()) / 86400000);
-            return diffDays <= 35;
-          }
-          return t.created_at?.split('T')[0] === orderDate;
-        });
-        if (hasMatch) existingLunchOrderIds.add(order.id);
-      });
-
-      // Verificar pedidos cancelados o eliminados entre las transacciones pendientes
-      const txLunchOrderIds = pendingData
-        .map((t: any) => t.metadata?.lunch_order_id)
-        .filter(Boolean);
-
-      let cancelledOrderIds = new Set<string>();
-      let knownLunchOrderIds = new Set<string>();
-      if (txLunchOrderIds.length > 0) {
-        const uniqueIds = [...new Set(txLunchOrderIds)];
-        const CHUNK = 200;
-        for (let i = 0; i < uniqueIds.length; i += CHUNK) {
-          const batch = uniqueIds.slice(i, i + CHUNK);
-          const { data: batchData } = await supabase
-            .from('lunch_orders')
-            .select('id, is_cancelled')
-            .in('id', batch);
-          batchData?.forEach((o: any) => {
-            knownLunchOrderIds.add(o.id);
-            if (o.is_cancelled) cancelledOrderIds.add(o.id);
-          });
-        }
-      }
-
-      // Filtrar transacciones de pedidos cancelados O eliminados (huérfanas)
-      const validPending = pendingData.filter((t: any) => {
-        if (t.metadata?.lunch_order_id) {
-          if (cancelledOrderIds.has(t.metadata.lunch_order_id)) return false;
-          if (!knownLunchOrderIds.has(t.metadata.lunch_order_id)) return false;
-        }
-        return true;
-      });
-
-      // Obtener precios de categorías de almuerzo
-      const catIds = [...new Set(lunchOrders.map((o: any) => o.category_id).filter(Boolean))];
-      let lunchCategoriesMap = new Map<string, number>();
-      if (catIds.length > 0) {
-        const { data: catsData } = await supabase
-          .from('lunch_categories')
-          .select('id, price')
-          .in('id', catIds);
-        catsData?.forEach((c: any) => lunchCategoriesMap.set(c.id, c.price || 0));
-      }
-
-      // Obtener configuración de precios por sede
-      const allSchoolIds = new Set<string>();
-      lunchOrders.forEach((o: any) => {
-        if (o.school_id) allSchoolIds.add(o.school_id);
-      });
-      let configMap = new Map<string, number>();
-      if (allSchoolIds.size > 0) {
-        const { data: configs } = await supabase
-          .from('lunch_configuration')
-          .select('school_id, lunch_price')
-          .in('school_id', Array.from(allSchoolIds));
-        configs?.forEach((c: any) => configMap.set(c.school_id, c.lunch_price));
-      }
-
-      // Crear deudas virtuales de lunch_orders sin transacción
-      // Solo llegamos aquí con pedidos payment_method='pagar_luego' (filtrado en BD)
-      const virtualDebts: UnifiedDebt[] = [];
-
-      lunchOrders.forEach((order: any) => {
-        if (existingLunchOrderIds.has(order.id)) return;
-
-        // Solo procesar pedidos con algún cliente identificado
-        if (!order.student_id && !order.teacher_id && !order.manual_name) return;
-
-        let amount = 0;
-        const qty = order.quantity || 1;
-        if (order.final_price && order.final_price > 0) {
-          amount = order.final_price;
-        } else if (order.category_id && lunchCategoriesMap.has(order.category_id)) {
-          amount = (lunchCategoriesMap.get(order.category_id) || 0) * qty;
-        } else if (order.school_id && configMap.has(order.school_id)) {
-          amount = (configMap.get(order.school_id) || 0) * qty;
-        } else {
-          amount = 7.50 * qty;
-        }
-
-        // Asegurar que amount sea siempre positivo
-        amount = Math.abs(amount);
-
-        let schoolId = order.school_id || order.students?.school_id || order.teacher_profiles?.school_id_1 || '';
-
-        if (schoolIdFilter && schoolId !== schoolIdFilter) return;
-
-        virtualDebts.push({
-          id: `lunch_${order.id}`,
-          amount,
-          school_id: schoolId,
-          school_name: order.schools?.name || '',
-          student_id: order.student_id || undefined,
-          teacher_id: order.teacher_id || undefined,
-          manual_client_name: order.manual_name || undefined,
-          student_name: order.students?.full_name || order.manual_name || undefined,
-          teacher_name: order.teacher_profiles?.full_name || undefined,
-          created_at: order.created_at || (order.order_date + 'T12:00:00'),
-          category: 'almuerzo',
-        });
-      });
-
-      // Unificar transacciones reales + virtuales
-      const allDebts: UnifiedDebt[] = [
-        ...validPending.map((t: any) => ({
-          id: t.id,
-          amount: Math.abs(t.amount || 0),
-          school_id: t.school_id || '',
-          school_name: t.schools?.name || '',
-          student_id: t.student_id || undefined,
-          teacher_id: t.teacher_id || undefined,
-          manual_client_name: t.manual_client_name || undefined,
-          student_name: t.students?.full_name || undefined,
-          teacher_name: t.teacher_profiles?.full_name || undefined,
-          created_at: t.created_at,
-          category: isLunchTransaction(t) ? 'almuerzo' as const : 'cafeteria' as const,
-        })),
-        ...virtualDebts,
-      ];
-
-      if (currentRequestId !== requestIdRef.current) return;
-
-      // ========== CALCULAR STATS ==========
-      let totalPending = 0, lunchPending = 0, cafeteriaPending = 0;
-      let totalTeacherDebt = 0, totalStudentDebt = 0, totalManualDebt = 0;
-      const teacherIds = new Set<string>();
-      const studentIds = new Set<string>();
-      const manualNames = new Set<string>();
-      const lunchDebtorKeys = new Set<string>();
-      const cafeteriaDebtorKeys = new Set<string>();
-      const debtByAge = { today: 0, days1to3: 0, days4to7: 0, days8to15: 0, daysOver15: 0, countToday: 0, count1to3: 0, count4to7: 0, count8to15: 0, countOver15: 0 };
-      const schoolStatsMap: Record<string, { pending: number; lunchPending: number; cafeteriaPending: number; collected: number; debtors: Set<string> }> = {};
-
-      allDebts.forEach((d) => {
-        const amt = d.amount;
-        totalPending += amt;
-
-        if (d.category === 'almuerzo') lunchPending += amt;
-        else cafeteriaPending += amt;
-
-        const debtorKey = d.teacher_id || d.student_id || d.manual_client_name || 'unknown';
-
-        if (d.category === 'almuerzo') lunchDebtorKeys.add(debtorKey);
-        else cafeteriaDebtorKeys.add(debtorKey);
-
-        if (d.teacher_id) {
-          totalTeacherDebt += amt;
-          teacherIds.add(d.teacher_id);
-        } else if (d.student_id) {
-          totalStudentDebt += amt;
-          studentIds.add(d.student_id);
-        } else if (d.manual_client_name) {
-          totalManualDebt += amt;
-          manualNames.add(d.manual_client_name.toLowerCase().trim());
-        }
-
-        const createdAt = new Date(d.created_at);
-        const daysOld = Math.floor((now.getTime() - createdAt.getTime()) / 86400000);
-        if (daysOld <= 0) { debtByAge.today += amt; debtByAge.countToday++; }
-        else if (daysOld <= 3) { debtByAge.days1to3 += amt; debtByAge.count1to3++; }
-        else if (daysOld <= 7) { debtByAge.days4to7 += amt; debtByAge.count4to7++; }
-        else if (daysOld <= 15) { debtByAge.days8to15 += amt; debtByAge.count8to15++; }
-        else { debtByAge.daysOver15 += amt; debtByAge.countOver15++; }
-
-        const sName = d.school_name || 'Sin sede';
-        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, lunchPending: 0, cafeteriaPending: 0, collected: 0, debtors: new Set() };
-        schoolStatsMap[sName].pending += amt;
-        if (d.category === 'almuerzo') schoolStatsMap[sName].lunchPending += amt;
-        else schoolStatsMap[sName].cafeteriaPending += amt;
-        schoolStatsMap[sName].debtors.add(debtorKey);
-      });
-
-      // ========== COBROS DEL PERÍODO SELECCIONADO ==========
-      // Excluir POS directo (source='pos') en memoria para evitar errores de sintaxis JSONB en filtros PostgREST
-      const validPaid = (paidData || []).filter((t: any) => t.metadata?.source !== 'pos');
-      let totalCollectedToday = 0;   // cobrado en el primer día del rango (si es un día único = "hoy")
-      let collectedYesterday = 0;
-      let totalCollectedWeek = 0;    // total del período completo
-      let totalCollectedMonth = 0;   // mismo valor (todo es del período elegido)
-      const paymentMethods = { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0, plin: 0, otro: 0 };
-
-      validPaid.forEach((t: any) => {
-        const amt = Math.abs(t.amount || 0);
-        const txDate = t.created_at.split('T')[0];
-        totalCollectedMonth += amt;
-        totalCollectedWeek  += amt;
-        if (txDate === today) totalCollectedToday += amt;
-        if (txDate === yesterday) collectedYesterday += amt;
-
-        const method = (t.payment_method || 'efectivo').toLowerCase();
-        if (method.includes('yape')) paymentMethods.yape += amt;
-        else if (method.includes('plin')) paymentMethods.plin += amt;
-        else if (method.includes('tarjeta') || method.includes('card')) paymentMethods.tarjeta += amt;
-        else if (method.includes('transferencia') || method.includes('transfer')) paymentMethods.transferencia += amt;
-        else if (method.includes('efectivo') || method.includes('cash')) paymentMethods.efectivo += amt;
-        else paymentMethods.otro += amt;
-
-        const sName = t.schools?.name || 'Sin sede';
-        if (!schoolStatsMap[sName]) schoolStatsMap[sName] = { pending: 0, lunchPending: 0, cafeteriaPending: 0, collected: 0, debtors: new Set() };
-        schoolStatsMap[sName].collected += amt;
-      });
-
-      // ========== TOP DEUDORES ==========
-      const debtorMap: Record<string, { name: string; type: 'student' | 'teacher' | 'manual'; amount: number; school_name: string; oldest: Date; count: number; hasLunch: boolean; hasCafeteria: boolean }> = {};
-
-      allDebts.forEach((d) => {
-        let key = '';
-        let name = '';
-        let type: 'student' | 'teacher' | 'manual' = 'manual';
-
-        if (d.teacher_id) {
-          key = `teacher_${d.teacher_id}`;
-          name = d.teacher_name || 'Profesor sin nombre';
-          type = 'teacher';
-        } else if (d.student_id) {
-          key = `student_${d.student_id}`;
-          name = d.student_name || 'Estudiante sin nombre';
-          type = 'student';
-        } else if (d.manual_client_name) {
-          key = `manual_${d.manual_client_name.toLowerCase().trim()}`;
-          name = d.manual_client_name;
-          type = 'manual';
-        } else return;
-
-        if (!debtorMap[key]) {
-          debtorMap[key] = { name, type, amount: 0, school_name: d.school_name || 'Sin sede', oldest: new Date(d.created_at), count: 0, hasLunch: false, hasCafeteria: false };
-        }
-        debtorMap[key].amount += d.amount;
-        debtorMap[key].count++;
-        if (d.category === 'almuerzo') debtorMap[key].hasLunch = true;
-        else debtorMap[key].hasCafeteria = true;
-        const txDate = new Date(d.created_at);
-        if (txDate < debtorMap[key].oldest) debtorMap[key].oldest = txDate;
-      });
-
-      const topDebtors = Object.values(debtorMap)
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 15)
-        .map(d => ({
-          name: d.name,
-          type: d.type,
-          amount: d.amount,
-          school_name: d.school_name,
-          days_overdue: Math.floor((now.getTime() - d.oldest.getTime()) / 86400000),
-          count: d.count,
-          category: (d.hasLunch && d.hasCafeteria ? 'mixed' : d.hasLunch ? 'almuerzo' : 'cafeteria') as 'almuerzo' | 'cafeteria' | 'mixed',
-        }));
-
-      // ========== REEMBOLSOS PENDIENTES (paginado) ==========
-      let refundCount = 0;
-      let refundAmount = 0;
-      try {
-        const refundDataRaw = await fetchAllPaginated((cursor) => {
-          let q = supabase
-            .from('transactions')
-            .select('amount, metadata, created_at')
-            .eq('payment_status', 'cancelled')
-            .eq('is_deleted', false);
-          if (schoolIdFilter) q = q.eq('school_id', schoolIdFilter);
-          if (cursor) q = q.lt('created_at', cursor);
-          return q;
-        });
-        const refundData = refundDataRaw.filter((t: any) => t.metadata?.requires_refund === true || t.metadata?.requires_refund === 'true');
-        refundCount = refundData.length;
-        refundAmount = refundData.reduce((sum: number, t: any) => sum + Math.abs(t.amount || 0), 0);
-      } catch { /* ignore */ }
-
-      // ========== POR SEDE ==========
-      const collectionBySchool = Object.entries(schoolStatsMap)
-        .map(([name, data]) => ({
-          school_name: name,
-          pending: data.pending,
-          lunchPending: data.lunchPending,
-          cafeteriaPending: data.cafeteriaPending,
-          collected: data.collected,
-          debtors: data.debtors.size,
-        }))
-        .sort((a, b) => b.pending - a.pending);
-
-      if (currentRequestId !== requestIdRef.current) return;
+      const s = rpcData as DashboardStats & {
+        debtByAge: DashboardStats['debtByAge'];
+        paymentMethods: DashboardStats['paymentMethods'];
+        topDebtors: DashboardStats['topDebtors'];
+        collectionBySchool: DashboardStats['collectionBySchool'];
+      };
 
       setStats({
-        totalPending,
-        lunchPending,
-        cafeteriaPending,
-        totalCollectedToday,
-        totalCollectedWeek,
-        totalCollectedMonth,
-        totalDebtors: teacherIds.size + studentIds.size + manualNames.size,
-        totalTicketsPending: allDebts.length,
-        totalTicketsPaid: validPaid.length,
-        lunchDebtors: lunchDebtorKeys.size,
-        cafeteriaDebtors: cafeteriaDebtorKeys.size,
-        totalTeacherDebt,
-        totalStudentDebt,
-        totalManualDebt,
-        teacherDebtors: teacherIds.size,
-        studentDebtors: studentIds.size,
-        manualDebtors: manualNames.size,
-        collectedYesterday,
-        debtByAge,
-        paymentMethods,
-        topDebtors,
-        pendingRefunds: refundCount,
-        pendingRefundAmount: refundAmount,
-        collectionBySchool,
+        totalPending:        Number(s.totalPending        ?? 0),
+        lunchPending:        Number(s.lunchPending        ?? 0),
+        cafeteriaPending:    Number(s.cafeteriaPending    ?? 0),
+        totalCollectedToday: Number(s.totalCollectedToday ?? 0),
+        totalCollectedWeek:  Number(s.totalCollectedWeek  ?? 0),
+        totalCollectedMonth: Number(s.totalCollectedMonth ?? 0),
+        collectedYesterday:  Number(s.collectedYesterday  ?? 0),
+        totalDebtors:        Number(s.totalDebtors        ?? 0),
+        totalTicketsPending: Number(s.totalTicketsPending ?? 0),
+        totalTicketsPaid:    Number(s.totalTicketsPaid    ?? 0),
+        lunchDebtors:        Number(s.lunchDebtors        ?? 0),
+        cafeteriaDebtors:    Number(s.cafeteriaDebtors    ?? 0),
+        totalTeacherDebt:    Number(s.totalTeacherDebt    ?? 0),
+        totalStudentDebt:    Number(s.totalStudentDebt    ?? 0),
+        totalManualDebt:     Number(s.totalManualDebt     ?? 0),
+        teacherDebtors:      Number(s.teacherDebtors      ?? 0),
+        studentDebtors:      Number(s.studentDebtors      ?? 0),
+        manualDebtors:       Number(s.manualDebtors       ?? 0),
+        debtByAge:           s.debtByAge        ?? emptyStats.debtByAge,
+        paymentMethods:      s.paymentMethods   ?? emptyStats.paymentMethods,
+        topDebtors:          s.topDebtors       ?? [],
+        pendingRefunds:      Number(s.pendingRefunds      ?? 0),
+        pendingRefundAmount: Number(s.pendingRefundAmount ?? 0),
+        collectionBySchool:  s.collectionBySchool ?? [],
       });
       setLastRefresh(new Date());
 

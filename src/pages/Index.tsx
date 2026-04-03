@@ -59,6 +59,7 @@ import { ErickaTutorial } from '@/components/parent/ErickaTutorial';
 import { BalanceHero } from '@/components/parent/BalanceHero';
 import { HeroActions } from '@/components/parent/HeroActions';
 import { ServicesGrid } from '@/components/parent/ServicesGrid';
+import { ChildCarouselHeader } from '@/components/parent/ChildCarouselHeader';
 
 interface Student {
   id: string;
@@ -894,15 +895,22 @@ const Index = () => {
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
         {/* ── PESTAÑA ALUMNOS — Carrusel estilo Yape ── */}
         <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
-          <div className="space-y-4 sm:space-y-5">
+          <div className="space-y-4">
 
-            {/* Título */}
-            <div className="px-1">
-              <h2 className="text-xl sm:text-2xl font-light text-stone-800 tracking-wide mb-0.5">Mis Hijos</h2>
-              <p className="text-stone-400 text-xs sm:text-sm tracking-wide">
-                {students.length > 1 ? 'Desliza para cambiar de hijo' : 'Gestión centralizada de cuentas escolares'}
-              </p>
-            </div>
+            {/* Cabecera v0: hijo activo + dots */}
+            {students.length > 0 && (
+              <ChildCarouselHeader
+                students={students}
+                activeStudentId={activeStudentId}
+                onDotClick={(sid) => {
+                  const el = carouselRef.current;
+                  if (!el) return;
+                  const index = students.findIndex(s => s.id === sid);
+                  const cardWidth = el.scrollWidth / students.length;
+                  el.scrollTo({ left: cardWidth * index, behavior: 'smooth' });
+                }}
+              />
+            )}
 
             {students.length === 0 ? (
               /* Estado vacío — idéntico al original */
@@ -1247,77 +1255,81 @@ const Index = () => {
         } : null}
       />
 
-      {/* ── NAVEGACIÓN INFERIOR — 3 ítems (Inicio · Historial · Perfil) ── */}
-      {/* Las pestañas 'almuerzos' y 'carrito' siguen existiendo en el código,
-          solo se acceden vía los HeroActions buttons. */}
-      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-stone-200/50 shadow-lg z-50">
-        <div className="max-w-7xl mx-auto px-2 sm:px-4">
-          <div className="grid grid-cols-3">
+      {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
+      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-100/50 shadow-lg z-50">
+        <div className="max-w-7xl mx-auto px-6 pb-4">
+          <div className="flex items-center justify-around h-20">
 
             {/* Inicio */}
-            <button
-              id="nav-tab-alumnos"
-              onClick={() => setActiveTab('alumnos')}
-              className={`flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
-                activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito'
-                  ? 'text-emerald-700'
-                  : 'text-stone-400 hover:text-emerald-600'
-              }`}
-            >
-              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
-                activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito'
-                  ? 'bg-emerald-100'
-                  : ''
-              }`}>
-                <Home className="h-5 w-5 sm:h-6 sm:w-6" />
-              </div>
-              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Inicio</span>
-            </button>
+            {(() => {
+              const isActive = activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito';
+              return (
+                <button
+                  id="nav-tab-alumnos"
+                  onClick={() => setActiveTab('alumnos')}
+                  className="flex flex-col items-center gap-1 px-6 active:scale-95 transition-transform"
+                >
+                  <div className={`p-2.5 rounded-2xl transition-all duration-200 ${
+                    isActive
+                      ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
+                      : 'bg-transparent hover:bg-slate-100'
+                  }`}>
+                    <Home className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  </div>
+                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Inicio</span>
+                </button>
+              );
+            })()}
 
-            {/* Historial — Pagos Realizados */}
-            <button
-              id="nav-tab-historial"
-              onClick={() => setActiveTab('historial')}
-              className={`relative flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
-                activeTab === 'historial'
-                  ? 'text-emerald-700'
-                  : 'text-stone-400 hover:text-emerald-600'
-              }`}
-            >
-              {/* Badge de pagos pendientes en el historial */}
-              {pendingPaymentsCount > 0 && activeTab !== 'historial' && (
-                <span className="absolute top-2 right-[28%] flex">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500 text-white text-[8px] font-bold">
-                    {pendingPaymentsCount > 9 ? '9+' : pendingPaymentsCount}
-                  </span>
-                </span>
-              )}
-              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
-                activeTab === 'historial' ? 'bg-emerald-100' : ''
-              }`}>
-                <History className="h-5 w-5 sm:h-6 sm:w-6" />
-              </div>
-              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Historial</span>
-            </button>
+            {/* Historial */}
+            {(() => {
+              const isActive = activeTab === 'historial';
+              return (
+                <button
+                  id="nav-tab-historial"
+                  onClick={() => setActiveTab('historial')}
+                  className="relative flex flex-col items-center gap-1 px-6 active:scale-95 transition-transform"
+                >
+                  {pendingPaymentsCount > 0 && !isActive && (
+                    <span className="absolute top-0 right-4 flex">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                      <span className="relative inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500 text-white text-[8px] font-bold">
+                        {pendingPaymentsCount > 9 ? '9+' : pendingPaymentsCount}
+                      </span>
+                    </span>
+                  )}
+                  <div className={`p-2.5 rounded-2xl transition-all duration-200 ${
+                    isActive
+                      ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
+                      : 'bg-transparent hover:bg-slate-100'
+                  }`}>
+                    <History className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  </div>
+                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Historial</span>
+                </button>
+              );
+            })()}
 
             {/* Perfil */}
-            <button
-              id="nav-tab-mas"
-              onClick={() => setActiveTab('mas')}
-              className={`flex flex-col items-center justify-center py-3 sm:py-3.5 transition-all duration-200 rounded-xl ${
-                activeTab === 'mas'
-                  ? 'text-emerald-700'
-                  : 'text-stone-400 hover:text-emerald-600'
-              }`}
-            >
-              <div className={`p-1.5 rounded-xl transition-all duration-200 ${
-                activeTab === 'mas' ? 'bg-emerald-100' : ''
-              }`}>
-                <User className="h-5 w-5 sm:h-6 sm:w-6" />
-              </div>
-              <span className="text-[10px] sm:text-xs font-medium mt-0.5">Perfil</span>
-            </button>
+            {(() => {
+              const isActive = activeTab === 'mas';
+              return (
+                <button
+                  id="nav-tab-mas"
+                  onClick={() => setActiveTab('mas')}
+                  className="flex flex-col items-center gap-1 px-6 active:scale-95 transition-transform"
+                >
+                  <div className={`p-2.5 rounded-2xl transition-all duration-200 ${
+                    isActive
+                      ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
+                      : 'bg-transparent hover:bg-slate-100'
+                  }`}>
+                    <User className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  </div>
+                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Perfil</span>
+                </button>
+              );
+            })()}
 
           </div>
         </div>

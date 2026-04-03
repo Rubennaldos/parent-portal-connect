@@ -23,12 +23,22 @@ export default function MaintenancePage() {
     return () => clearInterval(t);
   }, []);
 
-  // Si el portal ya está activo de nuevo, redirigir automáticamente
+  // Si el portal ya está activo, O el email está en bypass → redirigir
   useEffect(() => {
-    if (!loading && status.is_parent_portal_enabled) {
+    if (loading) return;
+    if (status.is_parent_portal_enabled) {
+      navigate('/', { replace: true });
+      return;
+    }
+    // Bypass: si el email del usuario está en la lista, dejarlo pasar igual
+    const userEmail = user?.email?.toLowerCase().trim() ?? '';
+    const bypassed = (status.parent_bypass_emails ?? [])
+      .map((e: string) => e.toLowerCase().trim())
+      .includes(userEmail);
+    if (bypassed) {
       navigate('/', { replace: true });
     }
-  }, [loading, status.is_parent_portal_enabled, navigate]);
+  }, [loading, status, user, navigate]);
 
   // Superadmin nunca debe quedar aquí
   useEffect(() => {
