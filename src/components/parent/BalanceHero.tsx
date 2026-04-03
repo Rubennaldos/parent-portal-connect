@@ -66,19 +66,17 @@ export function BalanceHero({
       {/* Monto */}
       <div className="relative mb-4">
         {isLoading ? (
-          <Skeleton className="h-14 w-44 mx-auto" />
+          <Skeleton className="h-12 w-40 mx-auto" />
         ) : showBalance ? (
-          <h1 className={`text-[3.25rem] font-extrabold tracking-tight leading-none ${
-            isNegative
-              ? 'text-red-500'
-              : 'bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 bg-clip-text text-transparent'
+          <h1 className={`text-[3rem] font-light tracking-tight leading-none ${
+            isNegative ? 'text-red-500' : 'text-slate-700'
           }`}>
-            S/{' '}
-            <span>{Math.abs(balance).toFixed(2)}</span>
-            {isNegative && <span className="text-lg ml-2 font-semibold text-red-400">deuda</span>}
+            <span className="text-xl font-normal text-slate-400 mr-1">S/</span>
+            <span className="font-semibold">{Math.abs(balance).toFixed(2)}</span>
+            {isNegative && <span className="text-base ml-2 font-normal text-red-400">deuda</span>}
           </h1>
         ) : (
-          <h1 className="text-[3.25rem] font-extrabold text-slate-200 tracking-tight leading-none select-none">
+          <h1 className="text-[3rem] font-light text-slate-200 tracking-tight leading-none select-none">
             S/ ***.**
           </h1>
         )}
@@ -91,16 +89,16 @@ export function BalanceHero({
         <div className="flex justify-center gap-2 flex-wrap">
           {lunchDebt > 0 && (
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-100 rounded-full">
-              <UtensilsCrossed className="w-3.5 h-3.5 text-red-500" />
-              <span className="text-xs font-semibold text-red-600">
+              <UtensilsCrossed className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-xs font-normal text-red-500">
                 Almuerzo: {showBalance ? `S/ ${lunchDebt.toFixed(2)}` : 'S/ ••'}
               </span>
             </div>
           )}
           {kioskDebt > 0 && (
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-full">
-              <ShoppingBag className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-semibold text-amber-600">
+              <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-normal text-amber-500">
                 Kiosco: {showBalance ? `S/ ${kioskDebt.toFixed(2)}` : 'S/ ••'}
               </span>
             </div>

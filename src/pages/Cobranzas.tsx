@@ -26,7 +26,6 @@ import {
 // Importar los componentes de cada tab
 import { BillingDashboard } from '@/components/billing/BillingDashboard';
 import { BillingCollection } from '@/components/billing/BillingCollection';
-import { BillingReports } from '@/components/billing/BillingReports';
 import { BillingConfig } from '@/components/billing/BillingConfig';
 import { BillingNubefactConfig } from '@/components/billing/BillingNubefactConfig';
 import { PaymentStatistics } from '@/components/admin/PaymentStatistics';

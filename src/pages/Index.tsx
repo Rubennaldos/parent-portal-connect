@@ -791,7 +791,7 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF9] pb-20 sm:pb-24">
+    <div className="bg-[#FAFAF9] pb-20">
       {/* Header Minimalista y Elegante - Responsive */}
       <header className="bg-white border-b border-stone-200/50 sticky top-0 z-40 shadow-sm backdrop-blur-sm bg-white/95">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-5">
@@ -837,65 +837,11 @@ const Index = () => {
         </div>
       </header>
 
-      {/* 🔴 BANNER DE PAGOS PENDIENTES - Visible desde cualquier pestaña */}
-      {pendingPaymentsCount > 0 && activeTab !== 'carrito' && (
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3 sm:pt-4">
-          <div 
-            onClick={() => setActiveTab('carrito')}
-            className="cursor-pointer bg-gradient-to-r from-red-50 via-red-100 to-orange-50 border-2 border-red-300 rounded-xl p-3 sm:p-4 shadow-md hover:shadow-lg transition-all duration-300"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex-shrink-0 p-2 bg-red-200 rounded-full">
-                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 text-red-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm sm:text-base font-bold text-red-800">
-                  {pendingPaymentsCount === 1 ? 'Tienes 1 pedido pendiente de pago' : `Tienes ${pendingPaymentsCount} pedidos pendientes de pago`}
-                </p>
-                <p className="text-[10px] sm:text-xs text-red-600 mt-0.5">
-                  Toca aquí para ir al <strong>Carrito</strong> y completar tu pago
-                </p>
-              </div>
-              <div className="flex-shrink-0">
-                <div className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-sm">
-                  <ShoppingCart className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Ir al Carrito</span>
-                  <span className="sm:hidden">Pagar</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🔧 BANNER GLOBAL DE MANTENIMIENTO DE RECARGAS - Visible para TODOS los padres */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 pt-3">
-        <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-9 h-9 bg-amber-400 rounded-full flex items-center justify-center">
-              <span className="text-white text-lg font-black">!</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm sm:text-base font-bold text-amber-900">
-                El módulo de Recargas y Topes ha sido suspendido hasta próximo aviso
-              </p>
-              <p className="text-xs sm:text-sm text-amber-800 mt-1 leading-relaxed">
-                Está en proceso de mantenimiento para mejorarlo. Disculpe la molestia.
-                Si usted tiene saldo de recarga, <strong>su dinero se encuentra a salvo y será guardado</strong>.
-              </p>
-              <p className="text-xs text-amber-700 mt-1.5">
-                Si desea la devolución, contacte al <strong>991 236 870</strong> por <strong>WhatsApp</strong> indicando su correo y solicitando la devolución.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content - Padding responsivo */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-10">
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4">
         {/* ── PESTAÑA ALUMNOS — Carrusel estilo Yape ── */}
         <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
-          <div className="space-y-4">
+          <div className="space-y-3">
 
             {/* Cabecera v0: hijo activo + dots */}
             {students.length > 0 && (
@@ -903,11 +849,16 @@ const Index = () => {
                 students={students}
                 activeStudentId={activeStudentId}
                 onDotClick={(sid) => {
+                  // Actualización directa sin scroll visible — no hay que bajar para ver el carousel
+                  setActiveStudentId(sid);
+                  try { localStorage.setItem('parentPortal_activeStudentId', sid); } catch { /* noop */ }
+                  // También sincronizamos el carousel oculto para mantener compatibilidad
                   const el = carouselRef.current;
-                  if (!el) return;
-                  const index = students.findIndex(s => s.id === sid);
-                  const cardWidth = el.scrollWidth / students.length;
-                  el.scrollTo({ left: cardWidth * index, behavior: 'smooth' });
+                  if (el) {
+                    const index = students.findIndex(s => s.id === sid);
+                    const cardWidth = el.scrollWidth / (students.length || 1);
+                    el.scrollTo({ left: cardWidth * index, behavior: 'auto' });
+                  }
                 }}
               />
             )}
@@ -967,14 +918,22 @@ const Index = () => {
                   );
                 })()}
 
-                {/* ── CARRUSEL HORIZONTAL ── */}
-                {/* overflow-x-scroll + snap-x: nativo, sin dependencias */}
+                {/* ── CARRUSEL HORIZONTAL (oculto visualmente — solo para lógica de scroll/detección) ── */}
+                {/* La interfaz visual la provee ChildCarouselHeader. Este div no ocupa espacio en pantalla. */}
                 <div
                   ref={carouselRef}
                   onScroll={handleCarouselScroll}
                   onLoad={scrollToActiveStudent}
-                  className="flex overflow-x-auto snap-x snap-mandatory scroll-smooth gap-3 sm:gap-4 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2"
-                  style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
+                  aria-hidden="true"
+                  className="flex overflow-x-auto snap-x snap-mandatory scroll-smooth gap-3"
+                  style={{
+                    scrollbarWidth: 'none',
+                    WebkitOverflowScrolling: 'touch',
+                    height: 0,
+                    overflow: 'hidden',
+                    visibility: 'hidden',
+                    pointerEvents: 'none',
+                  }}
                 >
                   {students.map((student) => (
                     <div
@@ -1010,29 +969,7 @@ const Index = () => {
                   </div>
                 </div>
 
-                {/* ── DOTS INDICADORES ── */}
-                {students.length > 1 && (
-                  <div className="flex justify-center gap-1.5 pt-0.5">
-                    {students.map((student) => (
-                      <button
-                        key={student.id}
-                        aria-label={`Ver ${student.full_name}`}
-                        onClick={() => {
-                          const el = carouselRef.current;
-                          if (!el) return;
-                          const index = students.findIndex(s => s.id === student.id);
-                          const cardWidth = el.scrollWidth / students.length;
-                          el.scrollTo({ left: cardWidth * index, behavior: 'smooth' });
-                        }}
-                        className={`rounded-full transition-all duration-300 ${
-                          student.id === activeStudentId
-                            ? 'w-5 h-2 bg-emerald-600'
-                            : 'w-2 h-2 bg-stone-300 hover:bg-stone-400'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
+                {/* Dots ya están en ChildCarouselHeader — no se duplican aquí */}
               </>
             )}
           </div>

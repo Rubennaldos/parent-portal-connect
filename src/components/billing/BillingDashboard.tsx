@@ -270,10 +270,10 @@ export const BillingDashboard = () => {
         ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
         : null;
 
-      // Traer cobros aprobados en recharge_requests (pagos de vouchers y almuerzos)
+      // Traer cobros aprobados en recharge_requests — sin join de FK nombrado para evitar 400
       let rrQuery = supabase
         .from('recharge_requests')
-        .select('id, amount, approved_by, approved_at, school_id, request_type, schools(name), profiles!recharge_requests_approved_by_fkey(id, full_name, role, school_id)')
+        .select('id, amount, approved_by, approved_at, school_id, request_type, schools:school_id(name)')
         .eq('status', 'approved')
         .not('approved_by', 'is', null)
         .gte('approved_at', periodStart)
@@ -281,10 +281,10 @@ export const BillingDashboard = () => {
       if (schoolIdFilter) rrQuery = rrQuery.eq('school_id', schoolIdFilter);
       const { data: rrData } = await rrQuery.limit(2000);
 
-      // Traer transacciones de cobro manual (crédito cobrado en caja)
+      // Traer transacciones de cobro manual — sin join de FK nombrado para evitar 400
       let txQuery = supabase
         .from('transactions')
-        .select('id, amount, created_by, created_at, school_id, metadata, schools(name), profiles!transactions_created_by_fkey(id, full_name, role, school_id)')
+        .select('id, amount, created_by, created_at, school_id, metadata, schools:school_id(name)')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .eq('is_deleted', false)
@@ -295,11 +295,27 @@ export const BillingDashboard = () => {
       const { data: txData } = await txQuery.limit(2000);
       const nonPosTxData = (txData || []).filter((t: any) => t.metadata?.source !== 'pos');
 
+      // Recolectar IDs únicos de admins y hacer UNA sola consulta de perfiles
+      const adminIds = new Set<string>();
+      rrData?.forEach((r: any) => { if (r.approved_by) adminIds.add(r.approved_by); });
+      nonPosTxData.forEach((t: any) => { if (t.created_by) adminIds.add(t.created_by); });
+
+      const profilesMap = new Map<string, { full_name: string; role: string }>();
+      if (adminIds.size > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .in('id', Array.from(adminIds));
+        profilesData?.forEach((p: any) => profilesMap.set(p.id, p));
+      }
+
       // Construir mapa admin_id → stats
       const map = new Map<string, AdminRankEntry>();
 
-      const addEntry = (adminId: string, profile: any, amount: number, timestamp: string, schoolName: string) => {
-        if (!adminId || !profile) return;
+      const addEntry = (adminId: string, amount: number, timestamp: string, schoolName: string) => {
+        if (!adminId) return;
+        const profile = profilesMap.get(adminId);
+        if (!profile) return;
         if (!map.has(adminId)) {
           map.set(adminId, {
             admin_id: adminId,
@@ -322,10 +338,10 @@ export const BillingDashboard = () => {
       };
 
       rrData?.forEach((r: any) => {
-        addEntry(r.approved_by, r.profiles, r.amount, r.approved_at, r.schools?.name || '');
+        addEntry(r.approved_by, r.amount, r.approved_at, (r.schools as any)?.name || '');
       });
       nonPosTxData.forEach((t: any) => {
-        addEntry(t.created_by, t.profiles, Math.abs(t.amount || 0), t.created_at, t.schools?.name || '');
+        addEntry(t.created_by, Math.abs(t.amount || 0), t.created_at, (t.schools as any)?.name || '');
       });
 
       const ranking = Array.from(map.values()).sort((a, b) => b.amountCollected - a.amountCollected);
