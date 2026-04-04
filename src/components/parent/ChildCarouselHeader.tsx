@@ -6,7 +6,7 @@
  * Los dots llaman onDotClick para scrollear el carrusel real (que sigue existiendo).
  */
 import { useState } from 'react';
-import { ChevronRight, X, GraduationCap, School, Hash, CircleCheck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GraduationCap, School, Hash, CircleCheck } from 'lucide-react';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
@@ -90,9 +90,23 @@ export function ChildCarouselHeader({
           </button>
         </div>
 
-        {/* Dots de navegación */}
+        {/* Navegación: flechas + dots */}
         {students.length > 1 && (
-          <div className="flex justify-center gap-2 mt-4">
+          <div className="flex justify-center items-center gap-3 mt-4">
+            {/* Flecha anterior */}
+            <button
+              onClick={() => {
+                const idx = students.findIndex(s => s.id === activeStudentId);
+                const prev = (idx - 1 + students.length) % students.length;
+                onDotClick(students[prev].id);
+              }}
+              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 active:scale-90 transition-all flex items-center justify-center shrink-0"
+              aria-label="Hijo anterior"
+            >
+              <ChevronLeft className="w-4 h-4 text-slate-400" />
+            </button>
+
+            {/* Dots */}
             {students.map(s => (
               <button
                 key={s.id}
@@ -105,6 +119,19 @@ export function ChildCarouselHeader({
                 aria-label={`Ver ${s.full_name}`}
               />
             ))}
+
+            {/* Flecha siguiente */}
+            <button
+              onClick={() => {
+                const idx = students.findIndex(s => s.id === activeStudentId);
+                const next = (idx + 1) % students.length;
+                onDotClick(students[next].id);
+              }}
+              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 active:scale-90 transition-all flex items-center justify-center shrink-0"
+              aria-label="Siguiente hijo"
+            >
+              <ChevronRight className="w-4 h-4 text-slate-400" />
+            </button>
           </div>
         )}
       </div>

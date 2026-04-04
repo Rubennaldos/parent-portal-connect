@@ -792,10 +792,13 @@ const Index = () => {
   }
 
   return (
-    <div className="bg-[#FAFAF9] pb-20">
-      {/* Header Minimalista y Elegante - Responsive */}
-      <header className="bg-white border-b border-stone-200/50 sticky top-0 z-40 shadow-sm backdrop-blur-sm bg-white/95">
-        <div className="max-w-md mx-auto px-4 py-3 sm:py-4">
+    <div className="bg-gray-100 min-h-screen">
+    {/* Contenedor "teléfono" — max-w-md en PC, full-width en móvil */}
+    <div className="max-w-md mx-auto min-h-screen bg-white relative shadow-2xl pb-20">
+
+      {/* Header Minimalista y Elegante */}
+      <header className="bg-white/95 border-b border-stone-200/50 sticky top-0 z-40 shadow-sm backdrop-blur-sm">
+        <div className="px-4 py-3 sm:py-4">
           <div className="flex items-center justify-between">
             {/* Logo y Título - Más compacto en móvil */}
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
@@ -838,8 +841,8 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content — max-w-md centra en PC como app móvil, full-width en celular */}
-      <main className="max-w-md mx-auto px-4 py-3">
+      {/* Main Content */}
+      <main className="px-4 py-3">
         {/* ── PESTAÑA ALUMNOS — Carrusel estilo Yape ── */}
         <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
           <div className="space-y-3">
@@ -1220,8 +1223,9 @@ const Index = () => {
       />
 
       {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
-      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-100/50 shadow-lg z-50">
-        <div className="max-w-md mx-auto px-6 pb-4">
+      {/* left-1/2 -translate-x-1/2 centra la barra en PC respetando el ancho del "teléfono" */}
+      <nav id="bottom-nav-bar" className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-slate-100/50 shadow-lg z-50">
+        <div className="px-6 pb-4">
           <div className="flex items-center justify-around h-20">
 
             {/* Inicio */}
@@ -1299,11 +1303,9 @@ const Index = () => {
         </div>
       </nav>
 
-      {/* Footer - Créditos del sistema (al final del contenido, no flotante) */}
-      <div className="pb-20 sm:pb-24">
-        <div className="text-center py-3 text-[9px] sm:text-[10px] text-gray-400">
-          © 2026 <span className="font-semibold">ERP Profesional</span> · Diseñado por <span className="font-semibold">ARQUISIA Soluciones</span> para <span className="font-semibold">Lima Café 28</span>
-        </div>
+      {/* Footer - dentro del contenedor teléfono */}
+      <div className="text-center py-3 text-[9px] text-gray-400">
+        © 2026 <span className="font-semibold">ERP Profesional</span> · Diseñado por <span className="font-semibold">ARQUISIA Soluciones</span>
       </div>
 
       {/* Modal de Formulario de Datos del Padre (PRIMERO) */}
@@ -1366,6 +1368,8 @@ const Index = () => {
           <TempPasswordForm onDone={clearTempPasswordFlag} />
         </DialogContent>
       </Dialog>
+
+    </div>
     </div>
   );
 };
