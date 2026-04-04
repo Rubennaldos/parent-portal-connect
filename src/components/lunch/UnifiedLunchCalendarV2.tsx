@@ -1758,26 +1758,26 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                 disabled={!isInteractive && !day.isSpecial && !multiSelectMode}
                 className={cn(
                   "flex-shrink-0 snap-center flex flex-col items-center justify-center",
-                  "w-14 h-[72px] sm:w-16 sm:h-20 rounded-xl border-2 transition-all duration-200",
+                  "w-14 h-[72px] sm:w-16 sm:h-20 rounded-2xl border-2 transition-all duration-200",
                   "disabled:opacity-30 disabled:cursor-not-allowed",
-                  // Active state (only in single mode)
-                  isActive && "bg-purple-600 border-purple-600 text-white shadow-lg shadow-purple-200 scale-105",
-                  // Multi-selected (blue check)
-                  isMultiSelected && "bg-blue-500 border-blue-500 text-white shadow-lg shadow-blue-200 scale-105",
-                  // Multi-select available: pulsing blue border
-                  isMultiSelectable && !isMultiSelected && "border-blue-400 bg-blue-50 hover:bg-blue-100 hover:border-blue-500",
+                  // Active state — gradiente violeta v0
+                  isActive && "bg-gradient-to-br from-violet-500 to-indigo-600 border-violet-500 text-white shadow-lg shadow-violet-300/40 scale-105",
+                  // Multi-selected
+                  isMultiSelected && "bg-gradient-to-br from-violet-500 to-indigo-600 border-violet-500 text-white shadow-lg shadow-violet-300/40 scale-105",
+                  // Multi-select available
+                  isMultiSelectable && !isMultiSelected && "border-violet-300 bg-violet-50 hover:bg-violet-100 hover:border-violet-400",
                   // Today ring
-                  day.isToday && !isActive && !isMultiSelected && !isMultiSelectable && "ring-2 ring-purple-400 ring-offset-1",
+                  day.isToday && !isActive && !isMultiSelected && !isMultiSelectable && "ring-2 ring-violet-400 ring-offset-1",
                   // Has orders (green)
-                  !isActive && !isMultiSelected && !isMultiSelectable && day.hasOrders && "bg-green-50 border-green-400 hover:border-green-500",
-                  // Available (white, interactive) — single mode only
-                  !multiSelectMode && !isActive && !day.hasOrders && day.canOrder && day.hasMenus && "bg-white border-gray-200 hover:border-purple-400 hover:bg-purple-50",
-                  // Blocked (red tint)
+                  !isActive && !isMultiSelected && !isMultiSelectable && day.hasOrders && "bg-emerald-50 border-emerald-300 hover:border-emerald-400",
+                  // Available (white, interactive)
+                  !multiSelectMode && !isActive && !day.hasOrders && day.canOrder && day.hasMenus && "bg-white border-slate-200 hover:border-violet-400 hover:bg-violet-50/50",
+                  // Blocked
                   !isActive && !isMultiSelected && !isMultiSelectable && day.isBlocked && !day.hasOrders && "bg-red-50 border-red-200",
                   // Special day
                   !isActive && !isMultiSelected && !isMultiSelectable && day.isSpecial && "bg-amber-50 border-amber-200",
                   // No menus / weekend empty
-                  !isActive && !isMultiSelected && !isMultiSelectable && !day.hasMenus && !day.isSpecial && !day.hasOrders && "bg-gray-50 border-gray-100",
+                  !isActive && !isMultiSelected && !isMultiSelectable && !day.hasMenus && !day.isSpecial && !day.hasOrders && "bg-slate-50 border-slate-100",
                   // In multi-select: dim days that can't be selected
                   multiSelectMode && !isMultiSelected && !isMultiSelectable && day.hasMenus && "opacity-50",
                 )}
@@ -1785,7 +1785,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                 {/* Day name */}
                 <span className={cn(
                   "text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider",
-                  isActive ? "text-purple-200" : isMultiSelected ? "text-blue-200" : isMultiSelectable ? "text-blue-500" : "text-gray-400",
+                  isActive ? "text-violet-200" : isMultiSelected ? "text-violet-200" : isMultiSelectable ? "text-violet-500" : "text-slate-400",
                 )}>
                   {WEEKDAYS[day.date.getDay()]}
                 </span>
@@ -1924,7 +1924,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                   <IconComponent className="h-3.5 w-3.5" style={{ color: category.color || '#8B5CF6' }} />
                 </div>
                 <span className="font-bold text-sm" style={{ color: category.color || '#8B5CF6' }}>{category.name}</span>
-                <span className="text-sm font-black text-purple-700">S/ {price.toFixed(2)}</span>
+                <span className="text-sm font-black text-violet-700">S/ {price.toFixed(2)}</span>
                 {hasOrderForThis && (
                   <Badge className="bg-green-500 text-[10px] px-1.5 py-0 ml-auto">✓ Pedido</Badge>
                 )}
@@ -1936,11 +1936,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                   onClick={() => canOrderNow ? handleCategoryCardTap(category) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
                   disabled={!canOrderNow && !hasOrderForThis}
                   className={cn(
-                    "w-full text-left rounded-lg border-2 p-2.5 transition-all",
+                    "w-full text-left rounded-2xl border-2 p-3 transition-all",
                     "disabled:opacity-50 disabled:cursor-not-allowed",
                     isExpanded && "border-amber-400 bg-amber-50",
-                    !isExpanded && canOrderNow && "bg-white border-gray-200 hover:border-amber-400 hover:bg-amber-50/50 active:scale-[0.98]",
-                    !isExpanded && hasOrderForThis && "bg-green-50 border-green-300",
+                    !isExpanded && canOrderNow && "bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50/50 active:scale-[0.98]",
+                    !isExpanded && hasOrderForThis && "bg-emerald-50 border-emerald-300",
                   )}
                 >
                   <p className="text-xs font-semibold text-amber-800">🍽️ Arma tu plato personalizado</p>
@@ -1960,19 +1960,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                       onClick={() => canOrderNow ? handleDirectMenuTap(category, menu) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
                       disabled={!canOrderNow && !hasOrderForThis}
                       className={cn(
-                        "w-full text-left rounded-lg border-2 p-2.5 transition-all",
+                        "w-full text-left rounded-2xl border-2 p-3 transition-all shadow-sm",
                         "disabled:opacity-50 disabled:cursor-not-allowed",
-                        canOrderNow && "bg-white border-gray-200 hover:border-purple-400 hover:bg-purple-50/50 active:scale-[0.98]",
-                        hasOrderForThis && "bg-green-50 border-green-300",
+                        canOrderNow && "bg-white border-slate-200 hover:border-violet-400 hover:bg-violet-50/50 hover:shadow-md active:scale-[0.98]",
+                        hasOrderForThis && "bg-emerald-50 border-emerald-300",
                       )}
                     >
-                      <p className="font-bold text-sm text-gray-900">{menu.main_course}</p>
-                      {menu.starter && <p className="text-[11px] text-gray-500 mt-0.5">🥗 {menu.starter}</p>}
-                      {menu.beverage && <p className="text-[11px] text-gray-500">🥤 {menu.beverage}</p>}
-                      {menu.dessert && <p className="text-[11px] text-gray-500">🍮 {menu.dessert}</p>}
-                      {menu.notes && <p className="text-[10px] text-gray-400 mt-0.5 italic">{menu.notes}</p>}
+                      <p className="font-bold text-sm text-slate-800">{menu.main_course}</p>
+                      {menu.starter && <p className="text-[11px] text-slate-500 mt-0.5">🥗 {menu.starter}</p>}
+                      {menu.beverage && <p className="text-[11px] text-slate-500">🥤 {menu.beverage}</p>}
+                      {menu.dessert && <p className="text-[11px] text-slate-500">🍮 {menu.dessert}</p>}
+                      {menu.notes && <p className="text-[10px] text-slate-400 mt-0.5 italic">{menu.notes}</p>}
                       {canOrderNow && (
-                        <p className="text-[10px] text-purple-600 font-semibold mt-1">Pedir →</p>
+                        <p className="text-[10px] text-violet-600 font-semibold mt-1.5">Pedir →</p>
                       )}
                     </button>
                   ))}
@@ -1981,7 +1981,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
               {/* Inline expanded ordering form */}
               {isExpanded && (
-                <div ref={expandedSectionRef} className="bg-white rounded-xl border-2 border-purple-200 p-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div ref={expandedSectionRef} className="bg-white rounded-2xl border-2 border-violet-200 p-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
                   {wizardStep === 'done' && (
                     <div className="text-center py-3">
                       <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-1 animate-bounce" />
@@ -3306,24 +3306,38 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     <div className="space-y-3">
       {/* STUDENT SELECTOR (parents only) */}
       {userType === 'parent' && students.length > 0 && (
-        <Card id="lunch-student-selector" className={cn(wizardStep !== 'idle' && !isInlineOrdering && "opacity-60")}>
-          <CardContent className="p-3">
-            <p className="text-xs font-medium text-gray-500 mb-2">
+        <div id="lunch-student-selector" className={cn(
+          "bg-white/80 backdrop-blur-sm rounded-[1.5rem] shadow-lg shadow-slate-200/40 border border-white p-4",
+          wizardStep !== 'idle' && !isInlineOrdering && "opacity-60"
+        )}>
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <Sparkles className="w-4 h-4 text-violet-400" />
+            <p className="text-xs font-semibold text-slate-500">
               {wizardStep !== 'idle' && !isInlineOrdering
-                ? `📌 Pidiendo para: ${selectedStudent?.full_name || ''}` 
-                : students.length > 1 ? 'Selecciona tu hijo(a):' : `Pidiendo para: ${selectedStudent?.full_name || ''}`}
+                ? `Pidiendo para: ${selectedStudent?.full_name || ''}`
+                : students.length > 1 ? 'Selecciona hijo(a):' : `Para: ${selectedStudent?.full_name || ''}`}
             </p>
-            {students.length > 1 && (
-              <div className="flex gap-2 flex-wrap">
-                {students.map(student => (
-                  <Button
+          </div>
+          {students.length > 1 && (
+            <div className="flex gap-2 flex-wrap">
+              {students.map((student, idx) => {
+                const isActive = selectedStudent?.id === student.id;
+                const gradients = [
+                  'from-emerald-400 to-teal-500',
+                  'from-violet-400 to-purple-500',
+                  'from-amber-400 to-orange-500',
+                  'from-blue-400 to-cyan-500',
+                ];
+                const grad = gradients[idx % gradients.length];
+                return (
+                  <button
                     key={student.id}
-                    variant={selectedStudent?.id === student.id ? "default" : "outline"}
-                    size="sm"
                     disabled={wizardStep !== 'idle' && !isInlineOrdering}
                     className={cn(
-                      "gap-2",
-                      selectedStudent?.id === student.id && "bg-purple-600 hover:bg-purple-700",
+                      "flex items-center gap-2 px-3 py-2 rounded-2xl transition-all duration-200 active:scale-95",
+                      isActive
+                        ? `bg-gradient-to-r ${grad} shadow-lg`
+                        : 'bg-slate-100 hover:bg-slate-200 disabled:opacity-50'
                     )}
                     onClick={() => {
                       if (wizardStep !== 'idle' && !isInlineOrdering) return;
@@ -3336,14 +3350,28 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                       setWizardStep('idle');
                     }}
                   >
-                    <Users className="h-3.5 w-3.5" />
-                    {student.full_name}
-                  </Button>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    <div className={cn(
+                      "w-7 h-7 rounded-full flex items-center justify-center",
+                      isActive ? 'bg-white/30' : `bg-gradient-to-r ${grad}`
+                    )}>
+                      <span className="text-xs font-bold text-white">
+                        {student.full_name.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <span className={cn("text-sm font-semibold", isActive ? 'text-white' : 'text-slate-600')}>
+                      {student.full_name.split(' ')[0]}
+                    </span>
+                    {isActive && (
+                      <div className="w-5 h-5 bg-white/30 rounded-full flex items-center justify-center">
+                        <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Restore progress banner */}
@@ -3367,67 +3395,70 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
         } catch { return null; }
       })()}
 
-      {/* DAY CAROUSEL + MONTH NAV (sticky para que siempre sea visible) */}
-      <Card id="lunch-calendar-header" className="overflow-hidden sticky top-0 z-20 shadow-md">
-        <CardHeader className="pb-2 pt-3 px-3">
-          <div className="flex items-center justify-between">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-            <div className="text-center flex-1">
-              <CardTitle className="text-sm sm:text-base font-bold">
-                {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
-              </CardTitle>
-              {!multiSelectMode && (
-                <CardDescription className="text-[10px] sm:text-xs">
-                  Desliza y elige un día
-                </CardDescription>
-              )}
-              {multiSelectMode && (
-                <CardDescription className="text-[10px] sm:text-xs text-blue-600 font-semibold">
-                  Modo múltiple: toca los días para seleccionar
-                </CardDescription>
-              )}
-            </div>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setCurrentDate(addMonths(currentDate, 1)); setSelectedDates(new Set()); }}>
-              <ChevronRight className="h-5 w-5" />
-            </Button>
+      {/* DAY CAROUSEL + MONTH NAV */}
+      <div id="lunch-calendar-header" className="bg-white/80 backdrop-blur-sm rounded-[1.5rem] shadow-lg shadow-slate-200/40 border border-white p-4 sticky top-0 z-20">
+        {/* Month header */}
+        <div className="flex items-center justify-between mb-3 px-1">
+          <div className="flex items-center gap-2">
+            <CalendarIcon className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-bold text-slate-700">
+              {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
+            </span>
           </div>
-
-          {/* Multi-select toggle */}
-          <div className="flex items-center justify-between mt-2 px-1">
+          <div className="flex gap-1">
             <button
-              onClick={() => {
-                setMultiSelectMode(!multiSelectMode);
-                if (multiSelectMode) setSelectedDates(new Set());
-              }}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
-                multiSelectMode
-                  ? "bg-blue-600 text-white shadow-md"
-                  : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
-              )}
+              onClick={() => { setCurrentDate(subMonths(currentDate, 1)); setSelectedDates(new Set()); }}
+              className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center active:scale-95 transition-transform hover:bg-slate-200"
             >
-              <CalendarIcon className="h-3.5 w-3.5" />
-              Pedido múltiple
+              <ChevronLeft className="w-4 h-4 text-slate-500" />
             </button>
-            {/* Legend mini */}
-            <div className="flex items-center gap-2 text-[9px] text-gray-400">
-              <span className="flex items-center gap-0.5"><UtensilsCrossed className="h-2.5 w-2.5 text-blue-400" />Menú</span>
-              <span className="flex items-center gap-0.5"><CheckCircle2 className="h-2.5 w-2.5 text-green-500" />Pedido</span>
-              <span className="flex items-center gap-0.5"><Lock className="h-2.5 w-2.5 text-red-400" />Cerrado</span>
+            <button
+              onClick={() => { setCurrentDate(addMonths(currentDate, 1)); setSelectedDates(new Set()); }}
+              className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center active:scale-95 transition-transform hover:bg-slate-200"
+            >
+              <ChevronRight className="w-4 h-4 text-slate-500" />
+            </button>
+          </div>
+        </div>
+
+        {/* Day carousel */}
+        <div className="pb-1">
+          {renderDayCarousel()}
+        </div>
+
+        {/* Multi-select toggle + leyenda */}
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+          <button
+            onClick={() => {
+              setMultiSelectMode(!multiSelectMode);
+              if (multiSelectMode) setSelectedDates(new Set());
+            }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
+              multiSelectMode
+                ? "bg-gradient-to-r from-violet-500 to-indigo-600 text-white shadow-md"
+                : "bg-slate-100 text-slate-500 hover:bg-violet-50 hover:text-violet-600"
+            )}
+          >
+            <CalendarIcon className="h-3.5 w-3.5" />
+            {multiSelectMode ? 'Modo múltiple activo' : 'Pedido múltiple'}
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-[10px] text-slate-400 font-medium">Pedido</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-violet-500" />
+              <span className="text-[10px] text-slate-400 font-medium">Hoy</span>
             </div>
           </div>
-        </CardHeader>
-
-        <CardContent className="pt-0 px-2 pb-3">
-          {renderDayCarousel()}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* PAYMENT PENDING BANNER — visible after ordering, lets parent keep ordering or pay */}
       {userType === 'parent' && totalOrderAmount > 0 && !isInlineOrdering && createdOrderIds.length > 0 && (
-        <div className="flex items-center justify-between gap-3 bg-purple-600 text-white rounded-xl px-4 py-3 shadow-lg">
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-violet-500 to-indigo-600 text-white rounded-[1.25rem] px-4 py-3 shadow-lg shadow-violet-300/40">
           <div>
             <p className="text-xs font-semibold text-purple-200">Pedidos pendientes de pago</p>
             <p className="text-lg font-black">S/ {totalOrderAmount.toFixed(2)}</p>
@@ -3474,7 +3505,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
       {/* Deadline info (compact) */}
       {config?.order_deadline_time && (
-        <div className="flex items-center gap-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
+        <div className="flex items-center gap-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 rounded-2xl px-3 py-2.5 border border-amber-200">
           <Clock className="h-3.5 w-3.5 flex-shrink-0" />
           <span>
             Límite: <strong>{config.order_deadline_time.substring(0, 5)}</strong>
@@ -3489,17 +3520,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       {/* FLOATING ACTION BAR (multi-select mode) */}
       {multiSelectMode && (
         <div className="sticky bottom-20 sm:bottom-24 z-30">
-          <Card className={cn(
-            "border-0 shadow-xl rounded-2xl",
+          <div className={cn(
+            "border-0 shadow-xl rounded-[1.5rem]",
             selectedDates.size > 0
-              ? "bg-gradient-to-r from-purple-600 to-blue-600"
-              : "bg-gradient-to-r from-gray-500 to-gray-600"
+              ? "bg-gradient-to-r from-violet-500 to-indigo-600"
+              : "bg-gradient-to-r from-slate-400 to-slate-500"
           )}>
-            <CardContent className="p-3 sm:p-4">
+            <div className="p-3 sm:p-4">
               {selectedDates.size === 0 ? (
                 <div className="text-center text-white">
                   <p className="font-bold text-sm">👆 Toca los días disponibles para seleccionarlos</p>
-                  <p className="text-xs text-gray-200 mt-0.5">Los días con 🍴 azul tienen menú disponible</p>
+                  <p className="text-xs text-white/70 mt-0.5">Los días con 🍴 tienen menú disponible</p>
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
@@ -3507,7 +3538,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                     <p className="font-bold text-sm sm:text-base">
                       ✅ {selectedDates.size} día{selectedDates.size > 1 ? 's' : ''} seleccionado{selectedDates.size > 1 ? 's' : ''}
                     </p>
-                    <p className="text-xs text-purple-200">
+                    <p className="text-xs text-violet-200">
                       Días: {Array.from(selectedDates).sort().map(d => parseInt(d.split('-')[2])).join(', ')}
                     </p>
                   </div>
@@ -3522,7 +3553,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                     </Button>
                     <Button
                       size="sm"
-                      className="bg-white text-purple-700 hover:bg-purple-50 font-bold shadow-lg"
+                      className="bg-white text-violet-700 hover:bg-violet-50 font-bold shadow-lg"
                       onClick={() => {
                         setMultiSelectMode(false);
                         startWizard();
@@ -3533,8 +3564,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
 
@@ -3546,13 +3577,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
       {/* EMPTY STATE */}
       {!loading && menus.size === 0 && (
-        <Card className="bg-gray-50">
-          <CardContent className="py-8 text-center">
-            <CalendarIcon className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-            <p className="text-gray-600 font-medium">No hay menús disponibles este mes</p>
-            <p className="text-gray-400 text-sm mt-1">Prueba avanzando al siguiente mes →</p>
-          </CardContent>
-        </Card>
+        <div className="bg-white/80 rounded-[1.5rem] shadow-lg shadow-slate-200/40 border border-white py-10 text-center">
+          <CalendarIcon className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+          <p className="text-slate-500 font-semibold">No hay menús disponibles este mes</p>
+          <p className="text-slate-400 text-sm mt-1">Prueba avanzando al siguiente mes →</p>
+        </div>
       )}
 
       {/* CANCEL CONFIRMATION DIALOG */}

@@ -25,7 +25,8 @@ import {
   Calendar,
   CreditCard,
   BookOpen,
-  User
+  User,
+  ChevronLeft,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -1008,43 +1009,69 @@ const Index = () => {
         {/* Pestaña Almuerzos */}
         <div className={activeTab !== 'almuerzos' ? 'hidden' : ''}>
           {user && maintenanceAlmuerzos ? (
-            /* 🔧 Módulo en mantenimiento */
-            <MaintenanceScreen
-              title={maintenanceAlmuerzos.title}
-              message={maintenanceAlmuerzos.message}
-            />
+            <MaintenanceScreen title={maintenanceAlmuerzos.title} message={maintenanceAlmuerzos.message} />
           ) : user ? (
-            <div className="px-2 sm:px-4 space-y-4 sm:space-y-6">
-              {/* Sub-pestañas para Almuerzos */}
-              <Tabs defaultValue="hacer-pedido" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 h-auto">
-                  <TabsTrigger id="lunch-subtab-hacer-pedido" value="hacer-pedido" className="text-xs sm:text-sm py-2 sm:py-3">
-                    <UtensilsCrossed className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+            <div className="space-y-0">
+              {/* Header v0 — igual que la pantalla de inicio */}
+              <div className="bg-white/80 backdrop-blur-sm px-1 py-3 border-b border-slate-100/50 mb-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setActiveTab('alumnos')}
+                    className="w-10 h-10 rounded-2xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center active:scale-95 transition-all"
+                    aria-label="Volver al inicio"
+                  >
+                    <ChevronLeft className="w-5 h-5 text-slate-600" />
+                  </button>
+                  <div className="flex-1">
+                    <h1 className="text-base font-bold text-slate-800">Hacer Pedido</h1>
+                    <p className="text-xs text-slate-400">Selecciona el menú del día</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-300/30">
+                    <UtensilsCrossed className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+
+                {/* Sub-nav con pills (Hacer Pedido / Mis Pedidos) */}
+                <div className="flex gap-2 mt-3">
+                  <button
+                    id="lunch-subtab-hacer-pedido"
+                    onClick={() => { const el = document.getElementById('lunch-content-hacer'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 text-white text-xs font-semibold shadow-sm"
+                  >
+                    <UtensilsCrossed className="h-3 w-3" />
                     Hacer Pedido
-                  </TabsTrigger>
-                  <TabsTrigger id="lunch-subtab-mis-pedidos" value="mis-pedidos" className="text-xs sm:text-sm py-2 sm:py-3">
-                    <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  </button>
+                  <button
+                    id="lunch-subtab-mis-pedidos"
+                    onClick={() => { const el = document.getElementById('lunch-content-mis-pedidos'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-slate-100 text-slate-500 text-xs font-semibold hover:bg-slate-200 transition-colors"
+                  >
+                    <Calendar className="h-3 w-3" />
                     Mis Pedidos
-                  </TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="hacer-pedido" className="mt-4 sm:mt-6">
-                  {/* Calendario unificado V2 con wizard paso a paso */}
-                  {user && parentProfileData && (
-                    <UnifiedLunchCalendarV2 
-                      userType="parent"
-                      userId={user.id}
-                      userSchoolId={parentProfileData.school_id || ''}
-                      onGoToCart={() => setActiveTab('carrito')}
-                    />
-                  )}
-                </TabsContent>
-                
-                <TabsContent value="mis-pedidos" className="mt-4 sm:mt-6">
-                  {/* Mis Pedidos de Almuerzo */}
-                  <ParentLunchOrders parentId={user.id} />
-                </TabsContent>
-              </Tabs>
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenido — Hacer Pedido */}
+              <div id="lunch-content-hacer">
+                {user && parentProfileData && (
+                  <UnifiedLunchCalendarV2
+                    userType="parent"
+                    userId={user.id}
+                    userSchoolId={parentProfileData.school_id || ''}
+                    onGoToCart={() => setActiveTab('carrito')}
+                  />
+                )}
+              </div>
+
+              {/* Separador y sección Mis Pedidos */}
+              <div id="lunch-content-mis-pedidos" className="mt-4 pt-3 border-t border-slate-100">
+                <div className="flex items-center gap-2 px-1 mb-3">
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm font-semibold text-slate-600">Mis Pedidos</span>
+                </div>
+                <ParentLunchOrders parentId={user.id} />
+              </div>
             </div>
           ) : null}
         </div>
