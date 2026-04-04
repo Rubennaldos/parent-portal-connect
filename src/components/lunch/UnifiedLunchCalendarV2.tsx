@@ -285,6 +285,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+  const [expandedStandardMenuId, setExpandedStandardMenuId] = useState<string | null>(null);
   const [isInlineOrdering, setIsInlineOrdering] = useState(false);
   const [showNotesField, setShowNotesField] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -1948,34 +1949,82 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                 </button>
               )}
 
-              {/* Standard menus: show each menu directly */}
+              {/* Standard menus: acordeón compacto (nombre + precio, detalles al tocar) */}
               {!isConfigurable && (
-                <div className={cn(
-                  "grid gap-2",
-                  catMenus.length > 1 ? "grid-cols-2" : "grid-cols-1"
-                )}>
-                  {catMenus.map((menu) => (
-                    <button
-                      key={menu.id}
-                      onClick={() => canOrderNow ? handleDirectMenuTap(category, menu) : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })() : null}
-                      disabled={!canOrderNow && !hasOrderForThis}
-                      className={cn(
-                        "w-full text-left rounded-2xl border-2 p-3 transition-all shadow-sm",
-                        "disabled:opacity-50 disabled:cursor-not-allowed",
-                        canOrderNow && "bg-white border-slate-200 hover:border-violet-400 hover:bg-violet-50/50 hover:shadow-md active:scale-[0.98]",
-                        hasOrderForThis && "bg-emerald-50 border-emerald-300",
-                      )}
-                    >
-                      <p className="font-bold text-sm text-slate-800">{menu.main_course}</p>
-                      {menu.starter && <p className="text-[11px] text-slate-500 mt-0.5">🥗 {menu.starter}</p>}
-                      {menu.beverage && <p className="text-[11px] text-slate-500">🥤 {menu.beverage}</p>}
-                      {menu.dessert && <p className="text-[11px] text-slate-500">🍮 {menu.dessert}</p>}
-                      {menu.notes && <p className="text-[10px] text-slate-400 mt-0.5 italic">{menu.notes}</p>}
-                      {canOrderNow && (
-                        <p className="text-[10px] text-violet-600 font-semibold mt-1.5">Pedir →</p>
-                      )}
-                    </button>
-                  ))}
+                <div className="flex flex-col gap-2">
+                  {catMenus.map((menu) => {
+                    const isMenuExpanded = expandedStandardMenuId === menu.id;
+                    const hasDetails = !!(menu.starter || menu.beverage || menu.dessert || menu.notes);
+                    return (
+                      <div
+                        key={menu.id}
+                        className={cn(
+                          "rounded-2xl border-2 overflow-hidden transition-all duration-200 shadow-sm",
+                          hasOrderForThis ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200",
+                          !canOrderNow && !hasOrderForThis && "opacity-50"
+                        )}
+                      >
+                        {/* Fila compacta siempre visible */}
+                        <button
+                          onClick={() => {
+                            if (hasDetails) {
+                              setExpandedStandardMenuId(isMenuExpanded ? null : menu.id);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+                        >
+                          <span className="font-semibold text-sm text-slate-800 leading-tight line-clamp-1 flex-1 pr-2">
+                            {menu.main_course}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {category.price != null && (
+                              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                S/ {Math.abs(category.price).toFixed(2)}
+                              </span>
+                            )}
+                            {hasDetails && (
+                              <svg
+                                className={cn("w-4 h-4 text-slate-400 transition-transform duration-200", isMenuExpanded && "rotate-180")}
+                                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </button>
+
+                        {/* Detalle expandible */}
+                        {isMenuExpanded && hasDetails && (
+                          <div className="px-3 pb-3 pt-1 border-t border-slate-100 bg-slate-50/60 space-y-0.5">
+                            {menu.starter && <p className="text-[11px] text-slate-500">🥗 {menu.starter}</p>}
+                            {menu.beverage && <p className="text-[11px] text-slate-500">🥤 {menu.beverage}</p>}
+                            {menu.dessert && <p className="text-[11px] text-slate-500">🍮 {menu.dessert}</p>}
+                            {menu.notes && <p className="text-[10px] text-slate-400 italic">{menu.notes}</p>}
+                          </div>
+                        )}
+
+                        {/* Botón Pedir — visible cuando puede pedir */}
+                        {(canOrderNow || hasOrderForThis) && (
+                          <button
+                            onClick={() => canOrderNow
+                              ? handleDirectMenuTap(category, menu)
+                              : hasOrderForThis ? (() => { setViewOrdersDate(selectedDay); setViewOrdersModal(true); })()
+                              : null
+                            }
+                            disabled={!canOrderNow && !hasOrderForThis}
+                            className={cn(
+                              "w-full px-3 py-2 text-xs font-bold transition-all active:scale-[0.98] border-t",
+                              canOrderNow
+                                ? "text-violet-600 bg-violet-50 hover:bg-violet-100 border-violet-100"
+                                : "text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border-emerald-100"
+                            )}
+                          >
+                            {canOrderNow ? 'Pedir →' : '✓ Ver pedido'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -3304,41 +3353,41 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
   return (
     <div className="space-y-3">
-      {/* STUDENT SELECTOR (parents only) */}
+      {/* STUDENT SELECTOR — Avatar Bar (parents only) */}
       {userType === 'parent' && students.length > 0 && (
         <div id="lunch-student-selector" className={cn(
-          "bg-white/80 backdrop-blur-sm rounded-[1.5rem] shadow-lg shadow-slate-200/40 border border-white p-4",
+          "bg-white/80 backdrop-blur-sm rounded-[1.5rem] shadow-lg shadow-slate-200/40 border border-white px-4 py-3",
           wizardStep !== 'idle' && !isInlineOrdering && "opacity-60"
         )}>
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <Sparkles className="w-4 h-4 text-violet-400" />
-            <p className="text-xs font-semibold text-slate-500">
-              {wizardStep !== 'idle' && !isInlineOrdering
-                ? `Pidiendo para: ${selectedStudent?.full_name || ''}`
-                : students.length > 1 ? 'Selecciona hijo(a):' : `Para: ${selectedStudent?.full_name || ''}`}
+          <div className="flex items-center gap-3">
+            <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+            <p className="text-xs font-semibold text-slate-500 shrink-0">
+              {wizardStep !== 'idle' && !isInlineOrdering ? 'Pidiendo para:' : 'Para:'}
             </p>
-          </div>
-          {students.length > 1 && (
-            <div className="flex gap-2 flex-wrap">
+
+            {/* Avatar circles horizontales */}
+            <div className="flex items-center gap-2 overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
               {students.map((student, idx) => {
                 const isActive = selectedStudent?.id === student.id;
-                const gradients = [
-                  'from-emerald-400 to-teal-500',
-                  'from-violet-400 to-purple-500',
-                  'from-amber-400 to-orange-500',
-                  'from-blue-400 to-cyan-500',
+                const ringColors = [
+                  'ring-emerald-400',
+                  'ring-violet-400',
+                  'ring-amber-400',
+                  'ring-blue-400',
                 ];
-                const grad = gradients[idx % gradients.length];
+                const bgColors = [
+                  'bg-gradient-to-br from-emerald-400 to-teal-500',
+                  'bg-gradient-to-br from-violet-400 to-purple-500',
+                  'bg-gradient-to-br from-amber-400 to-orange-500',
+                  'bg-gradient-to-br from-blue-400 to-cyan-500',
+                ];
+                const ring = ringColors[idx % ringColors.length];
+                const bg = bgColors[idx % bgColors.length];
                 return (
                   <button
                     key={student.id}
                     disabled={wizardStep !== 'idle' && !isInlineOrdering}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-2 rounded-2xl transition-all duration-200 active:scale-95",
-                      isActive
-                        ? `bg-gradient-to-r ${grad} shadow-lg`
-                        : 'bg-slate-100 hover:bg-slate-200 disabled:opacity-50'
-                    )}
+                    title={student.full_name}
                     onClick={() => {
                       if (wizardStep !== 'idle' && !isInlineOrdering) return;
                       setSelectedStudent(student);
@@ -3346,31 +3395,38 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                       setSelectedDates(new Set());
                       setSelectedDay(null);
                       setExpandedCategoryId(null);
+                      setExpandedStandardMenuId(null);
                       setIsInlineOrdering(false);
                       setWizardStep('idle');
                     }}
+                    className={cn(
+                      "shrink-0 flex flex-col items-center gap-1 transition-all duration-200 active:scale-95 disabled:opacity-50",
+                    )}
                   >
                     <div className={cn(
-                      "w-7 h-7 rounded-full flex items-center justify-center",
-                      isActive ? 'bg-white/30' : `bg-gradient-to-r ${grad}`
+                      "w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all duration-200",
+                      bg,
+                      isActive && `ring-[3px] ${ring} ring-offset-1 scale-110 shadow-lg`
                     )}>
-                      <span className="text-xs font-bold text-white">
-                        {student.full_name.charAt(0).toUpperCase()}
-                      </span>
+                      {student.photo_url ? (
+                        <img src={student.photo_url} alt={student.full_name} className="w-full h-full rounded-full object-cover" />
+                      ) : (
+                        <span className="text-sm font-bold text-white">
+                          {student.full_name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
                     </div>
-                    <span className={cn("text-sm font-semibold", isActive ? 'text-white' : 'text-slate-600')}>
+                    <span className={cn(
+                      "text-[10px] font-semibold leading-none",
+                      isActive ? 'text-slate-800' : 'text-slate-400'
+                    )}>
                       {student.full_name.split(' ')[0]}
                     </span>
-                    {isActive && (
-                      <div className="w-5 h-5 bg-white/30 rounded-full flex items-center justify-center">
-                        <Check className="w-3 h-3 text-white" strokeWidth={3} />
-                      </div>
-                    )}
                   </button>
                 );
               })}
             </div>
-          )}
+          </div>
         </div>
       )}
 

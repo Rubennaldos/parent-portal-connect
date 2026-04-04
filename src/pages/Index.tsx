@@ -851,16 +851,18 @@ const Index = () => {
                 students={students}
                 activeStudentId={activeStudentId}
                 onDotClick={(sid) => {
-                  // Actualización directa sin scroll visible — no hay que bajar para ver el carousel
                   setActiveStudentId(sid);
                   try { localStorage.setItem('parentPortal_activeStudentId', sid); } catch { /* noop */ }
-                  // También sincronizamos el carousel oculto para mantener compatibilidad
                   const el = carouselRef.current;
                   if (el) {
                     const index = students.findIndex(s => s.id === sid);
                     const cardWidth = el.scrollWidth / (students.length || 1);
                     el.scrollTo({ left: cardWidth * index, behavior: 'auto' });
                   }
+                }}
+                onCameraClick={() => {
+                  const active = students.find(s => s.id === activeStudentId) ?? students[0];
+                  if (active && !isTransitioning) openPhotoModal(active);
                 }}
               />
             )}
@@ -1065,14 +1067,8 @@ const Index = () => {
                 )}
               </div>
 
-              {/* Separador y sección Mis Pedidos */}
-              <div id="lunch-content-mis-pedidos" className="mt-4 pt-3 border-t border-slate-100">
-                <div className="flex items-center gap-2 px-1 mb-3">
-                  <Calendar className="w-4 h-4 text-slate-400" />
-                  <span className="text-sm font-semibold text-slate-600">Mis Pedidos</span>
-                </div>
-                <ParentLunchOrders parentId={user.id} />
-              </div>
+              {/* Sección Mis Pedidos — acordeón (cerrado por defecto) */}
+              <LunchOrdersAccordion userId={user.id} />
             </div>
           ) : null}
         </div>
@@ -1369,5 +1365,35 @@ const Index = () => {
     </div>
   );
 };
+
+/** Mis Pedidos — sección colapsable para evitar scroll innecesario */
+function LunchOrdersAccordion({ userId }: { userId: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div id="lunch-content-mis-pedidos" className="mt-4 border-t border-slate-100">
+      <button
+        onClick={() => setOpen(prev => !prev)}
+        className="w-full flex items-center justify-between px-1 py-3 text-left hover:bg-slate-50/60 transition-colors rounded-xl active:scale-[0.99]"
+      >
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-semibold text-slate-600">Mis Pedidos</span>
+        </div>
+        <div className={`w-6 h-6 flex items-center justify-center transition-transform duration-200 ${open ? 'rotate-180' : ''}`}>
+          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      {open && (
+        <div className="pb-4">
+          <ParentLunchOrders parentId={userId} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default Index;

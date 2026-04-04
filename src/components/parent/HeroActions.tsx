@@ -72,7 +72,7 @@ export function HeroActions({
               Almuerzos
             </span>
             <span className={`text-xs ${almuerzosEnMantenimiento ? 'text-slate-400' : 'text-white/70'}`}>
-              {almuerzosEnMantenimiento ? 'En mantenimiento' : `Para ${activeStudentName.split(' ')[0]}`}
+              {almuerzosEnMantenimiento ? 'En mantenimiento' : 'Menú del día'}
             </span>
           </div>
         </div>
