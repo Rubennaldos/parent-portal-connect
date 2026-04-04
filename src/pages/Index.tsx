@@ -792,12 +792,12 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white sm:bg-gray-100">
-    {/* Contenedor "teléfono" — solo en sm+ aplica max-w-md y shadow */}
-    <div className="min-h-screen bg-white sm:max-w-md sm:mx-auto sm:shadow-2xl sm:shadow-slate-300/60 relative pb-20">
+    <div className="min-h-screen bg-gray-100">
+    {/* Contenedor "teléfono" — full-width en móvil, caja centrada en sm+ */}
+    <div className="w-full min-h-screen bg-white relative pb-20 sm:max-w-md sm:mx-auto sm:shadow-2xl sm:border-x sm:border-gray-200">
 
-      {/* Header Minimalista y Elegante */}
-      <header className="bg-white/95 border-b border-stone-200/50 sticky top-0 z-40 shadow-sm backdrop-blur-sm">
+      {/* Header — full-width en móvil, acotado al contenedor en sm+ */}
+      <header className="w-full bg-white border-b border-stone-200/50 sticky top-0 z-40 shadow-sm">
         <div className="px-4 py-3 sm:py-4">
           <div className="flex items-center justify-between">
             {/* Logo y Título - Más compacto en móvil */}
@@ -1224,7 +1224,7 @@ const Index = () => {
 
       {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
       {/* left-1/2 -translate-x-1/2 centra la barra en PC respetando el ancho del "teléfono" */}
-      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-full sm:max-w-md bg-white/95 backdrop-blur-md border-t border-slate-100/50 shadow-lg z-50">
+      <nav id="bottom-nav-bar" className="fixed bottom-0 w-full bg-white border-t border-slate-100/50 shadow-lg z-50 sm:max-w-md sm:left-1/2 sm:-translate-x-1/2">
         <div className="px-6 pb-4">
           <div className="flex items-center justify-around h-20">
 
