@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
@@ -68,6 +68,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
+
+  // ── UI: acordeón por hijo + info hub ──
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  const [infoHubOpen, setInfoHubOpen] = useState(false);
 
   // ── Selección individual de transacciones por estudiante ──
   // Mapa: student_id → Set de transaction IDs seleccionados
@@ -421,8 +425,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Cargando carrito...</p>
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-500 mx-auto mb-3" />
+          <p className="text-slate-400 text-sm">Cargando pagos...</p>
         </div>
       </div>
     );
@@ -430,148 +434,117 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   if (debts.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-12">
-          <div className="text-center">
-            <Check className="h-16 w-16 text-emerald-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Carrito vacío</h3>
-            <p className="text-gray-500">
-              No tienes pagos pendientes. Aquí aparecerán tus almuerzos y consumos por pagar.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center py-16 px-4">
+        <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-4">
+          <Check className="h-8 w-8 text-emerald-500" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-800 mb-1">Todo al día</h3>
+        <p className="text-sm text-slate-400 text-center">No tienes pagos pendientes. Aquí aparecerán tus almuerzos y consumos por pagar.</p>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* 💳 AVISO: Cómo pagar */}
-      <Card id="cart-how-to-pay-card" className="border-2 border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50">
-        <CardContent className="pt-5 pb-4">
-          <div className="flex items-start gap-3">
-            <div className="p-2.5 bg-blue-100 rounded-full flex-shrink-0">
-              <CreditCard className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-blue-800">💳 ¿Cómo pagar?</p>
-              <p className="text-xs text-blue-600 mt-1">
-                Puedes pagar tus deudas <strong>presencialmente en caja</strong> o enviando un <strong>comprobante de pago</strong> (Yape, Plin, transferencia) desde aquí.
+    <div className="space-y-3">
+
+      {/* ── SmartInfoCard — Hub de información colapsable ── */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <button
+          onClick={() => setInfoHubOpen(p => !p)}
+          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+        >
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-100 to-indigo-100 flex items-center justify-center shrink-0">
+            <Info className="w-4 h-4 text-violet-500" />
+          </div>
+          <span className="flex-1 text-sm font-semibold text-slate-700">💡 Lo que necesitas saber</span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${infoHubOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {infoHubOpen && (
+          <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+            {/* ¿Cómo pagar? */}
+            <div className="flex items-start gap-2.5">
+              <CreditCard className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-slate-600 leading-relaxed">
+                <strong className="text-slate-700">¿Cómo pagar?</strong> — Puedes pagar presencialmente en caja
+                o enviando un comprobante (Yape, Plin, transferencia) tocando el botón <strong>"Pagar"</strong> de cada hijo.
               </p>
             </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* ⚠️ AVISO MULTI-SEDE: solo si el padre tiene hijos en sedes distintas */}
-      {isMultiSchool && (
-        <Card className="border-2 border-amber-400 bg-gradient-to-r from-amber-50 to-yellow-50">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 bg-amber-100 rounded-full flex-shrink-0">
-                <AlertCircle className="h-5 w-5 text-amber-600" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-amber-800">⚠️ Atención: Hijos en sedes distintas</p>
-                <p className="text-xs text-amber-700 mt-1 leading-relaxed">
-                  <strong>NO deposite todo junto.</strong> Si sus hijos se encuentran en diferentes sedes,
-                  cada sede tiene un número de cuenta bancaria distinto.
-                  Tiene que hacer el <strong>pago por separado</strong>, usando el botón de pago de cada alumno individualmente.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Resumen del Carrito */}
-      <Card id="cart-total-pending-card" className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
-        <CardContent className="pt-6 pb-5">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-amber-100 rounded-full">
-              <AlertCircle className="h-8 w-8 text-amber-600" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm text-amber-700 font-semibold uppercase">Total Pendiente</p>
-              <p className="text-4xl font-black text-amber-900">S/ {(totalDebt || 0).toFixed(2)}</p>
-              <p className="text-xs text-amber-600 mt-1">
-                {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} item(s) en el carrito
-                {debts.length >= 2 && ` de ${debts.length} alumnos`}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 🧾 Pagar Todo Junto (solo si hay 2+ hijos con deuda) */}
-      {debts.length >= 2 && (
-        <Card className="border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-green-50">
-          <CardContent className="pt-5 pb-4">
-            <div className="flex items-start gap-3 mb-3">
-              <div className="p-2.5 bg-emerald-100 rounded-full flex-shrink-0">
-                <Users className="h-5 w-5 text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-emerald-800">🧾 Pagar todo junto</p>
-                <p className="text-xs text-emerald-600 mt-0.5">
-                  Envía <strong>un solo comprobante</strong> que cubra las deudas de todos tus hijos.
-                  El administrador verá un único voucher.
-                </p>
-              </div>
-            </div>
+            {/* Sedes distintas vs. misma sede */}
             {isMultiSchool ? (
-              <div className="w-full bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 bg-amber-50 rounded-xl px-3 py-2.5 border border-amber-200">
+                <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs font-semibold text-amber-800">Pago conjunto no disponible</p>
-                  <p className="text-[10px] text-amber-700 mt-0.5">Tus hijos están en sedes distintas con cuentas bancarias diferentes. Paga cada sede por separado usando el botón individual de cada alumno.</p>
+                  <p className="text-xs font-bold text-amber-800">⚠️ Hijos en sedes distintas</p>
+                  <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                    Cada sede tiene una cuenta bancaria distinta. <strong>Paga por separado</strong> usando el botón individual de cada hijo.
+                  </p>
                 </div>
               </div>
-            ) : hasCombinedPendingVoucher ? (
-              <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
-                <Send className="h-4 w-4 text-blue-600" />
-                <div>
-                  <p className="text-xs font-semibold text-blue-800">Comprobante en revisión</p>
-                  <p className="text-[10px] text-blue-600">Todas las deudas ya tienen un pago pendiente de aprobación.</p>
+            ) : debts.length >= 2 ? (
+              <div className="flex items-start gap-2.5 bg-emerald-50 rounded-xl px-3 py-2.5 border border-emerald-200">
+                <Users className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-emerald-800">Todos en la misma sede</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">Puedes enviar un solo comprobante para todos tus hijos.</p>
                 </div>
-              </div>
-            ) : (
-              <>
-                {combinedCoveredCount > 0 && (
-                  <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded px-3 py-1.5 mb-1">
-                    <Send className="h-3 w-3 text-blue-500 flex-shrink-0" />
-                    <p className="text-[10px] text-blue-700">
-                      {combinedCoveredCount} de {allCombinedTransactions.length} compra(s) ya tienen comprobante en revisión.
-                    </p>
-                  </div>
+                {!hasCombinedPendingVoucher ? (
+                  <button
+                    onClick={() => { setInfoHubOpen(false); handleCombinedPay(); }}
+                    className="shrink-0 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold shadow-sm active:scale-95 transition-all"
+                  >
+                    Pagar todo
+                  </button>
+                ) : (
+                  <span className="shrink-0 px-3 py-1.5 rounded-xl bg-blue-100 text-blue-700 text-xs font-semibold">En revisión</span>
                 )}
-                <Button
-                  onClick={handleCombinedPay}
-                  className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 font-bold gap-2 text-base shadow-md"
-                >
-                  <Receipt className="h-5 w-5" />
-                  Pagar Todo Junto — S/ {(totalDebt || 0).toFixed(2)}
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
 
-      {/* Deudas por Estudiante */}
+      {/* ── Barra de Total Pendiente ── */}
+      <div id="cart-total-pending-card" className="bg-white rounded-2xl shadow-sm border border-slate-100 px-4 py-3 flex items-center gap-3">
+        <div className="flex-1">
+          <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Total pendiente</p>
+          <p className="text-2xl font-black text-slate-800">
+            S/ <span className="text-rose-500">{(totalDebt || 0).toFixed(2)}</span>
+          </p>
+          <p className="text-[10px] text-slate-400 mt-0.5">
+            {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} ítem(s)
+            {debts.length >= 2 && ` · ${debts.length} alumnos`}
+          </p>
+        </div>
+        {/* Botón pagar todo solo si aplica */}
+        {debts.length >= 2 && !isMultiSchool && !hasCombinedPendingVoucher && (
+          <button
+            onClick={handleCombinedPay}
+            className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-md active:scale-95 transition-all"
+          >
+            <Receipt className="h-4 w-4" />
+            Pagar todo
+          </button>
+        )}
+        {hasCombinedPendingVoucher && (
+          <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 border border-blue-200">
+            <Send className="h-3.5 w-3.5 text-blue-500" />
+            <span className="text-xs font-semibold text-blue-700">En revisión</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Lista de hijos — filas compactas con acordeón ── */}
       {debts.map((debt) => {
         const allTxIds = debt.pending_transactions.map(t => t.id);
-
-        // Transacciones YA cubiertas por un voucher pendiente (no se pueden volver a pagar)
         const coveredByPendingVoucher = debt.pending_transactions
           .filter(tx => voucherStatuses.get(tx.id)?.status === 'pending')
           .map(t => t.id);
         const hasSomeCovered = coveredByPendingVoucher.length > 0;
-        // Transacciones que NO están cubiertas y se pueden pagar ahora
         const payableTxIds = allTxIds.filter(id => !coveredByPendingVoucher.includes(id));
         const hasPayableItems = payableTxIds.length > 0;
 
-        // Inicializar selección: por defecto solo las pagables seleccionadas
         const selectedIds = selectedTxByStudent.has(debt.student_id)
           ? selectedTxByStudent.get(debt.student_id)!
           : new Set(payableTxIds.length > 0 ? payableTxIds : allTxIds);
@@ -582,158 +555,173 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           .filter(tx => selectedIds.has(tx.id))
           .reduce((sum, tx) => sum + tx.amount, 0);
 
+        const isExpanded = expandedStudentId === debt.student_id;
+        const initials = debt.student_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+
         return (
-          <Card key={debt.student_id} id={debt.student_id === debts[0]?.student_id ? 'cart-student-debt-card' : undefined} className="border-2">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-purple-50 pb-3">
-              <div className="flex items-center gap-4">
-                {debt.student_photo && (
-                  <img
-                    src={debt.student_photo}
-                    alt={debt.student_name}
-                    className="w-14 h-14 rounded-full object-cover border-2 border-white shadow-lg"
-                  />
-                )}
-                <div className="flex-1">
-                  <CardTitle className="text-lg">{debt.student_name}</CardTitle>
-                  <CardDescription className="text-sm">
-                    Deuda total: <span className="font-bold text-red-600">S/ {(debt.total_debt || 0).toFixed(2)}</span>
-                    {' • '}
-                    {debt.pending_transactions.length} compra(s)
-                  </CardDescription>
-                </div>
-              </div>
-
-              {/* ── Botón de Pagar ── */}
-              <div className="mt-3 space-y-2">
-                {hasSomeCovered && !hasPayableItems ? (
-                  /* Todas las deudas ya están cubiertas por voucher pendiente */
-                  <div className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
-                    <Send className="h-4 w-4 text-blue-600" />
-                    <div>
-                      <p className="text-xs font-semibold text-blue-800">Comprobante en revisión</p>
-                      <p className="text-[10px] text-blue-600">Un administrador verificará tu pago pronto.</p>
-                    </div>
-                  </div>
+          <div
+            key={debt.student_id}
+            id={debt.student_id === debts[0]?.student_id ? 'cart-student-debt-card' : undefined}
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden"
+          >
+            {/* ── Fila compacta del hijo ── */}
+            <div className="flex items-center gap-3 px-4 py-3">
+              {/* Avatar */}
+              <div className="shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-rose-400 to-orange-400 flex items-center justify-center shadow-md overflow-hidden">
+                {debt.student_photo ? (
+                  <img src={debt.student_photo} alt={debt.student_name} className="w-full h-full object-cover" />
                 ) : (
-                  <>
-                    {/* Aviso informativo si hay algunas en revisión pero quedan pagables */}
-                    {hasSomeCovered && (
-                      <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
-                        <Send className="h-3 w-3 text-blue-500 flex-shrink-0" />
-                        <p className="text-[10px] text-blue-700">
-                          {coveredByPendingVoucher.length} compra(s) ya tienen comprobante en revisión. Puedes pagar las restantes.
-                        </p>
-                      </div>
-                    )}
-                    {/* Resumen de selección — solo sobre ítems pagables */}
-                    <div className="flex items-center justify-between text-xs px-1">
-                      <button
-                        onClick={() => toggleAllTx(debt.student_id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
-                        className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        {allSelected
-                          ? <CheckSquare className="h-4 w-4" />
-                          : <Square className="h-4 w-4" />
-                        }
-                        {allSelected ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                      </button>
-                      <span className="text-gray-500">
-                        {selectedIds.size} de {payableTxIds.length || allTxIds.length} seleccionadas
-                      </span>
-                    </div>
-                    <Button
-                      id="cart-pay-selected-btn"
-                      onClick={() => handlePayDebt(debt)}
-                      disabled={noneSelected}
-                      className="w-full h-11 bg-green-600 hover:bg-green-700 font-semibold gap-2 text-sm shadow-md disabled:opacity-50"
-                    >
-                      <Banknote className="h-5 w-5" />
-                      {noneSelected
-                        ? 'Selecciona al menos 1 compra'
-                        : `Pagar seleccionadas — S/ ${selectedTotal.toFixed(2)}`}
-                    </Button>
-                  </>
+                  <span className="text-sm font-bold text-white">{initials}</span>
                 )}
               </div>
-            </CardHeader>
 
-            <CardContent className="pt-3">
-              <div className="space-y-2">
+              {/* Nombre + conteo */}
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-sm text-slate-800 truncate">{debt.student_name.split(' ')[0]}</p>
+                <p className="text-xs text-slate-400">{debt.pending_transactions.length} compra{debt.pending_transactions.length !== 1 ? 's' : ''}</p>
+              </div>
+
+              {/* Monto + botón pagar */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="text-right">
+                  <p className="text-base font-black text-rose-500">S/ {(debt.total_debt || 0).toFixed(2)}</p>
+                </div>
+                {hasPayableItems && (
+                  <button
+                    id="cart-pay-selected-btn"
+                    onClick={(e) => { e.stopPropagation(); handlePayDebt(debt); }}
+                    className="px-3 py-2 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold shadow-md active:scale-95 transition-all"
+                  >
+                    Pagar
+                  </button>
+                )}
+                {hasSomeCovered && !hasPayableItems && (
+                  <div className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-50 border border-blue-200">
+                    <Send className="h-3 w-3 text-blue-500" />
+                    <span className="text-[10px] font-semibold text-blue-700">Revisión</span>
+                  </div>
+                )}
+                {/* Chevron para expandir */}
+                <button
+                  onClick={() => setExpandedStudentId(isExpanded ? null : debt.student_id)}
+                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center active:scale-90 transition-all"
+                  aria-label={isExpanded ? 'Colapsar' : 'Ver detalle'}
+                >
+                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* ── Detalle expandible ── */}
+            {isExpanded && (
+              <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-2">
+
+                {/* Aviso revisión parcial */}
+                {hasSomeCovered && hasPayableItems && (
+                  <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                    <Send className="h-3 w-3 text-blue-500 shrink-0" />
+                    <p className="text-[10px] text-blue-700">
+                      {coveredByPendingVoucher.length} compra(s) ya están en revisión. Puedes pagar las restantes.
+                    </p>
+                  </div>
+                )}
+
+                {/* Selección */}
+                {hasPayableItems && (
+                  <div className="flex items-center justify-between text-xs px-0.5">
+                    <button
+                      onClick={() => toggleAllTx(debt.student_id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
+                      className="flex items-center gap-1.5 text-emerald-600 hover:text-emerald-800 font-semibold"
+                    >
+                      {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                      {allSelected ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                    </button>
+                    <span className="text-slate-400">{selectedIds.size} de {payableTxIds.length || allTxIds.length} selec.</span>
+                  </div>
+                )}
+
+                {/* Transacciones */}
                 {debt.pending_transactions.map((transaction) => {
                   const isLunch = !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
                   const isSelected = selectedIds.has(transaction.id);
                   const vStatus = voucherStatuses.get(transaction.id);
-                  // Esta transacción específica ya está cubierta por un voucher pendiente
                   const isCoveredByPending = coveredByPendingVoucher.includes(transaction.id);
 
                   return (
                     <div
                       key={transaction.id}
-                      className={`p-3 rounded-lg border bg-white transition-all ${
-                        isCoveredByPending
-                          ? 'border-blue-200 bg-blue-50/30 opacity-70'
-                          : `cursor-pointer ${isSelected ? 'border-green-400 bg-green-50/40' : 'border-gray-200'}`
-                      }`}
                       onClick={() => !isCoveredByPending && toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
+                      className={`p-3 rounded-xl border bg-white transition-all ${
+                        isCoveredByPending
+                          ? 'border-blue-100 opacity-70 cursor-default'
+                          : `cursor-pointer ${isSelected ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'}`
+                      }`}
                     >
-                      <div className="flex items-center gap-3">
-                        {/* Checkbox — solo si no está cubierta por voucher pendiente */}
+                      <div className="flex items-center gap-2.5">
                         {!isCoveredByPending ? (
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
                             onClick={(e) => e.stopPropagation()}
-                            className="flex-shrink-0"
+                            className="shrink-0"
                           />
                         ) : (
-                          <div className="h-4 w-4 flex-shrink-0 flex items-center justify-center">
+                          <div className="h-4 w-4 shrink-0 flex items-center justify-center">
                             <Send className="h-3.5 w-3.5 text-blue-400" />
                           </div>
                         )}
                         {isLunch
-                          ? <UtensilsCrossed className="h-4 w-4 text-orange-400 flex-shrink-0" />
-                          : <Receipt className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                          ? <UtensilsCrossed className="h-4 w-4 text-orange-400 shrink-0" />
+                          : <Receipt className="h-4 w-4 text-slate-400 shrink-0" />
                         }
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-xs sm:text-sm truncate">{transaction.description}</p>
-                          <p className="text-[10px] sm:text-xs text-gray-500">
+                          <p className="font-semibold text-xs text-slate-800 truncate">{transaction.description}</p>
+                          <p className="text-[10px] text-slate-400">
                             {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
-                            {transaction.ticket_code && ` • Ticket: ${transaction.ticket_code}`}
+                            {transaction.ticket_code && ` · ${transaction.ticket_code}`}
                           </p>
                         </div>
-                        <div className="text-right flex-shrink-0">
-                          <p className="text-sm sm:text-base font-bold text-red-600">S/ {(transaction.amount || 0).toFixed(2)}</p>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-black text-rose-500">S/ {(transaction.amount || 0).toFixed(2)}</p>
                           {isCoveredByPending ? (
-                            <Badge variant="outline" className="text-[9px] sm:text-[10px] border-blue-300 text-blue-700">
-                              <Send className="h-2.5 w-2.5 mr-0.5" />
-                              En revisión
+                            <Badge variant="outline" className="text-[9px] border-blue-200 text-blue-600 mt-0.5">
+                              <Send className="h-2.5 w-2.5 mr-0.5" />En revisión
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="text-[9px] sm:text-[10px] border-amber-300 text-amber-700">
-                              <Clock className="h-2.5 w-2.5 mr-0.5" />
-                              Pendiente
+                            <Badge variant="outline" className="text-[9px] border-amber-200 text-amber-600 mt-0.5">
+                              <Clock className="h-2.5 w-2.5 mr-0.5" />Pendiente
                             </Badge>
                           )}
                         </div>
                       </div>
 
-                      {/* ⚠️ Advertencia para almuerzos */}
                       {isLunch && !vStatus && (
-                        <div className="mt-2 flex items-start gap-1.5 bg-orange-50 border border-orange-200 rounded px-2 py-1.5">
-                          <UtensilsCrossed className="h-3.5 w-3.5 text-orange-500 mt-0.5 flex-shrink-0" />
-                          <p className="text-[10px] text-orange-700 font-medium leading-tight">
-                            ⚠️ Este almuerzo <strong>no se procesará</strong> hasta que pagues la deuda pendiente.
+                        <div className="mt-2 flex items-start gap-1.5 bg-orange-50 border border-orange-100 rounded-lg px-2 py-1.5">
+                          <UtensilsCrossed className="h-3 w-3 text-orange-400 mt-0.5 shrink-0" />
+                          <p className="text-[10px] text-orange-700 leading-tight">
+                            Este almuerzo <strong>no se procesará</strong> hasta que pagues la deuda pendiente.
                           </p>
                         </div>
                       )}
-
                       {renderVoucherStatus(transaction)}
                     </div>
                   );
                 })}
+
+                {/* Botón pagar seleccionadas (solo si hay pagables) */}
+                {hasPayableItems && (
+                  <button
+                    onClick={() => handlePayDebt(debt)}
+                    disabled={noneSelected}
+                    className="w-full h-11 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-md active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-1"
+                  >
+                    <Banknote className="h-5 w-5" />
+                    {noneSelected ? 'Selecciona al menos 1 compra' : `Pagar seleccionadas — S/ ${selectedTotal.toFixed(2)}`}
+                  </button>
+                )}
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </div>
         );
       })}
 
