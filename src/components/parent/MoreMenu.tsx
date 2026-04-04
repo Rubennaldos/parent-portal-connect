@@ -99,82 +99,78 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
   ];
 
   return (
-    <div className="space-y-6 pb-20">
-      {/* Header con usuario */}
-      <Card className="bg-gradient-to-br from-[#8B4513] to-[#D2691E] text-white border-0">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-              <User className="h-8 w-8" />
-            </div>
-            <div>
-              <h3 className="font-bold text-lg">Mi Cuenta</h3>
-              <p className="text-sm text-white/80 flex items-center gap-2">
-                <Mail className="h-3 w-3" />
-                {userEmail}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="space-y-4 pb-20">
 
-      {/* Secciones del menú */}
+      {/* ── Header de cuenta ── */}
+      <div className="bg-gradient-to-br from-slate-800 to-slate-700 rounded-[1.5rem] p-5 mx-0 shadow-xl shadow-slate-900/20">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-white/15 rounded-2xl flex items-center justify-center border border-white/20 shadow-inner">
+            <User className="h-7 w-7 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-base text-white">Mi Cuenta</h3>
+            <p className="text-xs text-white/60 flex items-center gap-1.5 truncate mt-0.5">
+              <Mail className="h-3 w-3 shrink-0" />
+              {userEmail}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Secciones del menú ── */}
       {menuSections.map((section, idx) => (
         <div key={idx}>
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-4">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-1">
             {section.title}
-          </h3>
-          <Card>
-            <CardContent className="p-0">
-              {section.items.map((item, itemIdx) => (
-                <div key={itemIdx}>
-                  <button
-                    onClick={item.action}
-                    disabled={item.disabled}
-                    className={`w-full flex items-center justify-between p-4 transition-colors ${
-                      item.disabled 
-                        ? 'opacity-50 cursor-not-allowed' 
-                        : 'hover:bg-gray-50 active:bg-gray-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <item.icon className="h-5 w-5 text-[#8B4513]" />
-                      <span className="font-medium text-gray-900">{item.label}</span>
+          </p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            {section.items.map((item, itemIdx) => (
+              <div key={itemIdx}>
+                <button
+                  onClick={item.action}
+                  disabled={item.disabled}
+                  className={`w-full flex items-center justify-between px-4 py-3.5 transition-colors ${
+                    item.disabled
+                      ? 'opacity-40 cursor-not-allowed'
+                      : 'hover:bg-slate-50/80 active:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+                      <item.icon className="h-4 w-4 text-slate-600" />
                     </div>
-                    <div className="flex items-center gap-2">
-                      {item.badge && (
-                        <Badge 
-                          variant={item.badgeVariant || 'outline'} 
-                          className={`text-xs ${
-                            item.badgeVariant === 'default' 
-                              ? 'bg-green-500 hover:bg-green-600 text-white' 
-                              : ''
-                          }`}
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                      {!item.disabled && <ChevronRight className="h-4 w-4 text-gray-400" />}
-                    </div>
-                  </button>
-                  {itemIdx < section.items.length - 1 && <Separator />}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                    <span className="font-semibold text-sm text-slate-800">{item.label}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {item.badge && (
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        item.badgeVariant === 'default'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {item.badge}
+                      </span>
+                    )}
+                    {!item.disabled && <ChevronRight className="h-4 w-4 text-slate-300" />}
+                  </div>
+                </button>
+                {itemIdx < section.items.length - 1 && (
+                  <div className="h-px bg-slate-100 mx-4" />
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       ))}
 
-      {/* Botón de cerrar sesión */}
-      <Button
+      {/* ── Cerrar sesión ── */}
+      <button
         onClick={onLogout}
-        variant="destructive"
-        className="w-full h-14 text-lg font-bold"
-        size="lg"
+        className="w-full h-13 rounded-2xl bg-rose-500 hover:bg-rose-600 active:scale-[0.98] text-white font-bold text-sm shadow-lg shadow-rose-300/40 flex items-center justify-center gap-2 transition-all py-4"
       >
-        <LogOut className="mr-2 h-5 w-5" />
+        <LogOut className="h-5 w-5" />
         Cerrar Sesión
-      </Button>
+      </button>
 
       {/* Modal Cambiar Contraseña */}
       <ChangePasswordModal

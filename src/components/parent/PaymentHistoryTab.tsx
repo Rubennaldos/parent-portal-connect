@@ -67,6 +67,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   const [records, setRecords] = useState<PaymentRecord[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHistory();
@@ -396,189 +397,203 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   // ── Render principal ───────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-7 w-7 animate-spin text-blue-500 mr-2" />
-        <span className="text-gray-500 text-sm">Cargando historial...</span>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-7 w-7 animate-spin text-emerald-500 mr-2" />
+        <span className="text-slate-400 text-sm">Cargando historial...</span>
       </div>
     );
   }
 
   if (records.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-14">
-          <div className="text-center">
-            <FileText className="h-14 w-14 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-700 mb-1">Sin registros</h3>
-            <p className="text-sm text-gray-500">
-              Aún no has enviado ningún comprobante de pago.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center py-16 px-4">
+        <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+          <FileText className="h-7 w-7 text-slate-400" />
+        </div>
+        <h3 className="text-base font-bold text-slate-700 mb-1">Sin registros</h3>
+        <p className="text-sm text-slate-400 text-center">Aún no has enviado ningún comprobante de pago.</p>
+      </div>
     );
   }
 
   return (
     <>
-      {/* Encabezado del listado */}
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs text-gray-500">
+      {/* Encabezado */}
+      <div className="flex items-center justify-between mb-3 px-0.5">
+        <p className="text-xs text-slate-400">
           {records.length} comprobante{records.length !== 1 ? 's' : ''} en tu historial
         </p>
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
           onClick={fetchHistory}
-          className="h-7 text-xs gap-1 text-gray-500 hover:text-gray-700"
+          className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 active:scale-95 transition-all"
         >
           <RefreshCw className="h-3 w-3" />
           Actualizar
-        </Button>
+        </button>
       </div>
 
-      {/* Lista de comprobantes */}
-      <div className="space-y-3">
-        {records.map((record) => (
-          <Card key={record.id} className={`border-l-4 ${borderColor(record.status)}`}>
-            <CardContent className="pt-4 pb-3 px-4">
+      {/* Lista compacta de comprobantes */}
+      <div className="space-y-2">
+        {records.map((record) => {
+          const isExpanded = expandedId === record.id;
+          const leftAccent = record.status === 'approved'
+            ? 'border-l-emerald-400'
+            : record.status === 'rejected'
+              ? 'border-l-rose-400'
+              : 'border-l-blue-400';
 
-              {/* Fila superior: nombre + estado + monto */}
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2 min-w-0">
+          return (
+            <div
+              key={record.id}
+              className={`bg-white rounded-2xl shadow-sm border-l-4 border border-slate-100 overflow-hidden ${leftAccent}`}
+            >
+              {/* ── Fila compacta siempre visible ── */}
+              <button
+                onClick={() => setExpandedId(isExpanded ? null : record.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+              >
+                {/* Ícono tipo */}
+                <div className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
+                  record.request_type === 'lunch_payment' ? 'bg-orange-100' :
+                  record.request_type === 'recharge' ? 'bg-emerald-100' : 'bg-blue-100'
+                }`}>
                   {getTypeIcon(record.request_type)}
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm leading-tight truncate">
-                      {record.studentName}
-                    </p>
-                    <p className="text-[11px] text-gray-500">
-                      {REQUEST_TYPE_LABEL[record.request_type ?? ''] ?? 'Pago'}
-                    </p>
-                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  {getStatusBadge(record.status)}
-                  <span className="text-base font-bold text-gray-800">
-                    S/ {record.amount.toFixed(2)}
-                  </span>
-                </div>
-              </div>
 
-              {/* Concepto */}
-              {record.description && (
-                <p className="text-[11px] text-gray-600 bg-gray-50 rounded px-2 py-1.5 mb-2 leading-snug">
-                  {record.description}
-                </p>
-              )}
-
-              {/* Detalles del pago */}
-              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-gray-600 mb-2">
-                <div>
-                  <span className="text-gray-400">Método: </span>
-                  <span className="font-medium">
-                    {PAYMENT_METHOD_LABEL[record.payment_method] ?? record.payment_method}
-                  </span>
-                </div>
-                {record.reference_code && (
-                  <div className="flex items-center gap-0.5 min-w-0">
-                    <Hash className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                    <span className="font-mono truncate text-gray-700">{record.reference_code}</span>
-                  </div>
-                )}
-                <div className="col-span-2 text-gray-400">
-                  {format(new Date(record.created_at), "d 'de' MMMM yyyy · HH:mm", { locale: es })}
-                </div>
-              </div>
-
-              {/* Banner: aprobado */}
-              {record.status === 'approved' && record.approved_at && (
-                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5 mb-2">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
-                  <p className="text-[11px] text-emerald-700">
-                    Aprobado el{' '}
-                    {format(new Date(record.approved_at), "d 'de' MMMM yyyy", { locale: es })}
-                    {record.approverName && ` por ${record.approverName}`}
+                {/* Nombre + tipo */}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-slate-800 truncate">{record.studentName}</p>
+                  <p className="text-[11px] text-slate-400">
+                    {REQUEST_TYPE_LABEL[record.request_type ?? ''] ?? 'Pago'} · {format(new Date(record.created_at), "d MMM yyyy", { locale: es })}
                   </p>
                 </div>
-              )}
 
-              {/* Comprobantes SUNAT individuales — uno por cada boleta/factura emitida */}
-              {record.status === 'approved' && record.sunat_invoices && record.sunat_invoices.length > 0 && (
-                <div className="bg-indigo-50 border border-indigo-200 rounded px-2 py-1.5 mb-2 space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5 text-indigo-600 flex-shrink-0" />
-                    <p className="text-[11px] text-indigo-700 font-medium">
-                      {record.sunat_invoices.length === 1 ? 'Comprobante SUNAT emitido' : `${record.sunat_invoices.length} comprobantes SUNAT emitidos`}
-                    </p>
+                {/* Monto + badge + chevron */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-right">
+                    {getStatusBadge(record.status)}
+                    <p className="text-sm font-black text-slate-800 mt-0.5">S/ {record.amount.toFixed(2)}</p>
                   </div>
-                  {record.sunat_invoices.map((inv, idx) => (
-                    <div key={idx} className="flex items-center justify-between gap-2">
-                      <p className="text-[10px] text-indigo-600 min-w-0 truncate">
-                        {inv.invoice_type === 'factura' ? 'Factura' : 'Boleta'}
-                        {inv.full_number && ` ${inv.full_number}`}
-                      </p>
-                      {inv.pdf_url ? (
-                        <a href={inv.pdf_url} target="_blank" rel="noopener noreferrer">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-[10px] gap-1 text-indigo-700 border-indigo-300 hover:bg-indigo-100 flex-shrink-0"
-                          >
-                            <Download className="h-3 w-3" />
-                            PDF
-                          </Button>
-                        </a>
-                      ) : (
-                        <span className="text-[10px] text-indigo-400 flex-shrink-0">Sin PDF</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Banner: rechazado */}
-              {record.status === 'rejected' && record.rejection_reason && (
-                <div className="flex items-start gap-1.5 bg-red-50 border border-red-200 rounded px-2 py-1.5 mb-2">
-                  <XCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-red-700 leading-snug">
-                    <span className="font-semibold">Motivo de rechazo: </span>
-                    {record.rejection_reason}
-                  </p>
-                </div>
-              )}
-
-              {/* Botones de acción */}
-              <div className="flex gap-2 pt-1">
-                {record.voucher_url && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setViewingImage(record.voucher_url!)}
-                    className="flex-1 h-8 text-xs gap-1"
+                  <svg
+                    className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                   >
-                    <ImageIcon className="h-3.5 w-3.5" />
-                    Ver comprobante
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => downloadPDF(record)}
-                  disabled={downloadingId === record.id}
-                  className="flex-1 h-8 text-xs gap-1"
-                >
-                  {downloadingId === record.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Download className="h-3.5 w-3.5" />
-                  )}
-                  {downloadingId === record.id ? 'Generando...' : 'Descargar recibo'}
-                </Button>
-              </div>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </button>
 
-            </CardContent>
-          </Card>
-        ))}
+              {/* ── Detalle expandible ── */}
+              {isExpanded && (
+                <div className="px-4 pb-4 pt-2 border-t border-slate-100 bg-slate-50/60 space-y-3">
+
+                  {/* Concepto */}
+                  {record.description && (
+                    <p className="text-[11px] text-slate-600 bg-white rounded-xl px-3 py-2 leading-snug border border-slate-100">
+                      {record.description}
+                    </p>
+                  )}
+
+                  {/* Detalles del pago */}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                    <div>
+                      <span className="text-slate-400">Método: </span>
+                      <span className="font-semibold text-slate-700">
+                        {PAYMENT_METHOD_LABEL[record.payment_method] ?? record.payment_method}
+                      </span>
+                    </div>
+                    {record.reference_code && (
+                      <div className="flex items-center gap-0.5 min-w-0">
+                        <Hash className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span className="font-mono truncate text-slate-700">{record.reference_code}</span>
+                      </div>
+                    )}
+                    <div className="col-span-2 text-slate-400">
+                      {format(new Date(record.created_at), "d 'de' MMMM yyyy · HH:mm", { locale: es })}
+                    </div>
+                  </div>
+
+                  {/* Banner aprobado */}
+                  {record.status === 'approved' && record.approved_at && (
+                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      <p className="text-[11px] text-emerald-700">
+                        Aprobado el {format(new Date(record.approved_at), "d 'de' MMMM yyyy", { locale: es })}
+                        {record.approverName && ` · por ${record.approverName}`}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Comprobantes SUNAT */}
+                  {record.status === 'approved' && record.sunat_invoices && record.sunat_invoices.length > 0 && (
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                        <p className="text-[11px] text-indigo-700 font-semibold">
+                          {record.sunat_invoices.length === 1 ? 'Comprobante SUNAT' : `${record.sunat_invoices.length} comprobantes SUNAT`}
+                        </p>
+                      </div>
+                      {record.sunat_invoices.map((inv, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] text-indigo-600 min-w-0 truncate">
+                            {inv.invoice_type === 'factura' ? 'Factura' : 'Boleta'}
+                            {inv.full_number && ` ${inv.full_number}`}
+                          </p>
+                          {inv.pdf_url ? (
+                            <a href={inv.pdf_url} target="_blank" rel="noopener noreferrer"
+                              className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-700 active:scale-95 transition-all"
+                            >
+                              <Download className="h-3 w-3" />PDF
+                            </a>
+                          ) : (
+                            <span className="text-[10px] text-indigo-400 shrink-0">Sin PDF</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Banner rechazado */}
+                  {record.status === 'rejected' && record.rejection_reason && (
+                    <div className="flex items-start gap-2 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">
+                      <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-rose-700 leading-snug">
+                        <span className="font-semibold">Motivo de rechazo: </span>
+                        {record.rejection_reason}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Botones acción */}
+                  <div className="flex gap-2 pt-1">
+                    {record.voucher_url && (
+                      <button
+                        onClick={() => setViewingImage(record.voucher_url!)}
+                        className="flex-1 h-9 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 flex items-center justify-center gap-1.5 hover:bg-slate-50 active:scale-[0.98] transition-all"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        Ver comprobante
+                      </button>
+                    )}
+                    <button
+                      onClick={() => downloadPDF(record)}
+                      disabled={downloadingId === record.id}
+                      className="flex-1 h-9 rounded-xl bg-slate-800 text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-700 active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                      {downloadingId === record.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                      {downloadingId === record.id ? 'Generando...' : 'Descargar recibo'}
+                    </button>
+                  </div>
+
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Modal para ver la foto del comprobante */}

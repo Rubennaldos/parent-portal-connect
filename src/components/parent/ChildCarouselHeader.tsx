@@ -6,7 +6,7 @@
  * - Flechas < > funcionales para navegar entre hijos
  * - Dots de navegación rápida
  */
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Eye, Camera, ChevronLeft, ChevronRight, GraduationCap, School, Hash, CircleCheck } from 'lucide-react';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
@@ -37,6 +37,7 @@ export function ChildCarouselHeader({
   onCameraClick,
 }: ChildCarouselHeaderProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const touchStartX = useRef<number | null>(null);
 
   const active = students.find(s => s.id === activeStudentId) ?? students[0];
   if (!active) return null;
@@ -53,6 +54,19 @@ export function ChildCarouselHeader({
     onDotClick(students[next].id);
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || students.length <= 1) return;
+    const diff = touchStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 40) {
+      diff > 0 ? nextStudent() : prevStudent();
+    }
+    touchStartX.current = null;
+  };
+
   const initials = active.full_name
     .split(' ')
     .slice(0, 2)
@@ -62,7 +76,11 @@ export function ChildCarouselHeader({
 
   return (
     <>
-      <div className="bg-white rounded-[1.75rem] shadow-lg shadow-slate-200/60 border border-white/80 p-5">
+      <div
+        className="bg-white rounded-[1.75rem] shadow-lg shadow-slate-200/60 border border-white/80 p-5 select-none"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <div className="flex items-center gap-4">
 
           {/* ── Avatar + badge cámara ── */}
