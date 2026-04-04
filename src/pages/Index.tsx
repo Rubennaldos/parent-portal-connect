@@ -794,7 +794,7 @@ const Index = () => {
     <div className="bg-[#FAFAF9] pb-20">
       {/* Header Minimalista y Elegante - Responsive */}
       <header className="bg-white border-b border-stone-200/50 sticky top-0 z-40 shadow-sm backdrop-blur-sm bg-white/95">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-5">
+        <div className="max-w-md mx-auto px-4 py-3 sm:py-4">
           <div className="flex items-center justify-between">
             {/* Logo y Título - Más compacto en móvil */}
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
@@ -837,8 +837,8 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4">
+      {/* Main Content — max-w-md centra en PC como app móvil, full-width en celular */}
+      <main className="max-w-md mx-auto px-4 py-3">
         {/* ── PESTAÑA ALUMNOS — Carrusel estilo Yape ── */}
         <div className={activeTab !== 'alumnos' ? 'hidden' : ''}>
           <div className="space-y-3">
@@ -1194,7 +1194,7 @@ const Index = () => {
 
       {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
       <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-100/50 shadow-lg z-50">
-        <div className="max-w-7xl mx-auto px-6 pb-4">
+        <div className="max-w-md mx-auto px-6 pb-4">
           <div className="flex items-center justify-around h-20">
 
             {/* Inicio */}
