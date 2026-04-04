@@ -792,8 +792,7 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white sm:bg-[#e8eaed] sm:flex sm:justify-center">
-    <div className="w-full min-h-screen bg-white relative pb-20 sm:w-[390px] sm:shadow-[0_0_40px_rgba(0,0,0,0.18)]">
+    <div className="min-h-screen bg-[#FAFAF9] pb-20">
 
       {/* Header — full-width en móvil, acotado al contenedor en sm+ */}
       <header className="w-full bg-white border-b border-stone-200/50 sticky top-0 z-40 shadow-sm">
@@ -1222,8 +1221,7 @@ const Index = () => {
       />
 
       {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
-      {/* left-1/2 -translate-x-1/2 centra la barra en PC respetando el ancho del "teléfono" */}
-      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100/50 shadow-lg z-50 sm:left-1/2 sm:right-auto sm:w-[390px] sm:-translate-x-1/2">
+      <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100/50 shadow-lg z-50">
         <div className="px-6 pb-4">
           <div className="flex items-center justify-around h-20">
 
@@ -1368,7 +1366,6 @@ const Index = () => {
         </DialogContent>
       </Dialog>
 
-    </div>
     </div>
   );
 };
