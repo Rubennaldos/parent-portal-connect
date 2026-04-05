@@ -115,6 +115,8 @@ const Index = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   // Ref al contenedor del carrusel para leer scrollLeft
   const carouselRef = useRef<HTMLDivElement>(null);
+  // Evita que el scroll programático del carousel oculto dispare isTransitioning
+  const isProgrammaticScroll = useRef(false);
   // ────────────────────────────────────────────────────────────────────────────
   const [parentName, setParentName] = useState<string>('');
   const [parentProfileData, setParentProfileData] = useState<any>(null); // 👤 Datos del perfil del padre
@@ -621,18 +623,17 @@ const Index = () => {
 
   // ── CARRUSEL: detectar qué hijo está centrado después de un scroll ──────────
   const handleCarouselScroll = useCallback(() => {
+    // Si el scroll fue disparado por código (onDotClick/flechas/swipe), lo ignoramos
+    if (isProgrammaticScroll.current) return;
     const el = carouselRef.current;
     if (!el || students.length === 0) return;
-    // Cada tarjeta ocupa scrollWidth / nCards del área de scroll total
     const cardWidth = el.scrollWidth / students.length;
     const newIndex  = Math.round(el.scrollLeft / cardWidth);
     const clamped   = Math.max(0, Math.min(newIndex, students.length - 1));
     const newId     = students[clamped]?.id;
     if (newId && newId !== activeStudentId) {
-      setIsTransitioning(true);
       setActiveStudentId(newId);
       try { localStorage.setItem('parentPortalActiveStudentId', newId); } catch { /* noop */ }
-      setTimeout(() => setIsTransitioning(false), 300);
     }
   }, [students, activeStudentId]);
 
@@ -851,13 +852,19 @@ const Index = () => {
                 students={students}
                 activeStudentId={activeStudentId}
                 onDotClick={(sid) => {
+                  // Actualización directa — sin bloquear interacciones
                   setActiveStudentId(sid);
                   try { localStorage.setItem('parentPortal_activeStudentId', sid); } catch { /* noop */ }
+                  // Sincronizar el carousel oculto marcando que es scroll programático
+                  // para que handleCarouselScroll no dispare isTransitioning
                   const el = carouselRef.current;
                   if (el) {
+                    isProgrammaticScroll.current = true;
                     const index = students.findIndex(s => s.id === sid);
                     const cardWidth = el.scrollWidth / (students.length || 1);
-                    el.scrollTo({ left: cardWidth * index, behavior: 'auto' });
+                    el.scrollTo({ left: cardWidth * index, behavior: 'instant' });
+                    // Liberar el flag tras el ciclo de eventos
+                    setTimeout(() => { isProgrammaticScroll.current = false; }, 50);
                   }
                 }}
                 onCameraClick={() => {
