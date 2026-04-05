@@ -169,14 +169,14 @@ export function PosConsumptionModal({
 
         {/* Footer — Total adeudado */}
         {!loading && !error && (
-          <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60">
+          <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60 space-y-2">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
-                  Total adeudado
+                  Deuda actual registrada
                 </p>
                 <p className="text-[9px] text-slate-300 mt-0.5">
-                  Basado en el saldo actual de {firstName}
+                  Saldo oficial de {firstName} en el sistema
                 </p>
               </div>
               <p className="text-xl font-black text-rose-500">
@@ -184,11 +184,36 @@ export function PosConsumptionModal({
               </p>
             </div>
 
+            {/* Aviso de discrepancia — cuando consumos listados no cuadran con el saldo */}
             {consumos.length > 0 && Math.abs(totalConsumo - kioskDebt) > 0.5 && (
-              <p className="text-[9px] text-slate-400 mt-2 leading-relaxed">
-                * La suma de consumos mostrados ({totalConsumo.toFixed(2)}) puede diferir del saldo
-                si hubo recargas parciales o ajustes en el período.
-              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 space-y-1">
+                <p className="text-[10px] font-bold text-amber-700">
+                  ⚠️ Nota sobre el historial
+                </p>
+                <p className="text-[9px] text-amber-600 leading-relaxed">
+                  Los consumos listados suman <strong>S/ {totalConsumo.toFixed(2)}</strong>, 
+                  pero la deuda oficial es <strong>S/ {kioskDebt.toFixed(2)}</strong>.
+                  La diferencia (S/ {Math.abs(totalConsumo - kioskDebt).toFixed(2)}) 
+                  puede deberse a pagos en efectivo, ajustes manuales o períodos anteriores 
+                  no registrados digitalmente. Para aclarar el detalle exacto, 
+                  comunícate con administración.
+                </p>
+              </div>
+            )}
+
+            {/* Aviso cuando NO hay consumos pero sí hay deuda */}
+            {consumos.length === 0 && kioskDebt > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <p className="text-[10px] font-bold text-amber-700">
+                  ⚠️ Sin historial digital disponible
+                </p>
+                <p className="text-[9px] text-amber-600 leading-relaxed mt-0.5">
+                  La deuda de S/ {kioskDebt.toFixed(2)} existe en el sistema pero no hay 
+                  consumos digitales registrados que la expliquen. 
+                  Puede haberse originado por consumos en efectivo o un ajuste 
+                  manual de saldo. Consulta a administración para el detalle.
+                </p>
+              </div>
             )}
           </div>
         )}
