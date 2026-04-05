@@ -530,15 +530,32 @@ const Index = () => {
       // UNA sola query para todos los hijos (antes era 1 query por hijo)
       const { data: allPendingTx } = await supabase
         .from('transactions')
-        .select('student_id, amount, metadata')
+        .select('id, student_id, amount, metadata')
         .in('student_id', billableIds)
         .eq('type', 'purchase')
         .in('payment_status', ['pending', 'partial'])
         .eq('is_deleted', false);
 
-      // Agregar en memoria — O(n), sin round-trips adicionales
+      // Obtener IDs de transacciones ya cubiertas por vouchers pendientes (en revisión)
+      // para excluirlas del chip de la Home — misma lógica que PaymentsTab
+      const { data: pendingVouchers } = await supabase
+        .from('recharge_requests')
+        .select('paid_transaction_ids')
+        .in('student_id', billableIds)
+        .eq('status', 'pending')
+        .in('request_type', ['debt_payment', 'lunch_payment']);
+
+      const inReviewTxIds = new Set<string>();
+      for (const v of pendingVouchers ?? []) {
+        if (Array.isArray(v.paid_transaction_ids)) {
+          v.paid_transaction_ids.forEach((id: string) => inReviewTxIds.add(id));
+        }
+      }
+
+      // Agregar en memoria — excluir transacciones "en revisión"
       for (const tx of allPendingTx ?? []) {
         if (!debtsMap[tx.student_id]) continue;
+        if (inReviewTxIds.has(tx.id)) continue; // Excluir: ya tiene voucher enviado
         const abs = Math.abs(tx.amount);
         if ((tx.metadata as any)?.lunch_order_id) {
           debtsMap[tx.student_id].lunchDebt += abs;

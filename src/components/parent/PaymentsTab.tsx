@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info, Wallet } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
@@ -36,6 +36,7 @@ interface StudentDebt {
   student_name: string;
   student_photo: string | null;
   student_balance: number;
+  wallet_balance: number;
   school_id: string;
   total_debt: number;
   pending_transactions: PendingTransaction[];
@@ -68,6 +69,13 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
+
+  // ── Billetera interna: toggle "usar saldo a favor" por alumno ──────────────
+  // Map: student_id → true/false (si el padre quiere usar el saldo disponible)
+  const [useWalletByStudent, setUseWalletByStudent] = useState<Map<string, boolean>>(new Map());
+  const getUseWallet = (studentId: string) => useWalletByStudent.get(studentId) ?? false;
+  const toggleWallet = (studentId: string) =>
+    setUseWalletByStudent(prev => new Map(prev).set(studentId, !prev.get(studentId)));
 
   // ── UI: acordeón por hijo + info hub ──
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
@@ -131,7 +139,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
       const { data: students, error: studentsError } = await supabase
         .from('students')
-        .select('id, full_name, photo_url, free_account, school_id, balance')
+        .select('id, full_name, photo_url, free_account, school_id, balance, wallet_balance')
         .eq('parent_id', userId)
         .eq('is_active', true);
 
@@ -165,6 +173,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             student_name: student.full_name,
             student_photo: student.photo_url,
             student_balance: student.balance || 0,
+            wallet_balance: student.wallet_balance || 0,
             school_id: student.school_id,
             total_debt: totalDebt,
             pending_transactions: transactions.map(t => ({
@@ -273,6 +282,18 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
 
+  // ── REGLA DE COBRANZAS: excluir "en revisión" del total a pagar ──
+  // Solo se suman deudas con estado pending (sin voucher) o rejected (voucher rechazado).
+  // Las transacciones cubiertas por un voucher pendiente se muestran como "en revisión" — no se cobran dos veces.
+  const totalPayable = debts.reduce((sum, d) => {
+    return sum + d.pending_transactions
+      .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
+      .reduce((s, tx) => s + tx.amount, 0);
+  }, 0);
+  const totalInReview = Math.max(0, totalDebt - totalPayable);
+  const payableItemsCount = debts.reduce((sum, d) =>
+    sum + d.pending_transactions.filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending').length, 0);
+
   // ── Detectar si las deudas pertenecen a sedes distintas ──
   const uniqueSchoolIds = [...new Set(debts.map(d => d.school_id).filter(Boolean))];
   const isMultiSchool = uniqueSchoolIds.length > 1;
@@ -299,6 +320,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       allStudentNames.push(debt.student_name);
 
       for (const tx of debt.pending_transactions) {
+        // Excluir transacciones cubiertas por voucher pendiente (en revisión)
+        if (voucherStatuses.get(tx.id)?.status === 'pending') continue;
         allTransactionIds.push(tx.id);
         if (tx.metadata?.lunch_order_id) {
           allLunchOrderIds.push(tx.metadata.lunch_order_id);
@@ -320,7 +343,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       allBreakdownItems,
       allStudentIds,
       combinedNames,
-      totalAmount: totalDebt,
+      totalAmount: totalPayable, // Solo lo pagable — no incluye "en revisión"
     };
   };
 
@@ -505,20 +528,25 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         )}
       </div>
 
-      {/* ── Barra de Total Pendiente ── */}
+      {/* ── Barra de Total Pendiente — solo muestra lo pagable (excluye "en revisión") ── */}
       <div id="cart-total-pending-card" className="bg-white rounded-2xl shadow-sm border border-slate-100 px-4 py-3 flex items-center gap-3">
         <div className="flex-1">
           <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Total pendiente</p>
           <p className="text-2xl font-black text-slate-800">
-            S/ <span className="text-rose-500">{(totalDebt || 0).toFixed(2)}</span>
+            S/ <span className="text-rose-500">{(totalPayable || 0).toFixed(2)}</span>
           </p>
           <p className="text-[10px] text-slate-400 mt-0.5">
-            {debts.reduce((sum, d) => sum + d.pending_transactions.length, 0)} ítem(s)
+            {payableItemsCount} ítem(s) por pagar
             {debts.length >= 2 && ` · ${debts.length} alumnos`}
+            {totalInReview > 0 && (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 text-blue-500 font-semibold">
+                · S/ {totalInReview.toFixed(2)} en revisión
+              </span>
+            )}
           </p>
         </div>
-        {/* Botón pagar todo solo si aplica */}
-        {debts.length >= 2 && !isMultiSchool && !hasCombinedPendingVoucher && (
+        {/* Botón pagar todo: solo si hay algo pagable y aplica */}
+        {debts.length >= 2 && !isMultiSchool && !hasCombinedPendingVoucher && totalPayable > 0 && (
           <button
             onClick={handleCombinedPay}
             className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-md active:scale-95 transition-all"
@@ -527,7 +555,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             Pagar todo
           </button>
         )}
-        {hasCombinedPendingVoucher && (
+        {hasCombinedPendingVoucher && totalPayable === 0 && (
           <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 border border-blue-200">
             <Send className="h-3.5 w-3.5 text-blue-500" />
             <span className="text-xs font-semibold text-blue-700">En revisión</span>
@@ -558,6 +586,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         const isExpanded = expandedStudentId === debt.student_id;
         const initials = debt.student_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
+        // Monto por alumno: solo lo pagable (sin "en revisión")
+        const studentPayable = debt.pending_transactions
+          .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
+          .reduce((s, tx) => s + tx.amount, 0);
+        const studentInReview = Math.max(0, debt.total_debt - studentPayable);
+
         return (
           <div
             key={debt.student_id}
@@ -584,7 +618,29 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               {/* Monto + botón pagar */}
               <div className="flex items-center gap-2 shrink-0">
                 <div className="text-right">
-                  <p className="text-base font-black text-rose-500">S/ {(debt.total_debt || 0).toFixed(2)}</p>
+                  <p className="text-base font-black text-rose-500">S/ {(studentPayable || 0).toFixed(2)}</p>
+                  {studentInReview > 0 && (
+                    <p className="text-[9px] text-blue-500 font-semibold mt-0.5 flex items-center gap-0.5 justify-end">
+                      <Send className="h-2.5 w-2.5" />S/ {studentInReview.toFixed(2)} en revisión
+                    </p>
+                  )}
+                  {/* Badge de saldo a favor */}
+                  {(debt.wallet_balance || 0) > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleWallet(debt.student_id); }}
+                      className={`mt-0.5 flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all border ${
+                        getUseWallet(debt.student_id)
+                          ? 'bg-emerald-100 border-emerald-400 text-emerald-800'
+                          : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                      }`}
+                      title={getUseWallet(debt.student_id) ? 'Toca para no usar el saldo' : 'Toca para usar tu saldo a favor'}
+                    >
+                      <Wallet className="h-2.5 w-2.5 shrink-0" />
+                      {getUseWallet(debt.student_id)
+                        ? `−S/ ${Math.min(debt.wallet_balance, debt.total_debt).toFixed(2)} aplicado`
+                        : `S/ ${debt.wallet_balance.toFixed(2)} a favor`}
+                    </button>
+                  )}
                 </div>
                 {hasPayableItems && (
                   <button
@@ -798,6 +854,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       {/* ── Modal de Pago (individual) ── */}
       {!combinedMode && selectedDebt && (() => {
         const payData = getPaymentData(selectedDebt);
+        const walletBalance = selectedDebt.wallet_balance || 0;
+        const useWallet = getUseWallet(selectedDebt.student_id);
+        // Cuánto se descuenta de la billetera: mínimo entre saldo disponible y deuda total
+        const walletToUse = useWallet
+          ? Math.min(walletBalance, payData.totalSelected)
+          : 0;
         return (
           <RechargeModal
             isOpen={showPaymentModal}
@@ -830,6 +892,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             }))}
             invoiceType={invoiceType}
             invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
+            walletAmountToUse={walletToUse}
           />
         );
       })()}
