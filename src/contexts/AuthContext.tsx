@@ -66,12 +66,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
 
-      // 🔧 FIX: Ignorar TOKEN_REFRESHED e INITIAL_SESSION para evitar
-      // re-renders y refetch innecesarios al volver a la pestaña
       if (event === 'TOKEN_REFRESHED') {
-        // Solo actualizamos la sesión silenciosamente sin cambiar el user object
-        console.log('[Auth] 🔄 Token refrescado silenciosamente');
-        setSession((prev) => prev); // no-op, mantiene referencia
+        // Actualizar la sesión con el nuevo JWT — NO hacer no-op o los requests
+        // posteriores enviarán el token expirado y fallarán con "JWT expired"
+        console.log('[Auth] 🔄 Token refrescado — actualizando session state');
+        setSession(session);
         return;
       }
 
@@ -206,6 +205,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { data, error };
   };
 
+  /**
+   * Elimina SOLO las claves de autenticación de Supabase del localStorage.
+   * NO borra preferencias de UI como activeStudentId, caché de menús, etc.
+   * Supabase almacena sus tokens bajo claves que comienzan con "sb-".
+   */
+  const clearAuthData = () => {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+      // sessionStorage sí se puede limpiar completo (solo guarda estado de navegación temporal)
+      sessionStorage.clear();
+    } catch {
+      // silencioso — no bloquear el logout por errores de storage
+    }
+  };
+
   const signOut = async () => {
     if (!supabase) return;
     
@@ -217,15 +238,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setSession(null);
       
-      // 3. Limpiar localStorage y sessionStorage
-      localStorage.clear();
-      sessionStorage.clear();
+      // 3. Borrar SOLO los tokens de Supabase — preservar preferencias de UI
+      clearAuthData();
       
-      // 4. Redirigir a login (sin hash, ahora usamos BrowserRouter)
+      // 4. Redirigir a login
       window.location.href = `${window.location.origin}/auth`;
     } catch (error) {
       console.error('Error signing out:', error);
-      // Aún así, forzar redirección
       window.location.href = `${window.location.origin}/auth`;
     }
   };
