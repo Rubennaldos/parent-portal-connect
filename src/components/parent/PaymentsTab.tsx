@@ -11,6 +11,7 @@ import { useDebouncedSync } from '@/stores/billingSync';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { RechargeModal } from './RechargeModal';
+import { PosConsumptionModal } from './PosConsumptionModal';
 import { InvoiceClientModal, type InvoiceClientData, type InvoiceType } from '@/components/billing/InvoiceClientModal';
 
 interface PendingTransaction {
@@ -80,6 +81,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   // ── UI: acordeón por hijo + info hub ──
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [infoHubOpen, setInfoHubOpen] = useState(false);
+
+  // ── Modal de detalle de consumos POS ──
+  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; debt: number } | null>(null);
 
   // ── Selección individual de transacciones por estudiante ──
   // Mapa: student_id → Set de transaction IDs seleccionados
@@ -755,10 +759,26 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                         }
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-xs text-slate-800 truncate">{transaction.description}</p>
-                          <p className="text-[10px] text-slate-400">
-                            {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
-                            {transaction.ticket_code && ` · ${transaction.ticket_code}`}
-                          </p>
+                          {isKioskBalance ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPosDetailStudent({
+                                  id: debt.student_id,
+                                  name: debt.student_name,
+                                  debt: transaction.amount,
+                                });
+                              }}
+                              className="text-[10px] text-blue-500 hover:text-blue-700 font-semibold mt-0.5 flex items-center gap-1 active:scale-95 transition-all"
+                            >
+                              👁 Ver detalle de consumos
+                            </button>
+                          ) : (
+                            <p className="text-[10px] text-slate-400">
+                              {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
+                              {transaction.ticket_code && ` · ${transaction.ticket_code}`}
+                            </p>
+                          )}
                         </div>
                         <div className="text-right shrink-0">
                           <p className="text-sm font-black text-rose-500">S/ {(transaction.amount || 0).toFixed(2)}</p>
@@ -919,6 +939,17 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           />
         );
       })()}
+
+      {/* ── Modal de detalle de consumos POS ── */}
+      {posDetailStudent && (
+        <PosConsumptionModal
+          open={!!posDetailStudent}
+          onClose={() => setPosDetailStudent(null)}
+          studentId={posDetailStudent.id}
+          studentName={posDetailStudent.name}
+          kioskDebt={posDetailStudent.debt}
+        />
+      )}
 
       {/* ── Modal de Pago (combinado — todos los hijos juntos) ── */}
       {combinedMode && (() => {
