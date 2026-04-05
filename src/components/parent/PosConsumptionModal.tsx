@@ -65,14 +65,16 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      // Traer TODAS las compras del estudiante — sin filtrar por payment_method
-      // (el POS puede guardar payment_method como null, 'saldo', 'mixto', 'efectivo', etc.)
-      // Luego filtramos en memoria las que realmente descontaron del balance
+      // El indicador real de compra POS es metadata->>'source' = 'pos'
+      // El payment_method puede ser 'yape', 'plin', 'saldo', 'null', etc.
+      // dependiendo de cómo el cajero registró el pago en el POS.
+      // Excluir almuerzos (lunch_order_id presente).
       const { data, error: fetchErr } = await supabase
         .from('transactions')
         .select('id, created_at, amount, description, ticket_code, payment_method, metadata')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
+        .filter('metadata->>source', 'eq', 'pos')
         .in('payment_status', ['paid', 'pending'])
         .eq('is_deleted', false)
         .order('created_at', { ascending: false })
@@ -80,23 +82,12 @@ export function PosConsumptionModal({
 
       if (fetchErr) throw fetchErr;
 
-      // Filtrar en memoria: son POS si:
-      //   1. metadata.source === 'pos'
-      //   2. O metadata.paid_from_balance === true
-      //   3. O payment_method === 'saldo' / 'mixto'
-      const posTransactions = (data ?? []).filter((t: any) => {
-        const meta = t.metadata ?? {};
-        return (
-          meta.source === 'pos' ||
-          meta.paid_from_balance === true ||
-          t.payment_method === 'saldo' ||
-          t.payment_method === 'mixto'
-        );
-      });
+      // Excluir en memoria cualquier transacción que tenga lunch_order_id (son almuerzos, no kiosco)
+      const posOnly = (data ?? []).filter(
+        (t: any) => !t.metadata?.lunch_order_id
+      );
 
-      // Si el filtro POS no encuentra nada, mostrar TODAS las compras del estudiante
-      // para que el padre vea algo y el admin pueda investigar
-      setConsumos(posTransactions.length > 0 ? posTransactions : (data ?? []));
+      setConsumos(posOnly);
     } catch (e: any) {
       setError('No se pudieron cargar los consumos. Intenta de nuevo.');
     } finally {
