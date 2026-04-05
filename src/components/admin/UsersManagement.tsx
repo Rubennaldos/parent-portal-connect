@@ -138,8 +138,18 @@ export function UsersManagement() {
     toast({ title: '🔑 Conectando...', description: `Iniciando sesión como ${targetEmail}` });
 
     try {
+      // Obtener el access_token de la sesión actual y pasarlo explícitamente.
+      // supabase.functions.invoke no siempre adjunta el JWT automáticamente.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
+      if (!accessToken) {
+        throw new Error('No hay sesión activa. Recarga la página e intenta de nuevo.');
+      }
+
       const { data, error } = await supabase.functions.invoke('admin-impersonate', {
         body: { target_email: targetEmail },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
 
       if (error) {
