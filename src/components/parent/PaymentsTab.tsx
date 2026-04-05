@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info, Wallet } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info, Wallet, ShoppingBag } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
@@ -165,9 +165,35 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
         if (transError) throw transError;
 
-        if (transactions && transactions.length > 0) {
-          const totalDebt = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const mappedTransactions: PendingTransaction[] = (transactions || []).map(t => ({
+          id: t.id,
+          student_id: t.student_id,
+          student_name: student.full_name,
+          amount: Math.abs(t.amount),
+          description: t.description,
+          created_at: t.created_at,
+          ticket_code: t.ticket_code,
+          metadata: t.metadata,
+        }));
 
+        // Inyectar deuda de kiosco si el balance es negativo
+        // ID sintético (no UUID) — se filtra antes de enviar a la BD
+        const kioskDebt = student.balance < 0 ? Math.abs(student.balance) : 0;
+        if (kioskDebt > 0) {
+          mappedTransactions.unshift({
+            id: `__kiosk_balance__${student.id}`,
+            student_id: student.id,
+            student_name: student.full_name,
+            amount: kioskDebt,
+            description: 'Deuda de Cafetería / Kiosco',
+            created_at: new Date().toISOString(),
+            ticket_code: undefined,
+            metadata: { is_kiosk_balance_debt: true },
+          });
+        }
+
+        if (mappedTransactions.length > 0) {
+          const totalDebt = mappedTransactions.reduce((sum, t) => sum + t.amount, 0);
           debtsData.push({
             student_id: student.id,
             student_name: student.full_name,
@@ -176,16 +202,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             wallet_balance: student.wallet_balance || 0,
             school_id: student.school_id,
             total_debt: totalDebt,
-            pending_transactions: transactions.map(t => ({
-              id: t.id,
-              student_id: t.student_id,
-              student_name: student.full_name,
-              amount: Math.abs(t.amount),
-              description: t.description,
-              created_at: t.created_at,
-              ticket_code: t.ticket_code,
-              metadata: t.metadata,
-            })),
+            pending_transactions: mappedTransactions,
           });
         }
       }
@@ -397,7 +414,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     const transactionIds: string[] = [];
 
     selectedTxList.forEach(tx => {
-      transactionIds.push(tx.id);
+      // Los IDs sintéticos de kiosco no van a la BD (no son UUIDs reales)
+      if (!tx.id.startsWith('__kiosk_balance__')) {
+        transactionIds.push(tx.id);
+      }
       if (tx.metadata?.lunch_order_id) {
         lunchOrderIds.push(tx.metadata.lunch_order_id);
       }
@@ -698,7 +718,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
                 {/* Transacciones */}
                 {debt.pending_transactions.map((transaction) => {
-                  const isLunch = !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
+                  const isKioskBalance = !!transaction.metadata?.is_kiosk_balance_debt;
+                  const isLunch = !isKioskBalance && !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
                   const isSelected = selectedIds.has(transaction.id);
                   const vStatus = voucherStatuses.get(transaction.id);
                   const isCoveredByPending = coveredByPendingVoucher.includes(transaction.id);
@@ -726,7 +747,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                             <Send className="h-3.5 w-3.5 text-blue-400" />
                           </div>
                         )}
-                        {isLunch
+                        {isKioskBalance
+                          ? <ShoppingBag className="h-4 w-4 text-rose-400 shrink-0" />
+                          : isLunch
                           ? <UtensilsCrossed className="h-4 w-4 text-orange-400 shrink-0" />
                           : <Receipt className="h-4 w-4 text-slate-400 shrink-0" />
                         }

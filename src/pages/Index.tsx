@@ -915,9 +915,12 @@ const Index = () => {
                 {/* ── MÓDULO DE SALDO (BalanceHero) + BOTONES HERO ── */}
                 {(() => {
                   const active = students.find(s => s.id === activeStudentId) ?? students[0];
-                  // Totales globales de TODOS los hijos — misma fuente que el módulo de Pagos
+                  // Deuda de almuerzos — suma de todos los hijos, excluye "en revisión"
                   const totalLunchDebtAll = Object.values(studentDebts).reduce((acc, d) => acc + d.lunchDebt, 0);
-                  const totalKioskDebtAll = Object.values(studentDebts).reduce((acc, d) => acc + d.kioskDebt, 0);
+                  // Deuda de kiosco — suma de balances negativos de todos los hijos (dinero consumido sin saldo)
+                  const totalKioskBalanceDebt = students.reduce(
+                    (acc, s) => acc + (s.balance < 0 ? Math.abs(s.balance) : 0), 0
+                  );
                   return (
                     <>
                       <BalanceHero
@@ -926,7 +929,7 @@ const Index = () => {
                         photoUrl={active?.photo_url ?? null}
                         balance={active?.balance ?? 0}
                         lunchDebt={totalLunchDebtAll}
-                        kioskDebt={totalKioskDebtAll}
+                        kioskBalanceDebt={totalKioskBalanceDebt}
                         isLoading={loading}
                       />
                       {/* Botones gigantes estilo Yape — re-renderizan con activeStudentId */}
