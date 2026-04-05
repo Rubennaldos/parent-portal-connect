@@ -138,8 +138,7 @@ export function UsersManagement() {
     toast({ title: '🔑 Conectando...', description: `Iniciando sesión como ${targetEmail}` });
 
     try {
-      // Obtener el access_token de la sesión actual y pasarlo explícitamente.
-      // supabase.functions.invoke no siempre adjunta el JWT automáticamente.
+      // Obtener el access_token de la sesión actual
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
 
@@ -147,16 +146,26 @@ export function UsersManagement() {
         throw new Error('No hay sesión activa. Recarga la página e intenta de nuevo.');
       }
 
-      const { data, error } = await supabase.functions.invoke('admin-impersonate', {
-        body: { target_email: targetEmail },
-        headers: { Authorization: `Bearer ${accessToken}` },
+      // Usar fetch directo — más confiable que supabase.functions.invoke para
+      // controlar headers y ver errores reales de la función
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://duxqzozoahvrvqseinji.supabase.co').replace(/\/$/, '');
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/admin-impersonate`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'apikey':        supabaseAnonKey,
+        },
+        body: JSON.stringify({ target_email: targetEmail }),
       });
 
-      if (error) {
-        throw new Error(error.message || 'Error al invocar la función');
-      }
-      if (!data?.success) {
-        throw new Error(data?.error || 'Respuesta inesperada del servidor');
+      let data: any;
+      try { data = await response.json(); } catch { data = {}; }
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || `Error ${response.status}: ${response.statusText}`);
       }
 
       // Aplicar la sesión del usuario objetivo
