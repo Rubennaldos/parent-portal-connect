@@ -138,15 +138,31 @@ serve(async (req) => {
     return json({ success: false, error: "No puedes impersonar tu propia cuenta" }, 400);
   }
 
-  // ── 5. Buscar al usuario objetivo en Supabase Auth ────────────────────────
-  const { data: usersResult, error: listErr } = await adminClient.auth.admin.listUsers();
-  if (listErr) {
-    return json({ success: false, error: "Error al buscar usuarios en el sistema" }, 500);
-  }
+  // ── 5. Buscar al usuario objetivo por email ───────────────────────────────
+  // Usar paginación amplia para proyectos con muchos usuarios.
+  // listUsers tiene un máximo de 1000 por página; con más usuarios se recorre en páginas.
+  let targetAuthUser: any = null;
+  let page = 1;
+  const PER_PAGE = 1000;
 
-  const targetAuthUser = usersResult?.users?.find(
-    (u) => u.email?.toLowerCase() === targetEmail
-  );
+  while (!targetAuthUser) {
+    const { data: usersResult, error: listErr } = await adminClient.auth.admin.listUsers({
+      page,
+      perPage: PER_PAGE,
+    });
+
+    if (listErr) {
+      return json({ success: false, error: "Error al buscar usuarios en el sistema" }, 500);
+    }
+
+    const users = usersResult?.users ?? [];
+    if (users.length === 0) break; // no hay más páginas
+
+    targetAuthUser = users.find((u: any) => u.email?.toLowerCase() === targetEmail) ?? null;
+
+    if (users.length < PER_PAGE) break; // última página
+    page++;
+  }
 
   if (!targetAuthUser) {
     return json({
