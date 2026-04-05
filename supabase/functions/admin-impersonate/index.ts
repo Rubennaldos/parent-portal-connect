@@ -221,14 +221,15 @@ serve(async (req) => {
   }
 
   // ── 7. Generar enlace de acceso temporal con service_role ─────────────────
-  // generateLink tipo 'magiclink' crea un token OTP de un solo uso
-  // que el frontend puede canjear con verifyOtp() o usar el access_token directo
+  // Leer el redirect_url del body (el frontend envía window.location.origin)
+  const redirectUrl = (body as any).redirect_url as string | undefined;
+  const finalRedirect = redirectUrl || Deno.env.get("SITE_URL") || "https://parent-portal-connect.vercel.app";
+
   const { data: linkData, error: linkErr } = await adminClient.auth.admin.generateLink({
     type:  "magiclink",
     email: targetEmail,
     options: {
-      // El enlace expira en 1 hora
-      expiresIn: 3600,
+      redirectTo: finalRedirect,
     },
   });
 

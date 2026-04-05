@@ -158,7 +158,10 @@ export function UsersManagement() {
           'Authorization': `Bearer ${accessToken}`,
           'apikey':        supabaseAnonKey,
         },
-        body: JSON.stringify({ target_email: targetEmail }),
+        body: JSON.stringify({
+          target_email: targetEmail,
+          redirect_url: window.location.origin,  // para que el enlace vuelva a nuestra app
+        }),
       });
 
       let data: any;
@@ -168,25 +171,30 @@ export function UsersManagement() {
         throw new Error(data?.error || `Error ${response.status}: ${response.statusText}`);
       }
 
-      // Aplicar la sesión del usuario objetivo
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token:  data.access_token,
-        refresh_token: data.refresh_token,
-      });
-
-      if (sessionError) {
-        throw new Error(`Sesión generada pero no aplicable: ${sessionError.message}`);
+      const actionLink = data.action_link;
+      if (!actionLink) {
+        throw new Error('El servidor no devolvió un enlace de acceso válido. Intenta de nuevo.');
       }
 
-      toast({
-        title:       '✅ Sesión iniciada',
-        description: `Ahora estás como ${data.target?.name || targetEmail}`,
-        duration:    4000,
-      });
+      // Abrir en una NUEVA pestaña: el admin mantiene su sesión actual
+      // y la nueva pestaña se logueará automáticamente como el usuario objetivo
+      const newTab = window.open(actionLink, '_blank');
 
-      // Pequeña pausa para que el toast sea visible antes de redirigir
-      await new Promise(r => setTimeout(r, 1200));
-      window.location.href = '/';
+      if (!newTab) {
+        // El navegador bloqueó el popup — ofrecer copiar el enlace manualmente
+        toast({
+          variant:     'destructive',
+          title:       '⚠️ Popup bloqueado',
+          description: 'Tu navegador bloqueó la nueva pestaña. Permite popups para este sitio e intenta de nuevo.',
+          duration:    6000,
+        });
+      } else {
+        toast({
+          title:       '✅ Nueva pestaña abierta',
+          description: `Ahora puedes ver la app como ${data.target?.name || targetEmail}. Tu sesión de admin sigue activa aquí.`,
+          duration:    5000,
+        });
+      }
     } catch (err: any) {
       toast({
         variant:     'destructive',
