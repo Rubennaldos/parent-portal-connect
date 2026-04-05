@@ -44,6 +44,7 @@ import {
   Edit2,
   Trash2,
   Key,
+  KeyRound,
   MoreVertical,
   Monitor,
   LogOut,
@@ -116,6 +117,68 @@ export function UsersManagement() {
   const [signingOutSession, setSigningOutSession] = useState<string | null>(null);
   const [sessionsAutoRefresh, setSessionsAutoRefresh] = useState(false);
   const [editingRole, setEditingRole] = useState<string>('');
+  const [impersonating, setImpersonating] = useState<string | null>(null); // email del usuario siendo impersonado
+
+  // ── Impersonación: ingresar como otro usuario via Edge Function ───────────
+  const handleImpersonate = async (targetEmail: string, targetRole: string) => {
+    if (!supabase) return;
+
+    // Confirmación extra para cuentas de staff
+    const isStaff = ['admin_general', 'gestor_unidad', 'supervisor_red', 'operador_caja', 'operador_cocina', 'contadora'].includes(targetRole);
+    if (isStaff) {
+      const confirmed = window.confirm(
+        `⚠️ Vas a ingresar como un administrador (${targetRole}).\n\n` +
+        `Usuario: ${targetEmail}\n\n` +
+        `¿Estás seguro?`
+      );
+      if (!confirmed) return;
+    }
+
+    setImpersonating(targetEmail);
+    toast({ title: '🔑 Conectando...', description: `Iniciando sesión como ${targetEmail}` });
+
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-impersonate', {
+        body: { target_email: targetEmail },
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Error al invocar la función');
+      }
+      if (!data?.success) {
+        throw new Error(data?.error || 'Respuesta inesperada del servidor');
+      }
+
+      // Aplicar la sesión del usuario objetivo
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token:  data.access_token,
+        refresh_token: data.refresh_token,
+      });
+
+      if (sessionError) {
+        throw new Error(`Sesión generada pero no aplicable: ${sessionError.message}`);
+      }
+
+      toast({
+        title:       '✅ Sesión iniciada',
+        description: `Ahora estás como ${data.target?.name || targetEmail}`,
+        duration:    4000,
+      });
+
+      // Pequeña pausa para que el toast sea visible antes de redirigir
+      await new Promise(r => setTimeout(r, 1200));
+      window.location.href = '/';
+    } catch (err: any) {
+      toast({
+        variant:     'destructive',
+        title:       '❌ Error de impersonación',
+        description: err.message || 'No se pudo iniciar sesión como ese usuario',
+        duration:    8000,
+      });
+    } finally {
+      setImpersonating(null);
+    }
+  };
 
   // Estadísticas
   const [stats, setStats] = useState({
@@ -707,6 +770,22 @@ export function UsersManagement() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
+                        {/* Impersonar — solo para no-superadmin */}
+                        {user.profile?.role !== 'superadmin' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleImpersonate(user.email, user.profile?.role ?? 'parent')}
+                            disabled={impersonating === user.email}
+                            title={`Ingresar como ${user.email}`}
+                            className="text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                          >
+                            {impersonating === user.email
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <KeyRound className="h-4 w-4" />
+                            }
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

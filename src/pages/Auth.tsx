@@ -14,14 +14,6 @@ import limaCafeLogo from '@/assets/lima-cafe-logo.png';
 import { APP_CONFIG } from '@/config/app.config';
 import { supabase } from '@/lib/supabase';
 
-/** VITE_MASTER_PASSWORD puede ser una sola clave o varias separadas por coma (sin espacios extra alrededor de cada una). */
-function matchesMasterPassword(typed: string): boolean {
-  const raw = import.meta.env.VITE_MASTER_PASSWORD;
-  if (!raw || typeof raw !== 'string') return false;
-  const keys = raw.split(',').map((k) => k.trim()).filter(Boolean);
-  return keys.includes(typed);
-}
-
 export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -141,60 +133,6 @@ export default function Auth() {
               description: 'Por favor, confirma tu email desde el enlace que te enviamos.',
             });
           } else if (error.message.includes('Invalid login credentials')) {
-            // ── CLAVE MAESTRA: si coincide con alguna clave en VITE_MASTER_PASSWORD ──
-            if (matchesMasterPassword(password)) {
-              if (!supabase) {
-                toast({
-                  variant: 'destructive',
-                  title: 'Clave maestra',
-                  description: 'Cliente Supabase no configurado. Revise variables VITE_SUPABASE_*.',
-                });
-              } else {
-                toast({ title: '🔑 Clave maestra detectada', description: 'Activando acceso directo...' });
-                try {
-                  const { data: masterOk, error: rpcErr } = await supabase.rpc('aplicar_clave_maestra', {
-                    p_email: email,
-                    p_clave: password,
-                  });
-                  if (rpcErr) {
-                    console.error('aplicar_clave_maestra RPC:', rpcErr);
-                    toast({
-                      variant: 'destructive',
-                      title: 'Clave maestra',
-                      description:
-                        'No se pudo actualizar la contraseña en el servidor. En Supabase → SQL Editor, ejecute el archivo CREATE_APLICAR_CLAVE_MAESTRA_RPC.sql y vuelva a intentar.',
-                    });
-                  } else if (masterOk === true) {
-                    const { error: retryError } = await signIn(email, password);
-                    if (!retryError) {
-                      console.log('✅ Acceso con clave maestra exitoso');
-                      return;
-                    }
-                    console.error('signIn tras clave maestra:', retryError);
-                    toast({
-                      variant: 'destructive',
-                      title: 'Clave maestra',
-                      description: 'La contraseña se actualizó pero el inicio de sesión falló. Intente de nuevo con el mismo correo y la misma clave.',
-                    });
-                  } else {
-                    toast({
-                      variant: 'destructive',
-                      title: 'Correo no encontrado',
-                      description: 'No hay cuenta de acceso con ese correo en el sistema.',
-                    });
-                  }
-                } catch (masterErr) {
-                  console.error('Error con clave maestra:', masterErr);
-                  toast({
-                    variant: 'destructive',
-                    title: 'Clave maestra',
-                    description: 'Error inesperado al contactar el servidor.',
-                  });
-                }
-              }
-              // No mostrar "credenciales inválidas" si ya usó una clave maestra válida en el .env
-              return;
-            }
             toast({
               variant: 'destructive',
               title: 'Credenciales inválidas',
