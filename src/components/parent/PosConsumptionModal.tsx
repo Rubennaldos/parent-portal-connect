@@ -65,21 +65,38 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      // Traer las últimas 200 compras POS pagadas con saldo
-      // Son las que descontaron del balance y pueden explicar la deuda
+      // Traer TODAS las compras del estudiante — sin filtrar por payment_method
+      // (el POS puede guardar payment_method como null, 'saldo', 'mixto', 'efectivo', etc.)
+      // Luego filtramos en memoria las que realmente descontaron del balance
       const { data, error: fetchErr } = await supabase
         .from('transactions')
         .select('id, created_at, amount, description, ticket_code, payment_method, metadata')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
-        .in('payment_method', ['saldo', 'mixto'])
         .in('payment_status', ['paid', 'pending'])
         .eq('is_deleted', false)
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(300);
 
       if (fetchErr) throw fetchErr;
-      setConsumos(data ?? []);
+
+      // Filtrar en memoria: son POS si:
+      //   1. metadata.source === 'pos'
+      //   2. O metadata.paid_from_balance === true
+      //   3. O payment_method === 'saldo' / 'mixto'
+      const posTransactions = (data ?? []).filter((t: any) => {
+        const meta = t.metadata ?? {};
+        return (
+          meta.source === 'pos' ||
+          meta.paid_from_balance === true ||
+          t.payment_method === 'saldo' ||
+          t.payment_method === 'mixto'
+        );
+      });
+
+      // Si el filtro POS no encuentra nada, mostrar TODAS las compras del estudiante
+      // para que el padre vea algo y el admin pueda investigar
+      setConsumos(posTransactions.length > 0 ? posTransactions : (data ?? []));
     } catch (e: any) {
       setError('No se pudieron cargar los consumos. Intenta de nuevo.');
     } finally {
