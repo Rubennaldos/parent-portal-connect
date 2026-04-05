@@ -518,10 +518,8 @@ const Index = () => {
       debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
     }
 
-    // Solo consultar alumnos que puedan tener deuda (excluir free_account=false)
-    const billableIds = studentsData
-      .filter(s => s.free_account !== false)
-      .map(s => s.id);
+    // Consultar TODOS los alumnos — las deudas de almuerzo aplican sin importar free_account
+    const billableIds = studentsData.map(s => s.id);
 
     if (billableIds.length === 0) {
       setStudentDebts(debtsMap);
@@ -900,6 +898,9 @@ const Index = () => {
                 {/* ── MÓDULO DE SALDO (BalanceHero) + BOTONES HERO ── */}
                 {(() => {
                   const active = students.find(s => s.id === activeStudentId) ?? students[0];
+                  // Totales globales de TODOS los hijos — misma fuente que el módulo de Pagos
+                  const totalLunchDebtAll = Object.values(studentDebts).reduce((acc, d) => acc + d.lunchDebt, 0);
+                  const totalKioskDebtAll = Object.values(studentDebts).reduce((acc, d) => acc + d.kioskDebt, 0);
                   return (
                     <>
                       <BalanceHero
@@ -907,8 +908,8 @@ const Index = () => {
                         studentName={active?.full_name ?? ''}
                         photoUrl={active?.photo_url ?? null}
                         balance={active?.balance ?? 0}
-                        lunchDebt={studentDebts[active?.id]?.lunchDebt ?? 0}
-                        kioskDebt={studentDebts[active?.id]?.kioskDebt ?? 0}
+                        lunchDebt={totalLunchDebtAll}
+                        kioskDebt={totalKioskDebtAll}
                         isLoading={loading}
                       />
                       {/* Botones gigantes estilo Yape — re-renderizan con activeStudentId */}

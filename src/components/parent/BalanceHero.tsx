@@ -82,23 +82,23 @@ export function BalanceHero({
         )}
       </div>
 
-      {/* Estado de deudas */}
+      {/* Estado de deudas — muestra el total de TODOS los hijos para coincidir con módulo Pagos */}
       {isLoading ? (
-        <Skeleton className="h-8 w-40 mx-auto rounded-full" />
+        <Skeleton className="h-8 w-48 mx-auto rounded-full" />
       ) : totalDebt > 0 ? (
         <div className="flex justify-center gap-2 flex-wrap">
           {lunchDebt > 0 && (
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-100 rounded-full">
-              <UtensilsCrossed className="w-3.5 h-3.5 text-red-400" />
-              <span className="text-xs font-normal text-red-500">
-                Almuerzo: {showBalance ? `S/ ${lunchDebt.toFixed(2)}` : 'S/ ••'}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-full shadow-sm">
+              <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-xs font-semibold text-amber-600">
+                Almuerzos pendientes: {showBalance ? `S/ ${lunchDebt.toFixed(2)}` : 'S/ ••'}
               </span>
             </div>
           )}
           {kioskDebt > 0 && (
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-full">
-              <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-xs font-normal text-amber-500">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 border border-rose-200 rounded-full shadow-sm">
+              <ShoppingBag className="w-3.5 h-3.5 text-rose-500" />
+              <span className="text-xs font-semibold text-rose-600">
                 Kiosco: {showBalance ? `S/ ${kioskDebt.toFixed(2)}` : 'S/ ••'}
               </span>
             </div>
