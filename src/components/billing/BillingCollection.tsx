@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { calcBillingFlags } from '@/lib/billingUtils';
+import { getBillingStatusBadge } from '@/lib/billingUtils';
 import { InvoiceClientModal, type InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
@@ -70,6 +70,8 @@ import {
   ArrowLeft,
   GraduationCap,
   Briefcase,
+  Wallet,
+  Ban,
 } from 'lucide-react';
 // Tabs de Radix removido - se usa tabs nativo para evitar error removeChild en algunos navegadores
 import { format } from 'date-fns';
@@ -210,6 +212,18 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
+  const [showDebtorDetailModal, setShowDebtorDetailModal] = useState(false);
+  const [selectedDebtorForDetail, setSelectedDebtorForDetail] = useState<any>(null);
+  // Deuda histórica real (sin filtros de fecha) para comparar con el total filtrado
+  const [historicalDebt, setHistoricalDebt] = useState<{ total: number; count: number } | null>(null);
+  const [loadingHistoricalDebt, setLoadingHistoricalDebt] = useState(false);
+
+  // ── Modal: Anular Almuerzo y Acreditar Billetera ──
+  const [showCancelWalletModal, setShowCancelWalletModal] = useState(false);
+  const [cancellingWallet, setCancellingWallet] = useState(false);
+  // billing_status de la transacción seleccionada (se consulta al abrir el modal)
+  const [cancelLunchBillingStatus, setCancelLunchBillingStatus] = useState<string | null>(null);
+  const [loadingCancelCheck, setLoadingCancelCheck] = useState(false);
 
   // Búsqueda dedicada para pestaña Pagos
   const [paidSearchTerm, setPaidSearchTerm] = useState('');
@@ -245,7 +259,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [untilDate, setUntilDate] = useState<string>(''); // Nueva fecha l�mite
+  const [fromDate, setFromDate]   = useState<string>(''); // Fecha mínima de deuda
+  const [untilDate, setUntilDate] = useState<string>(''); // Fecha máxima de deuda
   
   // Selecci�n m�ltiple
   const [selectedDebtors, setSelectedDebtors] = useState<Set<string>>(new Set());
@@ -413,7 +428,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     } else {
       // esperando userSchoolId
     }
-  }, [selectedSchool, userSchoolId, canViewAllSchools, untilDate, debtorsPage, searchTerm]);
+  }, [selectedSchool, userSchoolId, canViewAllSchools, fromDate, untilDate, debtorsPage, searchTerm]);
 
   useEffect(() => {
     if (debtorsSyncTs > 0 && activeTab === 'cobrar') {
@@ -447,16 +462,20 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     if (!user) return;
     
     try {
+      // Fetch role alongside school_id to avoid using stale closure value of canViewAllSchools.
+      // canViewAllSchools in the closure always equals false on mount (async state not yet set).
       const { data, error } = await supabase
         .from('profiles')
-        .select('school_id')
+        .select('school_id, role')
         .eq('id', user.id)
         .single();
       
       if (error) throw error;
       setUserSchoolId(data?.school_id || null);
       
-      if (!canViewAllSchools && data?.school_id) {
+      // Roles that can see all schools must NOT have selectedSchool forced to their own school.
+      const isGlobalRole = ['admin_general', 'supervisor_red', 'superadmin'].includes(data?.role ?? '');
+      if (!isGlobalRole && data?.school_id) {
         setSelectedSchool(data.school_id);
         fetchPeriods(data.school_id);
       }
@@ -502,6 +521,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         : null;
 
       // ── RPC unificado: agrupa, deduplica, pagina y hace todos los joins en Postgres ──
+      const fromDateUTC = fromDate
+        ? (() => { const d = new Date(fromDate); d.setHours(0, 0, 0, 0); return d.toISOString(); })()
+        : null;
       const untilDateUTC = untilDate
         ? (() => { const d = new Date(untilDate); d.setHours(23, 59, 59, 999); return d.toISOString(); })()
         : null;
@@ -515,6 +537,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         'get_billing_consolidated_debtors',
         {
           p_school_id:        schoolIdFilter ?? null,
+          p_from_date:        fromDateUTC,
           p_until_date:       untilDateUTC,
           p_transaction_type: txTypeFilter,
           p_search:           searchTerm?.trim() || null,
@@ -690,6 +713,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
   const handleRegisterPayment = async (invoiceData?: InvoiceClientData) => {
     if (!currentDebtor || !user) return;
+    // E2 FIX: Guard contra dedo nervioso — si ya hay una llamada en vuelo, ignorar clics extra.
+    // setSaving(true) está más abajo pero esta verificación es inmediata (sin await).
+    if (saving) return;
 
     // Determinar método y monto según modo (simple vs dividido)
     let finalPaymentMethod: string;
@@ -784,219 +810,46 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     setSaving(true);
     
     try {
-      
-      // Separar transacciones reales de virtuales
-      const realTransactions = currentDebtor.transactions.filter((t: any) => 
-        !t.id?.toString().startsWith('lunch_')
-      );
-      const virtualTransactions = currentDebtor.transactions.filter((t: any) => 
-        t.id?.toString().startsWith('lunch_')
-      );
-      
-      // Construir metadata extra para pago dividido/mixto
-      const extraMetadata = paymentBreakdown.length > 1 ? { payment_breakdown: paymentBreakdown } : {};
+      // ── Separar IDs reales (UUID) de virtuales (lunch_XXXX) ──────────────
+      const UUID_RE_TX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-      // 1. ACTUALIZAR transacciones reales existentes (que ya están en la BD)
-      if (realTransactions.length > 0) {
-        const realIds = realTransactions.map((t: any) => t.id);
+      const realTxIds: string[] = (currentDebtor.transactions ?? [])
+        .map((t: any) => t.id as string)
+        .filter((id: string) => id && UUID_RE_TX.test(id));
 
-        // Recalcular billing flags con el tipo de documento real
-        const updatedBillingFlags = calcBillingFlags(paymentData.document_type || 'ticket', finalPaymentMethod);
+      const lunchOrderIds: string[] = (currentDebtor.transactions ?? [])
+        .filter((t: any) => t.id?.toString().startsWith('lunch_'))
+        .map((t: any) => t.metadata?.lunch_order_id as string)
+        .filter(Boolean);
 
-        const { error: updateError } = await supabase
-          .from('transactions')
-          .update({
-            payment_status: 'paid',
-            payment_method: finalPaymentMethod,
-            operation_number: finalOperationNumber || null,
-            created_by: user.id,
-            ...updatedBillingFlags,
-          })
-          .in('id', realIds);
-
-        if (updateError) {
-          console.error('❌ [BillingCollection] Error actualizando transacciones:', updateError);
-          throw updateError;
-        }
-        
-      }
-
-      // 2. CREAR transacciones reales NUEVAS para las virtuales (pedidos de almuerzo sin transacci�n)
-      if (virtualTransactions.length > 0) {
-        
-        // 🎫 Generar ticket_code para las transacciones de almuerzo
-        let ticketCodeBase = '';
-        try {
-          const { data: ticketNumber, error: ticketError } = await supabase
-            .rpc('get_next_ticket_number', { p_user_id: user.id });
-          
-          if (!ticketError && ticketNumber) {
-            ticketCodeBase = ticketNumber;
-          }
-        } catch (err) {
-        }
-        
-        // Fallback: generar c�digo de ticket basado en timestamp
-        if (!ticketCodeBase) {
-          const now = new Date();
-          const dateStr = now.toISOString().slice(0,10).replace(/-/g,'');
-          const timeStr = now.toTimeString().slice(0,8).replace(/:/g,'');
-          ticketCodeBase = `COB-${dateStr}-${timeStr}`;
-        }
-        
-        // 🔧 ANTI-DUPLICADO: Verificar que no existan transacciones reales para estos lunch_orders
-        const lunchOrderIds = virtualTransactions
-          .map((vt: any) => vt.metadata?.lunch_order_id)
-          .filter(Boolean);
-        
-        let existingLunchOrderIds = new Set<string>();
-        if (lunchOrderIds.length > 0) {
-          // Fix: en vez de limit(100000) que genera una URL inmensa, consultamos
-          // con .or() usando los IDs específicos que necesitamos verificar.
-          // Chunked en lotes de 40 para mantener la URL corta.
-          const ANTI_DUP_CHUNK = 40;
-          const allDupTx: any[] = [];
-          for (let i = 0; i < lunchOrderIds.length; i += ANTI_DUP_CHUNK) {
-            const batch = lunchOrderIds.slice(i, i + ANTI_DUP_CHUNK);
-            const orFilter = batch
-              .map((id: string) => `metadata->>lunch_order_id.eq.${id}`)
-              .join(',');
-            const { data: batchTx } = await supabase
-              .from('transactions')
-              .select('metadata')
-              .eq('type', 'purchase')
-              .or(orFilter);
-            if (batchTx) allDupTx.push(...batchTx);
-          }
-          allDupTx.forEach((tx: any) => {
-            if (tx.metadata?.lunch_order_id) {
-              existingLunchOrderIds.add(tx.metadata.lunch_order_id);
-            }
-          });
-        }
-        
-        let ticketCounter = 0;
-        const transactionsToCreate = virtualTransactions
-          .filter((vt: any) => {
-            // 🔧 FILTRAR: No crear si ya existe una transacci�n real para este lunch_order
-            if (vt.metadata?.lunch_order_id && existingLunchOrderIds.has(vt.metadata.lunch_order_id)) {
-              return false;
-            }
-            return true;
-          })
-          .map((vt: any) => {
-            ticketCounter++;
-            // 🎫 Generar ticket_code �nico: base + sufijo si hay m�ltiples
-            const ticketCode = virtualTransactions.length > 1 
-              ? `${ticketCodeBase}-${ticketCounter}` 
-              : ticketCodeBase;
-            
-            const transaction: any = {
-              type: 'purchase',
-              amount: vt.amount,
-              payment_status: 'paid',
-              payment_method: finalPaymentMethod,
-              operation_number: finalOperationNumber || null,
-              description: vt.description,
-              student_id: vt.student_id || null,
-              teacher_id: vt.teacher_id || null,
-              manual_client_name: vt.manual_client_name || null,
-              school_id: vt.school_id,
-              created_by: user.id,
-              ticket_code: ticketCode,
-              ...calcBillingFlags(paymentData.document_type || 'ticket', finalPaymentMethod),
-            };
-            
-            // Agregar metadata con lunch_order_id + payment breakdown si aplica
-            if (vt.metadata) {
-              transaction.metadata = { ...vt.metadata, ...extraMetadata };
-            } else if (Object.keys(extraMetadata).length > 0) {
-              transaction.metadata = extraMetadata;
-            }
-            
-            return transaction;
-          });
-
-        if (transactionsToCreate.length > 0) {
-          const { data: createdTransactions, error: createError } = await supabase
-            .from('transactions')
-            .insert(transactionsToCreate)
-            .select();
-
-          if (createError) {
-            console.error('❌ [BillingCollection] Error creando transacciones:', createError);
-            throw createError;
-          }
-
-        } else {
-        }
-
-        // 🔧 FIX CR�TICO: Marcar los lunch_orders como 'delivered' para evitar duplicados
-        // Esto previene que un pedido cobrado vuelva a aparecer como virtual
-        const lunchOrderIdsToDeliver = virtualTransactions
-          .map((vt: any) => vt.metadata?.lunch_order_id)
-          .filter(Boolean);
-        
-        if (lunchOrderIdsToDeliver.length > 0) {
-          const { error: deliverError } = await supabase
-            .from('lunch_orders')
-            .update({ 
-              status: 'delivered',
-              delivered_at: new Date().toISOString(),
-            })
-            .in('id', lunchOrderIdsToDeliver);
-          
-          if (deliverError) {
-            console.error('⚠️� [BillingCollection] Error marcando lunch_orders como delivered:', deliverError);
-            // No lanzar error - el pago ya se registr�, esto es secundario
-          } else {
-          }
-        }
-      }
-
-      // 🔧 FIX: Tambi�n marcar lunch_orders de transacciones REALES como 'delivered'
-      if (realTransactions.length > 0) {
-        const realLunchOrderIds = realTransactions
-          .map((t: any) => t.metadata?.lunch_order_id)
-          .filter(Boolean);
-        
-        if (realLunchOrderIds.length > 0) {
-          const { error: deliverRealError } = await supabase
-            .from('lunch_orders')
-            .update({ 
-              status: 'delivered',
-              delivered_at: new Date().toISOString(),
-            })
-            .in('id', realLunchOrderIds);
-          
-          if (deliverRealError) {
-            console.error('⚠️� [BillingCollection] Error marcando lunch_orders reales como delivered:', deliverRealError);
-          } else {
-          }
-        }
-      }
-
-      // 3. ACTUALIZAR balance del alumno: sumar el monto cobrado (aliviar la deuda)
-      // El balance es negativo cuando hay deuda; cobrar lo lleva de vuelta a 0
       const studentId = currentDebtor.client_type === 'student' ? currentDebtor.id : null;
-      if (studentId) {
-        const { error: balanceError } = await supabase.rpc('adjust_student_balance', {
-          p_student_id: studentId,
-          p_amount: finalPaidAmount, // positivo = aumenta balance (cubre la deuda)
-        });
-        if (balanceError) {
-          console.error('⚠️ [BillingCollection] Balance no actualizado tras cobro:', balanceError);
-          // No lanzar error — el pago ya quedó registrado, el balance se puede corregir con auditoría
+      const breakdownPayload = paymentBreakdown.length > 1 ? paymentBreakdown : null;
+
+      // ── LLAMADA ATÓMICA AL RPC ────────────────────────────────────────────
+      // Un solo round-trip a la BD. Si cualquier paso falla → ROLLBACK total.
+      const { data: rpcResult, error: rpcError } = await supabase.rpc(
+        'process_payment_collection',
+        {
+          p_real_tx_ids:       realTxIds,
+          p_lunch_order_ids:   lunchOrderIds,
+          p_payment_method:    finalPaymentMethod,
+          p_operation_number:  finalOperationNumber || null,
+          p_document_type:     paymentData.document_type || 'ticket',
+          p_school_id:         currentDebtor.school_id ?? null,
+          p_amount_paid:       finalPaidAmount,
+          p_student_id:        studentId,
+          p_payment_breakdown: breakdownPayload ? JSON.stringify(breakdownPayload) : null,
         }
+      );
+
+      if (rpcError) {
+        console.error('❌ [BillingCollection] process_payment_collection falló:', rpcError);
+        throw rpcError;
       }
 
       const methodLabel = useSplitPayment && paymentBreakdown.length > 1
         ? paymentBreakdown.map(p => `${p.method} S/${p.amount.toFixed(2)}`).join(' + ')
         : finalPaymentMethod;
-      toast({
-        title: '✅ Pago registrado',
-        description: `Se registró el pago de S/ ${finalPaidAmount.toFixed(2)} con ${methodLabel}`,
-      });
 
       // Rastro de auditoría: queda registrado quién cobró, cuánto, cómo y a quién
       registrarHuella(
@@ -1016,32 +869,39 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         currentDebtor.school_id ?? undefined
       );
 
-      // ── Emision inmediata de Boleta/Factura si se solicitó ────────────
+      // ── Emisión inmediata de Boleta/Factura ──────────────────────────────────
+      // El toast de "éxito" se lanza AL FINAL, no antes, para evitar
+      // que el admin vea "todo OK" cuando la parte fiscal todavía no completó.
       if (invoiceData && (paymentData.document_type === 'boleta' || paymentData.document_type === 'factura')) {
         try {
-          const UUID_RE_CB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          const allTxIds = (currentDebtor.transactions ?? [])
-            .filter((t: any) => (t.payment_status === 'pending' || t.payment_status === 'partial') && UUID_RE_CB.test(t.id))
-            .map((t: any) => t.id as string);
-
+          const allTxIds = realTxIds;
           const tipoNubefact = invoiceData.tipo === 'factura' ? 1 : 2;
-          const r2 = (n: number) => Math.round(n * 100) / 100;
-          const total = r2(finalPaidAmount);
 
-          // IGV dinámico desde billing_config de la sede
+          // ── IGV en aritmética de ENTEROS (céntimos) ──────────────────────────
+          // Garantía: baseCents + igvCents = totalCents SIEMPRE.
+          // Elimina fugas de ±0.01 que SUNAT rechaza por descuadre.
+          // floor() absorbe el residuo en base; igv recibe el resto exacto.
           let igvPct = 18;
-          if (currentDebtor.school_id) {
-            const { data: bcfg } = await supabase
-              .from('billing_config')
-              .select('igv_porcentaje')
-              .eq('school_id', currentDebtor.school_id)
-              .single();
-            if (bcfg?.igv_porcentaje != null && Number(bcfg.igv_porcentaje) > 0) {
-              igvPct = Number(bcfg.igv_porcentaje);
+          try {
+            if (currentDebtor.school_id) {
+              const { data: bcfg } = await supabase
+                .from('billing_config')
+                .select('igv_porcentaje')
+                .eq('school_id', currentDebtor.school_id)
+                .single();
+              if (bcfg?.igv_porcentaje != null && Number(bcfg.igv_porcentaje) > 0) {
+                igvPct = Number(bcfg.igv_porcentaje);
+              }
             }
-          }
-          const base = r2(total / (1 + igvPct / 100));
-          const igv  = r2(total - base);
+          } catch { /* usa 18% de fallback */ }
+
+          const total       = Math.round(finalPaidAmount * 100) / 100;
+          const totalCents  = Math.round(total * 100);
+          const divisorX100 = 100 + igvPct;
+          const baseCents   = Math.floor(totalCents * 100 / divisorX100);
+          const igvCents    = totalCents - baseCents;
+          const base        = baseCents / 100;
+          const igv         = igvCents  / 100;
 
           const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
             body: {
@@ -1055,19 +915,19 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
               },
               items: [{
                 unidad_de_medida: 'NIU',
-                codigo: 'COBRO',
-                descripcion: `Cobro deuda - ${currentDebtor.client_name || 'Cliente'}`,
-                cantidad: 1,
-                valor_unitario: base,
-                precio_unitario: total,
-                descuento: '',
-                subtotal: base,
-                tipo_de_igv: 1,
+                codigo:           'COBRO',
+                descripcion:      `Cobro deuda - ${currentDebtor.client_name || 'Cliente'}`,
+                cantidad:         1,
+                valor_unitario:   base,
+                precio_unitario:  total,
+                descuento:        '',
+                subtotal:         base,
+                tipo_de_igv:      1,
                 igv,
                 total,
                 anticipo_regularizacion: false,
               }],
-              monto_total: total,
+              monto_total:    total,
               payment_method: paymentData.payment_method,
             },
           });
@@ -1079,18 +939,68 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
                 .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
                 .in('id', allTxIds);
             }
-            toast({ title: 'Comprobante emitido', description: `${invoiceData.tipo === 'factura' ? 'Factura' : 'Boleta'} generada correctamente.` });
+            // Toast único de éxito total: cobro + boleta confirmados
+            toast({
+              title: '✅ Cobro y comprobante registrados',
+              description: `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ${invoiceData.tipo === 'factura' ? 'Factura' : 'Boleta'} emitida con IGV ${igvPct}%.`,
+            });
           } else {
-            console.warn('Emision fallida, queda en pending para batch nocturno:', emitErr || emitResult?.error);
+            // Nubefact rechazó o no respondió — marcar como 'failed' para reintento
+            const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
+            console.warn('Emisión fallida (Nubefact):', nubefactError);
+            if (allTxIds.length > 0) {
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'failed' })
+                .in('id', allTxIds)
+                .eq('billing_status', 'pending');
+            }
             toast({
               variant: 'destructive',
-              title: 'Pago registrado, comprobante pendiente',
-              description: 'El pago se registro correctamente pero la boleta/factura no se pudo emitir. Se emitira en el batch nocturno.',
+              title: '⚠️ Cobro guardado — Error SUNAT',
+              description:
+                `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ` +
+                `La boleta no se pudo emitir (Error: ${nubefactError}). ` +
+                `Marcada como "Error SUNAT" para reintento. ` +
+                `Ve a Facturación → Cierre Mensual → "Reintentar Fallidas".`,
+              duration: 12000,
             });
           }
-        } catch (emitError) {
-          console.warn('Error en emision inmediata (no critico):', emitError);
+        } catch (emitError: any) {
+          // La conexión a Nubefact falló con excepción (timeout, WiFi caído, etc.).
+          // El RPC ya hizo COMMIT → cobro registrado. Marcar como 'failed' para que
+          // el panel "Reintentar Fallidas" lo detecte. NO decir "proceso nocturno".
+          const emitErrMsg = emitError?.message || 'Error de conexión desconocido';
+          console.warn('[BillingCollection] Excepción en emisión Nubefact:', emitErrMsg);
+          if (realTxIds.length > 0) {
+            try {
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'failed' })
+                .in('id', realTxIds)
+                .eq('billing_status', 'pending');
+            } catch (dbErr) {
+              console.error('[BillingCollection] No se pudo marcar como failed:', dbErr);
+            }
+          }
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Cobro guardado en BD — Boleta fallida',
+            description:
+              `S/ ${finalPaidAmount.toFixed(2)} quedaron registrados correctamente. ` +
+              `La conexión con SUNAT falló (${emitErrMsg}). ` +
+              `La transacción fue marcada como "Error SUNAT". ` +
+              `Reinténtala desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
+              `NO vuelvas a cobrar.`,
+            duration: 15000,
+          });
         }
+      } else {
+        // Sin comprobante solicitado: toast de cobro simple
+        toast({
+          title: '✅ Cobro registrado',
+          description: `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}.`,
+        });
       }
 
       // Cerrar modal y limpiar
@@ -1121,85 +1031,152 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   };
 
   // ────────────────────────────────────────────────────────────────────────
-  // CXC: construir la lista de despacho según filtros del asistente
+  // CXC: construir la lista de despacho — fetch propio sin paginación
   // ────────────────────────────────────────────────────────────────────────
-  // CXC: construir lista de despacho aplicando los filtros del asistente.
+  // PROBLEMA ORIGINAL: buildCxcList usaba filteredDebtors (= página actual,
+  // máx 50 registros). Con 813 deudores, CXC solo veía 50 → montos incorrectos.
   //
-  // REGLA DE CONSISTENCIA: los montos se derivan siempre de los campos
-  // ya calculados en fetchDebtors (cafeteria_amount / lunch_amount /
-  // total_amount), que a su vez usan Math.abs(transaction.amount) sobre
-  // transacciones con payment_status IN ('pending','partial').
-  // Esto garantiza que el CXC muestre exactamente el mismo número que
-  // aparece en la tabla principal.
+  // SOLUCIÓN: buildCxcListAsync hace su propio call al RPC con p_limit=9999
+  // para obtener TODOS los deudores antes de aplicar los filtros CXC.
   //
-  // El recálculo desde cero (Math.abs sobre tx crudas) solo se hace
-  // cuando el usuario elige un Rango de Fechas, ya que en ese caso los
-  // campos pre-calculados del deudor no son válidos para el sub-período.
+  // El servidor ya aplica el filtro de sede y el tipo de transacción.
+  // Los filtros de rango de fechas, rubro y tipo de cliente se aplican aquí
+  // sobre la lista completa.
   // ────────────────────────────────────────────────────────────────────────
-  const buildCxcList = () => {
-    let list = [...filteredDebtors];
+  const buildCxcListAsync = async () => {
+    setCxcLoadingList(true);
+    setCxcHasGenerated(true);
 
-    // 1. Filtro de sede adicional del modal
-    if (cxcSchool !== 'all') {
-      list = list.filter(d => d.school_id === cxcSchool);
+    try {
+      // Calcular el school_id efectivo para la consulta CXC.
+      // Prioridad: filtro de sede del modal CXC > filtro de sede de la vista principal.
+      const mainSchoolFilter = !canViewAllSchools || selectedSchool !== 'all'
+        ? (selectedSchool !== 'all' ? selectedSchool : userSchoolId)
+        : null;
+      const cxcSchoolFilter = cxcSchool !== 'all' ? cxcSchool : mainSchoolFilter;
+
+      // supervisor_red solo ve cafetería (restricción de negocio).
+      const txTypeFilter = role === 'supervisor_red' ? 'cafeteria' : null;
+
+      // Para rango de fechas, limitar p_until_date al fin del rango.
+      // Para "Todo el histórico", sin límite (null).
+      const untilDateUTC = cxcPeriodType === 'range' && cxcDateTo
+        ? (() => { const d = new Date(cxcDateTo + 'T23:59:59'); return d.toISOString(); })()
+        : null;
+
+      const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+        'get_billing_consolidated_debtors',
+        {
+          p_school_id:        cxcSchoolFilter ?? null,
+          p_until_date:       untilDateUTC,
+          p_transaction_type: txTypeFilter,
+          p_search:           null,
+          p_offset:           0,
+          p_limit:            9999,
+        }
+      );
+
+      if (rpcErr) {
+        console.error('❌ CXC fetch error:', rpcErr);
+        setCxcList([]);
+        setCxcChecked(new Set());
+        return;
+      }
+
+      const rawDebtors: any[] = rpcResult?.debtors ?? [];
+
+      // Rehidratar al mismo formato Debtor[] que usa el resto del componente.
+      const allDebtors: Debtor[] = rawDebtors.map((d: any) => ({
+        id:                d.id,
+        client_name:       d.client_name,
+        client_type:       d.client_type,
+        student_grade:     d.student_grade   || '',
+        student_section:   d.student_section || '',
+        parent_id:         d.parent_id       || '',
+        parent_name:       d.parent_name     || '',
+        parent_phone:      d.parent_phone    || '',
+        parent_email:      '',
+        school_id:         d.school_id,
+        school_name:       d.school_name,
+        total_amount:      Number(d.total_amount      ?? 0),
+        lunch_amount:      Number(d.lunch_amount      ?? 0),
+        cafeteria_amount:  Number(d.cafeteria_amount  ?? 0),
+        transaction_count: Number(d.transaction_count ?? 0),
+        transactions:      (d.transactions ?? []).map((t: any) => ({
+          ...t,
+          students:         d.client_type === 'student'
+            ? { id: d.id, full_name: d.client_name, parent_id: d.parent_id, grade: d.student_grade, section: d.student_section }
+            : null,
+          teacher_profiles: d.client_type === 'teacher'
+            ? { id: d.id, full_name: d.client_name }
+            : null,
+          schools:          { id: d.school_id, name: d.school_name },
+        })),
+        has_lunch_debt:    Boolean(d.has_lunch_debt),
+        voucher_status:    (d.voucher_status ?? 'none') as 'none' | 'pending' | 'rejected',
+      }));
+
+      let list = [...allDebtors];
+
+      // 1. Filtro de rango de fechas (solo en modo 'range').
+      //    Recalculamos montos desde las transacciones individuales porque los
+      //    campos pre-calculados del deudor cubren el período completo.
+      if (cxcPeriodType === 'range' && (cxcDateFrom || cxcDateTo)) {
+        const from = cxcDateFrom ? new Date(cxcDateFrom + 'T00:00:00') : null;
+        const to   = cxcDateTo   ? new Date(cxcDateTo   + 'T23:59:59') : null;
+        list = list.map(d => {
+          const txFiltered = d.transactions.filter((t: any) => {
+            const txDate = new Date(t.metadata?.order_created_at || t.created_at);
+            if (from && txDate < from) return false;
+            if (to   && txDate > to)   return false;
+            return true;
+          });
+          if (txFiltered.length === 0) return null;
+          const lunch = txFiltered
+            .filter((t: any) => isLunchTx(t))
+            .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
+          const cafe = txFiltered
+            .filter((t: any) => !isLunchTx(t))
+            .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
+          return { ...d, transactions: txFiltered, total_amount: lunch + cafe, lunch_amount: lunch, cafeteria_amount: cafe };
+        }).filter(Boolean) as Debtor[];
+      }
+
+      // 2. Filtro de rubro — usar campos pre-calculados del servidor para
+      //    que el monto coincida exactamente con lo que ya calculó el RPC.
+      if (cxcRubro === 'cafeteria') {
+        list = list.map(d => {
+          if (d.cafeteria_amount <= 0) return null;
+          const txFiltered = d.transactions.filter((t: any) => !isLunchTx(t));
+          if (txFiltered.length === 0) return null;
+          return { ...d, transactions: txFiltered, total_amount: d.cafeteria_amount, lunch_amount: 0 };
+        }).filter(Boolean) as Debtor[];
+      } else if (cxcRubro === 'lunch') {
+        list = list.map(d => {
+          if (d.lunch_amount <= 0) return null;
+          const txFiltered = d.transactions.filter((t: any) => isLunchTx(t));
+          if (txFiltered.length === 0) return null;
+          return { ...d, transactions: txFiltered, total_amount: d.lunch_amount, cafeteria_amount: 0 };
+        }).filter(Boolean) as Debtor[];
+      }
+
+      // 3. Filtro de tipo de cliente.
+      if (cxcClientType === 'student') {
+        list = list.filter(d => d.client_type === 'student');
+      } else if (cxcClientType === 'teacher') {
+        list = list.filter(d => d.client_type === 'teacher');
+      }
+
+      setCxcList(list);
+      setCxcChecked(new Set());
+
+    } catch (err) {
+      console.error('❌ buildCxcListAsync error:', err);
+      setCxcList([]);
+      setCxcChecked(new Set());
+    } finally {
+      setCxcLoadingList(false);
     }
-
-    // 2. Filtro de rango de fechas
-    //    → único caso en que recalculamos: los campos pre-calculados no
-    //      sirven para un sub-período específico.
-    if (cxcPeriodType === 'range' && (cxcDateFrom || cxcDateTo)) {
-      const from = cxcDateFrom ? new Date(cxcDateFrom + 'T00:00:00') : null;
-      const to   = cxcDateTo   ? new Date(cxcDateTo   + 'T23:59:59') : null;
-      list = list.map(d => {
-        const txFiltered = d.transactions.filter((t: any) => {
-          const txDate = new Date(t.metadata?.order_created_at || t.created_at);
-          if (from && txDate < from) return false;
-          if (to   && txDate > to)   return false;
-          return true;
-        });
-        if (txFiltered.length === 0) return null;
-        // Recalcular desde cero para el sub-período (mismo método que fetchDebtors)
-        const lunch = txFiltered
-          .filter((t: any) => isLunchTx(t))
-          .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
-        const cafe = txFiltered
-          .filter((t: any) => !isLunchTx(t))
-          .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
-        return { ...d, transactions: txFiltered, total_amount: lunch + cafe, lunch_amount: lunch, cafeteria_amount: cafe };
-      }).filter(Boolean) as Debtor[];
-    }
-
-    // 3. Filtro de rubro
-    //    → usamos los campos pre-calculados del deudor (cafeteria_amount /
-    //      lunch_amount) para que el monto coincida EXACTAMENTE con la tabla.
-    if (cxcRubro === 'cafeteria') {
-      list = list.map(d => {
-        if (d.cafeteria_amount <= 0) return null;
-        const txFiltered = d.transactions.filter((t: any) => !isLunchTx(t));
-        if (txFiltered.length === 0) return null;
-        // Monto = cafeteria_amount pre-calculado (NO re-suma desde las tx)
-        return { ...d, transactions: txFiltered, total_amount: d.cafeteria_amount, lunch_amount: 0 };
-      }).filter(Boolean) as Debtor[];
-    } else if (cxcRubro === 'lunch') {
-      list = list.map(d => {
-        if (d.lunch_amount <= 0) return null;
-        const txFiltered = d.transactions.filter((t: any) => isLunchTx(t));
-        if (txFiltered.length === 0) return null;
-        return { ...d, transactions: txFiltered, total_amount: d.lunch_amount, cafeteria_amount: 0 };
-      }).filter(Boolean) as Debtor[];
-    }
-    // cxcRubro === 'all' → total_amount ya es correcto, no tocar
-
-    // 4. Filtro de tipo de usuario (alumno / profesor / todos)
-    if (cxcClientType === 'student') {
-      list = list.filter(d => d.client_type === 'student');
-    } else if (cxcClientType === 'teacher') {
-      list = list.filter(d => d.client_type === 'teacher');
-    }
-    // 'all' incluye students + teachers + manual
-
-    setCxcList(list);
-    setCxcChecked(new Set());
   };
 
   const openCxcModal = () => {
@@ -1843,7 +1820,7 @@ Agradecemos su pronta atención. 🙏`;
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
+          .select('id, full_name, email, role, school_id, schools(id, name)')
           .in('id', userIds);
         
         profiles?.forEach((p: any) => {
@@ -1852,7 +1829,7 @@ Agradecemos su pronta atención. 🙏`;
 
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
-          .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
+          .select('id, full_name, school_id_1, schools!school_id_1(id, name)')
           .in('id', userIds);
         
         teacherProfiles?.forEach((tp: any) => {
@@ -2291,6 +2268,82 @@ Si tienes dudas, comunícate con la administración de tu sede.
     }
   };
 
+  // ── ABRIR MODAL DE CONFIRMACIÓN DE ANULACIÓN ─────────────────────────────
+  // Consulta el billing_status real de la transacción antes de mostrar el modal
+  // (el RPC de reportes no lo devuelve, hay que buscarlo en la tabla).
+  const openCancelLunchModal = async () => {
+    if (!selectedTransaction?.id) return;
+    setLoadingCancelCheck(true);
+    try {
+      const { data } = await supabase
+        .from('transactions')
+        .select('billing_status')
+        .eq('id', selectedTransaction.id)
+        .single();
+      setCancelLunchBillingStatus(data?.billing_status ?? null);
+    } catch {
+      setCancelLunchBillingStatus(null);
+    } finally {
+      setLoadingCancelCheck(false);
+      setShowCancelWalletModal(true);
+    }
+  };
+
+  // ── EJECUTAR LA ANULACIÓN CON CRÉDITO DE BILLETERA ───────────────────────
+  const handleCancelWithWallet = async () => {
+    const lunchOrderId = selectedTransaction?.metadata?.lunch_order_id;
+    if (!lunchOrderId) return;
+
+    setCancellingWallet(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        'cancel_lunch_order_with_wallet_credit',
+        {
+          p_lunch_order_id: lunchOrderId,
+          p_reason: 'Anulación desde módulo de cobranzas',
+        }
+      );
+      if (error) throw error;
+
+      const result = data as any;
+      setShowCancelWalletModal(false);
+      setShowDetailsModal(false);
+
+      if (result.wallet_credit_amount > 0) {
+        toast({
+          title: '✅ Almuerzo anulado — Saldo acreditado',
+          description:
+            `S/ ${Number(result.wallet_credit_amount).toFixed(2)} acreditados en la ` +
+            `billetera del alumno. Nuevo saldo disponible: ` +
+            `S/ ${Number(result.new_wallet_balance).toFixed(2)}`,
+          duration: 7000,
+        });
+      } else {
+        toast({
+          title: '✅ Almuerzo anulado',
+          description: result.message || 'El pedido fue cancelado correctamente.',
+          duration: 5000,
+        });
+      }
+
+      // Refrescar listas
+      fetchDebtors();
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      toast({
+        variant: 'destructive',
+        title: 'Error al anular',
+        description: msg.includes('ALREADY_CANCELLED')
+          ? 'Este pedido ya estaba anulado.'
+          : msg.includes('NOT_FOUND')
+          ? 'No se encontró el pedido de almuerzo.'
+          : msg || 'No se pudo anular el pedido. Intenta de nuevo.',
+      });
+    } finally {
+      setCancellingWallet(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Alerta de API SUNAT no conectado — solo en pestañas relevantes */}
@@ -2347,49 +2400,69 @@ Si tienes dudas, comunícate con la administración de tu sede.
               </select>
             </div>
 
-            {/* NUEVO: Filtro de fecha l�mite */}
+
+            {/* Filtro: Rango de fechas Desde / Hasta */}
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
-                Cobrar hasta:
+                Período de cobranza:
               </Label>
-              <div className="flex gap-2">
-                <Input
-                  type="date"
-                  value={untilDate}
-                  onChange={(e) => { setUntilDate(e.target.value); setDebtorsPage(1); setPaidPage(1); }}
-                  className="flex-1"
-                  placeholder="Seleccionar fecha l�mite"
-                />
-                <Button
-                  variant="default"
-                  className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
-                  onClick={() => {
-                    const today = new Date();
-                    const localDate = today.toISOString().split('T')[0];
-                    setUntilDate(localDate);
-                    setDebtorsPage(1);
-                    setPaidPage(1);
-                  }}
-                >
-                  📅 Hasta Hoy
-                </Button>
+              <div className="flex gap-2 items-end">
+                <div className="flex-1 space-y-1">
+                  <span className="text-xs text-gray-500 font-medium">Desde</span>
+                  <Input
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) => { setFromDate(e.target.value); setDebtorsPage(1); setPaidPage(1); }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <span className="text-xs text-gray-500 font-medium">Hasta</span>
+                  <Input
+                    type="date"
+                    value={untilDate}
+                    onChange={(e) => { setUntilDate(e.target.value); setDebtorsPage(1); setPaidPage(1); }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap text-xs"
+                    onClick={() => {
+                      const today = new Date().toISOString().split('T')[0];
+                      setUntilDate(today);
+                      setDebtorsPage(1);
+                      setPaidPage(1);
+                    }}
+                  >
+                    Hasta Hoy
+                  </Button>
+                  {(fromDate || untilDate) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-gray-400 hover:text-red-500 px-2"
+                      onClick={() => { setFromDate(''); setUntilDate(''); setDebtorsPage(1); setPaidPage(1); }}
+                    >
+                      Limpiar
+                    </Button>
+                  )}
+                </div>
               </div>
-              {untilDate && (
-                <p className="text-xs text-gray-500">
-                  Filtrando hasta el {format(new Date(untilDate + 'T00:00:00'), 'dd/MM/yyyy', { locale: es })} 
-                  {(() => {
-                    const today = new Date();
-                    const filterDate = new Date(untilDate + 'T00:00:00');
-                    if (filterDate < today) {
-                      return ' ⚠️� (Puede que falten pedidos de fechas posteriores)';
-                    }
-                    return '';
-                  })()}
+              {(fromDate || untilDate) && (
+                <p className="text-xs text-blue-600 font-medium mt-1">
+                  {fromDate && untilDate
+                    ? `Deudas del ${format(new Date(fromDate + 'T00:00:00'), 'dd/MM/yyyy', { locale: es })} al ${format(new Date(untilDate + 'T00:00:00'), 'dd/MM/yyyy', { locale: es })}`
+                    : fromDate
+                    ? `Deudas desde el ${format(new Date(fromDate + 'T00:00:00'), 'dd/MM/yyyy', { locale: es })}`
+                    : `Deudas hasta el ${format(new Date(untilDate + 'T00:00:00'), 'dd/MM/yyyy', { locale: es })}`
+                  }
                 </p>
               )}
             </div>
-
             {/* Buscador */}
             <div className="space-y-2">
               <Label>Buscar</Label>
@@ -2604,10 +2677,10 @@ Si tienes dudas, comunícate con la administración de tu sede.
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {/* Info de paginación */}
-              {filteredDebtors.length > DEBTORS_PER_PAGE && (
+              {debtorsTotalCount > DEBTORS_PER_PAGE && (
                 <div className="flex items-center justify-between px-1 text-sm text-gray-500">
                   <span>
-                    Mostrando {((safeDebtorsPage - 1) * DEBTORS_PER_PAGE) + 1}–{Math.min(safeDebtorsPage * DEBTORS_PER_PAGE, filteredDebtors.length)} de {filteredDebtors.length} deudores
+                    Mostrando {((safeDebtorsPage - 1) * DEBTORS_PER_PAGE) + 1}–{Math.min(safeDebtorsPage * DEBTORS_PER_PAGE, debtorsTotalCount)} de {debtorsTotalCount} deudores
                   </span>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safeDebtorsPage <= 1} onClick={() => setDebtorsPage(1)}>
@@ -2742,117 +2815,34 @@ Si tienes dudas, comunícate con la administración de tu sede.
                               </div>
                             </div>
                             
-                            {/* Desglose de transacciones */}
-                            <details className="cursor-pointer">
-                              <summary className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-                                Ver detalles de {debtor.transaction_count} transacci�n(es) ▼
-                              </summary>
-                              <div className="mt-2">
-                                {/* Bot�n para seleccionar todas */}
-                                <button
-                                  onClick={() => {
-                                    const debtorKey = debtor.id;
-                                    const newMap = new Map(selectedTransactionsByDebtor);
-                                    const currentSelection = newMap.get(debtorKey);
-                                    const allSelected = currentSelection && currentSelection.size === debtor.transactions.length;
-                                    
-                                    if (allSelected) {
-                                      // Deseleccionar todas
-                                      newMap.set(debtorKey, new Set());
-                                    } else {
-                                      // Seleccionar todas
-                                      const allTxIds = new Set(debtor.transactions.map((t: any) => t.id));
-                                      newMap.set(debtorKey, allTxIds);
-                                    }
-                                    
-                                    setSelectedTransactionsByDebtor(newMap);
-                                  }}
-                                  className="text-xs text-blue-600 hover:text-blue-700 underline mb-2"
-                                >
-                                  {(() => {
-                                    const debtorKey = debtor.id;
-                                    const currentSelection = selectedTransactionsByDebtor.get(debtorKey);
-                                    const allSelected = currentSelection && currentSelection.size === debtor.transactions.length;
-                                    return allSelected ? 'Deseleccionar todas' : 'Seleccionar todas';
-                                  })()}
-                                </button>
-                                
-                                <div className="space-y-1 max-h-40 overflow-y-auto">
-                                  {debtor.transactions.map((t: any, idx: number) => {
-                                    const debtorKey = debtor.id;
-                                    const isSelected = selectedTransactionsByDebtor.get(debtorKey)?.has(t.id) || false;
-                                    
-                                    return (
-                                      <div key={t.id} className="text-xs bg-white p-2 rounded border flex items-start gap-2 hover:bg-blue-50 transition-colors">
-                                        <input
-                                          type="checkbox"
-                                          checked={isSelected}
-                                          onChange={(e) => {
-                                            e.stopPropagation();
-                                            const newMap = new Map(selectedTransactionsByDebtor);
-                                            if (!newMap.has(debtorKey)) {
-                                              newMap.set(debtorKey, new Set());
-                                            }
-                                            const txSet = newMap.get(debtorKey)!;
-                                            
-                                            if (e.target.checked) {
-                                              txSet.add(t.id);
-                                            } else {
-                                              txSet.delete(t.id);
-                                            }
-                                            
-                                            setSelectedTransactionsByDebtor(newMap);
-                                          }}
-                                          className="mt-0.5 cursor-pointer"
-                                        />
-                                        <div 
-                                          className="flex-1 cursor-pointer"
-                                          onClick={() => {
-                                            const txForModal = {
-                                              ...t,
-                                              client_name: debtor.client_name,
-                                              client_type: debtor.client_type,
-                                              parent_name: debtor.parent_name,
-                                              parent_phone: debtor.parent_phone,
-                                              school_name: debtor.school_name
-                                            };
-                                            setSelectedTransaction(txForModal);
-                                            setShowDetailsModal(true);
-                                          }}
-                                        >
-                                          <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                              <span className="font-semibold text-blue-600 hover:text-blue-700">#{idx + 1}</span>
-                                              {/* Mostrar fecha del pedido si viene del metadata, si no de la descripci�n */}
-                                              {t.metadata?.order_date ? (
-                                                <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                                  📅 {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
-                                                </span>
-                                              ) : null}
-                                              {t.metadata?.menu_name && (
-                                                <span className="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded text-[10px] font-medium">
-                                                  {t.metadata.menu_name}
-                                                </span>
-                                              )}
-                                            </div>
-                                            <span className="text-red-600 font-bold">S/ {Math.abs(t.amount).toFixed(2)}</span>
-                                          </div>
-                                          <div className="text-gray-600 mt-0.5 text-[10px]">
-                                            {t.description} • {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}
-                                            {t.ticket_code && (
-                                              <span className="ml-1 text-indigo-700 font-bold">• 🎫 {t.ticket_code}</span>
-                                            )}
-                                            {t.schools?.name && (
-                                              <span className="ml-1 text-slate-500">• 🏫 Comprado en: <span className="font-semibold text-slate-700">{t.schools.name}</span></span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            </details>
+                            {/* Botón de detalle — reemplaza el acordeón inline */}
+                            <button
+                              className="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 mt-1"
+                              onClick={async () => {
+                                setSelectedDebtorForDetail(debtor);
+                                setHistoricalDebt(null);
+                                setShowDebtorDetailModal(true);
+                                // Cargar deuda histórica real (sin filtros de fecha ni período)
+                                if (debtor.student_id) {
+                                  setLoadingHistoricalDebt(true);
+                                  try {
+                                    const { data } = await supabase
+                                      .from('transactions')
+                                      .select('id, amount')
+                                      .eq('student_id', debtor.student_id)
+                                      .eq('type', 'purchase')
+                                      .in('payment_status', ['pending', 'partial'])
+                                      .eq('is_deleted', false);
+                                    const total = (data ?? []).reduce((s, t) => s + Math.abs(t.amount), 0);
+                                    setHistoricalDebt({ total, count: (data ?? []).length });
+                                  } catch { /* silencioso */ }
+                                  finally { setLoadingHistoricalDebt(false); }
+                                }
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                              Ver Detalle ({debtor.transaction_count} consumo{debtor.transaction_count !== 1 ? 's' : ''})
+                            </button>
                           </div>
 
                           {/* Botones de acción */}
@@ -2933,7 +2923,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
               })}
 
               {/* Paginación inferior */}
-              {filteredDebtors.length > DEBTORS_PER_PAGE && (
+              {debtorsTotalCount > DEBTORS_PER_PAGE && (
                 <div className="flex items-center justify-between px-1 pt-4 text-sm text-gray-500">
                   <span>
                     Página {safeDebtorsPage} de {debtorsTotalPages}
@@ -3166,6 +3156,8 @@ Si tienes dudas, comunícate con la administración de tu sede.
           ══════════════════════════════════════════════════════════════════ */}
       <Dialog open={showCxcModal} onOpenChange={(open) => { if (!open) setShowCxcModal(false); }}>
         <DialogContent className="max-w-2xl max-h-[92vh] overflow-hidden flex flex-col p-0">
+          <DialogTitle className="sr-only">CXC — Cuentas por Cobrar</DialogTitle>
+          <DialogDescription className="sr-only">Asistente de cobranza masiva paso a paso</DialogDescription>
 
           {/* Header fijo */}
           <div className="flex items-center justify-between px-6 py-4 border-b bg-indigo-600 text-white rounded-t-lg shrink-0">
@@ -3365,7 +3357,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                 </Button>
                 <Button
                   className="bg-indigo-600 hover:bg-indigo-700 gap-2"
-                  onClick={() => { setCxcLoadingList(true); setCxcHasGenerated(true); setTimeout(() => { buildCxcList(); setCxcLoadingList(false); }, 0); }}
+                  onClick={() => buildCxcListAsync()}
                   disabled={cxcLoadingList}
                 >
                   {cxcLoadingList ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
@@ -3995,9 +3987,199 @@ Si tienes dudas, comunícate con la administración de tu sede.
         }}
       />
 
+      {/* ── Modal: Lista de consumos del deudor ─────────────────────────── */}
+      <Dialog open={showDebtorDetailModal} onOpenChange={(open) => { setShowDebtorDetailModal(open); if (!open) setSelectedDebtorForDetail(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <ClipboardList className="h-5 w-5 text-red-600" />
+              Consumos pendientes
+            </DialogTitle>
+            {selectedDebtorForDetail && (
+              <DialogDescription asChild>
+                <div className="space-y-1 pt-1">
+                  <p className="font-semibold text-gray-900 text-base">{selectedDebtorForDetail.client_name}</p>
+                  <div className="flex items-center gap-3 flex-wrap text-sm text-gray-500">
+                    <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{selectedDebtorForDetail.school_name}</span>
+                    <span className="text-red-600 font-bold text-base">Total: S/ {selectedDebtorForDetail.total_amount?.toFixed(2)}</span>
+                  </div>
+                </div>
+              </DialogDescription>
+            )}
+          </DialogHeader>
+
+          {selectedDebtorForDetail && (
+            <div className="space-y-3 mt-2">
+
+              {/* ── Banner: deuda histórica vs deuda filtrada ─────────────── */}
+              {loadingHistoricalDebt && (
+                <div className="text-xs text-gray-400 italic px-1">Calculando deuda histórica…</div>
+              )}
+              {!loadingHistoricalDebt && historicalDebt && (
+                (() => {
+                  const filteredTotal = selectedDebtorForDetail.total_amount ?? 0;
+                  const histTotal = historicalDebt.total;
+                  const diff = histTotal - filteredTotal;
+                  if (diff > 0.01) {
+                    return (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-1">
+                        <p className="text-xs font-bold text-amber-800 flex items-center gap-1">
+                          ⚠️ Hay deuda histórica adicional fuera del filtro de fechas
+                        </p>
+                        <div className="flex gap-4 text-xs text-amber-700">
+                          <span>En período: <strong>S/ {filteredTotal.toFixed(2)}</strong></span>
+                          <span>Total histórico: <strong className="text-red-700">S/ {histTotal.toFixed(2)}</strong></span>
+                          <span className="text-gray-500">({historicalDebt.count} consumos)</span>
+                        </div>
+                        <p className="text-xs text-amber-600">
+                          El portal del padre muestra S/ {histTotal.toFixed(2)} porque suma todas las deudas sin filtro de fechas.
+                        </p>
+                        <button
+                          className="mt-1 text-xs font-semibold text-blue-700 hover:text-blue-900 underline flex items-center gap-1"
+                          onClick={() => {
+                            setFromDate('');
+                            setUntilDate('');
+                            setShowDebtorDetailModal(false);
+                            toast({ title: 'Filtro de fechas eliminado', description: 'Ahora ves toda la deuda histórica en la lista.' });
+                          }}
+                        >
+                          Ver historial completo (quitar filtro de fechas)
+                        </button>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()
+              )}
+
+              {/* Botón seleccionar todas */}
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs text-gray-500">{selectedDebtorForDetail.transactions?.length} transacción(es)</span>
+                <button
+                  onClick={() => {
+                    const debtorKey = selectedDebtorForDetail.id;
+                    const newMap = new Map(selectedTransactionsByDebtor);
+                    const currentSelection = newMap.get(debtorKey);
+                    const allSelected = currentSelection && currentSelection.size === selectedDebtorForDetail.transactions.length;
+                    if (allSelected) {
+                      newMap.set(debtorKey, new Set());
+                    } else {
+                      newMap.set(debtorKey, new Set(selectedDebtorForDetail.transactions.map((t: any) => t.id)));
+                    }
+                    setSelectedTransactionsByDebtor(newMap);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 underline font-medium"
+                >
+                  {(() => {
+                    const sel = selectedTransactionsByDebtor.get(selectedDebtorForDetail.id);
+                    return sel && sel.size === selectedDebtorForDetail.transactions?.length
+                      ? 'Deseleccionar todas'
+                      : 'Seleccionar todas';
+                  })()}
+                </button>
+              </div>
+
+              {/* Lista de transacciones */}
+              <div className="space-y-2">
+                {selectedDebtorForDetail.transactions?.map((t: any, idx: number) => {
+                  const debtorKey = selectedDebtorForDetail.id;
+                  const isSelected = selectedTransactionsByDebtor.get(debtorKey)?.has(t.id) || false;
+                  return (
+                    <div
+                      key={t.id}
+                      className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-start gap-3 hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          const newMap = new Map(selectedTransactionsByDebtor);
+                          if (!newMap.has(debtorKey)) newMap.set(debtorKey, new Set());
+                          const txSet = newMap.get(debtorKey)!;
+                          if (e.target.checked) txSet.add(t.id);
+                          else txSet.delete(t.id);
+                          setSelectedTransactionsByDebtor(newMap);
+                        }}
+                        className="mt-1 cursor-pointer accent-blue-600"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-gray-400">#{idx + 1}</span>
+                            {t.metadata?.order_date && (
+                              <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-bold">
+                                📅 {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
+                              </span>
+                            )}
+                            {t.metadata?.menu_name && (
+                              <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs font-medium">
+                                {t.metadata.menu_name}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-red-600 font-bold text-sm shrink-0">S/ {Math.abs(t.amount).toFixed(2)}</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1 truncate">
+                          {t.description}
+                          {t.created_at && (
+                            <span className="text-gray-400"> · {format(new Date(t.created_at), 'dd/MM HH:mm', { locale: es })}</span>
+                          )}
+                          {t.ticket_code && (
+                            <span className="ml-1 text-indigo-700 font-semibold"> · 🎫 {t.ticket_code}</span>
+                          )}
+                        </p>
+                      </div>
+                      {/* Botón ver detalle individual */}
+                      <button
+                        title="Ver detalle completo"
+                        className="shrink-0 p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-blue-500 hover:text-blue-700"
+                        onClick={() => {
+                          setSelectedTransaction({
+                            ...t,
+                            client_name: selectedDebtorForDetail.client_name,
+                            client_type: selectedDebtorForDetail.client_type,
+                            parent_name: selectedDebtorForDetail.parent_name,
+                            parent_phone: selectedDebtorForDetail.parent_phone,
+                            school_name: selectedDebtorForDetail.school_name,
+                          });
+                          setShowDetailsModal(true);
+                        }}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer: cobrar seleccionadas */}
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <Button variant="outline" size="sm" onClick={() => setShowDebtorDetailModal(false)}>
+                  Cerrar
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => {
+                    setShowDebtorDetailModal(false);
+                    handleOpenPayment(selectedDebtorForDetail, 'all');
+                  }}
+                >
+                  <DollarSign className="h-4 w-4 mr-1" />
+                  Cobrar S/ {selectedDebtorForDetail.total_amount?.toFixed(2)}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Modal de Detalles Completos */}
       <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogTitle className="sr-only">Detalle de transacción</DialogTitle>
+          <DialogDescription className="sr-only">Información completa de la transacción seleccionada</DialogDescription>
           {selectedTransaction && (() => {
             const isPending = selectedTransaction.payment_status === 'pending' || selectedTransaction.payment_status === 'partial';
             const isPaid = selectedTransaction.payment_status === 'paid';
@@ -4263,6 +4445,25 @@ Si tienes dudas, comunícate con la administración de tu sede.
                           <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{selectedTransaction.ticket_code}</span>
                         </div>
                       )}
+                      {/* Badge de estado SUNAT — visible siempre para alertar de 'failed' */}
+                      {selectedTransaction.billing_status && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Estado SUNAT:</span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getBillingStatusBadge(selectedTransaction.billing_status).className}`}>
+                            {getBillingStatusBadge(selectedTransaction.billing_status).label}
+                          </span>
+                        </div>
+                      )}
+                      {/* Alerta especial si la boleta falló */}
+                      {selectedTransaction.billing_status === 'failed' && (
+                        <div className="mt-2 bg-red-50 border border-red-300 rounded-lg px-3 py-2">
+                          <p className="text-xs font-semibold text-red-800">⚠ Boleta no emitida — acción requerida</p>
+                          <p className="text-xs text-red-700 mt-0.5">
+                            Nubefact no pudo emitir el comprobante para este pago.
+                            Ve a <strong>Facturación → Cierre Mensual → "Reintentar Fallidas"</strong> para resolverlo.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -4388,7 +4589,30 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     <TransactionAuditTimeline transactionId={selectedTransaction.id} />
                   )}
 
-                  {/* Bot�n PDF */}
+                  {/* ── ANULAR ALMUERZO Y ACREDITAR BILLETERA ───────────────
+                      Visible cuando:
+                      - La transacción ya fue pagada (isPaid)
+                      - Es un pedido de almuerzo (tiene lunch_order_id en metadata)
+                      - El alumno existe (no es docente)
+                      El RPC determinará internamente si aplica crédito de billetera
+                      (solo si billing_status='sent'; si no, simplemente cancela). */}
+                  {isPaid && selectedTransaction.metadata?.lunch_order_id && selectedTransaction.student_id && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-orange-300 text-orange-700 hover:bg-orange-50 h-11"
+                      disabled={loadingCancelCheck || cancellingWallet}
+                      onClick={openCancelLunchModal}
+                    >
+                      {loadingCancelCheck ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Ban className="h-4 w-4 mr-2" />
+                      )}
+                      Anular Almuerzo y Acreditar Saldo
+                    </Button>
+                  )}
+
+                  {/* Botón PDF */}
                   {isPaid ? (
                     <Button
                       onClick={() => {
@@ -4427,6 +4651,121 @@ Si tienes dudas, comunícate con la administración de tu sede.
           })()}
         </DialogContent>
       </Dialog>
+      {/* ══════════════════════════════════════════════════════════
+          MODAL: Confirmar Anulación de Almuerzo + Billetera
+          Se abre desde el botón "Anular Almuerzo y Acreditar Saldo"
+          en el modal de detalles de una transacción pagada.
+          ══════════════════════════════════════════════════════════ */}
+      <Dialog open={showCancelWalletModal} onOpenChange={setShowCancelWalletModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-700">
+              <Ban className="h-5 w-5" />
+              Anular Almuerzo
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Confirmación de anulación de almuerzo
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedTransaction && (
+            <div className="space-y-4">
+              {/* Descripción del almuerzo que se va a anular */}
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-orange-800">
+                  {selectedTransaction.description || 'Almuerzo'}
+                </p>
+                <p className="text-xl font-bold text-orange-700 mt-1">
+                  S/ {Math.abs(selectedTransaction.amount).toFixed(2)}
+                </p>
+              </div>
+
+              {/* Explicación según el billing_status */}
+              {cancelLunchBillingStatus === 'sent' ? (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
+                  <p className="text-sm font-bold text-green-800 flex items-center gap-1.5">
+                    <Wallet className="h-4 w-4" />
+                    Este pedido ya fue boleteado a SUNAT
+                  </p>
+                  <p className="text-sm text-green-700">
+                    Al anularlo, se acreditarán{' '}
+                    <span className="font-bold">
+                      S/ {Math.abs(selectedTransaction.amount).toFixed(2)}
+                    </span>{' '}
+                    como <strong>saldo a favor</strong> en la billetera interna del alumno.
+                  </p>
+                  <p className="text-xs text-green-600 mt-1">
+                    El padre podrá usar ese saldo en su próximo pago.
+                    La boleta original en SUNAT <strong>no se modifica</strong>.
+                  </p>
+                </div>
+              ) : cancelLunchBillingStatus === 'excluded' || cancelLunchBillingStatus === 'pending' ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+                  <p className="text-sm font-bold text-amber-800">
+                    ⚠️ Este almuerzo aún no fue enviado a SUNAT
+                  </p>
+                  <p className="text-sm text-amber-700">
+                    Se cancelará el pedido, pero <strong>no se acreditará saldo</strong>{' '}
+                    en la billetera porque no existe boleta emitida. Si el padre realizó
+                    un pago, gestiona el reembolso manualmente.
+                  </p>
+                </div>
+              ) : cancelLunchBillingStatus === 'failed' ? (
+                <div className="bg-red-50 border border-red-300 rounded-lg p-3 space-y-1">
+                  <p className="text-sm font-bold text-red-800">
+                    ✗ Este almuerzo tiene una boleta con error SUNAT
+                  </p>
+                  <p className="text-sm text-red-700">
+                    El pago fue cobrado pero Nubefact no emitió la boleta (quedó en "Error SUNAT").
+                    Al anular, <strong>no se acreditará saldo</strong> en la billetera porque la boleta no existe formalmente.
+                    Resuelve primero el error en Cierre Mensual.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <p className="text-sm text-gray-700">
+                    Se cancelará el pedido. El sistema determinará automáticamente
+                    si corresponde acreditar saldo a la billetera del alumno.
+                  </p>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-500">
+                Esta acción no se puede deshacer directamente.
+                Si fue un error, contacta al administrador del sistema.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 mt-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowCancelWalletModal(false)}
+              disabled={cancellingWallet}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-orange-600 hover:bg-orange-700 text-white"
+              onClick={handleCancelWithWallet}
+              disabled={cancellingWallet}
+            >
+              {cancellingWallet ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Anulando...
+                </>
+              ) : (
+                <>
+                  <Ban className="h-4 w-4 mr-2" />
+                  Confirmar Anulación
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 };
