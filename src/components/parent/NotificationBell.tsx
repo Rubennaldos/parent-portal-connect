@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Bell, X, Info, AlertTriangle, Clock, CreditCard, CheckCheck, Loader2 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
@@ -25,8 +25,8 @@ interface Notification {
 const TYPE_CONFIG: Record<NotifType, { label: string; Icon: any; dot: string; bg: string; border: string; text: string }> = {
   info:     { label: 'Info',         Icon: Info,          dot: 'bg-blue-500',    bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700'    },
   reminder: { label: 'Recordatorio', Icon: Clock,         dot: 'bg-amber-500',   bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700'   },
-  alert:    { label: 'Alerta',        Icon: AlertTriangle, dot: 'bg-red-500',     bg: 'bg-red-50',     border: 'border-red-200',     text: 'text-red-700'     },
-  payment:  { label: 'Cobranza',      Icon: CreditCard,    dot: 'bg-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
+  alert:    { label: 'Alerta',       Icon: AlertTriangle, dot: 'bg-red-500',     bg: 'bg-red-50',     border: 'border-red-200',     text: 'text-red-700'     },
+  payment:  { label: 'Cobranza',     Icon: CreditCard,    dot: 'bg-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' },
 };
 
 function timeAgo(isoDate: string): string {
@@ -39,16 +39,18 @@ function timeAgo(isoDate: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Hook reutilizable: conteo de no leídos
+// Hook: conteo de no leídos con Supabase Realtime
 // ═══════════════════════════════════════════════════════════════
 
 export function useUnreadNotifCount() {
   const [count, setCount] = useState(0);
+  const userIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) { setCount(0); return; }
+      userIdRef.current = user.id;
       const { count: c } = await supabase
         .from('in_app_notifications')
         .select('id', { count: 'exact', head: true })
@@ -60,31 +62,61 @@ export function useUnreadNotifCount() {
     }
   }, []);
 
+  /** Optimistic: pone el contador a 0 instantáneamente */
+  const clearCount = useCallback(() => setCount(0), []);
+
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 60_000);
-    return () => clearInterval(interval);
+
+    // ── Supabase Realtime: escuchar inserts en la tabla ──────────────
+    const channel = supabase
+      .channel('notif-bell-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'in_app_notifications' },
+        (_payload) => {
+          // Refrescar conteo cuando llega cualquier mensaje nuevo;
+          // la query ya filtra por user_id del padre o global.
+          refresh();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'in_app_notifications' },
+        (_payload) => {
+          refresh();
+        },
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [refresh]);
 
-  return { count, refresh };
+  return { count, refresh, clearCount };
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Panel de notificaciones (Sheet) — exportado para uso standalone
+// Panel de notificaciones (Sheet)
 // ═══════════════════════════════════════════════════════════════
 
 interface NotificationsSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onReadAll?: () => void; // callback para resetear el badge externo
+  /** Llamado cuando el panel se abre → permite resetear el badge externo */
+  onClearCount?: () => void;
 }
 
-export function NotificationsSheet({ open, onOpenChange, onReadAll }: NotificationsSheetProps) {
+export function NotificationsSheet({ open, onOpenChange, onClearCount }: NotificationsSheetProps) {
   const { toast } = useToast();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading,       setLoading]       = useState(false);
 
-  const fetchNotifications = useCallback(async () => {
+  const markAllReadInDB = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    await supabase.from('in_app_notifications').update({ is_read: true }).in('id', ids);
+  }, []);
+
+  const fetchAndMarkRead = useCallback(async () => {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -96,33 +128,30 @@ export function NotificationsSheet({ open, onOpenChange, onReadAll }: Notificati
         .order('created_at', { ascending: false })
         .limit(50);
       if (error) throw error;
-      setNotifications((data as Notification[]) ?? []);
+
+      const notifs = (data as Notification[]) ?? [];
+      setNotifications(notifs.map(n => ({ ...n, is_read: true }))); // mark all as read visually
+
+      // Persiste la lectura en la BD en segundo plano
+      const unreadIds = notifs.filter(n => !n.is_read).map(n => n.id);
+      if (unreadIds.length > 0) markAllReadInDB(unreadIds);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error', description: err?.message || 'No se pudieron cargar las notificaciones.' });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, markAllReadInDB]);
 
-  const markAsRead = useCallback(async (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-    await supabase.from('in_app_notifications').update({ is_read: true }).eq('id', id);
-  }, []);
-
-  const markAllAsRead = useCallback(async () => {
-    const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
-    if (!unreadIds.length) return;
-    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-    await supabase.from('in_app_notifications').update({ is_read: true }).in('id', unreadIds);
-    onReadAll?.();
-  }, [notifications, onReadAll]);
-
+  // Al abrir: 1) limpiar badge externo inmediatamente (optimistic) 2) traer datos
   useEffect(() => {
-    if (open) fetchNotifications();
-  }, [open, fetchNotifications]);
+    if (open) {
+      onClearCount?.(); // badge a 0 al instante
+      fetchAndMarkRead();
+    }
+  }, [open]);
 
-  const unread = notifications.filter(n => !n.is_read);
-  const read   = notifications.filter(n => n.is_read);
+  const unread = notifications.filter(n => !n.is_read); // siempre 0 después del fetch
+  const all    = notifications;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -145,17 +174,6 @@ export function NotificationsSheet({ open, onOpenChange, onReadAll }: Notificati
               <X className="h-4 w-4" />
             </button>
           </div>
-          {unread.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="self-start mt-1 h-7 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 gap-1.5"
-            >
-              <CheckCheck className="h-3.5 w-3.5" />
-              Marcar todas como leídas
-            </Button>
-          )}
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto">
@@ -164,7 +182,7 @@ export function NotificationsSheet({ open, onOpenChange, onReadAll }: Notificati
               <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
               <p className="text-sm text-slate-400">Cargando mensajes…</p>
             </div>
-          ) : notifications.length === 0 ? (
+          ) : all.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
               <Bell className="h-10 w-10 opacity-20" />
               <p className="text-sm font-medium">Sin mensajes por ahora</p>
@@ -172,16 +190,10 @@ export function NotificationsSheet({ open, onOpenChange, onReadAll }: Notificati
             </div>
           ) : (
             <div className="p-3 space-y-2">
-              {unread.length > 0 && (
+              {all.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-1 pt-1">Nuevos</p>
-                  {unread.map(n => <NotifCard key={n.id} n={n} onRead={markAsRead} />)}
-                </div>
-              )}
-              {read.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300 px-1 pt-2">Anteriores</p>
-                  {read.map(n => <NotifCard key={n.id} n={n} onRead={markAsRead} />)}
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-1 pt-1">Mensajes</p>
+                  {all.map(n => <NotifCard key={n.id} n={n} />)}
                 </div>
               )}
             </div>
@@ -194,38 +206,28 @@ export function NotificationsSheet({ open, onOpenChange, onReadAll }: Notificati
 
 // ─── Tarjeta individual ───────────────────────────────────────────────────────
 
-function NotifCard({ n, onRead }: { n: Notification; onRead: (id: string) => void }) {
+function NotifCard({ n }: { n: Notification }) {
   const cfg = TYPE_CONFIG[n.type as NotifType] ?? TYPE_CONFIG.info;
   const { Icon } = cfg;
   const [expanded, setExpanded] = useState(false);
 
-  const handleClick = () => {
-    setExpanded(e => !e);
-    if (!n.is_read) onRead(n.id);
-  };
-
   return (
     <button
-      onClick={handleClick}
-      className={`w-full text-left rounded-2xl border p-3.5 transition-all ${
-        n.is_read ? 'bg-white border-slate-100 opacity-70 hover:opacity-100' : `${cfg.bg} ${cfg.border} shadow-sm`
-      }`}
+      onClick={() => setExpanded(e => !e)}
+      className={`w-full text-left rounded-2xl border p-3.5 transition-all ${cfg.bg} ${cfg.border} shadow-sm hover:shadow-md`}
     >
       <div className="flex items-start gap-3">
-        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${n.is_read ? 'bg-slate-100' : cfg.bg}`}>
-          <Icon className={`h-4 w-4 ${n.is_read ? 'text-slate-400' : cfg.text}`} />
+        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${cfg.bg}`}>
+          <Icon className={`h-4 w-4 ${cfg.text}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <p className={`text-xs font-bold leading-tight ${n.is_read ? 'text-slate-500' : 'text-slate-800'}`}>{n.title}</p>
-            {!n.is_read && <span className={`w-2 h-2 rounded-full ${cfg.dot} shrink-0 mt-1`} />}
-          </div>
-          <p className={`text-[11px] mt-0.5 leading-relaxed ${n.is_read ? 'text-slate-400' : 'text-slate-600'} ${expanded ? '' : 'line-clamp-2'}`}>
+          <p className="text-xs font-bold leading-tight text-slate-800">{n.title}</p>
+          <p className={`text-[11px] mt-0.5 leading-relaxed text-slate-600 ${expanded ? '' : 'line-clamp-2'}`}>
             {n.message}
           </p>
           <div className="flex items-center justify-between mt-1.5">
             <span className="text-[9px] text-slate-400">{timeAgo(n.created_at)}</span>
-            <span className={`text-[9px] font-semibold uppercase tracking-wider ${n.is_read ? 'text-slate-300' : cfg.text}`}>{cfg.label}</span>
+            <span className={`text-[9px] font-semibold uppercase tracking-wider ${cfg.text}`}>{cfg.label}</span>
           </div>
         </div>
       </div>
@@ -234,12 +236,12 @@ function NotifCard({ n, onRead }: { n: Notification; onRead: (id: string) => voi
 }
 
 // ═══════════════════════════════════════════════════════════════
-// NotificationBell — campanita con sheet integrado (uso en header)
+// NotificationBell — campanita standalone (uso en header si se necesita)
 // ═══════════════════════════════════════════════════════════════
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
-  const { count, refresh } = useUnreadNotifCount();
+  const { count, clearCount } = useUnreadNotifCount();
 
   return (
     <>
@@ -255,7 +257,7 @@ export function NotificationBell() {
           </span>
         )}
       </button>
-      <NotificationsSheet open={open} onOpenChange={setOpen} onReadAll={refresh} />
+      <NotificationsSheet open={open} onOpenChange={setOpen} onClearCount={clearCount} />
     </>
   );
 }

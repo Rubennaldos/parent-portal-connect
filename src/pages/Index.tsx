@@ -153,7 +153,7 @@ const Index = () => {
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showNotifSheet, setShowNotifSheet] = useState(false);
-  const { count: unreadNotifCount, refresh: refreshNotifCount } = useUnreadNotifCount();
+  const { count: unreadNotifCount, clearCount: clearNotifCount } = useUnreadNotifCount();
   const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
   const [showPhotoConsent, setShowPhotoConsent] = useState(false);
@@ -1205,7 +1205,7 @@ const Index = () => {
           <NotificationsSheet
             open={showNotifSheet}
             onOpenChange={setShowNotifSheet}
-            onReadAll={refreshNotifCount}
+            onClearCount={clearNotifCount}
           />
 
           {/* Modal de Historial de Compras */}
