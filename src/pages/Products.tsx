@@ -61,7 +61,7 @@ interface DashboardStats {
 
 const Products = () => {
   const { user, signOut } = useAuth();
-  const { role } = useRole();
+  const { role, canViewAllSchools } = useRole();
   const navigate = useNavigate();
   const { toast } = useToast();
   const maintenance = useMaintenanceGuard('productos_admin');
@@ -151,11 +151,12 @@ const Products = () => {
   }, []);
 
   // Cargar productos una vez que sepamos la sede del usuario
+  // canViewAllSchools cubre: admin_general, supervisor_red, superadmin
   useEffect(() => {
-    if (userSchoolId !== null || role === 'admin_general') {
+    if (userSchoolId !== null || canViewAllSchools) {
       fetchProducts();
     }
-  }, [userSchoolId, role]);
+  }, [userSchoolId, role, canViewAllSchools]);
 
   // Normaliza texto para búsqueda tolerante a tildes y mayúsculas
   const normalizeSearch = (str: string) =>
@@ -252,8 +253,8 @@ const Products = () => {
 
     let productsData: Product[] = [];
 
-    if (role === 'admin_general') {
-      // Admin ve TODOS (activos e inactivos) para poder reactivar
+    if (canViewAllSchools) {
+      // Admin general / supervisor ven TODOS (activos e inactivos) para poder reactivar
       const { data } = await supabase.from('products').select('*').order('name');
       productsData = (data || []) as Product[];
     } else if (userSchoolId) {
@@ -1106,13 +1107,19 @@ const Products = () => {
   const handleDeleteProduct = async (id: string) => {
     if (!confirm('¿Está seguro de eliminar este producto?')) return;
     
+    // Actualización optimista: marcar como inactivo en la UI al instante
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, active: false, is_active: false } : p));
+    setFilteredProducts(prev => prev.map(p => p.id === id ? { ...p, active: false, is_active: false } : p));
+
     try {
       const { error } = await supabase.from('products').delete().eq('id', id);
       if (error) throw error;
       
       toast({ title: '✅ Producto eliminado' });
-      fetchProducts();
+      await fetchProducts(); // refrescar desde la BD para sincronizar estado real
     } catch (error: any) {
+      // Revertir actualización optimista si hubo error
+      await fetchProducts();
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };
@@ -1760,7 +1767,7 @@ const Products = () => {
 
       {/* Modal */}
       <Dialog open={showProductModal} onOpenChange={setShowProductModal}>
-        <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editingProductId ? 'Editar Producto' : 'Crear Nuevo Producto'}</DialogTitle>
           </DialogHeader>
@@ -1815,7 +1822,7 @@ const Products = () => {
 
       {/* Modal Cámara */}
       <Dialog open={showCamera} onOpenChange={setShowCamera}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Escanear Código de Barras</DialogTitle>
           </DialogHeader>
@@ -1853,7 +1860,7 @@ const Products = () => {
 
       {/* Modal: Control de Stock por Sede */}
       <Dialog open={showStockControlModal} onOpenChange={setShowStockControlModal}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5 text-blue-600" />
@@ -1936,7 +1943,7 @@ const Products = () => {
         if (!open) { setCatEditTarget(null); setCatDeleteTarget(null); setCatMoveTarget(''); }
         setShowCatManager(open);
       }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <Tag className="h-5 w-5 text-purple-600" />
