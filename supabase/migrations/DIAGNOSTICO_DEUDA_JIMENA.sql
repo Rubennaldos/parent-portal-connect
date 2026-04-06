@@ -75,15 +75,40 @@ WHERE t.student_id = (SELECT id FROM students WHERE full_name ILIKE '%Giribaldi%
   AND t.type = 'purchase'
 ORDER BY t.created_at DESC;
 
--- ── BLOQUE 5: Estado del tope diario ─────────────────────────────────────────
--- Si current_period_spent >= daily_limit → ESO bloquea el POS, NO la deuda
+-- ── BLOQUE 5: Estado del tope (misma idea que el POS: solo aplica si el monto > 0)
+-- OJO: NO usar solo (spent >= daily_limit): si daily_limit = 0 entonces 0 >= 0
+--      y el reporte mentía "TOPE ALCANZADO". En el POS la condición es
+--      limitAmount > 0 AND cartTotal > available.
 SELECT
   full_name,
   limit_type,
   daily_limit,
+  weekly_limit,
+  monthly_limit,
   current_period_spent,
-  (daily_limit - current_period_spent) AS disponible,
-  CASE WHEN current_period_spent >= daily_limit THEN '🔴 TOPE ALCANZADO' ELSE '🟢 Puede comprar' END AS estado_tope,
+  CASE limit_type
+    WHEN 'daily'   THEN GREATEST(0, COALESCE(daily_limit, 0)   - COALESCE(current_period_spent, 0))
+    WHEN 'weekly'  THEN GREATEST(0, COALESCE(weekly_limit, 0)  - COALESCE(current_period_spent, 0))
+    WHEN 'monthly' THEN GREATEST(0, COALESCE(monthly_limit, 0) - COALESCE(current_period_spent, 0))
+    ELSE NULL
+  END AS disponible_para_kiosco,
+  CASE
+    WHEN limit_type IS NULL OR limit_type = 'none'
+      THEN '⚪ Sin tope de consumo (cuenta libre de límites)'
+    WHEN limit_type = 'daily' AND COALESCE(daily_limit, 0) <= 0
+      THEN '⚠️ Dato inconsistente: limit_type=daily pero daily_limit es 0 — el POS NO bloquea por tope (trata como sin límite efectivo). Corregir en Topes o en BD.'
+    WHEN limit_type = 'weekly' AND COALESCE(weekly_limit, 0) <= 0
+      THEN '⚠️ Dato inconsistente: limit_type=weekly pero weekly_limit es 0 — revisar configuración.'
+    WHEN limit_type = 'monthly' AND COALESCE(monthly_limit, 0) <= 0
+      THEN '⚠️ Dato inconsistente: limit_type=monthly pero monthly_limit es 0 — revisar configuración.'
+    WHEN limit_type = 'daily' AND current_period_spent >= daily_limit AND daily_limit > 0
+      THEN '🔴 TOPE DIARIO ALCANZADO (el POS bloquea cafetería hasta el reinicio)'
+    WHEN limit_type = 'weekly' AND current_period_spent >= weekly_limit AND weekly_limit > 0
+      THEN '🔴 TOPE SEMANAL ALCANZADO'
+    WHEN limit_type = 'monthly' AND current_period_spent >= monthly_limit AND monthly_limit > 0
+      THEN '🔴 TOPE MENSUAL ALCANZADO'
+    ELSE '🟢 Puede comprar en kiosco (dentro del tope disponible)'
+  END AS estado_tope,
   next_reset_date
 FROM students
 WHERE full_name ILIKE '%Giribaldi%';
