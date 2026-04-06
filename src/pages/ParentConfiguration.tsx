@@ -8,12 +8,13 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, GitMerge } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, GitMerge, Bell } from 'lucide-react';
 import { ResetUserPasswordModal } from '@/components/admin/ResetUserPasswordModal';
 import { MergeParentsModal } from '@/components/admin/MergeParentsModal';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
+import { ComunicadosPanel } from '@/components/admin/ComunicadosPanel';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1024,6 +1025,10 @@ const ParentConfiguration = () => {
               <Wallet className="h-4 w-4 mr-2" />
               Recargas
             </TabsTrigger>
+            <TabsTrigger value="comunicados" className="flex-1 min-w-[120px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-indigo-500 data-[state=active]:to-violet-500 data-[state=active]:text-white">
+              <Bell className="h-4 w-4 mr-2" />
+              Comunicados
+            </TabsTrigger>
           </TabsList>
 
           {/* Pestaña de Gestión de Padres */}
@@ -1573,6 +1578,15 @@ const ParentConfiguration = () => {
             />
           </TabsContent>
 
+          {/* ── Pestaña Comunicados ── */}
+          <TabsContent value="comunicados" className="mt-6">
+            <ComunicadosPanel
+              schoolId={userSchoolId}
+              canViewAllSchools={canViewAllSchools}
+              schools={schools.map(s => ({ id: s.id, name: s.name }))}
+            />
+          </TabsContent>
+
         </Tabs>
       </div>
 
@@ -1680,7 +1694,7 @@ const ParentConfiguration = () => {
 
       {/* Modal Editar Padre */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Editar Padre</DialogTitle>
           </DialogHeader>
@@ -1770,7 +1784,7 @@ const ParentConfiguration = () => {
 
       {/* Modal Ver Hijos - DISEÑO RENOVADO */}
       <Dialog open={showChildrenModal} onOpenChange={setShowChildrenModal}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gradient-to-br from-emerald-50 to-teal-50">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gradient-to-br from-emerald-50 to-teal-50" aria-describedby={undefined}>
           <DialogHeader className="border-b border-emerald-200 pb-4">
             <DialogTitle className="flex items-center gap-3 text-2xl text-emerald-900">
               <Baby className="h-7 w-7 text-emerald-600" />

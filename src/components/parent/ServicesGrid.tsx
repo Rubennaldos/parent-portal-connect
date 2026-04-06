@@ -1,17 +1,25 @@
 /**
  * ServicesGrid — Cuadrícula de servicios secundarios, estilo Yape.
  *
- * Muestra únicamente Historial y Soporte.
- * Recargas y Topes fueron eliminados de la UI por decisión de negocio.
+ * Botones de acceso rápido: Historial, Mensajes, Topes de Consumo, Soporte.
  */
-import { Clock, Headphones, Sparkles } from 'lucide-react';
+import { Clock, Headphones, ShieldCheck, MessageSquare } from 'lucide-react';
 
 interface ServicesGridProps {
   onViewHistory: () => void;
+  onTopes?: () => void;
+  onMessages?: () => void;
+  unreadNotifCount?: number;
   supportPhone?: string;
 }
 
-export function ServicesGrid({ onViewHistory, supportPhone = '51991236870' }: ServicesGridProps) {
+export function ServicesGrid({
+  onViewHistory,
+  onTopes,
+  onMessages,
+  unreadNotifCount = 0,
+  supportPhone = '51991236870',
+}: ServicesGridProps) {
   const services = [
     {
       id: 'historial',
@@ -21,6 +29,27 @@ export function ServicesGrid({ onViewHistory, supportPhone = '51991236870' }: Se
       iconColor: 'text-emerald-500',
       ring: 'ring-emerald-200/50',
       action: onViewHistory,
+      badge: 0,
+    },
+    {
+      id: 'mensajes',
+      label: 'Mensajes',
+      Icon: MessageSquare,
+      bg: 'bg-gradient-to-br from-blue-100 to-indigo-100',
+      iconColor: 'text-blue-500',
+      ring: 'ring-blue-200/50',
+      action: onMessages ?? (() => {}),
+      badge: unreadNotifCount,
+    },
+    {
+      id: 'topes',
+      label: 'Topes de\nConsumo',
+      Icon: ShieldCheck,
+      bg: 'bg-gradient-to-br from-amber-100 to-orange-100',
+      iconColor: 'text-amber-500',
+      ring: 'ring-amber-200/50',
+      action: onTopes ?? (() => {}),
+      badge: 0,
     },
     {
       id: 'soporte',
@@ -35,27 +64,34 @@ export function ServicesGrid({ onViewHistory, supportPhone = '51991236870' }: Se
           '_blank',
         );
       },
+      badge: 0,
     },
   ];
 
   return (
     <div className="bg-white/80 backdrop-blur-sm rounded-[1.75rem] shadow-lg shadow-slate-200/40 border border-white p-5">
       <div className="flex items-center gap-2 mb-4 px-1">
-        <Sparkles className="w-4 h-4 text-amber-400" />
+        <ShieldCheck className="w-4 h-4 text-amber-400" />
         <span className="text-sm font-semibold text-slate-500">Servicios rápidos</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {services.map(({ id, label, Icon, bg, iconColor, ring, action }) => (
+      <div className="grid grid-cols-4 gap-2">
+        {services.map(({ id, label, Icon, bg, iconColor, ring, action, badge }) => (
           <button
             key={id}
             onClick={action}
-            className="flex flex-col items-center gap-2.5 p-3 rounded-2xl hover:bg-slate-50/80 cursor-pointer active:scale-95 transition-all duration-200"
+            className="relative flex flex-col items-center gap-2 p-2 rounded-2xl hover:bg-slate-50/80 cursor-pointer active:scale-95 transition-all duration-200"
           >
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${bg} ring-2 ${ring} shadow-sm`}>
-              <Icon className={`w-6 h-6 ${iconColor}`} />
+            {/* Ícono con badge */}
+            <div className={`relative w-12 h-12 rounded-2xl flex items-center justify-center ${bg} ring-2 ${ring} shadow-sm`}>
+              <Icon className={`w-5 h-5 ${iconColor}`} />
+              {badge > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center px-1 shadow-sm animate-pulse">
+                  {badge > 99 ? '99+' : badge}
+                </span>
+              )}
             </div>
-            <span className="text-xs font-semibold text-slate-600 leading-tight text-center">
+            <span className="text-[10px] font-semibold text-slate-600 leading-tight text-center whitespace-pre-line">
               {label}
             </span>
           </button>

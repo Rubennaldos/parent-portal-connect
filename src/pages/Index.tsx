@@ -45,6 +45,7 @@ import { PaymentsTab } from '@/components/parent/PaymentsTab';
 import { PaymentHistoryTab } from '@/components/parent/PaymentHistoryTab';
 import { StudentLinksManager } from '@/components/parent/StudentLinksManager';
 import { MoreMenu } from '@/components/parent/MoreMenu';
+import { useUnreadNotifCount, NotificationsSheet } from '@/components/parent/NotificationBell';
 import { TempPasswordForm } from '@/components/parent/TempPasswordForm';
 import { PhotoConsentModal } from '@/components/parent/PhotoConsentModal';
 import { PurchaseHistoryModal } from '@/components/parent/PurchaseHistoryModal';
@@ -151,6 +152,8 @@ const Index = () => {
   const [showCalendarModal, setShowCalendarModal] = useState(false); // Nuevo
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
+  const [showNotifSheet, setShowNotifSheet] = useState(false);
+  const { count: unreadNotifCount, refresh: refreshNotifCount } = useUnreadNotifCount();
   const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
   const [showPhotoConsent, setShowPhotoConsent] = useState(false);
@@ -915,12 +918,25 @@ const Index = () => {
                 {/* ── MÓDULO DE SALDO (BalanceHero) + BOTONES HERO ── */}
                 {(() => {
                   const active = students.find(s => s.id === activeStudentId) ?? students[0];
-                  // Deuda de almuerzos — suma de todos los hijos, excluye "en revisión"
-                  const totalLunchDebtAll = Object.values(studentDebts).reduce((acc, d) => acc + d.lunchDebt, 0);
-                  // Deuda de kiosco — suma de balances negativos de todos los hijos (dinero consumido sin saldo)
-                  const totalKioskBalanceDebt = students.reduce(
-                    (acc, s) => acc + (s.balance < 0 ? Math.abs(s.balance) : 0), 0
-                  );
+
+                  // ── Deuda del hijo ACTIVO únicamente ──────────────────────────
+                  // Mismo criterio que PaymentsTab: transacciones pendientes reales
+                  // (cafetería + almuerzos) excluidas las que ya tienen voucher en revisión.
+                  // NO se mezcla con datos de otros hijos.
+                  const activeDebt  = active ? (studentDebts[active.id] ?? { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 }) : { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
+                  const activeLunchDebt = activeDebt.lunchDebt;
+                  const activeCafeFromTx      = activeDebt.kioskDebt;
+                  const activeCafeFromBalance = (active?.balance ?? 0) < 0 ? Math.abs(active?.balance ?? 0) : 0;
+                  const activeKioskDebt = activeCafeFromTx > 0 ? activeCafeFromTx : activeCafeFromBalance;
+
+                  // ── Deuda FAMILIAR (todos los hijos) ──────────────────────────
+                  const familyLunchDebt = Object.values(studentDebts).reduce((acc, d) => acc + d.lunchDebt, 0);
+                  const familyKioskDebt = students.reduce((acc, s) => {
+                    const fromTx  = studentDebts[s.id]?.kioskDebt ?? 0;
+                    const fromBal = s.balance < 0 ? Math.abs(s.balance) : 0;
+                    return acc + (fromTx > 0 ? fromTx : fromBal);
+                  }, 0);
+
                   return (
                     <>
                       <BalanceHero
@@ -928,8 +944,11 @@ const Index = () => {
                         studentName={active?.full_name ?? ''}
                         photoUrl={active?.photo_url ?? null}
                         balance={active?.balance ?? 0}
-                        lunchDebt={totalLunchDebtAll}
-                        kioskBalanceDebt={totalKioskBalanceDebt}
+                        lunchDebt={activeLunchDebt}
+                        kioskBalanceDebt={activeKioskDebt}
+                        familyLunchDebt={familyLunchDebt}
+                        familyKioskDebt={familyKioskDebt}
+                        multipleChildren={students.length > 1}
                         isLoading={loading}
                       />
                       {/* Botones gigantes estilo Yape — re-renderizan con activeStudentId */}
@@ -945,6 +964,14 @@ const Index = () => {
                       {/* Cuadrícula de servicios secundarios estilo Yape */}
                       <ServicesGrid
                         onViewHistory={() => { if (!isTransitioning) openHistoryModal(active); }}
+                        onTopes={() => {
+                          if (!isTransitioning && active) {
+                            setSelectedStudent(active);
+                            setShowLimitModal(true);
+                          }
+                        }}
+                        onMessages={() => { if (!isTransitioning) setShowNotifSheet(true); }}
+                        unreadNotifCount={unreadNotifCount}
                       />
                     </>
                   );
@@ -1155,17 +1182,30 @@ const Index = () => {
             skipConsent={true} // Saltar el consentimiento porque ya fue validado
           />
 
-          {/* Modal de Límites de Gasto */}
+          {/* Modal de Topes de Consumo */}
           <SpendingLimitsModal
             open={showLimitModal}
             onOpenChange={setShowLimitModal}
             studentId={selectedStudent.id}
             studentName={selectedStudent.full_name}
             onSuccess={fetchStudents}
+            students={students.map(s => ({
+              id: s.id,
+              full_name: s.full_name,
+              photo_url: s.photo_url,
+              limit_type: s.limit_type,
+            }))}
             onRequestRecharge={(suggestedAmount?: number) => {
               setRechargeSuggestedAmount(suggestedAmount);
               setShowRechargeModal(true);
             }}
+          />
+
+          {/* Panel de Notificaciones / Mensajes */}
+          <NotificationsSheet
+            open={showNotifSheet}
+            onOpenChange={setShowNotifSheet}
+            onReadAll={refreshNotifCount}
           />
 
           {/* Modal de Historial de Compras */}
@@ -1181,7 +1221,8 @@ const Index = () => {
           {/* Modal de Calendario de Almuerzos */}
           {selectedStudent && (
             <Dialog open={showCalendarModal} onOpenChange={setShowCalendarModal}>
-              <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+              <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+                <DialogTitle className="sr-only">Diálogo</DialogTitle>
                 <LunchCalendarView
                   studentId={selectedStudent.id}
                   studentName={selectedStudent.full_name}
