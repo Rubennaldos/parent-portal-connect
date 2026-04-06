@@ -127,10 +127,15 @@ export function StudentCard({
 
   const [spentPeriod] = useState(0);
 
-  // Topes desactivados — variables mantenidas solo para que el UI condicional no falle
-  const limitType = 'none';
-  const currentLimit = 0;
-  const limitRemaining = 0;
+  // Topes de consumo — datos reales del alumno
+  const limitType = student.limit_type || 'none';
+  const currentLimit = limitType === 'daily'   ? (student.daily_limit   ?? 0)
+                     : limitType === 'weekly'  ? (student.weekly_limit  ?? 0)
+                     : limitType === 'monthly' ? (student.monthly_limit ?? 0)
+                     : 0;
+  const limitRemaining = Math.max(0, currentLimit - spentPeriod);
+  const getLimitLabel = () =>
+    limitType === 'daily' ? 'Diario' : limitType === 'weekly' ? 'Semanal' : limitType === 'monthly' ? 'Mensual' : '';
 
   return (
     <>
@@ -182,6 +187,16 @@ export function StudentCard({
             <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">
               {student.grade} · {student.section}
             </p>
+            {/* Badge de tope o kiosco desactivado */}
+            {student.kiosk_disabled ? (
+              <span className="inline-flex items-center gap-1 mt-1 text-[9px] font-semibold bg-red-100 text-red-700 border border-red-200 rounded-full px-2 py-0.5">
+                🚫 Kiosco desactivado
+              </span>
+            ) : limitType !== 'none' && currentLimit > 0 ? (
+              <span className="inline-flex items-center gap-1 mt-1 text-[9px] font-semibold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">
+                🟠 Tope {getLimitLabel()}: S/ {currentLimit.toFixed(2)}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -305,8 +320,8 @@ export function StudentCard({
           </div>
         )}
 
-        {/* Limit info - OCULTO durante mantenimiento (topes desactivados) */}
-        {limitType !== 'none' && !RECHARGES_MAINTENANCE && (
+        {/* Limit info - visible siempre que haya un tope configurado */}
+        {limitType !== 'none' && currentLimit > 0 && (
           <div className="rounded-lg p-3 border border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-1.5">
@@ -343,9 +358,11 @@ export function StudentCard({
               Sin recargas activas
             </Badge>
           )}
-          {/* Badge de tope SOLO cuando el módulo está activo */}
-          {limitType !== 'none' && !student.kiosk_disabled && !RECHARGES_MAINTENANCE && (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-purple-200 text-purple-600 bg-purple-50">Tope {getLimitLabel()}</Badge>
+          {/* Badge de tope */}
+          {limitType !== 'none' && currentLimit > 0 && !student.kiosk_disabled && (
+            <Badge variant="outline" className="text-[9px] py-0 px-2 border-amber-200 text-amber-600 bg-amber-50">
+              Tope {getLimitLabel()}: S/ {currentLimit.toFixed(2)}
+            </Badge>
           )}
           {student.kiosk_disabled && (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-orange-200 text-orange-600 bg-orange-50">Solo Almuerzo</Badge>
@@ -426,8 +443,8 @@ export function StudentCard({
             </Button>
           )}
 
-          {/* Bottom row: History + Settings (Settings hidden during maintenance) */}
-          <div className={`grid ${RECHARGES_MAINTENANCE ? 'grid-cols-1' : 'grid-cols-2'} gap-2`}>
+          {/* Bottom row: History + Settings (Settings siempre visible — topes independientes de recargas) */}
+          <div className="grid grid-cols-2 gap-2">
             <Button
               onClick={onViewHistory}
               variant="ghost"
@@ -437,17 +454,15 @@ export function StudentCard({
               <History className="h-3.5 w-3.5 mr-1" />
               Historial
             </Button>
-            {!RECHARGES_MAINTENANCE && (
-              <Button
-                onClick={onOpenSettings}
-                variant="ghost"
-                size="sm"
-                className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-              >
-                <Settings2 className="h-3.5 w-3.5 mr-1" />
-                Configurar
-              </Button>
-            )}
+            <Button
+              onClick={onOpenSettings}
+              variant="ghost"
+              size="sm"
+              className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            >
+              <Settings2 className="h-3.5 w-3.5 mr-1" />
+              Topes
+            </Button>
           </div>
         </div>
 
@@ -458,7 +473,7 @@ export function StudentCard({
 
     {/* Modal configuración de cuenta */}
     <Dialog open={showAccountConfig} onOpenChange={setShowAccountConfig}>
-      <DialogContent className="max-w-xs p-4">
+      <DialogContent className="max-w-xs p-4" aria-describedby={undefined}>
         <DialogHeader className="pb-2">
           <DialogTitle className="flex items-center gap-2 text-sm font-medium text-gray-700">
             <Settings className="h-4 w-4 text-gray-400" />
@@ -574,7 +589,7 @@ export function StudentCard({
 
     {/* Modal informativo de mantenimiento */}
     <Dialog open={showMaintenanceInfo} onOpenChange={setShowMaintenanceInfo}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Wrench className="h-5 w-5 text-amber-600" />
