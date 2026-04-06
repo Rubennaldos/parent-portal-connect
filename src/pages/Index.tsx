@@ -970,8 +970,9 @@ const Index = () => {
                             setShowLimitModal(true);
                           }
                         }}
-                        onMessages={() => { if (!isTransitioning) setShowNotifSheet(true); }}
+                        onMessages={() => setShowNotifSheet(true)}
                         unreadNotifCount={unreadNotifCount}
+                        onAddStudent={() => setShowAddStudent(true)}
                       />
                     </>
                   );
@@ -1144,6 +1145,14 @@ const Index = () => {
       </main>
 
       {/* MODALES */}
+
+      {/* Panel de Notificaciones / Mensajes — FUERA del bloque selectedStudent */}
+      <NotificationsSheet
+        open={showNotifSheet}
+        onOpenChange={setShowNotifSheet}
+        onClearCount={clearNotifCount}
+      />
+
       <AddStudentModal
         isOpen={showAddStudent}
         onClose={() => setShowAddStudent(false)}
@@ -1199,13 +1208,6 @@ const Index = () => {
               setRechargeSuggestedAmount(suggestedAmount);
               setShowRechargeModal(true);
             }}
-          />
-
-          {/* Panel de Notificaciones / Mensajes */}
-          <NotificationsSheet
-            open={showNotifSheet}
-            onOpenChange={setShowNotifSheet}
-            onClearCount={clearNotifCount}
           />
 
           {/* Modal de Historial de Compras */}
