@@ -112,7 +112,15 @@ function StockBadge({ stock }: { stock: number | null }) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function LogisticsDashboard() {
+interface LogisticsDashboardProps {
+  userSchoolId?:     string | null;
+  canViewAllSchools?: boolean;
+}
+
+export default function LogisticsDashboard({
+  userSchoolId,
+  canViewAllSchools = false,
+}: LogisticsDashboardProps) {
   const { toast } = useToast();
 
   const [loadingStatic,  setLoadingStatic]  = useState(true);
@@ -130,34 +138,45 @@ export default function LogisticsDashboard() {
   const [tips,     setTips]     = useState<string[]>([]);
   const [lastSync, setLastSync] = useState('');
 
+  // Detectar si hay filtro activo de sede
+  const hasSchoolFilter = !canViewAllSchools && !!userSchoolId;
+
   // ── Datos estáticos: top 5 + alertas stock ─────────────────────────────────
 
   const fetchStaticData = useCallback(async () => {
     setLoadingStatic(true);
     try {
-      // Top 5 all-time
-      const { data: topData, error: topErr } = await supabase
+      // Top 5 all-time — filtrado por sede si corresponde
+      let top5Query = supabase
         .from('products')
         .select('id, name, total_sales')
         .eq('active', true)
         .not('total_sales', 'is', null)
         .order('total_sales', { ascending: false })
         .limit(5);
+      if (hasSchoolFilter) {
+        top5Query = (top5Query as any).or(`school_ids.is.null,school_ids.cs.{${userSchoolId}}`);
+      }
+      const { data: topData, error: topErr } = await top5Query;
       if (topErr) throw topErr;
 
-      const top5Rows: TopProduct[] = (topData || []).map(p => ({
+      const top5Rows: TopProduct[] = (topData || []).map((p: any) => ({
         name:        p.name,
         shortName:   short(p.name, 18),
         total_sales: p.total_sales ?? 0,
       }));
 
-      // Alertas stock ≤ 10
-      const { data: lowData, error: lowErr } = await supabase
+      // Alertas stock ≤ 10 — filtrado por sede si corresponde
+      let stockAlertQuery = supabase
         .from('product_stock')
         .select('product_id, school_id, current_stock')
         .eq('is_enabled', true)
         .lte('current_stock', 10)
         .order('current_stock');
+      if (hasSchoolFilter) {
+        stockAlertQuery = (stockAlertQuery as any).eq('school_id', userSchoolId);
+      }
+      const { data: lowData, error: lowErr } = await stockAlertQuery;
       if (lowErr) throw lowErr;
 
       const productIds = [...new Set((lowData || []).map(r => r.product_id))];
@@ -188,7 +207,7 @@ export default function LogisticsDashboard() {
     } finally {
       setLoadingStatic(false);
     }
-  }, [toast]);
+  }, [toast, hasSchoolFilter, userSchoolId]);
 
   // ── Movimiento del día ──────────────────────────────────────────────────────
 
@@ -197,14 +216,20 @@ export default function LogisticsDashboard() {
     try {
       const { gte, lt } = limaToday();
 
-      // 1. Transacciones de compra de hoy (excluye anuladas — Vector 2 QA)
-      const { data: txs, error: txErr } = await supabase
+      // 1. Transacciones de compra de hoy — FILTRADO POR SEDE cuando aplica
+      //    Esto evita el 400 Bad Request por URL demasiado larga en el .in() de abajo
+      let txQuery = supabase
         .from('transactions')
         .select('id, school_id')
         .eq('type', 'purchase')
         .neq('payment_status', 'cancelled')
         .gte('created_at', gte)
-        .lt('created_at', lt);
+        .lt('created_at', lt)
+        .limit(500); // guardia de seguridad
+      if (hasSchoolFilter) {
+        txQuery = (txQuery as any).eq('school_id', userSchoolId);
+      }
+      const { data: txs, error: txErr } = await txQuery;
       if (txErr) throw txErr;
 
       if (!txs || txs.length === 0) {
@@ -214,16 +239,23 @@ export default function LogisticsDashboard() {
         return [];
       }
 
-      const txIds        = txs.map(t => t.id);
-      const schoolByTxId = new Map(txs.map(t => [t.id, t.school_id as string]));
-      const allSchoolIds = [...new Set(txs.map(t => t.school_id).filter(Boolean) as string[])];
+      const txIds        = txs.map((t: any) => t.id);
+      const schoolByTxId = new Map(txs.map((t: any) => [t.id, t.school_id as string]));
+      const allSchoolIds = [...new Set(txs.map((t: any) => t.school_id).filter(Boolean) as string[])];
 
-      // 2. Items de esas transacciones
-      const { data: items, error: itemsErr } = await supabase
-        .from('transaction_items')
-        .select('transaction_id, product_id, product_name, quantity')
-        .in('transaction_id', txIds);
-      if (itemsErr) throw itemsErr;
+      // 2. Items de esas transacciones — chunked para evitar URLs largas
+      const CHUNK = 200;
+      let allItems: any[] = [];
+      for (let i = 0; i < txIds.length; i += CHUNK) {
+        const chunk = txIds.slice(i, i + CHUNK);
+        const { data: chunkItems, error: chunkErr } = await supabase
+          .from('transaction_items')
+          .select('transaction_id, product_id, product_name, quantity')
+          .in('transaction_id', chunk);
+        if (chunkErr) throw chunkErr;
+        allItems = allItems.concat(chunkItems || []);
+      }
+      const items = allItems;
 
       if (!items || items.length === 0) {
         setMovement([]);
@@ -232,7 +264,7 @@ export default function LogisticsDashboard() {
         return [];
       }
 
-      const productIds = [...new Set(items.map(i => i.product_id).filter(Boolean) as string[])];
+      const productIds = [...new Set(items.map((i: any) => i.product_id).filter(Boolean) as string[])];
 
       // 3. Nombres de sedes
       const { data: schools } = await supabase
@@ -296,7 +328,7 @@ export default function LogisticsDashboard() {
     } finally {
       setLoadingDaily(false);
     }
-  }, [toast]);
+  }, [toast, hasSchoolFilter, userSchoolId]);
 
   // ── Carga inicial ──────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { AlertTriangle, ArrowLeft, Building2, ClipboardList, Merge, BadgeCheck, LayoutGrid, Package, BarChart3, CalendarRange } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRole } from '@/hooks/useRole';
 import { SuppliersTab } from '@/components/logistics/SuppliersTab';
 import { PurchaseEntriesTab } from '@/components/logistics/PurchaseEntriesTab';
 import { ProductMergeTab } from '@/components/logistics/ProductMergeTab';
@@ -20,6 +21,7 @@ const Logistics = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const maintenance = useMaintenanceGuard('logistica_admin');
+  const { canViewAllSchools } = useRole();
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -152,7 +154,10 @@ const Logistics = () => {
 
           <TabsContent value="dashboard" className="mt-3">
             <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-5">
-              <LogisticsDashboard />
+              <LogisticsDashboard
+                userSchoolId={userSchoolId}
+                canViewAllSchools={canViewAllSchools}
+              />
             </div>
           </TabsContent>
 
