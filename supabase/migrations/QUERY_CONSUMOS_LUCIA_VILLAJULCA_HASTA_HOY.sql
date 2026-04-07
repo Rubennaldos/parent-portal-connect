@@ -175,3 +175,43 @@ WHERE lo.student_id = (SELECT id FROM alumna)
   AND COALESCE(lo.is_cancelled, false) = false
   AND COALESCE(lo.status, '') <> 'cancelled'
   AND lo.order_date::date <= h.d;
+
+
+-- ── 6) TOTAL POR DÍA — Almuerzos vs Kiosco (solo `transactions`, fuente contable)
+--     Almuerzo = fila con metadata.lunch_order_id NOT NULL
+--     Kiosco   = compra POS / cuenta libre sin lunch_order_id
+--     Misma regla que el resto del script: no canceladas, no borradas, hasta hoy Lima.
+-- ───────────────────────────────────────────────────────────────────────────
+WITH alumna AS (
+  SELECT id FROM students
+  WHERE full_name ILIKE '%Villajulca%'
+    AND (full_name ILIKE '%Lucía%' OR full_name ILIKE '%Lucia%')
+    AND COALESCE(is_active, true) = true
+  LIMIT 1
+),
+hoy_lima AS (
+  SELECT (timezone('America/Lima', now()))::date AS d
+)
+SELECT
+  (timezone('America/Lima', t.created_at))::date AS dia_lima,
+  to_char((timezone('America/Lima', t.created_at))::date, 'DD/MM/YYYY') AS dia_calendario,
+  SUM(
+    CASE WHEN (t.metadata->>'lunch_order_id') IS NOT NULL
+      THEN ABS(t.amount) ELSE 0 END
+  )::numeric(12, 2) AS total_almuerzos_soles,
+  SUM(
+    CASE WHEN (t.metadata->>'lunch_order_id') IS NULL
+      THEN ABS(t.amount) ELSE 0 END
+  )::numeric(12, 2) AS total_kiosco_soles,
+  SUM(ABS(t.amount))::numeric(12, 2) AS total_dia_soles,
+  COUNT(*) FILTER (WHERE (t.metadata->>'lunch_order_id') IS NOT NULL) AS tickets_almuerzo,
+  COUNT(*) FILTER (WHERE (t.metadata->>'lunch_order_id') IS NULL)     AS tickets_kiosco
+FROM transactions t
+CROSS JOIN hoy_lima h
+WHERE t.student_id = (SELECT id FROM alumna)
+  AND t.type = 'purchase'
+  AND COALESCE(t.is_deleted, false) = false
+  AND COALESCE(t.payment_status, '') <> 'cancelled'
+  AND (timezone('America/Lima', t.created_at))::date <= h.d
+GROUP BY (timezone('America/Lima', t.created_at))::date
+ORDER BY dia_lima DESC;
