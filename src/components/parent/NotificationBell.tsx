@@ -51,11 +51,13 @@ export function useUnreadNotifCount() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setCount(0); return; }
       userIdRef.current = user.id;
+      const now = new Date().toISOString();
       const { count: c } = await supabase
         .from('in_app_notifications')
         .select('id', { count: 'exact', head: true })
         .eq('is_read', false)
-        .or(`user_id.eq.${user.id},user_id.is.null`);
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .or(`expiration_date.is.null,expiration_date.gt.${now}`);
       setCount(c ?? 0);
     } catch {
       // Silenciar: tabla puede no existir aún
@@ -121,10 +123,12 @@ export function NotificationsSheet({ open, onOpenChange, onClearCount }: Notific
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+      const now = new Date().toISOString();
       const { data, error } = await supabase
         .from('in_app_notifications')
         .select('id, title, message, type, is_read, created_at, user_id')
         .or(`user_id.eq.${user.id},user_id.is.null`)
+        .or(`expiration_date.is.null,expiration_date.gt.${now}`)
         .order('created_at', { ascending: false })
         .limit(50);
       if (error) throw error;
