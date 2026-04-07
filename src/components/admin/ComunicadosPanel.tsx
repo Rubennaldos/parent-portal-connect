@@ -640,8 +640,10 @@ export function ComunicadosPanel({
                           <div className="relative">
                             <button
                               onClick={() => setOpenMenuId(openMenuId === n.id ? null : n.id)}
-                              className={`p-1 rounded-md transition-all text-slate-300 hover:text-slate-600 hover:bg-slate-100 ${
-                                openMenuId === n.id ? 'bg-slate-100 text-slate-600' : 'opacity-0 group-hover:opacity-100'
+                              className={`p-1 rounded-md transition-all ${
+                                openMenuId === n.id
+                                  ? 'bg-slate-100 text-slate-600'
+                                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
                               }`}
                               title="Acciones"
                             >
