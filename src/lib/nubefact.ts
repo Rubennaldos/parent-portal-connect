@@ -23,6 +23,9 @@ export interface GenerarComprobanteParams {
   cliente?: ClienteComprobante;
   monto_total: number;
   doc_ref?: DocReferencia; // solo para nota de crédito
+  /** Ítems detallados del carrito en formato Nubefact.
+   *  Si se omite, la Edge Function genera una línea resumen con monto_total. */
+  items?: Record<string, unknown>[];
 }
 
 export interface ComprobanteResultado {

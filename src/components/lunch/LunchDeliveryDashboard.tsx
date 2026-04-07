@@ -2440,7 +2440,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
 
       {/* PHOTO VIEWER */}
       <Dialog open={!!viewingPhoto} onOpenChange={() => setViewingPhoto(null)}>
-        <DialogContent className="max-w-xs p-2">
+        <DialogContent className="max-w-xs p-2" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-2">
               <Camera className="h-4 w-4" /> Foto

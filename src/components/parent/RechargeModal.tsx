@@ -69,6 +69,9 @@ interface RechargeModalProps {
   invoiceType?: 'boleta' | 'factura' | null;
   /** Datos del cliente para emitir boleta/factura */
   invoiceClientData?: Record<string, unknown> | null;
+  /** Monto de billetera interna a descontar (S/ a favor del alumno).
+   *  Si > 0, el padre solo sube voucher por (suggestedAmount - walletAmountToUse). */
+  walletAmountToUse?: number;
 }
 
 interface PaymentConfig {
@@ -108,6 +111,7 @@ export function RechargeModal({
   combinedStudentIds,
   invoiceType,
   invoiceClientData,
+  walletAmountToUse = 0,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
 
@@ -129,6 +133,9 @@ export function RechargeModal({
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const submittingRef = useRef(false);
+  // 0-100 mientras se sube, null cuando no hay subida activa
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadPhaseLabel, setUploadPhaseLabel] = useState('');
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -150,7 +157,11 @@ export function RechargeModal({
 
       setCollapsedExtras(new Set());
       if (skipAmountStep) {
-        setAmount(String(suggestedAmount));
+        // Si hay saldo de billetera, el voucher es por la diferencia
+        const voucherAmt = walletAmountToUse > 0
+          ? Math.max(0, (suggestedAmount ?? 0) - walletAmountToUse)
+          : (suggestedAmount ?? 0);
+        setAmount(String(voucherAmt));
       } else {
         setAmount('');
       }
@@ -290,19 +301,33 @@ export function RechargeModal({
 
   // ── Helper: subir imagen a storage ──
   // ⚠️ LANZA error si falla â€” así el insert no se hace sin foto
-  const uploadVoucherImage = async (file: File, userId: string): Promise<string> => {
+  const uploadVoucherImage = async (
+    file: File,
+    userId: string,
+    onProgress?: (pct: number) => void
+  ): Promise<string> => {
     const compressed = await compressImage(file);
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const retryName = `${userId}/voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+        // onUploadProgress disponible en @supabase/storage-js >= 2.5; se ignora en versiones anteriores
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const uploadOptions: any = { upsert: false, contentType: 'image/jpeg' };
+        if (onProgress) {
+          uploadOptions.onUploadProgress = (ev: { loaded: number; total: number }) => {
+            if (ev?.total > 0) onProgress(Math.round((ev.loaded / ev.total) * 100));
+          };
+        }
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('vouchers')
-          .upload(retryName, compressed, { upsert: false, contentType: 'image/jpeg' });
+          .upload(retryName, compressed, uploadOptions);
 
         if (uploadError) {
-          console.error(`[Voucher] Intento ${attempt}/3:`, uploadError.message);
-          lastError = new Error(uploadError.message);
+          console.error(`[Voucher] Intento ${attempt}/3:`, uploadError.message, (uploadError as any)?.statusCode);
+          lastError = Object.assign(new Error(uploadError.message), {
+            statusCode: (uploadError as any)?.statusCode,
+          });
           if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
           continue;
         }
@@ -316,11 +341,22 @@ export function RechargeModal({
       }
     }
 
-    const isNetworkErr = lastError?.message?.toLowerCase().includes('fetch') || lastError?.message?.toLowerCase().includes('network');
-    if (isNetworkErr) {
-      throw new Error('No se pudo subir la foto por problemas de conexión. Revisa tu WiFi o datos móviles e intenta de nuevo.');
+    // Clasificar el error para dar un mensaje accionable según la causa real
+    const msg  = lastError?.message?.toLowerCase() ?? '';
+    const code = String((lastError as any)?.statusCode ?? '');
+    let userMsg: string;
+    if (code === '413' || msg.includes('413') || msg.includes('payload too large') || msg.includes('too large')) {
+      userMsg = 'La imagen es demasiado pesada. Toma una captura de pantalla del comprobante en lugar de adjuntar la foto original (la captura pesa mucho menos).';
+    } else if (code === '403' || msg.includes('403') || msg.includes('not allowed') || msg.includes('permission')) {
+      userMsg = 'El servidor rechazó la imagen por restricciones de seguridad. Usa una imagen JPG o PNG estándar y vuelve a intentar.';
+    } else if (lastError?.name === 'AbortError' || msg.includes('timeout') || msg.includes('timed out')) {
+      userMsg = 'La subida está tardando demasiado. Intenta conectarte a WiFi en lugar de datos móviles.';
+    } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('failed to fetch') || msg.includes('load failed')) {
+      userMsg = 'No se pudo conectar con el servidor. Verifica que tienes internet activo. Si usas datos móviles, prueba cambiando a WiFi.';
+    } else {
+      userMsg = `No se pudo subir la foto del comprobante. ${lastError?.message || 'Intenta de nuevo en unos minutos.'}`;
     }
-    throw new Error(`No se pudo subir la foto del comprobante. ${lastError?.message || 'Intenta de nuevo en unos minutos.'}`);
+    throw new Error(userMsg);
   };
 
   // ── Helper: verificar duplicado de código de operación ──
@@ -334,15 +370,73 @@ export function RechargeModal({
     return !!(data && data.length > 0);
   };
 
+  // ── Pago 100% con billetera: no requiere voucher bancario ───────────────────
+  const isFullWalletPayment =
+    requestType === 'debt_payment' &&
+    walletAmountToUse > 0 &&
+    walletAmountToUse >= (suggestedAmount ?? 0);
+
   const handleSubmit = async () => {
     if (!user) return;
     if (loading) return;
     if (submittingRef.current) return;
     submittingRef.current = true;
 
+    // ── CAMINO A: Pago 100% con billetera interna ─────────────────────────────
+    // No se pide voucher ni código de operación. El RPC valida y ejecuta en BD.
+    if (isFullWalletPayment) {
+      setLoading(true);
+      try {
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+          'pay_debt_with_wallet_only',
+          {
+            p_student_id:      studentId,
+            p_debt_tx_ids:     (paidTransactionIds || []) as any,
+            p_lunch_order_ids: (lunchOrderIds || []) as any,
+          }
+        );
+        if (rpcErr) {
+          const msg = rpcErr.message || '';
+          if (msg.includes('INSUFFICIENT_WALLET')) {
+            toast({
+              title: '⚠️ Saldo insuficiente',
+              description: 'Tu saldo ya no alcanza. Recarga la página e intenta de nuevo.',
+              variant: 'destructive',
+            });
+          } else if (msg.includes('CONFLICT')) {
+            toast({
+              title: '⚠️ Deuda ya cobrada',
+              description: 'Este pago fue procesado por otro canal. Recarga la página.',
+              variant: 'destructive',
+            });
+          } else {
+            toast({
+              title: 'Error al procesar el pago',
+              description: msg || 'Intenta de nuevo en unos segundos.',
+              variant: 'destructive',
+            });
+          }
+          return;
+        }
+        setStep('success');
+      } catch (err: any) {
+        toast({
+          title: 'Error inesperado',
+          description: err.message || 'Contacta al administrador.',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
+        setUploadProgress(null);
+        submittingRef.current = false;
+      }
+      return;
+    }
+
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
+      submittingRef.current = false;
       return;
     }
     if (requestType === 'recharge' && numAmount > 2000) {
@@ -459,13 +553,34 @@ export function RechargeModal({
         .single();
 
       // ── PASO 1: Subir TODAS las imágenes primero (si falla alguna, no insertamos nada) ──
-      const voucherUrl = await uploadVoucherImage(voucherFile, user.id);
+      const totalImages = 1 + extraVouchers.length;
+
+      // Calcula el rango de progreso que corresponde a esta imagen dentro del total.
+      // Ej: 2 imágenes → imagen 0 va de 0% a 47%, imagen 1 va de 47% a 94%.
+      const imageSlice = Math.floor(94 / totalImages);
+
+      setUploadPhaseLabel('Subiendo foto...');
+      setUploadProgress(0);
+
+      const voucherUrl = await uploadVoucherImage(voucherFile, user.id, (pct) => {
+        setUploadProgress(Math.round((pct * imageSlice) / 100));
+      });
 
       const extraUrls: string[] = [];
-      for (const ev of extraVouchers) {
-        const evUrl = await uploadVoucherImage(ev.voucherFile!, user.id);
+      for (let i = 0; i < extraVouchers.length; i++) {
+        const ev = extraVouchers[i];
+        const baseOffset = imageSlice * (i + 1);
+        setUploadPhaseLabel(
+          extraVouchers.length > 1 ? `Subiendo foto ${i + 2} de ${totalImages}...` : 'Subiendo foto adicional...'
+        );
+        const evUrl = await uploadVoucherImage(ev.voucherFile!, user.id, (pct) => {
+          setUploadProgress(baseOffset + Math.round((pct * imageSlice) / 100));
+        });
         extraUrls.push(evUrl);
       }
+
+      setUploadPhaseLabel('Guardando registro...');
+      setUploadProgress(96);
 
       const baseDescription = requestDescription || (
         requestType === 'lunch_payment' ? 'Pago de almuerzo' :
@@ -479,25 +594,55 @@ export function RechargeModal({
         ? `${notes.trim() ? notes.trim() + ' | ' : ''}Pago combinado: ${studentName}`
         : (notes.trim() || null);
 
-      // ── PASO 2: Insertar TODOS los registros (imágenes ya están subidas) ──
-      const { error: insertError } = await supabase.from('recharge_requests').insert({
-        student_id: studentId,
-        parent_id: user.id,
-        school_id: student?.school_id || null,
-        amount: numAmount,
-        payment_method: selectedMethod,
-        reference_code: referenceCode.trim(),
-        voucher_url: voucherUrl,
-        notes: effectiveNotes,
-        status: 'pending',
-        request_type: requestType,
-        description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
-        lunch_order_ids: lunchOrderIds || null,
-        paid_transaction_ids: paidTransactionIds || null,
-        invoice_type: invoiceType || null,
-        invoice_client_data: invoiceClientData || null,
-      });
-      if (insertError) throw insertError;
+      // ── PASO 2: Registrar el pago ─────────────────────────────────────────────
+      // CAMINO B: Pago dividido (billetera + voucher) → RPC con validación server-side
+      // CAMINO C: Pago sin billetera → INSERT directo (flujo existente)
+      if (walletAmountToUse > 0) {
+        // CAMINO B: usar RPC para que el backend valide que wallet_amount ≤ wallet_balance real.
+        // Esto cierra la vulnerabilidad de payload tampering (Escenario 2 de QA).
+        const { error: rpcError } = await supabase.rpc('submit_voucher_with_split', {
+          p_student_id:          studentId,
+          p_debt_tx_ids:         (paidTransactionIds || []) as any,
+          p_lunch_order_ids:     (lunchOrderIds || []) as any,
+          p_wallet_amount:       walletAmountToUse,
+          p_voucher_amount:      numAmount,
+          p_voucher_url:         voucherUrl,
+          p_reference_code:      referenceCode.trim(),
+          p_invoice_type:        invoiceType || null,
+          p_invoice_client_data: (invoiceClientData as any) || null,
+        });
+        if (rpcError) {
+          const msg = rpcError.message || '';
+          if (msg.includes('INSUFFICIENT_WALLET')) {
+            throw new Error(
+              'Tu saldo a favor bajó entre que abriste la pantalla y enviaste el pago. ' +
+              'Recarga la página e intenta de nuevo.'
+            );
+          }
+          throw rpcError;
+        }
+      } else {
+        // CAMINO C: pago sin billetera → INSERT directo (sin cambios al flujo existente)
+        const { error: insertError } = await supabase.from('recharge_requests').insert({
+          student_id: studentId,
+          parent_id: user.id,
+          school_id: student?.school_id || null,
+          amount: numAmount,
+          wallet_amount: 0,
+          payment_method: selectedMethod,
+          reference_code: referenceCode.trim(),
+          voucher_url: voucherUrl,
+          notes: effectiveNotes,
+          status: 'pending',
+          request_type: requestType,
+          description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
+          lunch_order_ids: lunchOrderIds || null,
+          paid_transaction_ids: paidTransactionIds || null,
+          invoice_type: invoiceType || null,
+          invoice_client_data: invoiceClientData || null,
+        });
+        if (insertError) throw insertError;
+      }
 
       for (let i = 0; i < extraVouchers.length; i++) {
         const ev = extraVouchers[i];
@@ -519,21 +664,36 @@ export function RechargeModal({
         if (evError) throw evError;
       }
 
+      setUploadProgress(100);
+      setUploadPhaseLabel('');
       setStep('success');
     } catch (err: any) {
       console.error('Error al enviar solicitud:', err);
       const msg: string = err?.message || '';
-      const isPhotoError = msg.toLowerCase().includes('foto') || msg.toLowerCase().includes('subir') || msg.toLowerCase().includes('conexión') || msg.toLowerCase().includes('fetch');
+
+      // Si el error viene del upload (ya tiene mensaje accionable), mostrarlo directo.
+      // Si viene del insert (foto ya subida pero BD falló), dar contexto diferente.
+      const isUploadError =
+        msg.toLowerCase().includes('foto') ||
+        msg.toLowerCase().includes('subir') ||
+        msg.toLowerCase().includes('imagen') ||
+        msg.toLowerCase().includes('servidor') ||
+        msg.toLowerCase().includes('internet') ||
+        msg.toLowerCase().includes('wifi') ||
+        msg.toLowerCase().includes('tardando');
+
       toast({
-        title: isPhotoError ? 'Error al subir la foto' : 'Error al registrar tu solicitud',
-        description: isPhotoError
+        title: isUploadError ? 'Error al subir la foto' : 'Error al guardar tu solicitud',
+        description: isUploadError
           ? msg
-          : `Tu foto se subió pero no se pudo guardar el registro. Espera un momento y vuelve a intentarlo. (${msg})`,
+          : `La foto se subió, pero no se pudo guardar el registro. Espera un momento y vuelve a intentarlo. (${msg})`,
         variant: 'destructive',
-        duration: 8000,
+        duration: 10000,
       });
     } finally {
       setLoading(false);
+      setUploadProgress(null);
+      setUploadPhaseLabel('');
       submittingRef.current = false;
     }
   };
@@ -914,11 +1074,43 @@ export function RechargeModal({
   // ─────────────────────── PASO 3: Subir voucher ───────────────────────
   const renderStepVoucher = () => (
     <div className="space-y-5">
-      {/* Resumen del pago */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center justify-between text-sm">
-        <span className="text-gray-600">{requestType === 'lunch_payment' ? 'Pago almuerzo:' : requestType === 'debt_payment' ? 'Pago deuda:' : 'Recarga solicitada:'}</span>
-        <span className="font-bold text-blue-700">S/ {parseFloat(amount).toFixed(2)} vía {currentMethodInfo?.label}</span>
-      </div>
+      {/* Resumen del pago — con o sin billetera */}
+      {walletAmountToUse > 0 ? (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2 text-sm">
+          <p className="font-bold text-emerald-800 flex items-center gap-1.5">
+            <Wallet className="h-4 w-4" />
+            Pago dividido con Saldo a Favor
+          </p>
+          <div className="space-y-1">
+            <div className="flex justify-between text-gray-700">
+              <span>Deuda total:</span>
+              <span className="font-semibold">
+                S/ {((suggestedAmount ?? 0)).toFixed(2)}
+              </span>
+            </div>
+            <div className="flex justify-between text-emerald-700">
+              <span>— Saldo a favor:</span>
+              <span className="font-bold text-emerald-700">
+                − S/ {walletAmountToUse.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex justify-between font-bold text-blue-800 border-t border-emerald-200 pt-1 mt-1">
+              <span>A pagar con voucher:</span>
+              <span>S/ {parseFloat(amount || '0').toFixed(2)}</span>
+            </div>
+          </div>
+          <p className="text-xs text-emerald-700">
+            Solo debes transferir <strong>S/ {parseFloat(amount || '0').toFixed(2)}</strong>.
+            Los S/ {walletAmountToUse.toFixed(2)} de tu saldo a favor
+            se descontarán automáticamente al aprobar el admin.
+          </p>
+        </div>
+      ) : (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center justify-between text-sm">
+          <span className="text-gray-600">{requestType === 'lunch_payment' ? 'Pago almuerzo:' : requestType === 'debt_payment' ? 'Pago deuda:' : 'Recarga solicitada:'}</span>
+          <span className="font-bold text-blue-700">S/ {parseFloat(amount).toFixed(2)} vía {currentMethodInfo?.label}</span>
+        </div>
+      )}
 
       {/* ── Desglose de compras (solo para debt_payment) ── */}
       {requestType === 'debt_payment' && breakdownItems && breakdownItems.length > 0 && (
@@ -1186,7 +1378,84 @@ export function RechargeModal({
   );
 
   // ─────────────────────── VISTA COMBINADA (1 sola pantalla) ───────────────────────
+  // ── Vista de pago 100% con billetera (sin voucher) ───────────────────────────
+  const renderWalletOnlyView = () => (
+    <div className="space-y-4">
+      {/* Banner principal */}
+      <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Wallet className="h-5 w-5 text-emerald-600 shrink-0" />
+          <p className="font-bold text-emerald-800 text-sm">Pago completo con Saldo a Favor</p>
+        </div>
+        <div className="space-y-1.5 text-sm">
+          <div className="flex justify-between text-gray-700">
+            <span>Deuda total:</span>
+            <span className="font-semibold text-rose-600">S/ {(suggestedAmount ?? 0).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-emerald-700">
+            <span>Tu saldo a favor cubre:</span>
+            <span className="font-bold">− S/ {(suggestedAmount ?? 0).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between font-bold text-emerald-800 border-t border-emerald-200 pt-1.5">
+            <span>A pagar ahora:</span>
+            <span className="text-lg">S/ 0.00</span>
+          </div>
+        </div>
+        <p className="text-xs text-emerald-700 bg-emerald-100 rounded-lg px-3 py-2">
+          No necesitas hacer ninguna transferencia ni subir foto.
+          Tu saldo a favor se descontará automáticamente al confirmar.
+        </p>
+      </div>
+
+      {/* Desglose de lo que se va a pagar */}
+      {breakdownItems && breakdownItems.length > 0 && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowBreakdown(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-600 transition-colors"
+          >
+            <span>📋 Ver desglose ({breakdownItems.length} ítem{breakdownItems.length !== 1 ? 's' : ''})</span>
+            <span>{showBreakdown ? '▲' : '▼'}</span>
+          </button>
+          {showBreakdown && (
+            <div className="divide-y divide-gray-100 max-h-36 overflow-y-auto">
+              {breakdownItems.map((item, i) => (
+                <div key={i} className="flex justify-between px-3 py-1.5 text-xs">
+                  <span className="text-gray-700 truncate flex-1 mr-2">{item.description}</span>
+                  <span className="font-semibold text-rose-600">S/ {item.amount.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Botón de confirmación */}
+      <Button
+        onClick={handleSubmit}
+        disabled={loading}
+        className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-base gap-2"
+      >
+        {loading ? (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Procesando...
+          </>
+        ) : (
+          <>
+            <Wallet className="h-5 w-5" />
+            Pagar S/ {(suggestedAmount ?? 0).toFixed(2)} con Saldo a Favor
+          </>
+        )}
+      </Button>
+    </div>
+  );
+
   const renderCombinedView = () => {
+    // Si el saldo cubre toda la deuda, mostrar vista simplificada (sin voucher)
+    if (isFullWalletPayment) return renderWalletOnlyView();
+
     const hasAnyMethod = !!(
       (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
       (paymentConfig?.plin_enabled !== false && paymentConfig?.plin_number) ||
@@ -1569,14 +1838,31 @@ export function RechargeModal({
               Otro comprobante (pago en partes)
             </button>
 
-            {/* Submit */}
+            {/* Submit + barra de progreso */}
+            {uploadProgress !== null && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
+                  <span>{uploadPhaseLabel || 'Procesando...'}</span>
+                  <span className="font-bold text-blue-600">{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 text-center">
+                  No cierres esta ventana hasta que el comprobante se envíe.
+                </p>
+              </div>
+            )}
             <Button
               onClick={handleSubmit}
               disabled={loading || !canSubmit}
               className="w-full h-12 bg-green-600 hover:bg-green-700 font-bold text-base shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Enviando...</>
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" />{uploadPhaseLabel || 'Enviando...'}</>
               ) : !selectedMethod ? (
                 <>Selecciona el método de pago</>
               ) : !referenceCode.trim() ? (
@@ -1666,7 +1952,8 @@ export function RechargeModal({
   if (RECHARGES_MAINTENANCE && requestType === 'recharge') {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm" aria-describedby={undefined}>
+          <DialogTitle className="sr-only">Diálogo</DialogTitle>
           <div className="text-center space-y-4 py-4">
             <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
               <AlertCircle className="h-8 w-8 text-amber-600" />
@@ -1690,7 +1977,7 @@ export function RechargeModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
             <Wallet className="h-5 w-5 text-blue-600" />

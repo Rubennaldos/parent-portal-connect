@@ -11,10 +11,14 @@ import {
   Loader2, Receipt, Smartphone, RefreshCw,
   CheckCircle2, CalendarDays, Building2, Info,
   AlertTriangle, ShieldCheck, ChevronDown, ChevronUp,
-  Clock, XCircle,
+  Clock, XCircle, Settings2, FileSpreadsheet,
 } from 'lucide-react';
+import { AutoBoleteoConfigModal } from './AutoBoleteoConfigModal';
+import { EmitirComprobanteModal, type TransaccionParaEmitir } from './EmitirComprobanteModal';
+import { PlusCircle } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import * as XLSX from 'xlsx';
 
 // ── Métodos de pago digitales que entran al cierre mensual ────────────────────
 // Regla contable (Art. 4 Ley IGV): se boletean cuando ingresa el dinero al banco.
@@ -209,6 +213,9 @@ export const CierreMensual = () => {
   }[]>([]);
   const orphanCount = orphanRows.length;
   const orphanTotal = round2(orphanRows.reduce((s, r) => s + Math.abs(r.amount), 0));
+
+  // Modal de configuración de Auto-Boleteo
+  const [showAutoConfig, setShowAutoConfig] = useState(false);
 
   // Panel de excluded (transacciones is_taxable=true que Nubefact rechazó al aprobar voucher)
   const [showExcluded, setShowExcluded]         = useState(false);
@@ -750,10 +757,12 @@ export const CierreMensual = () => {
     }
   };
 
-  // ── Panel de Excluidas (Nubefact falló al aprobar voucher) ───────────────────
-  // Busca transacciones is_taxable=true con billing_status='excluded'.
-  // Estas son ventas que SÍ deben facturarse pero Nubefact rechazó la emisión individual.
-  // El botón "Reintentar" las vuelve a 'pending' para que aparezcan en la tabla del Cierre.
+  // ── Panel de Fallidas/Excluidas (Nubefact falló al aprobar voucher) ────────────
+  // Busca transacciones is_taxable=true con billing_status='failed' O 'excluded'
+  // (ambas son facturables que no llegaron a SUNAT):
+  //   - 'failed'   = Nubefact falló; estado TEMPORAL, requiere reintento.
+  //   - 'excluded' = legacy: mismo significado antes de agregar 'failed'.
+  // El botón "Reintentar" las vuelve a 'pending' para que aparezcan en la tabla.
   const handleScanExcluded = async () => {
     if (!schoolId) return;
     setScanningExcluded(true);
@@ -761,10 +770,10 @@ export const CierreMensual = () => {
       const { start, end } = getMonthRange();
       const { data, error } = await supabase
         .from('transactions')
-        .select('id, created_at, amount, payment_method')
+        .select('id, created_at, amount, payment_method, billing_status')
         .eq('school_id', schoolId)
-        .eq('billing_status', 'excluded')
-        .eq('is_taxable', true)         // solo las que SÍ deben facturarse
+        .in('billing_status', ['failed', 'excluded'])  // ambos requieren reintento
+        .eq('is_taxable', true)
         .eq('payment_status', 'paid')
         .neq('amount', 0)
         .gte('created_at', start.toISOString())
@@ -774,7 +783,7 @@ export const CierreMensual = () => {
       setExcludedRows(data ?? []);
       setExcludedScanned(true);
       if ((data ?? []).length === 0) {
-        toast({ title: '✅ Sin excluidas pendientes', description: 'No hay transacciones facturables marcadas como "excluded" este mes.' });
+        toast({ title: '✅ Sin fallidas pendientes', description: 'No hay transacciones facturables con error SUNAT este mes.' });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
@@ -795,7 +804,7 @@ export const CierreMensual = () => {
           .from('transactions')
           .update({ billing_status: 'pending' })
           .in('id', batch)
-          .eq('billing_status', 'excluded')  // guard: solo si siguen excluded
+          .in('billing_status', ['failed', 'excluded'])  // resetear ambos estados
           .eq('is_taxable', true);
         if (error) { retryError = error; break; }
       }
@@ -812,6 +821,206 @@ export const CierreMensual = () => {
       toast({ variant: 'destructive', title: 'Error al reintentar', description: msg });
     } finally {
       setRetryingExcluded(false);
+    }
+  };
+
+  // ── Comprobante Manual ───────────────────────────────────────────────────────
+  const [isManualInvoiceModalOpen, setIsManualInvoiceModalOpen] = useState(false);
+
+  // ── Reporte Detallado para Contabilidad ──────────────────────────────────────
+  const [generatingReport, setGeneratingReport] = useState(false);
+
+  const handleReporteContabilidad = async () => {
+    if (!schoolId || !selectedMonth) return;
+    setGeneratingReport(true);
+    try {
+      const IGV_PCT     = 10.5;
+      const IGV_DIVISOR = 1 + IGV_PCT / 100; // 1.105
+
+      const [repYear, repMonth] = selectedMonth.split('-').map(Number);
+      const schoolName = schools.find(s => s.id === schoolId)?.name ?? 'Sede';
+
+      // ── 1. Fuente de verdad: tabla invoices filtrada por emission_date del mes ──
+      // Esta es la lógica correcta para declaraciones SUNAT: solo lo emitido en el período,
+      // independientemente de cuándo ocurrió el consumo.
+      // emission_date es un campo DATE (sin hora) → rango directo sin conversión UTC.
+      const [y, m] = selectedMonth.split('-');
+      const emissionStart = `${y}-${m}-01`;
+      // Último día del mes:
+      const lastDay = new Date(repYear, repMonth, 0).getDate();
+      const emissionEnd = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+
+      type InvRow = {
+        id: string;
+        emission_date: string;
+        full_number: string | null;
+        invoice_type: string | null;
+        client_name: string | null;
+        client_document_number: string | null;
+        total_amount: number;
+        sunat_status: string | null;
+      };
+
+      const PAGE_SIZE = 1000;
+      let allInvoices: InvRow[] = [];
+      let from = 0, hasMore = true;
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('invoices')
+          .select('id, emission_date, full_number, invoice_type, client_name, client_document_number, total_amount, sunat_status')
+          .eq('school_id', schoolId)
+          .gte('emission_date', emissionStart)
+          .lte('emission_date', emissionEnd)
+          .neq('sunat_status', 'cancelled')  // excluir anuladas
+          .order('emission_date', { ascending: true })
+          .order('full_number',   { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        allInvoices = allInvoices.concat((data ?? []) as InvRow[]);
+        hasMore = (data?.length ?? 0) === PAGE_SIZE;
+        from += PAGE_SIZE;
+      }
+
+      if (allInvoices.length === 0) {
+        toast({
+          title: 'Sin comprobantes',
+          description: `No hay boletas emitidas entre el 01/${m}/${y} y el ${lastDay}/${m}/${y} para esta sede.`,
+        });
+        return;
+      }
+
+      // ── 2. Construir filas del reporte ───────────────────────────────────────
+      type ReportRow = {
+        'Fecha Emisión':           string;
+        'Tipo CP':                 string;
+        'Serie':                   string;
+        'Número':                  string;
+        'DNI/RUC Cliente':         string;
+        'Nombre Cliente':          string;
+        'Base Imponible (10.5%)':  number;
+        'IGV (10.5%)':             number;
+        'Importe Total':           number;
+      };
+
+      const rows: ReportRow[] = allInvoices.map(inv => {
+        // Usar total_amount de la boleta (fuente de verdad SUNAT, no la transacción)
+        const totalAbs = Math.abs(inv.total_amount ?? 0);
+
+        // Aritmética en centavos para evitar ruido IEEE 754
+        const totalCents  = Math.round(totalAbs * 100);
+        const divisorX100 = Math.round(IGV_DIVISOR * 1000); // 1105
+        const baseCents   = Math.floor(totalCents * 1000 / divisorX100);
+        const igvCents    = totalCents - baseCents;
+        const base        = baseCents / 100;
+        const igv         = igvCents  / 100;
+
+        // Fecha de emisión (campo DATE en BD → formatear directamente)
+        let emisionStr = '';
+        try {
+          emisionStr = format(parseISO(inv.emission_date), 'dd/MM/yyyy');
+        } catch { emisionStr = inv.emission_date; }
+
+        // Serie y número desde full_number ("B001-00001234" → "B001" / "00001234")
+        let serie  = '';
+        let numero = '';
+        if (inv.full_number) {
+          const parts = inv.full_number.split('-');
+          if (parts.length >= 2) {
+            serie  = parts[0];
+            numero = parts.slice(1).join('-');
+          } else {
+            serie = inv.full_number;
+          }
+        }
+
+        // Tipo de comprobante → código SUNAT
+        const tipoCP = inv.invoice_type === 'factura' ? '01' : '03';
+
+        return {
+          'Fecha Emisión':           emisionStr,
+          'Tipo CP':                 tipoCP,
+          'Serie':                   serie,
+          'Número':                  numero,
+          'DNI/RUC Cliente':         inv.client_document_number ?? '-',
+          'Nombre Cliente':          inv.client_name ?? 'Consumidor Final',
+          'Base Imponible (10.5%)':  base,
+          'IGV (10.5%)':             igv,
+          'Importe Total':           totalAbs,
+        };
+      });
+
+      // ── 3. Totales ───────────────────────────────────────────────────────────
+      const totBase  = round2(rows.reduce((s, r) => s + r['Base Imponible (10.5%)'], 0));
+      const totIGV   = round2(rows.reduce((s, r) => s + r['IGV (10.5%)'],            0));
+      const totTotal = round2(rows.reduce((s, r) => s + r['Importe Total'],           0));
+
+      // ── 4. Construir libro Excel ─────────────────────────────────────────────
+      const headers: (keyof ReportRow)[] = [
+        'Fecha Emisión', 'Tipo CP', 'Serie', 'Número',
+        'DNI/RUC Cliente', 'Nombre Cliente',
+        'Base Imponible (10.5%)', 'IGV (10.5%)', 'Importe Total',
+      ];
+
+      const nombreMes = format(new Date(repYear, repMonth - 1, 1), 'MMMM yyyy', { locale: es }).toUpperCase();
+      const aoa: (string | number)[][] = [
+        [`REGISTRO DE VENTAS — ${schoolName.toUpperCase()} — ${nombreMes}`],
+        [`Filtro: boletas emitidas entre 01/${m}/${y} y ${lastDay}/${m}/${y} | IGV ${IGV_PCT}%`],
+        [`Generado: ${format(new Date(), "dd/MM/yyyy HH:mm", { locale: es })} | ${rows.length} comprobantes`],
+        [],
+        headers as string[],
+        ...rows.map(r => headers.map(h => r[h])),
+        [],
+        ['', '', '', '', '', 'TOTALES:', totBase, totIGV, totTotal],
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      // Ancho de columnas
+      ws['!cols'] = [
+        { wch: 14 }, // Fecha Emisión
+        { wch: 8  }, // Tipo CP
+        { wch: 8  }, // Serie
+        { wch: 14 }, // Número
+        { wch: 16 }, // DNI/RUC
+        { wch: 32 }, // Nombre
+        { wch: 24 }, // Base
+        { wch: 14 }, // IGV
+        { wch: 14 }, // Total
+      ];
+
+      // Formato numérico para columnas G, H, I (índice 6,7,8 → columnas monetarias)
+      const numFmt = '#,##0.00';
+      const dataStartRow = 6; // fila 1=título, 2=subtítulo, 3=generado, 4=vacía, 5=headers, 6=datos
+      const lastDataRow  = dataStartRow + rows.length - 1;
+      for (let r = dataStartRow; r <= lastDataRow + 2; r++) {
+        ['G', 'H', 'I'].forEach(col => {
+          const cellRef = `${col}${r}`;
+          if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
+            ws[cellRef].z = numFmt;
+          }
+        });
+      }
+
+      const wb = XLSX.utils.book_new();
+      const mesSheetName = format(new Date(repYear, repMonth - 1, 1), 'MMM-yyyy', { locale: es }).toUpperCase();
+      XLSX.utils.book_append_sheet(wb, ws, mesSheetName);
+
+      const fileName = `RegistroVentas_${schoolName.replace(/\s+/g, '_')}_${selectedMonth}_IGV${IGV_PCT}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+
+      toast({
+        title: '✅ Reporte generado',
+        description: `${rows.length} comprobante(s) emitido(s) en ${nombreMes}. Base: S/ ${totBase.toFixed(2)} | IGV: S/ ${totIGV.toFixed(2)} | Total: S/ ${totTotal.toFixed(2)}`,
+      });
+    } catch (err: any) {
+      console.error('[ReporteContabilidad]', err);
+      toast({
+        variant: 'destructive',
+        title: 'Error al generar reporte',
+        description: err?.message ?? 'Error desconocido',
+      });
+    } finally {
+      setGeneratingReport(false);
     }
   };
 
@@ -872,10 +1081,47 @@ export const CierreMensual = () => {
               >
                 {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAutoConfig(true)}
+                title="Configurar Auto-Boleteo diario"
+                className="h-9 px-2.5 border-indigo-300 text-indigo-600 hover:bg-indigo-50"
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
             </div>
           )}
           <Button variant="outline" size="sm" onClick={fetchGroups} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReporteContabilidad}
+            disabled={generatingReport || !schoolId}
+            title="Exportar reporte de ventas con boletas para contabilidad (IGV 10.5%)"
+            className="gap-1.5 border-emerald-400 text-emerald-700 hover:bg-emerald-50 font-semibold"
+          >
+            {generatingReport
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <FileSpreadsheet className="h-4 w-4" />}
+            <span className="hidden sm:inline">Reporte Contabilidad</span>
+            <span className="sm:hidden">Excel</span>
+          </Button>
+
+          {/* ── Botón Comprobante Manual ── */}
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setIsManualInvoiceModalOpen(true)}
+            disabled={!schoolId}
+            title="Emitir una boleta o factura manual sin vincularla a una venta"
+            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+          >
+            <PlusCircle className="h-4 w-4" />
+            <span className="hidden sm:inline">Emitir Comprobante Manual</span>
+            <span className="sm:hidden">Manual</span>
           </Button>
         </div>
       </div>
@@ -1211,10 +1457,10 @@ export const CierreMensual = () => {
           <div className="flex items-center gap-2">
             <XCircle className="h-4 w-4 text-orange-600 shrink-0" />
             <span className="text-sm font-semibold text-orange-800">
-              Rescate de Excluidas por Fallo de Nubefact
+              Reintentar Fallidas — Error SUNAT
             </span>
             <span className="text-xs text-orange-600 hidden sm:inline">
-              — Transacciones facturables marcadas como "excluded"
+              — Transacciones con billing_status "failed" o "excluded" (is_taxable=true)
             </span>
           </div>
           {showExcluded
@@ -1225,12 +1471,16 @@ export const CierreMensual = () => {
         {showExcluded && (
           <div className="p-4 bg-white space-y-4">
             <p className="text-xs text-gray-600">
-              Busca transacciones con <code>billing_status='excluded'</code> e{' '}
-              <code>is_taxable=true</code>. Estas son ventas digitales cuyo comprobante
-              individual <strong>no se pudo emitir en Nubefact</strong> al aprobar el voucher del padre
-              (red caída, serie inválida, error de API). Al presionar{' '}
-              <strong>"Reintentar"</strong>, se restablecen a "pending" y aparecen en la tabla
-              del Cierre Mensual para boletearlas como resumen.
+              Busca transacciones con <code>billing_status='failed'</code> o{' '}
+              <code>'excluded'</code> e <code>is_taxable=true</code>.
+              Son ventas digitales cuyo comprobante individual{' '}
+              <strong>no se pudo emitir en Nubefact</strong> al aprobar el voucher del padre
+              (red caída, serie inválida, error de API).
+              <br />
+              <strong>Nota:</strong> <code>'failed'</code> = Nubefact falló (requiere reintento).
+              <code>'excluded'</code> con <code>is_taxable=true</code> = mismo significado en registros anteriores.
+              Al presionar <strong>"Reintentar"</strong>, se restablecen a "pending" y aparecen
+              en la tabla del Cierre Mensual para boletearlas como resumen.
             </p>
 
             <div className="flex gap-2 flex-wrap">
@@ -1244,7 +1494,7 @@ export const CierreMensual = () => {
                 {scanningExcluded
                   ? <Loader2 className="h-4 w-4 animate-spin" />
                   : <AlertTriangle className="h-4 w-4" />}
-                Escanear excluidas
+                Escanear fallidas / excluidas
               </Button>
 
               {excludedScanned && excludedCount > 0 && (
@@ -1266,7 +1516,7 @@ export const CierreMensual = () => {
               <div className="flex items-center gap-2 rounded-lg p-3 bg-green-50 border border-green-200">
                 <ShieldCheck className="h-5 w-5 text-green-600 shrink-0" />
                 <p className="text-sm text-green-700 font-medium">
-                  Sin excluidas pendientes — ninguna transacción facturable quedó bloqueada por Nubefact este mes.
+                  Sin fallidas pendientes — ninguna transacción facturable tiene "Error SUNAT" este mes.
                 </p>
               </div>
             )}
@@ -1283,17 +1533,29 @@ export const CierreMensual = () => {
                         <th className="px-3 py-2 text-left text-orange-700 font-semibold">UUID (últimos 12)</th>
                         <th className="px-3 py-2 text-left text-orange-700 font-semibold">Fecha (Lima)</th>
                         <th className="px-3 py-2 text-left text-orange-700 font-semibold">Método</th>
+                        <th className="px-3 py-2 text-left text-orange-700 font-semibold">Estado</th>
                         <th className="px-3 py-2 text-right text-orange-700 font-semibold">Monto</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-orange-100">
                       {excludedRows.map(row => (
-                        <tr key={row.id} className="bg-white hover:bg-orange-50">
+                        <tr key={row.id} className={`bg-white hover:bg-orange-50 ${(row as any).billing_status === 'failed' ? 'border-l-2 border-red-400' : ''}`}>
                           <td className="px-3 py-2 font-mono text-gray-500">…{row.id.slice(-12)}</td>
                           <td className="px-3 py-2 text-gray-700">
                             {format(toLimaDate(row.created_at), 'dd/MM/yyyy HH:mm', { locale: es })}
                           </td>
                           <td className="px-3 py-2 text-gray-600">{row.payment_method ?? '—'}</td>
+                          <td className="px-3 py-2">
+                            {(row as any).billing_status === 'failed' ? (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-300">
+                                ✗ Error SUNAT
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">
+                                excluida
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-right font-bold text-gray-900">
                             S/ {Math.abs(row.amount).toFixed(2)}
                           </td>
@@ -1316,6 +1578,42 @@ export const CierreMensual = () => {
         )}
       </div>
 
+      {/* Modal Auto-Boleteo */}
+      {schoolId && (
+        <AutoBoleteoConfigModal
+          open={showAutoConfig}
+          onClose={() => setShowAutoConfig(false)}
+          schoolId={schoolId}
+          schoolName={schools.find(s => s.id === schoolId)?.name ?? 'Sede'}
+        />
+      )}
+
+      {/* Modal Comprobante Manual
+          Se construye una "transacción virtual" con id vacío, monto 0 y fecha hoy.
+          El modal tiene manualMode implícito: muestra inputs de monto y concepto
+          y NO intenta actualizar ningún registro de transactions en BD. */}
+      {isManualInvoiceModalOpen && schoolId && (
+        <EmitirComprobanteModal
+          open={isManualInvoiceModalOpen}
+          onClose={() => setIsManualInvoiceModalOpen(false)}
+          transaction={{
+            id:          '',          // sin transacción real — modal lo maneja internamente
+            amount:      0,           // el modal habilitará el campo de monto al detectar 0
+            description: '',
+            school_id:   schoolId,
+            ticket_code: null,
+          } satisfies TransaccionParaEmitir}
+          onSuccess={(_invoiceId, pdfUrl) => {
+            setIsManualInvoiceModalOpen(false);
+            toast({
+              title:       '✅ Comprobante emitido',
+              description: pdfUrl
+                ? 'Boleta/Factura enviada a SUNAT correctamente.'
+                : 'Comprobante registrado. Revisa la pestaña Comprobantes.',
+            });
+          }}
+        />
+      )}
     </div>
   );
 };

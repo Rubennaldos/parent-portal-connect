@@ -530,7 +530,7 @@ export const CombosPromotionsManager = () => {
 
       {/* MODAL: CREAR COMBO */}
       <Dialog open={showComboModal} onOpenChange={setShowComboModal}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-2xl flex items-center gap-2">
               <Gift className="h-6 w-6 text-purple-600" />
@@ -818,7 +818,7 @@ export const CombosPromotionsManager = () => {
 
       {/* MODAL: CREAR PROMOCIÓN */}
       <Dialog open={showPromoModal} onOpenChange={setShowPromoModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-2xl flex items-center gap-2">
               <Zap className="h-6 w-6 text-orange-600" />

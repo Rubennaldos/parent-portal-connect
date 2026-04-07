@@ -786,7 +786,7 @@ export default function ParentsManagement() {
 
       {/* Modal Editar Padre */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Editar Padre</DialogTitle>
           </DialogHeader>
@@ -897,7 +897,7 @@ export default function ParentsManagement() {
 
       {/* Modal Ver Hijos */}
       <Dialog open={showChildrenModal} onOpenChange={setShowChildrenModal}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Baby className="h-5 w-5" />

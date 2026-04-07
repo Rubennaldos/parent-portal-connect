@@ -46,6 +46,8 @@ import {
   List,
   FileDown,
   Sheet,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { 
   Dialog,
@@ -72,6 +74,7 @@ import { format, startOfDay, endOfDay, addDays, subDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import { ThermalTicket } from "@/components/pos/ThermalTicket";
+import { EmitirComprobanteModal, type TransaccionParaEmitir } from '@/components/billing/EmitirComprobanteModal';
 
 interface School {
   id: string;
@@ -97,6 +100,8 @@ interface Transaction {
   deletion_reason?: string;
   invoice_client_name?: string;
   invoice_client_dni_ruc?: string;
+  invoice_id?: string | null;
+  billing_status?: string | null;
   // alias de compatibilidad (undefined cuando no existe en BD)
   client_name?: string;
   document_type?: 'ticket' | 'boleta' | 'factura';
@@ -148,6 +153,8 @@ const TRANSACTION_SELECT = `
   invoice_client_name,
   invoice_client_dni_ruc,
   document_type,
+  invoice_id,
+  billing_status,
   created_by,
   school_id,
   student_id,
@@ -179,6 +186,10 @@ export const SalesList = () => {
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  // Emisión manual de comprobante SUNAT
+  const [emitirTarget, setEmitirTarget] = useState<TransaccionParaEmitir | null>(null);
+  // Mapa local: transaction.id → pdf_url (para mostrar "Ver PDF" tras emitir sin recargar)
+  const [localPdfMap, setLocalPdfMap] = useState<Map<string, string | null>>(new Map());
   const fetchTxRequestId = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState<Transaction[] | null>(null);
@@ -189,6 +200,13 @@ export const SalesList = () => {
   // Rango de fechas
   const [dateFrom, setDateFrom] = useState<Date>(new Date());
   const [dateTo, setDateTo]     = useState<Date>(new Date());
+  // Filtro de horas (formato "HH:MM", vacío = sin filtro de hora)
+  const [timeFrom, setTimeFrom] = useState('');
+  const [timeTo,   setTimeTo]   = useState('');
+  // Buscador dedicado de Nº de Operación (columna operation_number)
+  const [opNumberSearch, setOpNumberSearch] = useState('');
+  // Filtro de método de pago
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
   // Vista: 'flat' = lista plana clásica, 'grouped' = agrupado por alumno
   const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('grouped');
   // Control de filas expandidas en vista agrupada
@@ -269,13 +287,13 @@ export const SalesList = () => {
   // Resetear página a 1 cuando cambia cualquier filtro de consulta
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, dateFrom, dateTo, selectedSchool, userSchoolId, salesFilter, personFilter]);
+  }, [activeTab, dateFrom, dateTo, timeFrom, timeTo, opNumberSearch, selectedPaymentMethod, selectedSchool, userSchoolId, salesFilter, personFilter]);
 
   useEffect(() => {
     if (!permissions.loading && permissions.canView) {
       fetchTransactions();
     }
-  }, [activeTab, dateFrom, dateTo, selectedSchool, userSchoolId, currentPage, permissions.loading, permissions.canView]);
+  }, [activeTab, dateFrom, dateTo, timeFrom, timeTo, opNumberSearch, selectedPaymentMethod, selectedSchool, userSchoolId, currentPage, permissions.loading, permissions.canView]);
 
   useEffect(() => {
     if (txSyncTs > 0 && !permissions.loading && permissions.canView) {
@@ -441,11 +459,9 @@ export const SalesList = () => {
 
       const studentIds = (matchingStudents || []).map((s: any) => s.id);
 
-      // Respetar el rango de fechas activo
-      const searchStart = new Date(dateFrom);
-      searchStart.setHours(0, 0, 0, 0);
-      const searchEnd = new Date(dateTo);
-      searchEnd.setHours(23, 59, 59, 999);
+      // Respetar el rango de fechas + horas activo
+      const searchStart = buildLimaTimestamp(dateFrom, timeFrom, false);
+      const searchEnd   = buildLimaTimestamp(dateTo,   timeTo,   true);
 
       let query = supabase
         .from('transactions')
@@ -467,7 +483,8 @@ export const SalesList = () => {
       if (studentIds.length > 0) {
         query = query.in('student_id', studentIds);
       } else {
-        // Si no hay estudiantes con ese nombre, buscar en ticket_code y descripción
+        // Buscar en ticket_code, descripción y cliente (sin operation_number:
+        // ese tiene su propio input dedicado)
         query = query.or(
           `ticket_code.ilike.%${term.trim()}%,` +
           `description.ilike.%${term.trim()}%,` +
@@ -504,12 +521,27 @@ export const SalesList = () => {
     }
   };
 
+  // ── Helpers para combinar fecha + hora en UTC Lima (UTC-5) ───────────────
+  // La BD almacena timestamps en UTC. Lima es UTC-5, o sea Lima 00:00 = UTC 05:00.
+  const buildLimaTimestamp = (date: Date, timeStr: string, isEnd: boolean): Date => {
+    const [hh, mm] = timeStr
+      ? timeStr.split(':').map(Number)
+      : isEnd ? [23, 59] : [0, 0];
+    const ss = isEnd && !timeStr ? 59 : 0;
+    // Construir en UTC: fecha Lima + hora Lima + offset Lima (UTC-5 = +5h en UTC)
+    return new Date(Date.UTC(
+      date.getFullYear(), date.getMonth(), date.getDate(),
+      hh + 5,   // sumar 5h para convertir Lima → UTC
+      mm,
+      ss,
+      isEnd && !timeStr ? 999 : 0,
+    ));
+  };
+
   // Construye los filtros compartidos de la query principal (sede, fechas, pestaña)
   const buildBaseQuery = (forCount = false) => {
-    const start = new Date(dateFrom);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(dateTo);
-    end.setHours(23, 59, 59, 999);
+    const start = buildLimaTimestamp(dateFrom, timeFrom, false);
+    const end   = buildLimaTimestamp(dateTo,   timeTo,   true);
 
     let q = supabase
       .from('transactions')
@@ -529,6 +561,25 @@ export const SalesList = () => {
       q = q.or('payment_status.eq.cancelled,is_deleted.eq.true');
     } else {
       q = q.eq('is_deleted', false).neq('payment_status', 'cancelled');
+    }
+
+    // ── Filtro de Nº de Operación (columna dedicada) ─────────────────────────
+    if (opNumberSearch.trim()) {
+      q = q.ilike('operation_number', `%${opNumberSearch.trim()}%`);
+    }
+
+    // ── Filtro de Método de Pago ──────────────────────────────────────────────
+    if (selectedPaymentMethod !== 'all') {
+      // Yape y Plin tienen variantes (_qr, _numero) → usar ilike con prefijo
+      if (selectedPaymentMethod === 'yape') {
+        q = q.or('payment_method.eq.yape,payment_method.eq.yape_qr,payment_method.eq.yape_numero');
+      } else if (selectedPaymentMethod === 'plin') {
+        q = q.or('payment_method.eq.plin,payment_method.eq.plin_qr,payment_method.eq.plin_numero');
+      } else if (selectedPaymentMethod === 'tarjeta') {
+        q = q.or('payment_method.eq.tarjeta,payment_method.eq.card,payment_method.eq.visa,payment_method.eq.mastercard');
+      } else {
+        q = q.eq('payment_method', selectedPaymentMethod);
+      }
     }
 
     return q;
@@ -1067,41 +1118,64 @@ export const SalesList = () => {
   const fetchAllForExport = async (): Promise<Transaction[]> => {
     if (!canViewAllSchools && !userSchoolId) return [];
 
-    const start = new Date(dateFrom); start.setHours(0, 0, 0, 0);
-    const end   = new Date(dateTo);   end.setHours(23, 59, 59, 999);
+    // Convertir fechas a UTC respetando el huso horario Lima (UTC-5).
+    // dateFrom/dateTo son Date locales del calendario → construir el rango UTC explícito.
+    // Inicio del primer día Lima = 05:00 UTC del mismo día calendario.
+    // Fin del último día Lima    = 04:59:59.999 UTC del día calendario SIGUIENTE.
+    const limaOffsetMs = 5 * 60 * 60 * 1000;
+    const startUTC = new Date(
+      Date.UTC(dateFrom.getFullYear(), dateFrom.getMonth(), dateFrom.getDate()) + limaOffsetMs
+    );
+    const endUTC = new Date(
+      Date.UTC(dateTo.getFullYear(), dateTo.getMonth(), dateTo.getDate() + 1) + limaOffsetMs - 1
+    );
 
-    let q = supabase
-      .from('transactions')
-      .select(TRANSACTION_SELECT)
-      .in('type', ['purchase', 'sale'])
-      .eq('is_deleted', false)
-      .neq('payment_status', 'cancelled')
-      .gte('created_at', start.toISOString())
-      .lte('created_at', end.toISOString())
-      .order('created_at', { ascending: false });
+    // ── Paginación completa: bucle .range(from, to) hasta agotar todos los registros ──
+    // Supabase devuelve máximo 1000 filas por petición; sin paginación se trunca silenciosamente.
+    const PAGE = 1000;
+    let allData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (canViewAllSchools) {
-      if (selectedSchool !== 'all') q = q.eq('school_id', selectedSchool);
-    } else {
-      q = q.eq('school_id', userSchoolId!);
+    while (hasMore) {
+      let q = supabase
+        .from('transactions')
+        .select(TRANSACTION_SELECT)
+        .in('type', ['purchase', 'sale'])
+        .eq('is_deleted', false)
+        .neq('payment_status', 'cancelled')
+        .gte('created_at', startUTC.toISOString())
+        .lte('created_at', endUTC.toISOString())
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE - 1);
+
+      if (canViewAllSchools) {
+        if (selectedSchool !== 'all') q = q.eq('school_id', selectedSchool);
+      } else {
+        q = q.eq('school_id', userSchoolId!);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      allData = allData.concat(data ?? []);
+      hasMore = (data?.length ?? 0) === PAGE;
+      from += PAGE;
     }
 
-    const { data, error } = await q;
-    if (error) throw error;
-
-    // Enriquecer con cajeros
-    if (data && data.length > 0) {
-      const ids = [...new Set((data as any[]).map(t => t.created_by).filter(Boolean))];
+    // Enriquecer con cajeros (una sola query para todos los lotes)
+    if (allData.length > 0) {
+      const ids = [...new Set(allData.map((t: any) => t.created_by).filter(Boolean))];
       if (ids.length > 0) {
         const { data: profs } = await supabase
           .from('profiles').select('id, email, full_name').in('id', ids);
         if (profs) {
           const map = new Map(profs.map(p => [p.id, p]));
-          (data as any[]).forEach(t => { if (t.created_by) t.profiles = map.get(t.created_by); });
+          allData.forEach((t: any) => { if (t.created_by) t.profiles = map.get(t.created_by); });
         }
       }
     }
-    return (data || []) as Transaction[];
+    return allData as Transaction[];
   };
 
   // ── Exportar PDF profesional ─────────────────────────────────────────────
@@ -1383,6 +1457,35 @@ export const SalesList = () => {
                 >
                   Hoy
                 </Button>
+
+                {/* Filtro de horas */}
+                <span className="text-xs text-muted-foreground font-medium ml-1">|</span>
+                <span className="text-xs text-muted-foreground font-medium">⏱ Desde</span>
+                <input
+                  type="time"
+                  value={timeFrom}
+                  onChange={(e) => setTimeFrom(e.target.value)}
+                  className="h-7 px-1.5 text-xs border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 w-[82px]"
+                  title="Hora inicio (Lima)"
+                />
+                <span className="text-xs text-muted-foreground font-medium">hasta</span>
+                <input
+                  type="time"
+                  value={timeTo}
+                  onChange={(e) => setTimeTo(e.target.value)}
+                  className="h-7 px-1.5 text-xs border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 w-[82px]"
+                  title="Hora fin (Lima)"
+                />
+                {(timeFrom || timeTo) && (
+                  <Button
+                    variant="ghost" size="sm"
+                    className="h-7 px-1.5 text-[10px] text-gray-500 hover:bg-gray-100"
+                    onClick={() => { setTimeFrom(''); setTimeTo(''); }}
+                    title="Quitar filtro de hora"
+                  >
+                    ✕ hora
+                  </Button>
+                )}
               </div>
 
               {/* ── Toggle Vista ── */}
@@ -1496,42 +1599,109 @@ export const SalesList = () => {
             </Card>
           </div>
 
-          {/* Buscador */}
-          <div className="relative mb-6">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input
-              placeholder="🔍 Buscar: ticket, cliente, monto..."
-              className="pl-10 h-12 text-base border-2 focus:border-emerald-500"
-              value={searchTerm}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSearchTerm(val);
-                // Limpiar resultados globales si borra todo
-                if (!val.trim()) {
-                  setGlobalSearchResults(null);
-                  if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
-                  return;
-                }
-                // Debounce 600ms para búsqueda global
-                if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
-                globalSearchTimer.current = setTimeout(() => {
-                  fetchGlobalSearch(val);
-                }, 600);
-              }}
-            />
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              {globalSearchLoading && (
-                <span className="text-xs text-gray-400 animate-pulse">Buscando...</span>
-              )}
-              {globalSearchResults !== null && !globalSearchLoading && (
-                <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-800">
-                  🌐 {filteredTransactions.length} resultados en rango seleccionado
-                </Badge>
-              )}
-              {searchTerm && globalSearchResults === null && !globalSearchLoading && (
-                <Badge variant="secondary" className="text-xs">
-                  {filteredTransactions.length} resultados
-                </Badge>
+          {/* ── Barra de búsqueda + filtros avanzados ── */}
+          <div className="space-y-3 mb-6">
+
+            {/* Fila 1: Buscador general + Nº de Operación */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+              {/* Buscador general (nombre, ticket, descripción) */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  placeholder="🔍 Buscar: ticket, cliente, monto..."
+                  className="pl-10 h-12 text-base border-2 focus:border-emerald-500"
+                  value={searchTerm}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSearchTerm(val);
+                    if (!val.trim()) {
+                      setGlobalSearchResults(null);
+                      if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+                      return;
+                    }
+                    if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+                    globalSearchTimer.current = setTimeout(() => {
+                      fetchGlobalSearch(val);
+                    }, 600);
+                  }}
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  {globalSearchLoading && (
+                    <span className="text-xs text-gray-400 animate-pulse">Buscando...</span>
+                  )}
+                  {globalSearchResults !== null && !globalSearchLoading && (
+                    <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-800">
+                      🌐 {filteredTransactions.length} resultados
+                    </Badge>
+                  )}
+                  {searchTerm && globalSearchResults === null && !globalSearchLoading && (
+                    <Badge variant="secondary" className="text-xs">
+                      {filteredTransactions.length} resultados
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {/* Buscador dedicado de Nº de Operación */}
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-black text-muted-foreground select-none">#</span>
+                <Input
+                  placeholder="Buscar Nº de Operación (Yape, Tarjeta, Transfer...)"
+                  className={`pl-8 h-12 text-base border-2 uppercase ${opNumberSearch ? 'border-indigo-400 focus:border-indigo-500 bg-indigo-50' : 'focus:border-indigo-400'}`}
+                  value={opNumberSearch}
+                  onChange={(e) => {
+                    setOpNumberSearch(e.target.value.toUpperCase());
+                    setCurrentPage(1);
+                  }}
+                />
+                {opNumberSearch && (
+                  <button
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-lg leading-none"
+                    onClick={() => setOpNumberSearch('')}
+                    title="Limpiar"
+                  >×</button>
+                )}
+              </div>
+            </div>
+
+            {/* Fila 2: Filtro de Método de Pago */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-gray-600 shrink-0">💳 Medio de Pago:</span>
+              {[
+                { value: 'all',          label: 'Todos',          color: 'gray'   },
+                { value: 'efectivo',     label: '💵 Efectivo',    color: 'emerald'},
+                { value: 'yape',         label: '📱 Yape',        color: 'purple' },
+                { value: 'plin',         label: '📱 Plin',        color: 'cyan'   },
+                { value: 'tarjeta',      label: '💳 Tarjeta',     color: 'blue'   },
+                { value: 'transferencia',label: '🏦 Transferencia',color: 'amber' },
+                { value: 'mixto',        label: '🔀 Mixto',       color: 'orange' },
+              ].map(opt => {
+                const isActive = selectedPaymentMethod === opt.value;
+                const colorMap: Record<string, string> = {
+                  gray:    isActive ? 'bg-gray-700 text-white border-gray-700'    : 'bg-white text-gray-600 border-gray-300 hover:border-gray-500',
+                  emerald: isActive ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300 hover:border-emerald-500',
+                  purple:  isActive ? 'bg-purple-600 text-white border-purple-600'   : 'bg-white text-purple-700 border-purple-300 hover:border-purple-500',
+                  cyan:    isActive ? 'bg-cyan-600 text-white border-cyan-600'       : 'bg-white text-cyan-700 border-cyan-300 hover:border-cyan-500',
+                  blue:    isActive ? 'bg-blue-600 text-white border-blue-600'       : 'bg-white text-blue-700 border-blue-300 hover:border-blue-500',
+                  amber:   isActive ? 'bg-amber-600 text-white border-amber-600'     : 'bg-white text-amber-700 border-amber-300 hover:border-amber-500',
+                  orange:  isActive ? 'bg-orange-600 text-white border-orange-600'   : 'bg-white text-orange-700 border-orange-300 hover:border-orange-500',
+                };
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setSelectedPaymentMethod(opt.value); setCurrentPage(1); }}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border-2 transition-all ${colorMap[opt.color]}`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+              {selectedPaymentMethod !== 'all' && (
+                <button
+                  className="px-2 py-1 text-xs text-gray-400 hover:text-gray-700"
+                  onClick={() => setSelectedPaymentMethod('all')}
+                >✕ limpiar</button>
               )}
             </div>
           </div>
@@ -1903,6 +2073,46 @@ export const SalesList = () => {
                                 <Eye className="h-3.5 w-3.5" />
                               </Button>
 
+                              {/* Botón SUNAT: Ver PDF si ya existe, Emitir si no */}
+                              {(t.invoice_id || localPdfMap.has(t.id))
+                                ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1 border-indigo-300 hover:bg-indigo-50 text-indigo-600"
+                                    title="Ver PDF en Nubefact"
+                                    onClick={async () => {
+                                      const local = localPdfMap.get(t.id);
+                                      if (local) { window.open(local, '_blank'); return; }
+                                      // Buscar pdf_url en invoices
+                                      const { data: inv } = await supabase
+                                        .from('invoices').select('pdf_url').eq('id', t.invoice_id!).maybeSingle();
+                                      if (inv?.pdf_url) window.open(inv.pdf_url, '_blank');
+                                      else toast({ title: 'PDF no disponible', description: 'El comprobante fue emitido pero el PDF aún no está listo en Nubefact.' });
+                                    }}
+                                  >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                  </Button>
+                                )
+                                : t.payment_status !== 'cancelled' && !t.is_deleted && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1 border-purple-300 hover:bg-purple-50 text-purple-700"
+                                    title="Emitir comprobante electrónico SUNAT"
+                                    onClick={() => setEmitirTarget({
+                                      id:          t.id,
+                                      amount:      t.amount,
+                                      description: t.description,
+                                      school_id:   t.school_id,
+                                      ticket_code: t.ticket_code,
+                                    })}
+                                  >
+                                    <FileText className="h-3.5 w-3.5" />
+                                  </Button>
+                                )
+                              }
+
                               {/* Botón Reimprimir */}
                               {permissions.canPrint && t.payment_status !== 'cancelled' && !t.is_deleted && (
                                 <Button 
@@ -2220,7 +2430,7 @@ export const SalesList = () => {
 
       {/* MODAL: Detalles de Venta (DISEÑO TICKET REAL) */}
       <Dialog open={showDetails} onOpenChange={setShowDetails}>
-        <DialogContent className="max-w-[400px] p-0 bg-gray-100 overflow-hidden">
+        <DialogContent className="max-w-[400px] p-0 bg-gray-100 overflow-hidden" aria-describedby={undefined}>
           <DialogHeader className="p-4 bg-white border-b">
             <DialogTitle className="flex items-center gap-2">
               <Receipt className="h-5 w-5 text-blue-600" />
@@ -2257,6 +2467,27 @@ export const SalesList = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de emisión manual de comprobante SUNAT */}
+      {emitirTarget && (
+        <EmitirComprobanteModal
+          open={!!emitirTarget}
+          onClose={() => setEmitirTarget(null)}
+          transaction={emitirTarget}
+          onSuccess={(invoiceId, pdfUrl) => {
+            // Actualizar la lista local sin recargar: marcar invoice_id en la transacción
+            setTransactions(prev =>
+              prev.map(t => t.id === emitirTarget.id ? { ...t, invoice_id: invoiceId } : t),
+            );
+            setLocalPdfMap(prev => {
+              const next = new Map(prev);
+              next.set(emitirTarget.id, pdfUrl);
+              return next;
+            });
+            setEmitirTarget(null);
+          }}
+        />
+      )}
 
       {/* TICKET TÉRMICO (Oculto, para impresión) */}
       {selectedTransaction && transactionItems.length > 0 && (

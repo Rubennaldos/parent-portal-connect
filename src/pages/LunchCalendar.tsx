@@ -1109,7 +1109,7 @@ const LunchCalendar = () => {
 
       {/* Modal para preguntar si crear otro menú */}
       <Dialog open={isCreateAnotherMenuOpen} onOpenChange={setIsCreateAnotherMenuOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <UtensilsCrossed className="h-6 w-6 text-green-600" />
@@ -1180,7 +1180,7 @@ const LunchCalendar = () => {
 
       {/* Modal de Detalle de Menús del Día */}
       <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-2xl">
               <UtensilsCrossed className="h-6 w-6 text-green-600" />

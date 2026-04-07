@@ -181,7 +181,7 @@ export const BillingDashboard = () => {
   const [appliedDateFrom, setAppliedDateFrom] = useState<string>(mondayDateStr());
   const [appliedDateTo, setAppliedDateTo] = useState<string>(todayDateStr());
 
-  const canViewAllSchools = role === 'admin_general';
+  const canViewAllSchools = role === 'admin_general' || role === 'supervisor_red';
 
   // ── Atajos de rango de fechas — aplican inmediatamente (1 clic = 2 valores definidos) ──
   const applyRange = (range: 'today' | 'yesterday' | 'week' | 'month' | 'lastmonth') => {
@@ -235,14 +235,16 @@ export const BillingDashboard = () => {
 
   const fetchUserSchool = async () => {
     if (!user) return;
+    // Fetch role alongside school_id to avoid stale closure value of canViewAllSchools.
     const { data } = await supabase
       .from('profiles')
-      .select('school_id')
+      .select('school_id, role')
       .eq('id', user.id)
       .single();
     if (data?.school_id) {
       setUserSchoolId(data.school_id);
-      if (!canViewAllSchools) {
+      const isGlobalRole = ['admin_general', 'supervisor_red', 'superadmin'].includes(data?.role ?? '');
+      if (!isGlobalRole) {
         setSelectedSchool(data.school_id);
       }
     }
@@ -273,7 +275,7 @@ export const BillingDashboard = () => {
       // Traer cobros aprobados en recharge_requests — sin join de FK nombrado para evitar 400
       let rrQuery = supabase
         .from('recharge_requests')
-        .select('id, amount, approved_by, approved_at, school_id, request_type, schools:school_id(name)')
+        .select('id, amount, approved_by, approved_at, school_id, request_type, schools(name)')
         .eq('status', 'approved')
         .not('approved_by', 'is', null)
         .gte('approved_at', periodStart)
@@ -284,7 +286,7 @@ export const BillingDashboard = () => {
       // Traer transacciones de cobro manual — sin join de FK nombrado para evitar 400
       let txQuery = supabase
         .from('transactions')
-        .select('id, amount, created_by, created_at, school_id, metadata, schools:school_id(name)')
+        .select('id, amount, created_by, created_at, school_id, metadata, schools(name)')
         .eq('type', 'purchase')
         .eq('payment_status', 'paid')
         .eq('is_deleted', false)

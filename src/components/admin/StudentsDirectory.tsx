@@ -692,7 +692,7 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
 
       {/* ── Modal detalle recargas ── */}
       <Dialog open={!!rechargeModalStudent} onOpenChange={(open) => { if (!open) setRechargeModalStudent(null); }}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2 text-base">

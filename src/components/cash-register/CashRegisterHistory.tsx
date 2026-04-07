@@ -107,7 +107,7 @@ export function CashRegisterHistory({ schoolId, onClose }: CashRegisterHistoryPr
   if (loading) {
     return (
       <Dialog open onOpenChange={onClose}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
+        <DialogContent className="max-w-4xl max-h-[80vh]" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Historial de Cierres</DialogTitle>
           </DialogHeader>

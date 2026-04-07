@@ -103,7 +103,7 @@ export function PosConsumptionModal({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-sm w-full p-0 overflow-hidden rounded-2xl">
+      <DialogContent className="max-w-sm w-full p-0 overflow-hidden rounded-2xl" aria-describedby={undefined}>
 
         {/* ── Header ── */}
         <DialogHeader className="px-5 pt-5 pb-3 border-b border-slate-100">

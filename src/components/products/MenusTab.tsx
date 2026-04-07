@@ -422,7 +422,7 @@ export const MenusTab = ({ schools }: MenusTabProps) => {
 
       {/* Modal de Instrucciones */}
       <Dialog open={showInstructions} onOpenChange={setShowInstructions}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>📋 Instrucciones de Uso - Menús Semanales</DialogTitle>
           </DialogHeader>

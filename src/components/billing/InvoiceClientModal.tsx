@@ -238,6 +238,21 @@ export const InvoiceClientModal = ({
       }
     }
 
+    // ── Regla SUNAT: boleta >= S/ 700 requiere identificación del comprador ──
+    if (
+      invoiceType === 'boleta' &&
+      docType === 'sin_documento' &&
+      typeof totalAmount === 'number' &&
+      totalAmount >= 700
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'DNI requerido por SUNAT',
+        description: `Las boletas de S/ ${totalAmount.toFixed(2)} o más requieren DNI o RUC del cliente. Selecciona el tipo de documento e ingrésalo.`,
+      });
+      return;
+    }
+
     // ── Validaciones adicionales por tipo de comprobante ──
     if (invoiceType === 'factura') {
       if (!cleanDoc || cleanDoc.length !== 11) {
@@ -288,13 +303,24 @@ export const InvoiceClientModal = ({
   };
 
   const isFactura = invoiceType === 'factura';
+
+  // SUNAT: boleta >= S/ 700 exige identificación del comprador (DNI/RUC).
+  // Emitir a "Consumidor Final" (sin_documento) por ese monto → rechazo inmediato.
+  const needs700DocRule =
+    invoiceType === 'boleta' &&
+    typeof totalAmount === 'number' &&
+    totalAmount >= 700 &&
+    docType === 'sin_documento';
+
   const canConfirm = isFactura
     ? docNumber.replace(/\D/g, '').length === 11 && !!razonSocial.trim() && !!direccion.trim()
-    : true; // Boleta puede ser sin datos
+    : needs700DocRule
+      ? false   // bloqueado hasta que seleccione DNI/RUC con datos
+      : true;   // boleta < S/ 700 sin documento: válido
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden">
+      <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden" aria-describedby={undefined}>
         <DialogHeader className="bg-gradient-to-r from-blue-600 to-indigo-700 p-5 text-white">
           <DialogTitle className="text-white text-xl font-bold flex items-center gap-2">
             <Receipt className="h-6 w-6" />
@@ -535,15 +561,32 @@ export const InvoiceClientModal = ({
             />
           </div>
 
-          {/* Nota informativa para boleta sin documento */}
+          {/* Nota / bloqueo para boleta sin documento */}
           {invoiceType === 'boleta' && docType === 'sin_documento' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
-              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-700">
-                Se emitirá boleta a <strong>"Consumidor Final"</strong> sin número de documento.
-                Es válido para SUNAT para ventas al público en general.
-              </p>
-            </div>
+            needs700DocRule ? (
+              // ── BLOQUEO SUNAT: monto >= S/ 700 exige identificación ──
+              <div className="bg-red-50 border border-red-400 rounded-lg p-3 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold text-red-700">
+                    SUNAT exige DNI para boletas mayores a S/ 700
+                  </p>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    No se puede emitir a "Consumidor Final" por S/ {totalAmount?.toFixed(2)}.
+                    Selecciona <strong>DNI</strong> o <strong>RUC</strong> e ingresa el número del cliente.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              // ── Informativo: boleta sin doc por montos normales ──
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+                <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-700">
+                  Se emitirá boleta a <strong>"Consumidor Final"</strong> sin número de documento.
+                  Es válido para SUNAT para ventas al público en general.
+                </p>
+              </div>
+            )
           )}
 
           {/* Banner de datos pre-cargados desde el perfil */}

@@ -208,7 +208,7 @@ export default function ManualCashEntryModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className={`text-xl ${isIncome ? 'text-green-700' : 'text-red-700'}`}>
             {isIncome ? '📥 Registrar Ingreso Manual' : '📤 Registrar Egreso Manual'}

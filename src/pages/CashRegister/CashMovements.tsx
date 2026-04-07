@@ -340,7 +340,7 @@ export default function CashMovements({ cashRegister, movements, onMovementAdded
 
       {/* Dialog para registrar movimiento */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
               {movementType === 'ingreso' ? (

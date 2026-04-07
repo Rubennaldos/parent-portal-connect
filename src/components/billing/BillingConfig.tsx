@@ -32,6 +32,9 @@ import {
   Zap,
   Users,
   User,
+  Power,
+  PowerOff,
+  BrainCircuit,
 } from 'lucide-react';
 
 const PERUVIAN_BANKS = [
@@ -129,6 +132,10 @@ export const BillingConfig = () => {
   const [schoolDelays, setSchoolDelays] = useState<SchoolDelayConfig[]>([]);
   const [savingDelays, setSavingDelays] = useState(false);
 
+  // ── Kill Switch Motor IA de Vouchers ──
+  const [voucherAiDisabled, setVoucherAiDisabled] = useState<boolean>(true);
+  const [aiToggleLoading, setAiToggleLoading] = useState(false);
+
   console.log('🎭 Rol actual:', role);
   console.log('🔐 canViewAllSchools del hook:', canViewAllSchoolsFromHook);
   
@@ -184,8 +191,50 @@ export const BillingConfig = () => {
   useEffect(() => {
     if (selectedSchool) {
       fetchConfig();
+      loadAiConfig(selectedSchool);
     }
   }, [selectedSchool]);
+
+  // ── Kill Switch IA: cargar estado por sede ──
+  const loadAiConfig = async (schoolId: string) => {
+    try {
+      const { data } = await supabase
+        .from('billing_config')
+        .select('disable_voucher_ai')
+        .eq('school_id', schoolId)
+        .maybeSingle();
+      // false explícito = IA activa; cualquier otra cosa (true, null, sin fila) = apagada
+      setVoucherAiDisabled(data?.disable_voucher_ai !== false);
+    } catch {
+      setVoucherAiDisabled(true);
+    }
+  };
+
+  const toggleVoucherAi = async () => {
+    if (!selectedSchool) return;
+    const nuevoEstado = !voucherAiDisabled;
+    setAiToggleLoading(true);
+    try {
+      const { error } = await supabase
+        .from('billing_config')
+        .upsert(
+          { school_id: selectedSchool, disable_voucher_ai: nuevoEstado },
+          { onConflict: 'school_id' }
+        );
+      if (error) throw error;
+      setVoucherAiDisabled(nuevoEstado);
+      toast({
+        title: nuevoEstado ? '🔴 IA de Auditoría desactivada' : '🟢 IA de Auditoría reactivada',
+        description: nuevoEstado
+          ? 'Modo Manual activo. Los montos del padre se usan sin verificación automática.'
+          : 'GPT-4o Vision analizará cada voucher antes de aprobar.',
+      });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al cambiar el estado de la IA', description: err.message });
+    } finally {
+      setAiToggleLoading(false);
+    }
+  };
 
   const fetchSchools = async () => {
     try {
@@ -575,6 +624,94 @@ export const BillingConfig = () => {
               </div>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Motor IA de Auditoría de Vouchers ────────────────────────────── */}
+      <Card className="border-2 shadow-lg bg-white">
+        <CardHeader className={`border-b-2 p-4 sm:p-6 ${voucherAiDisabled ? 'bg-gradient-to-r from-amber-50 to-orange-50' : 'bg-gradient-to-r from-emerald-50 to-teal-50'}`}>
+          <CardTitle className="flex items-center gap-3 text-base sm:text-xl">
+            <div className={`p-2 rounded-lg shrink-0 ${voucherAiDisabled ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+              {voucherAiDisabled
+                ? <PowerOff className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+                : <BrainCircuit className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+              }
+            </div>
+            Motor IA de Auditoría de Vouchers
+          </CardTitle>
+          <CardDescription className="text-sm sm:text-base mt-2">
+            Controla si el sistema usa inteligencia artificial (GPT-4o Vision) para verificar
+            automáticamente los comprobantes de pago antes de aprobarlos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 sm:p-6 space-y-4">
+
+          {/* Estado actual */}
+          <div className={`flex items-start gap-3 p-4 rounded-xl border-2 ${
+            voucherAiDisabled
+              ? 'bg-amber-50 border-amber-300'
+              : 'bg-emerald-50 border-emerald-300'
+          }`}>
+            <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+              voucherAiDisabled ? 'bg-amber-100' : 'bg-emerald-100'
+            }`}>
+              {voucherAiDisabled
+                ? <PowerOff className="h-5 w-5 text-amber-600" />
+                : <BrainCircuit className="h-5 w-5 text-emerald-600" />
+              }
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-bold ${voucherAiDisabled ? 'text-amber-800' : 'text-emerald-800'}`}>
+                Estado actual:{' '}
+                <span>{voucherAiDisabled ? '🔴 DESACTIVADO — Modo Manual' : '🟢 ACTIVO'}</span>
+              </p>
+              <p className={`text-xs mt-0.5 ${voucherAiDisabled ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {voucherAiDisabled
+                  ? 'Los montos y N° de operación ingresados por el padre se aceptan sin verificación automática. Cada voucher se marca como "Validación manual requerida".'
+                  : 'GPT-4o Vision analiza la imagen de cada comprobante antes de aprobar. Consume créditos de OpenAI.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Explicación */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+            <p className="text-xs font-semibold text-blue-800">¿Qué significa cada modo?</p>
+            <ul className="text-xs text-blue-700 space-y-1.5">
+              <li>
+                <span className="font-semibold">🔴 Desactivado (Modo Manual):</span>{' '}
+                El admin revisa visualmente cada voucher. Más trabajo manual pero sin costo de IA. Recomendado si el OCR está dando errores de montos.
+              </li>
+              <li>
+                <span className="font-semibold">🟢 Activo (IA):</span>{' '}
+                La IA lee la imagen del comprobante y verifica monto y N° de operación automáticamente. Requiere créditos activos en OpenAI.
+              </li>
+            </ul>
+          </div>
+
+          {/* Botón de acción */}
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              disabled={aiToggleLoading || !selectedSchool}
+              className={`gap-2 font-semibold ${
+                voucherAiDisabled
+                  ? 'border-emerald-400 text-emerald-700 hover:bg-emerald-50'
+                  : 'border-red-300 text-red-700 hover:bg-red-50'
+              }`}
+              onClick={toggleVoucherAi}
+            >
+              {aiToggleLoading
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : voucherAiDisabled
+                  ? <><Power className="h-4 w-4" /> Reactivar IA para esta sede</>
+                  : <><PowerOff className="h-4 w-4" /> Desactivar IA para esta sede</>
+              }
+            </Button>
+          </div>
+
+          {!selectedSchool && (
+            <p className="text-xs text-gray-400 text-center">Selecciona una sede para cambiar el estado de la IA.</p>
+          )}
         </CardContent>
       </Card>
 

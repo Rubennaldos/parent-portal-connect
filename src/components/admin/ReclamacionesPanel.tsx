@@ -392,7 +392,7 @@ Responde SOLO con el texto de la respuesta, sin explicaciones adicionales. Máxi
 
       {/* ═══════════ MODAL DETALLE Y RESPUESTA ═══════════ */}
       <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-stone-800">
               <BookOpen className="h-5 w-5 text-red-700" />
@@ -499,7 +499,7 @@ Responde SOLO con el texto de la respuesta, sin explicaciones adicionales. Máxi
 
       {/* ═══════════ MODAL PREVIEW EMAIL ═══════════ */}
       <Dialog open={showEmailPreview} onOpenChange={setShowEmailPreview}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0" aria-describedby={undefined}>
           <DialogHeader className="px-6 pt-6 pb-2">
             <DialogTitle className="flex items-center gap-2 text-stone-800">
               <Mail className="h-5 w-5 text-blue-600" />

@@ -21,7 +21,11 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FileSpreadsheet,
+  UserCheck,
+  FileText,
+  ExternalLink,
 } from 'lucide-react';
+import { EmitirComprobanteModal, type TransaccionParaEmitir } from '../EmitirComprobanteModal';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
@@ -90,6 +94,10 @@ export const BillingReportsTab = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Filtro "Cobrado por" — solo visible para admin_general y supervisor_red
+  const [selectedCollectorId, setSelectedCollectorId] = useState<string>('all');
+  const [collectors, setCollectors] = useState<{ id: string; full_name: string; role: string }[]>([]);
+
   // ── Paginación server-side ─────────────────────────────────────────────────
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -101,6 +109,11 @@ export const BillingReportsTab = ({
 
   // ── Preview foto de comprobante ─────────────────────────────────────────────
   const [previewVoucher, setPreviewVoucher] = useState<string | null>(null);
+
+  // ── Comprobantes SUNAT emitidos: transaction.id → { invoice_id, pdf_url } ───
+  const [invoiceMap, setInvoiceMap] = useState<Map<string, { invoiceId: string; pdfUrl: string | null }>>(new Map());
+  // Transacción seleccionada para abrir EmitirComprobanteModal
+  const [emitirTarget, setEmitirTarget] = useState<TransaccionParaEmitir | null>(null);
 
   // Anti-race-condition: solo procesar la respuesta del fetch más reciente
   const fetchRequestId = useRef(0);
@@ -132,11 +145,12 @@ export const BillingReportsTab = ({
       // Fix: ambas rutas (búsqueda y sin búsqueda) ahora usan RPCs (POST).
       // Esto elimina los selects con embedded joins que causaban 400 Bad Request.
       const rpcParams = {
-        p_school_id:   schoolIdFilter ?? null,
-        p_status:      statusFilter !== 'all' ? statusFilter : null,
-        p_date_from:   dateFrom ? `${dateFrom}T00:00:00` : null,
-        p_date_to:     dateTo   ? `${dateTo}T23:59:59`   : null,
-        p_search_term: searchTerm.trim() || null,
+        p_school_id:      schoolIdFilter ?? null,
+        p_status:         statusFilter !== 'all' ? statusFilter : null,
+        p_date_from:      dateFrom ? `${dateFrom}T00:00:00` : null,
+        p_date_to:        dateTo   ? `${dateTo}T23:59:59`   : null,
+        p_search_term:    searchTerm.trim() || null,
+        p_collector_id:   selectedCollectorId !== 'all' ? selectedCollectorId : null,
       };
 
       // 1. Contar total
@@ -204,7 +218,7 @@ export const BillingReportsTab = ({
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name, email, role, school_id, schools:school_id(id, name)')
+          .select('id, full_name, email, role, school_id, schools(id, name)')
           .in('id', userIds);
         profiles?.forEach((p: any) => {
           createdByMap.set(p.id, { ...p, school_name: p.schools?.name || null });
@@ -212,7 +226,7 @@ export const BillingReportsTab = ({
 
         const { data: teacherProfiles } = await supabase
           .from('teacher_profiles')
-          .select('id, full_name, school_id_1, schools:school_id_1(id, name)')
+          .select('id, full_name, school_id_1, schools!school_id_1(id, name)')
           .in('id', userIds);
         teacherProfiles?.forEach((tp: any) => {
           const existing = createdByMap.get(tp.id);
@@ -230,6 +244,36 @@ export const BillingReportsTab = ({
 
       if (requestId !== fetchRequestId.current) return;
       setTransactions(enriched);
+
+      // Cargar invoice_id de las transacciones para saber cuáles ya tienen comprobante SUNAT
+      const ids = enriched.map((t: any) => t.id).filter(Boolean);
+      if (ids.length > 0) {
+        const { data: txDetails } = await supabase
+          .from('transactions')
+          .select('id, invoice_id')
+          .in('id', ids)
+          .not('invoice_id', 'is', null);
+
+        if (txDetails && txDetails.length > 0) {
+          const invIds = txDetails.map((r: any) => r.invoice_id).filter(Boolean);
+          const { data: invRows } = await supabase
+            .from('invoices')
+            .select('id, pdf_url')
+            .in('id', invIds);
+
+          const invPdfMap = new Map<string, string | null>(
+            (invRows ?? []).map((r: any) => [r.id as string, r.pdf_url as string | null]),
+          );
+
+          const newMap = new Map<string, { invoiceId: string; pdfUrl: string | null }>();
+          for (const r of txDetails) {
+            if (r.invoice_id) {
+              newMap.set(r.id, { invoiceId: r.invoice_id, pdfUrl: invPdfMap.get(r.invoice_id) ?? null });
+            }
+          }
+          if (requestId === fetchRequestId.current) setInvoiceMap(newMap);
+        }
+      }
     } catch (err) {
       if (requestId !== fetchRequestId.current) return;
       console.error('[BillingReportsTab] Error:', err);
@@ -243,10 +287,29 @@ export const BillingReportsTab = ({
     }
   };
 
+  // ── Cargar lista de usuarios cobradores (solo para admin_general / supervisor_red) ──
+  // Usa el RPC get_billing_collectors que devuelve solo usuarios con al menos
+  // una transacción registrada, para que el dropdown sea compacto y útil.
+  const fetchCollectors = async () => {
+    if (!canViewAllSchools) return;
+    try {
+      const { data, error } = await supabase.rpc('get_billing_collectors', { p_school_id: null });
+      if (!error && Array.isArray(data)) setCollectors(data);
+    } catch {
+      // Silencioso — el filtro simplemente no aparecerá si falla
+    }
+  };
+
   // ── Effects ────────────────────────────────────────────────────────────────
 
   // ── Ref para evitar el doble fetch en mount ───────────────────────────────
   const isMounted = useRef(false);
+
+  // Carga la lista de cobradores una vez al montar el componente
+  useEffect(() => {
+    fetchCollectors();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Re-fetch cuando cambian filtros (resetea a página 1)
   useEffect(() => {
@@ -261,7 +324,7 @@ export const BillingReportsTab = ({
     setCurrentPage(1);
     fetchTransactions(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSchool, dateFrom, dateTo, statusFilter, searchTerm, userSchoolId, canViewAllSchools]);
+  }, [selectedSchool, dateFrom, dateTo, statusFilter, searchTerm, selectedCollectorId, userSchoolId, canViewAllSchools]);
 
   // Re-fetch cuando cambia la página (sin resetear) — ignorar el primer render
   useEffect(() => {
@@ -475,11 +538,12 @@ export const BillingReportsTab = ({
 
       // Fix: loop de exportación también usa RPC para evitar 400 con embedded joins.
       const exportRpcParams = {
-        p_school_id:   schoolIdFilter ?? null,
-        p_status:      statusFilter !== 'all' ? statusFilter : null,
-        p_date_from:   dateFrom ? `${dateFrom}T00:00:00` : null,
-        p_date_to:     dateTo   ? `${dateTo}T23:59:59`   : null,
-        p_search_term: searchTerm.trim() || null,
+        p_school_id:      schoolIdFilter ?? null,
+        p_status:         statusFilter !== 'all' ? statusFilter : null,
+        p_date_from:      dateFrom ? `${dateFrom}T00:00:00` : null,
+        p_date_to:        dateTo   ? `${dateTo}T23:59:59`   : null,
+        p_search_term:    searchTerm.trim() || null,
+        p_collector_id:   selectedCollectorId !== 'all' ? selectedCollectorId : null,
       };
 
       const EXPORT_PAGE = 1000;
@@ -828,8 +892,8 @@ export const BillingReportsTab = ({
             ))}
           </div>
 
-          {/* Fila 3: Estado + Sede (si admin) */}
-          <div className={`grid gap-2 mb-3 ${canViewAllSchools ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {/* Fila 3: Estado */}
+          <div className="mb-3">
             <div className="space-y-1">
               <Label className="text-xs text-gray-500">Estado</Label>
               <select
@@ -843,9 +907,16 @@ export const BillingReportsTab = ({
                 <option value="partial">Parciales</option>
               </select>
             </div>
-            {canViewAllSchools && (
+          </div>
+
+          {/* Fila 3b: Sede + Cobrado por (solo admin_general / supervisor_red) */}
+          {canViewAllSchools && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
               <div className="space-y-1">
-                <Label className="text-xs text-gray-500">Sede</Label>
+                <Label className="text-xs text-gray-500 flex items-center gap-1">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Sede
+                </Label>
                 <select
                   value={selectedSchool}
                   onChange={(e) => { setSelectedSchool(e.target.value); setCurrentPage(1); }}
@@ -857,8 +928,30 @@ export const BillingReportsTab = ({
                   ))}
                 </select>
               </div>
-            )}
-          </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-gray-500 flex items-center gap-1">
+                  <UserCheck className="h-3.5 w-3.5" />
+                  Cobrado por
+                </Label>
+                <select
+                  value={selectedCollectorId}
+                  onChange={(e) => { setSelectedCollectorId(e.target.value); setCurrentPage(1); }}
+                  className={`flex h-10 w-full rounded-md border px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                    selectedCollectorId !== 'all'
+                      ? 'border-blue-400 bg-blue-50 text-blue-800 font-medium'
+                      : 'border-input bg-background'
+                  }`}
+                >
+                  <option value="all">Todos los usuarios</option>
+                  {collectors.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Fila 4: Buscar */}
           <div className="space-y-1 mb-3">
@@ -1114,6 +1207,39 @@ export const BillingReportsTab = ({
                           <Download className="h-4 w-4 mr-2" />
                           Comprobante
                         </Button>
+
+                        {/* Botón SUNAT: Ver PDF si ya existe, Emitir si no */}
+                        {invoiceMap.has(transaction.id) ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full border-indigo-400 text-indigo-600 hover:bg-indigo-50"
+                            onClick={() => {
+                              const url = invoiceMap.get(transaction.id)?.pdfUrl;
+                              if (url) window.open(url, '_blank');
+                              else toast({ title: 'PDF no disponible aún', description: 'El comprobante fue emitido pero el PDF aún no está listo en Nubefact.' });
+                            }}
+                          >
+                            <ExternalLink className="h-4 w-4 mr-2" />
+                            Ver PDF SUNAT
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full border-purple-400 text-purple-700 hover:bg-purple-50"
+                            onClick={() => setEmitirTarget({
+                              id:          transaction.id,
+                              amount:      transaction.amount,
+                              description: transaction.description,
+                              school_id:   transaction.school_id ?? transaction.schools?.id ?? null,
+                              ticket_code: transaction.ticket_code,
+                            })}
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Emitir Comprobante
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1166,6 +1292,22 @@ export const BillingReportsTab = ({
             </Button>
           </div>
         </div>
+      )}
+      {/* Modal de emisión manual de comprobante SUNAT */}
+      {emitirTarget && (
+        <EmitirComprobanteModal
+          open={!!emitirTarget}
+          onClose={() => setEmitirTarget(null)}
+          transaction={emitirTarget}
+          onSuccess={(invoiceId, pdfUrl) => {
+            setInvoiceMap(prev => {
+              const next = new Map(prev);
+              next.set(emitirTarget.id, { invoiceId, pdfUrl });
+              return next;
+            });
+            setEmitirTarget(null);
+          }}
+        />
       )}
     </div>
   );

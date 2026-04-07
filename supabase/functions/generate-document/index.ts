@@ -137,38 +137,28 @@ serve(async (req) => {
       1: "01", 2: "03", 7: "07", 8: "07",
     };
 
-    // 5. Número correlativo — usamos MAX(numero) para no generar huecos ni repetir
-    // COUNT(*) fallaba cuando había registros anteriores borrados o la tabla estaba vacía
-    // pero Nubefact ya tenía ese número registrado de sesiones previas.
-    let numero = 1;
-    try {
-      const { data: maxRow } = await supabase
-        .from("invoices")
-        .select("numero")
-        .eq("school_id", school_id)
-        .eq("serie", serie)
-        .order("numero", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (maxRow?.numero) numero = (maxRow.numero as number) + 1;
-    } catch (_) {
-      // Fallback a electronic_documents si invoices no existe aún
-      try {
-        const { data: maxRowED } = await supabase
-          .from("electronic_documents")
-          .select("numero")
-          .eq("school_id", school_id)
-          .eq("tipo_comprobante", tipo)
-          .eq("serie", serie)
-          .order("numero", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (maxRowED?.numero) numero = (maxRowED.numero as number) + 1;
-      } catch (_2) {
-        numero = 1;
-      }
+    // 5. Número correlativo — ATÓMICO vía get_next_invoice_numero
+    // Reemplaza el frágil SELECT MAX(numero)+1.
+    // La función usa INSERT...ON CONFLICT...DO UPDATE RETURNING, lo que garantiza
+    // que dos llamadas concurrentes NUNCA reciban el mismo número.
+    const { data: nextNumero, error: seqErr } = await supabase
+      .rpc("get_next_invoice_numero", { p_school_id: school_id, p_serie: serie });
+
+    if (seqErr || nextNumero == null) {
+      console.error(`[generate-document] Error obteniendo correlativo atómico:`, seqErr);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `No se pudo obtener el correlativo para ${serie}. ` +
+                 `Detalle: ${seqErr?.message ?? "respuesta nula"}. ` +
+                 `Verifica que la migración 20260404_invoice_sequences.sql fue ejecutada en Supabase.`,
+        }),
+        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
+      );
     }
-    console.log(`📋 Correlativo calculado: ${serie}-${String(numero).padStart(8, "0")}`);
+
+    let numero: number = nextNumero;
+    console.log(`📋 Correlativo atómico: ${serie}-${String(numero).padStart(8, "0")}`);
 
     // 6. Calcular IGV — carga dinámica desde billing_config
     // Perú: 18% estándar, 10.5% para MYPES Restaurantes (Régimen Especial)
@@ -180,8 +170,14 @@ serve(async (req) => {
       igv_pct = 18; // Fallback estándar
       console.warn(`[generate-document] ADVERTENCIA: igv_porcentaje no configurado para school_id=${school_id}. Usando 18% por defecto. Configure el IGV correcto en billing_config.`);
     }
-    const igv_monto    = monto_total - (monto_total / (1 + igv_pct / 100));
-    const base_imponible = monto_total - igv_monto;
+    // Aritmética de enteros (céntimos) — garantiza baseCents + igvCents = totalCents
+    // sin ruido IEEE 754. Misma fórmula que VoucherApproval, BillingCollection y CierreMensual.
+    const totalCents    = Math.round(monto_total * 100);
+    const divisorX100   = 100 + igv_pct;
+    const baseCents     = Math.floor(totalCents * 100 / divisorX100);
+    const igvCents      = totalCents - baseCents;
+    const base_imponible = baseCents / 100;
+    const igv_monto      = igvCents  / 100;
 
     // 7. Fecha — usa emission_date si viene del cuerpo (Cierre Mensual, 3 días de gracia)
     //    o hoy si no se especifica (POS en tiempo real)
@@ -250,37 +246,59 @@ serve(async (req) => {
       payload.documento_que_se_modifica_numero   = doc_ref.numero;
     }
 
-    // 11. Llamar a la API de Nubefact (con retry si el número ya existe)
+    // 11. Llamar a la API de Nubefact
+    // Con la secuencia atómica, el correlativo es único y no debería existir en Nubefact.
+    // Sin embargo, mantenemos UN único fallback de emergencia para el caso de desfase
+    // en la migración de datos (ej. números en electronic_documents no cargados a invoice_sequences).
+    // Si el fallback también falla con "ya existe", es una señal de que la secuencia está
+    // desincronizada y debe corregirse manualmente en invoice_sequences.
     const nubefactHeaders = {
       "Authorization": `Token token=${cfg.nubefact_token.trim()}`,
       "Content-Type":  "application/json",
     };
 
     let nubefactData: any;
-    let intentos = 0;
-    const MAX_INTENTOS = 3;
 
-    while (intentos < MAX_INTENTOS) {
-      intentos++;
-      const nubefactRes = await fetch(cfg.nubefact_ruta.trim(), {
-        method:  "POST",
-        headers: nubefactHeaders,
-        body: JSON.stringify({ ...payload, numero }),
-      });
-      nubefactData = await nubefactRes.json();
+    // Primer intento — el número atómico debería ser siempre único
+    const nubefactRes1 = await fetch(cfg.nubefact_ruta.trim(), {
+      method:  "POST",
+      headers: nubefactHeaders,
+      body:    JSON.stringify({ ...payload, numero }),
+    });
+    nubefactData = await nubefactRes1.json();
 
-      // Detectar "documento ya existe" en Nubefact → auto-incrementar y reintentar
-      const errStr = JSON.stringify(nubefactData.errors ?? "").toLowerCase();
-      const yaExiste = errStr.includes("ya existe") || errStr.includes("already exists") ||
-                       errStr.includes("duplicado") || errStr.includes("duplicate");
+    // Fallback de emergencia: si Nubefact dice "ya existe", obtener el SIGUIENTE correlativo
+    // atómico (consumiendo un número y creando un hueco deliberado) y reintentar UNA vez.
+    const errStr1 = JSON.stringify(nubefactData.errors ?? "").toLowerCase();
+    const yaExiste1 = errStr1.includes("ya existe") || errStr1.includes("already exists") ||
+                      errStr1.includes("duplicado") || errStr1.includes("duplicate");
 
-      if (yaExiste && intentos < MAX_INTENTOS) {
-        console.warn(`⚠️ Número ${serie}-${numero} ya existe en Nubefact — reintentando con ${numero + 1}`);
-        numero += 1;
+    if (yaExiste1) {
+      console.error(
+        `🚨 [generate-document] ALERTA SECUENCIA: el correlativo atómico ${serie}-${numero} ` +
+        `ya existe en Nubefact. Esto indica desfase en invoice_sequences. ` +
+        `Consumiendo siguiente número como emergencia y reintentando.`
+      );
+
+      // Obtener el siguiente número de la secuencia (consumiéndolo — crea un hueco intencional)
+      const { data: nextNumeroFallback, error: seqErrFb } = await supabase
+        .rpc("get_next_invoice_numero", { p_school_id: school_id, p_serie: serie });
+
+      if (!seqErrFb && nextNumeroFallback != null) {
+        numero = nextNumeroFallback;
         payload.numero = numero;
-        continue;
+        console.warn(`[generate-document] Reintentando con correlativo de emergencia: ${serie}-${numero}`);
+
+        const nubefactRes2 = await fetch(cfg.nubefact_ruta.trim(), {
+          method:  "POST",
+          headers: nubefactHeaders,
+          body:    JSON.stringify({ ...payload, numero }),
+        });
+        nubefactData = await nubefactRes2.json();
+      } else {
+        // Si ni siquiera podemos obtener el fallback, dejar nubefactData con el error original
+        console.error(`[generate-document] No se pudo obtener correlativo de emergencia:`, seqErrFb);
       }
-      break; // éxito o error no recuperable
     }
 
     // 12. Estado SUNAT

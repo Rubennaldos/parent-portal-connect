@@ -1,13 +1,20 @@
 -- ============================================================
--- RPC: get_billing_dashboard_stats
--- Reemplaza las 4-5 queries paralelas + todos los reduce/loops
--- de BillingDashboard.tsx. Postgres hace las sumas; el navegador
--- solo recibe un objeto JSON con ~30 campos.
+-- RPC: get_billing_dashboard_stats  (v2 — fix contable 04-Apr-2026)
+-- ============================================================
+-- CAMBIOS vs versión anterior:
 --
--- PARÁMETROS:
---   p_school_id  → filtra por sede (NULL = todas)
---   p_date_from  → inicio del período (date string YYYY-MM-DD)
---   p_date_to    → fin del período   (date string YYYY-MM-DD)
+--   BUG 1 — Deudas pendientes ignoraban el histórico:
+--     La sección de DEUDA PENDIENTE usaba BETWEEN v_period_start AND v_period_end.
+--     Esto excluía deudas anteriores al rango seleccionado, que siguen siendo deuda.
+--     FIX: solo se aplica el límite SUPERIOR (v_period_end) a las deudas pendientes.
+--          p_date_from solo afecta a métricas de COBROS DEL PERÍODO.
+--
+--   BUG 2 — Almuerzos virtuales sobreescribían en lugar de acumular:
+--     La sección 2 hacía INTO v_lunch_pending sobreescribiendo el valor
+--     ya calculado en la sección 1 (almuerzos con transacción).
+--     FIX: variables separadas (v_virtual_lunch_pending / v_virtual_lunch_debtors)
+--          que se suman al final: total lunch = real + virtual.
+--          También se elimina el filtro p_date_from de lunch_orders.
 -- ============================================================
 
 DROP FUNCTION IF EXISTS get_billing_dashboard_stats(uuid, date, date);
@@ -23,25 +30,34 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  -- Límites para COBROS DEL PERÍODO (ambas fechas aplican)
   v_period_start  timestamptz := (p_date_from::text || 'T00:00:00-05:00')::timestamptz;
   v_period_end    timestamptz := (p_date_to::text   || 'T23:59:59-05:00')::timestamptz;
+
+  -- Límite superior para DEUDA PENDIENTE (solo p_date_to — no excluir historial)
+  v_debt_end      timestamptz := (p_date_to::text   || 'T23:59:59-05:00')::timestamptz;
+
   v_today         date        := CURRENT_DATE AT TIME ZONE 'America/Lima';
   v_yesterday     date        := v_today - interval '1 day';
 
   -- ── DEUDA PENDIENTE (transacciones reales) ──────────────────
-  v_total_pending       numeric := 0;
-  v_lunch_pending       numeric := 0;
-  v_cafeteria_pending   numeric := 0;
-  v_total_debtors       integer := 0;
-  v_lunch_debtors       integer := 0;
-  v_cafeteria_debtors   integer := 0;
-  v_teacher_debtors     integer := 0;
-  v_student_debtors     integer := 0;
-  v_manual_debtors      integer := 0;
-  v_total_teacher_debt  numeric := 0;
-  v_total_student_debt  numeric := 0;
-  v_total_manual_debt   numeric := 0;
+  v_total_pending         numeric := 0;
+  v_lunch_pending         numeric := 0;   -- almuerzos con tx real
+  v_cafeteria_pending     numeric := 0;
+  v_total_debtors         integer := 0;
+  v_lunch_debtors         integer := 0;
+  v_cafeteria_debtors     integer := 0;
+  v_teacher_debtors       integer := 0;
+  v_student_debtors       integer := 0;
+  v_manual_debtors        integer := 0;
+  v_total_teacher_debt    numeric := 0;
+  v_total_student_debt    numeric := 0;
+  v_total_manual_debt     numeric := 0;
   v_total_tickets_pending integer := 0;
+
+  -- ── ALMUERZOS VIRTUALES (lunch_orders sin tx) — variables separadas ──
+  v_virtual_lunch_pending numeric := 0;
+  v_virtual_lunch_debtors integer := 0;
 
   -- ── COBROS DEL PERÍODO ──────────────────────────────────────
   v_collected_today     numeric := 0;
@@ -77,7 +93,7 @@ BEGIN
 
   -- ============================================================
   -- 1. DEUDA PENDIENTE — transacciones reales (type=purchase, pending/partial)
-  --    Rango: todo el período seleccionado
+  --    FIX: SIN límite inferior de fecha — toda deuda pendiente hasta p_date_to
   -- ============================================================
   SELECT
     COALESCE(SUM(ABS(t.amount)), 0),
@@ -103,12 +119,14 @@ BEGIN
   WHERE t.type = 'purchase'
     AND t.is_deleted = false
     AND t.payment_status IN ('pending', 'partial')
-    AND t.created_at BETWEEN v_period_start AND v_period_end
+    -- FIX BUG 1: solo límite superior, sin filtro inferior
+    AND t.created_at <= v_debt_end
     AND (p_school_id IS NULL OR t.school_id = p_school_id);
 
   -- ============================================================
-  -- 2. DEUDA DE ALMUERZOS — lunch_orders sin transacción real
-  --    Misma lógica de materialización pero solo para conteo/suma
+  -- 2. ALMUERZOS VIRTUALES — lunch_orders sin transacción real
+  --    FIX BUG 2a: variables SEPARADAS para no sobreescribir sección 1
+  --    FIX BUG 2b: solo límite superior en order_date (no FROM)
   -- ============================================================
   SELECT
     COALESCE(SUM(
@@ -120,7 +138,7 @@ BEGIN
       END
     ), 0),
     COUNT(DISTINCT COALESCE(lo.student_id::text, lo.teacher_id::text, lower(trim(lo.manual_name)), 'unk'))
-  INTO v_lunch_pending, v_lunch_debtors
+  INTO v_virtual_lunch_pending, v_virtual_lunch_debtors
   FROM lunch_orders lo
   LEFT JOIN lunch_categories lc ON lc.id = lo.category_id
   LEFT JOIN students st ON st.id = lo.student_id
@@ -130,7 +148,8 @@ BEGIN
   WHERE lo.is_cancelled = false
     AND lo.payment_method = 'pagar_luego'
     AND lo.status NOT IN ('cancelled')
-    AND lo.order_date BETWEEN p_date_from AND p_date_to
+    -- FIX BUG 1+2: solo límite superior de fecha
+    AND lo.order_date <= p_date_to
     AND (
       p_school_id IS NULL
       OR lo.school_id = p_school_id
@@ -144,12 +163,15 @@ BEGIN
         AND t2.payment_status IN ('pending', 'partial', 'paid')
     );
 
-  -- Acumular sobre los totales ya calculados
-  v_total_pending     := v_total_pending + v_lunch_pending;
-  v_total_debtors     := v_total_debtors + v_lunch_debtors;
+  -- FIX BUG 2c: ACUMULAR (no sobreescribir) — total lunch = real + virtual
+  v_lunch_pending   := v_lunch_pending + v_virtual_lunch_pending;
+  v_lunch_debtors   := v_lunch_debtors + v_virtual_lunch_debtors;
+  v_total_pending   := v_total_pending + v_virtual_lunch_pending;
+  v_total_debtors   := v_total_debtors + v_virtual_lunch_debtors;
 
   -- ============================================================
   -- 3. COBROS DEL PERÍODO (paid, excluyendo source='pos')
+  --    Aquí SÍ se aplica p_date_from — es un rango de ingresos
   -- ============================================================
   SELECT
     COALESCE(SUM(ABS(t.amount)) FILTER (WHERE (t.created_at AT TIME ZONE 'America/Lima')::date = v_today AND (t.metadata->>'source') IS DISTINCT FROM 'pos'), 0),
@@ -179,7 +201,8 @@ BEGIN
     AND (p_school_id IS NULL OR t.school_id = p_school_id);
 
   -- ============================================================
-  -- 4. ANTIGÜEDAD DE LA DEUDA (solo transacciones reales pending)
+  -- 4. ANTIGÜEDAD DE LA DEUDA
+  --    FIX: sin filtro de p_date_from — toda deuda pendiente hasta hoy
   -- ============================================================
   SELECT
     COALESCE(SUM(ABS(t.amount)) FILTER (WHERE EXTRACT(DAY FROM (NOW() AT TIME ZONE 'America/Lima' - t.created_at AT TIME ZONE 'America/Lima')) <= 0), 0),
@@ -202,10 +225,11 @@ BEGIN
   WHERE t.type = 'purchase'
     AND t.is_deleted = false
     AND t.payment_status IN ('pending', 'partial')
+    -- FIX: sin límite inferior — toda la deuda histórica cuenta
     AND (p_school_id IS NULL OR t.school_id = p_school_id);
 
   -- ============================================================
-  -- 5. TOP 15 DEUDORES (por monto total pendiente)
+  -- 5. TOP 15 DEUDORES (sin filtro de fecha — toda deuda pendiente)
   -- ============================================================
   SELECT jsonb_agg(
     jsonb_build_object(
@@ -248,6 +272,8 @@ BEGIN
 
   -- ============================================================
   -- 6. RESUMEN POR SEDE
+  --    Pending: sin filtro de fecha (toda deuda histórica)
+  --    Collected: con filtro de período (solo ingresos del rango)
   -- ============================================================
   SELECT jsonb_agg(
     jsonb_build_object(
@@ -263,9 +289,11 @@ BEGIN
   FROM (
     SELECT
       school_id,
+      -- FIX: sin filtro de fecha inferior para pending
       SUM(ABS(amount)) FILTER (WHERE payment_status IN ('pending','partial')) AS pending,
       SUM(ABS(amount)) FILTER (WHERE payment_status IN ('pending','partial') AND (metadata->>'lunch_order_id') IS NOT NULL) AS lunch_p,
       SUM(ABS(amount)) FILTER (WHERE payment_status IN ('pending','partial') AND (metadata->>'lunch_order_id') IS NULL) AS cafe_p,
+      -- Collected sí usa el rango del período
       SUM(ABS(amount)) FILTER (WHERE payment_status = 'paid' AND (metadata->>'source') IS DISTINCT FROM 'pos' AND created_at BETWEEN v_period_start AND v_period_end) AS collected,
       COUNT(DISTINCT COALESCE(student_id::text, teacher_id::text, lower(trim(manual_client_name)))) FILTER (WHERE payment_status IN ('pending','partial')) AS debtors_count
     FROM transactions
@@ -296,10 +324,12 @@ BEGIN
   );
 
   v_debt_age_obj := jsonb_build_object(
-    'today', v_debt_today, 'days1to3', v_debt_1to3,
-    'days4to7', v_debt_4to7, 'days8to15', v_debt_8to15, 'daysOver15', v_debt_over15,
+    'today',      v_debt_today,  'days1to3',  v_debt_1to3,
+    'days4to7',   v_debt_4to7,   'days8to15', v_debt_8to15,
+    'daysOver15', v_debt_over15,
     'countToday', v_count_today, 'count1to3', v_count_1to3,
-    'count4to7', v_count_4to7, 'count8to15', v_count_8to15, 'countOver15', v_count_over15
+    'count4to7',  v_count_4to7,  'count8to15',v_count_8to15,
+    'countOver15',v_count_over15
   );
 
   RETURN jsonb_build_object(

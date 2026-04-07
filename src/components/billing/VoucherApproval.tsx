@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { BILLING_EXCLUDED, calcBillingFlags } from '@/lib/billingUtils';
+import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { logErrorAsync } from '@/lib/logError';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -34,6 +34,9 @@ import {
   CalendarDays,
   BadgeCheck,
   BadgeX,
+  Power,
+  PowerOff,
+  BrainCircuit,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -61,8 +64,10 @@ interface RechargeRequest {
   description?: string | null;
   lunch_order_ids?: string[] | null;
   paid_transaction_ids?: string[] | null;
+  /** S/ que se descuentan de la billetera interna del alumno (0 = sin billetera) */
+  wallet_amount?: number | null;
   // Joins
-  students?: { full_name: string; balance: number };
+  students?: { full_name: string; balance: number; wallet_balance?: number };
   profiles?: { full_name: string; email: string };
   schools?: { name: string };
   // Computed
@@ -161,6 +166,10 @@ export const VoucherApproval = () => {
 
   const canViewAll = role === 'admin_general' || role === 'supervisor_red';
 
+  // ── Kill Switch: Motor IA de Auditoría ────────────────────────────────────
+  // true = IA apagada (Modo Manual), false = IA activa
+  const [voucherAiDisabled, setVoucherAiDisabled] = useState<boolean>(true);
+  const [aiToggleLoading, setAiToggleLoading] = useState(false);
   // ── Función de auditoría Anti-Fraude ─────────────────────────────────────
   const runAudit = async () => {
     const normalized = auditCode.trim().toUpperCase();
@@ -305,11 +314,18 @@ export const VoucherApproval = () => {
 
   useEffect(() => {
     fetchUserSchool();
+    // Carga inicial sin school_id — se refinará en el segundo effect
+    loadAiConfig();
   }, [user, role]);
 
-  // Solo cargar vouchers cuando el school_id ya está resuelto (no undefined)
+  // Solo cargar vouchers cuando el school_id ya está resuelto (no undefined).
+  // También re-carga la config IA con el school_id correcto para que el filtro
+  // por sede sea preciso (evita leer la fila incorrecta en entornos multi-sede).
   useEffect(() => {
-    if (userSchoolId !== undefined) fetchRequests();
+    if (userSchoolId !== undefined) {
+      fetchRequests();
+      loadAiConfig(userSchoolId); // refresca con la sede correcta
+    }
   }, [filter, userSchoolId, selectedSchoolFilter]);
 
   // Búsqueda global con debounce: cuando hay término de búsqueda, busca en TODA la BD
@@ -390,6 +406,56 @@ export const VoucherApproval = () => {
     }
   };
 
+  // ── Kill Switch: cargar y guardar estado de la IA ──────────────────────────
+  // schoolId opcional: si se pasa, filtra por esa sede (más preciso).
+  // Si no se pasa (admin_general sin contexto), toma el primer registro activo.
+  // DEFAULT → true (desactivada) para evitar activar la IA por error de config.
+  const loadAiConfig = async (schoolId?: string | null) => {
+    try {
+      let query = supabase
+        .from('billing_config')
+        .select('disable_voucher_ai');
+
+      if (schoolId) {
+        // Filtrar por sede específica: el resultado es determinista y correcto
+        query = query.eq('school_id', schoolId) as typeof query;
+      } else {
+        // Sin sede conocida: ordenar por creado/id para ser deterministas
+        query = query.order('id', { ascending: true }) as typeof query;
+      }
+
+      const { data } = await (query as any).limit(1).maybeSingle();
+      const flag = data?.disable_voucher_ai;
+      setVoucherAiDisabled(flag !== false); // false explícito = IA activa, cualquier otra cosa = apagada
+    } catch {
+      setVoucherAiDisabled(true); // Error cargando → seguro por defecto
+    }
+  };
+
+  const toggleVoucherAi = async () => {
+    const nuevoEstado = !voucherAiDisabled;
+    setAiToggleLoading(true);
+    try {
+      const { error } = await supabase
+        .from('billing_config')
+        .update({ disable_voucher_ai: nuevoEstado })
+        .not('id', 'is', null);
+
+      if (error) throw error;
+      setVoucherAiDisabled(nuevoEstado);
+      toast({
+        title: nuevoEstado ? '🔴 IA de Auditoría desactivada' : '🟢 IA de Auditoría reactivada',
+        description: nuevoEstado
+          ? 'Modo Manual activo. Los montos del padre se usan sin verificación automática.'
+          : 'GPT-4o Vision analizará cada voucher antes de aprobar.',
+      });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al cambiar el estado de la IA', description: err.message });
+    } finally {
+      setAiToggleLoading(false);
+    }
+  };
+
   const fetchRequests = async () => {
     setLoading(true);
     try {
@@ -397,7 +463,7 @@ export const VoucherApproval = () => {
         .from('recharge_requests')
         .select(`
           *,
-          students(full_name, balance),
+          students(full_name, balance, wallet_balance),
           profiles!recharge_requests_parent_id_fkey(full_name, email),
           schools(name)
         `)
@@ -581,6 +647,55 @@ export const VoucherApproval = () => {
   // PUERTA DE ENTRADA: Auditar con IA ANTES de aprobar
   // ──────────────────────────────────────────────────────────
   const handleApproveConIA = async (req: RechargeRequest, overrideCode?: string) => {
+    // ── Kill Switch: DOBLE CANDADO — React state + BD fresca por sede ──
+    // La IA solo corre si AMBAS fuentes dicen que está activa:
+    //   1. El estado React (cargado en mounté/useEffect) dice "activa" (false)
+    //   2. La BD fresca para esta sede también dice "activa" (false explícito)
+    // Si CUALQUIERA dice "desactivada", se salta la IA.
+    // DEFAULT → siempre desactivada ante cualquier error o dato ausente.
+
+    // Candado 1: estado React (rápido, sin red)
+    if (voucherAiDisabled) {
+      toast({
+        title: '📋 Modo Manual — IA desactivada',
+        description: `Voucher de S/ ${req.amount.toFixed(2)} procesado con los datos del padre. Sin verificación automática.`,
+      });
+      return handleApprove(req, overrideCode);
+    }
+
+    // Candado 2: BD fresca por sede (fuente de verdad, evita estado cacheado incorrecto)
+    let iaActivaEnBD = false; // default: desactivada
+    try {
+      const schoolIdParaBuscar = req.school_id ?? userSchoolId ?? null;
+      let cfgQuery = supabase
+        .from('billing_config')
+        .select('disable_voucher_ai');
+      if (schoolIdParaBuscar) {
+        cfgQuery = cfgQuery.eq('school_id', schoolIdParaBuscar) as typeof cfgQuery;
+      } else {
+        cfgQuery = cfgQuery.order('id', { ascending: true }) as typeof cfgQuery;
+      }
+      const { data: cfgFresh } = await (cfgQuery as any).limit(1).maybeSingle();
+      // IA activa SOLO si disable_voucher_ai es explícitamente FALSE
+      iaActivaEnBD = cfgFresh?.disable_voucher_ai === false;
+      // Sincronizar el estado visual si la BD discrepa
+      if (!iaActivaEnBD && !voucherAiDisabled) {
+        setVoucherAiDisabled(true);
+      }
+    } catch {
+      // Error (columna no existe, red, etc.) → tratar como desactivada
+      iaActivaEnBD = false;
+      setVoucherAiDisabled(true);
+    }
+
+    if (!iaActivaEnBD) {
+      toast({
+        title: '📋 Modo Manual — IA desactivada',
+        description: `Voucher de S/ ${req.amount.toFixed(2)} procesado con los datos del padre. Sin verificación automática.`,
+      });
+      return handleApprove(req, overrideCode);
+    }
+
     // Si el voucher no tiene imagen, saltar la auditoría IA y aprobar directo
     if (!req.voucher_url) {
       toast({
@@ -805,11 +920,192 @@ export const VoucherApproval = () => {
         }
       }
 
-      // 1. Actualizar estado — GUARD: solo si aún está pendiente (evita double-approve)
+      const walletAmt = Number(req.wallet_amount || 0);
+      const isSplitPayment = isDebtPayment && walletAmt > 0;
+
+      // ══════════════════════════════════════════════════════════════
+      // ── CAMINO B: PAGO TRADICIONAL (RPC atómico sin billetera) ───
+      // Reemplaza el bucle multi-paso previo. El RPC hace todo en una
+      // sola transacción DB: bloqueo FOR UPDATE, update de transacciones
+      // en batch, confirmación de lunch_orders y auditoría.
+      // ══════════════════════════════════════════════════════════════
+      if ((isLunchPayment || isDebtPayment) && !isSplitPayment) {
+        const { data: rpcRaw, error: rpcErr } = await supabase.rpc(
+          'process_traditional_voucher_approval',
+          { p_request_id: req.id, p_admin_id: user.id }
+        );
+
+        if (rpcErr) {
+          const msg = rpcErr.message || '';
+          if (msg.includes('ALREADY_PROCESSED') || msg.includes('RACE_CONDITION')) {
+            toast({
+              title: '⚠️ Ya fue procesado',
+              description: 'Este comprobante ya fue aprobado o rechazado por otro administrador.',
+              variant: 'destructive',
+            });
+            fetchRequests();
+          } else if (msg.includes('NO_DEBTS_FOUND')) {
+            toast({
+              variant: 'destructive',
+              title: '⚠️ Sin deudas vinculadas',
+              description:
+                'El voucher no tiene transacciones ni almuerzos vinculados. ' +
+                'Edita los campos paid_transaction_ids y/o lunch_order_ids en la solicitud y vuelve a intentarlo. ' +
+                'Si el problema persiste, contacta soporte.',
+              duration: 12000,
+            });
+          } else {
+            throw rpcErr;
+          }
+          return;
+        }
+
+        const rpcData = rpcRaw as any;
+        const isPartial = Boolean(rpcData?.is_partial);
+
+        if (isPartial) {
+          const falta = Math.max(0, Number(rpcData?.shortage ?? 0));
+          toast({
+            title: '✅ Comprobante parcial aprobado',
+            description:
+              `S/ ${Number(rpcData?.total_approved ?? 0).toFixed(2)} de ` +
+              `S/ ${Number(rpcData?.total_debt ?? 0).toFixed(2)} recibidos de ` +
+              `${req.students?.full_name || 'el alumno'}. ` +
+              `Falta S/ ${falta.toFixed(2)} para confirmar el almuerzo.`,
+          });
+          fetchRequests();
+          emitSync(['debtors', 'transactions', 'balances', 'dashboard']);
+          return;
+        }
+
+        // ── Pago completo ──
+        const updatedTxIds: string[] = Array.isArray(rpcData?.updated_tx_ids)
+          ? rpcData.updated_tx_ids
+          : [];
+        const approvedAmount = Number(rpcData?.amount ?? req.amount);
+
+        const label = isDebtPayment ? 'Pago de deuda aprobado' : 'Pago de almuerzo aprobado';
+        toast({
+          title: label,
+          description: `Se confirmó el pago de S/ ${approvedAmount.toFixed(2)} de ${req.students?.full_name || 'el alumno'}. ${updatedTxIds.length} deuda(s) liquidadas.`,
+        });
+
+        // ── Emisión automática de Boleta/Factura si el padre lo solicitó ──
+        const rInvType   = (rpcData?.invoice_type   ?? (req as any).invoice_type)   as string | null;
+        const rInvClient = (rpcData?.invoice_client_data ?? (req as any).invoice_client_data) as Record<string, string> | null;
+        const schoolIdForEmit = rpcData?.school_id ?? req.school_id;
+
+        if (rInvType && (rInvType === 'boleta' || rInvType === 'factura') && updatedTxIds.length > 0) {
+          try {
+            const round2 = (n: number) => Math.round(n * 100) / 100;
+            const totalForInvoice = round2(approvedAmount);
+
+            let igvPct = 18;
+            try {
+              const { data: cfg } = await supabase
+                .from('billing_config')
+                .select('igv_porcentaje')
+                .eq('school_id', schoolIdForEmit || req.school_id)
+                .maybeSingle();
+              if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
+            } catch { /* usa 18% de fallback */ }
+
+            const totalCents  = Math.round(totalForInvoice * 100);
+            const divisorX100 = 100 + igvPct;
+            const baseCents   = Math.floor(totalCents * 100 / divisorX100);
+            const igvCents    = totalCents - baseCents;
+            const base        = baseCents / 100;
+            const igv         = igvCents  / 100;
+
+            const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
+              body: {
+                school_id: schoolIdForEmit || req.school_id,
+                tipo: rInvType === 'factura' ? 1 : 2,
+                cliente: {
+                  doc_type:     rInvClient?.doc_type     || '-',
+                  doc_number:   rInvClient?.doc_number   || '-',
+                  razon_social: rInvClient?.razon_social || req.students?.full_name || 'Consumidor Final',
+                  direccion:    rInvClient?.direccion    || '-',
+                },
+                items: [{
+                  unidad_de_medida: 'NIU',
+                  codigo:           'PAGO',
+                  descripcion:      `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
+                  cantidad:         1,
+                  valor_unitario:   base,
+                  precio_unitario:  totalForInvoice,
+                  descuento:        '',
+                  subtotal:         base,
+                  tipo_de_igv:      1,
+                  igv,
+                  total:            totalForInvoice,
+                  anticipo_regularizacion: false,
+                }],
+                monto_total:    totalForInvoice,
+                payment_method: req.payment_method,
+              },
+            });
+
+            if (!emitErr && emitResult?.success && emitResult.documento?.id) {
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
+                .in('id', updatedTxIds);
+              toast({
+                title: '✅ Comprobante emitido',
+                description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} generada automáticamente con IGV ${igvPct}%.`,
+              });
+            } else {
+              const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'failed' })
+                .in('id', updatedTxIds)
+                .eq('billing_status', 'pending');
+              toast({
+                variant: 'destructive',
+                title: '⚠️ Pago aprobado — Error SUNAT',
+                description:
+                  `El pago se registró correctamente, pero Nubefact no pudo emitir el comprobante. ` +
+                  `Las transacciones fueron marcadas como "Error SUNAT" para reintento. ` +
+                  `Encuéntralas en Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${nubefactError}`,
+                duration: 12000,
+              });
+            }
+          } catch (invoiceErr: any) {
+            logErrorAsync('nubefact', `Emisión automática falló con excepción: ${invoiceErr?.message ?? 'Desconocido'}`, {
+              schoolId: req.school_id,
+              context: { req_id: req.id, amount: approvedAmount, tx_ids: updatedTxIds, error: invoiceErr?.message },
+            });
+            await supabase
+              .from('transactions')
+              .update({ billing_status: 'failed' })
+              .in('id', updatedTxIds)
+              .eq('billing_status', 'pending');
+            toast({
+              variant: 'destructive',
+              title: '⚠️ Pago aprobado — Error SUNAT (excepción)',
+              description:
+                `El pago de S/ ${approvedAmount.toFixed(2)} fue aprobado, pero ocurrió un error inesperado al generar el comprobante. ` +
+                `Marcado como "Error SUNAT" para reintento en Cierre Mensual. Error: ${invoiceErr?.message || 'Desconocido'}`,
+              duration: 12000,
+            });
+          }
+        }
+
+        fetchRequests();
+        emitSync(['debtors', 'transactions', 'balances', 'dashboard']);
+        return;
+      }
+
+      // ══════════════════════════════════════════════════════════════
+      // ── GUARD COMPARTIDO: split payment y recarga ─────────────────
+      // Solo corre si el camino NO es el tradicional (ya manejado arriba).
+      // ══════════════════════════════════════════════════════════════
       const { data: approveResult, error: reqErr } = await supabase
         .from('recharge_requests')
         .update({
-          status: 'approved',
+          status:      'approved',
           approved_by: user.id,
           approved_at: new Date().toISOString(),
         })
@@ -828,343 +1124,192 @@ export const VoucherApproval = () => {
         return;
       }
 
-      if (isLunchPayment || isDebtPayment) {
-        // ══════════════════════════════════════════════════════════════
-        // ── PAGO DE ALMUERZO / DEUDA ──
-        // ══════════════════════════════════════════════════════════════
-        const paymentMeta = {
-          payment_approved: true,
-          payment_source: isDebtPayment ? 'debt_voucher_payment' : 'lunch_voucher_payment',
-          recharge_request_id: req.id,
-          reference_code: req.reference_code,
-          approved_by: user.id,
-          approved_at: new Date().toISOString(),
-          voucher_url: req.voucher_url,
-        };
-
-        // ── VERIFICACIÓN DE PAGO PARCIAL (solo para lunch_payment con lunch_order_ids) ──
-        let fullyPaid = true;
-        let totalDebt = 0;
-        let totalApproved = 0;
-
-        if (isLunchPayment && req.lunch_order_ids && req.lunch_order_ids.length > 0) {
-          // 1. Calcular deuda total de órdenes activas
-          const { data: ordersForDebt } = await supabase
-            .from('lunch_orders')
-            .select('id, final_price')
-            .in('id', req.lunch_order_ids)
-            .eq('is_cancelled', false);
-
-          totalDebt = (ordersForDebt || []).reduce((sum, o) => sum + ((o as any).final_price || 0), 0);
-
-          // 2. Sumar todos los vouchers APROBADOS (lunch_payment + debt_payment) del mismo alumno
-          const { data: relatedVouchers } = await supabase
-            .from('recharge_requests')
-            .select('id, amount, lunch_order_ids')
-            .eq('student_id', req.student_id)
-            .in('request_type', ['lunch_payment', 'debt_payment'])
-            .eq('status', 'approved');
-
-          const orderIdSet = new Set(req.lunch_order_ids);
-          const relatedApproved = (relatedVouchers || []).filter((v: any) =>
-            (v.lunch_order_ids || []).some((id: string) => orderIdSet.has(id))
-          );
-          totalApproved = relatedApproved.reduce((sum, v: any) => sum + (v.amount || 0), 0);
-
-          // Asegurar que el voucher actual esté contado (por consistencia read-after-write)
-          if (!relatedApproved.some((v: any) => v.id === req.id)) {
-            totalApproved += req.amount;
+      // ══════════════════════════════════════════════════════════════
+      // ── CAMINO A: PAGO DIVIDIDO CON BILLETERA INTERNA ────────────
+      // ══════════════════════════════════════════════════════════════
+      if (isSplitPayment) {
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+          'approve_split_payment_voucher',
+          {
+            p_request_id:       req.id,
+            p_operation_number: req.reference_code || effectiveRefCode || null,
+            p_admin_notes:      null,
           }
+        );
 
-          // 3. ¿El total acumulado cubre la deuda? (tolerancia de S/0.50 por redondeos)
-          fullyPaid = totalApproved >= totalDebt - 0.50;
+        if (rpcErr) {
+          const msg = rpcErr.message || '';
+          // Mensajes de error conocidos del RPC
+          if (msg.includes('ALREADY_PROCESSED') || msg.includes('RACE_CONDITION')) {
+            toast({
+              title: '⚠️ Ya fue procesado',
+              description: 'Otro administrador aprobó este voucher en el mismo instante.',
+              variant: 'destructive',
+            });
+            fetchRequests();
+          } else if (msg.includes('INSUFFICIENT_WALLET')) {
+            toast({
+              title: '⚠️ Saldo insuficiente — billetera consumida',
+              description:
+                'El saldo a favor del alumno ya fue usado en otra aprobación anterior. ' +
+                'Esta solicitud quedó sin respaldo de billetera. ' +
+                'Coordina con la dueña: o se rechaza esta solicitud o el padre paga el monto completo con nuevo voucher.',
+              variant: 'destructive',
+              duration: 10000,
+            });
+            fetchRequests(); // ← refrescar para que el admin vea el estado real
+          } else if (msg.includes('CONFLICT')) {
+            toast({
+              title: '⚠️ Conflicto de datos',
+              description: 'Algunas deudas ya fueron cobradas por otro proceso. Recarga la lista.',
+              variant: 'destructive',
+            });
+            fetchRequests();
+          } else {
+            throw rpcErr;
+          }
+          return;
         }
 
-        if (fullyPaid) {
-          // ══════════════════════════════════════════════════════════
-          // ── PAGO COMPLETO: marcar órdenes y transacciones como pagadas ──
-          // ══════════════════════════════════════════════════════════
+        const result = rpcResult as any;
+        const fiscalTxId   = result?.fiscal_tx_id   ?? null;
+        const walletUsed   = result?.wallet_amount_used ?? 0;
+        const fiscalAmount = result?.fiscal_amount   ?? 0;
+        const shouldInvoice = result?.should_invoice ?? false;
 
-          // 🔑 PASO 1: Recopilar TODOS los IDs de transacciones a marcar como pagadas
-          const txIdsToUpdate = new Set<string>();
-          let updatedCount = 0;
-          let failedCount = 0;
+        toast({
+          title: '✅ Pago con billetera aprobado',
+          description: result?.message ||
+            `S/ ${walletUsed.toFixed(2)} de billetera + S/ ${fiscalAmount.toFixed(2)} de voucher procesados.`,
+        });
 
-          // A) Buscar transacciones por lunch_order_ids (sin maybeSingle — soporta duplicados)
-          if (req.lunch_order_ids && req.lunch_order_ids.length > 0) {
-            for (const orderId of req.lunch_order_ids) {
-              const { data: matchingTxs, error: searchErr } = await supabase
-                .from('transactions')
-                .select('id')
-                .eq('type', 'purchase')
-                .in('payment_status', ['pending', 'partial'])
-                .contains('metadata', { lunch_order_id: orderId });
+        // ── Generar boleta por el monto REAL del voucher (si lo hay) ─────────────
+        // El generate-document necesita el payload COMPLETO, no solo transaction_id.
+        // Reutilizamos la misma lógica de construcción del flujo normal (líneas ~1200-1258).
+        if (shouldInvoice && fiscalTxId) {
+          try {
+            const splitInvType   = (req as any).invoice_type as string | null;
+            const splitInvClient = (req as any).invoice_client_data as Record<string, string> | null;
 
-              if (searchErr) {
-                console.error(`❌ Error buscando tx para order ${orderId}:`, searchErr);
-              }
-              (matchingTxs || []).forEach(tx => txIdsToUpdate.add(tx.id));
-            }
-          }
-
-          // B) Agregar paid_transaction_ids directamente
-          if (req.paid_transaction_ids && req.paid_transaction_ids.length > 0) {
-            req.paid_transaction_ids.forEach(id => txIdsToUpdate.add(id));
-          }
-
-          // C) Fallback: si no encontramos transacciones por A ni B, buscar por student_id
-          if (txIdsToUpdate.size === 0 && req.student_id) {
-            console.log(`🔄 [VoucherApproval] Fallback: buscando tx pendientes por student_id ${req.student_id}`);
-            const { data: fallbackTxs } = await supabase
-              .from('transactions')
-              .select('id, amount')
-              .eq('student_id', req.student_id)
-              .eq('type', 'purchase')
-              .in('payment_status', ['pending', 'partial'])
-              .order('created_at', { ascending: true });
-
-            if (fallbackTxs && fallbackTxs.length > 0) {
-              let remaining = req.amount;
-              for (const tx of fallbackTxs) {
-                if (remaining <= 0.01) break;
-                txIdsToUpdate.add(tx.id);
-                remaining -= Math.abs(tx.amount);
-              }
-              console.log(`🔄 [VoucherApproval] Fallback encontró ${txIdsToUpdate.size} transacciones a cubrir`);
-            }
-          }
-
-          console.log(`📋 [VoucherApproval] Transacciones a actualizar: ${txIdsToUpdate.size}`, Array.from(txIdsToUpdate));
-
-          // ── BUG A FIX: Si no hay transacciones que saldar, revertir la aprobación ──
-          if (txIdsToUpdate.size === 0) {
-            console.warn('⚠️ [VoucherApproval] txIdsToUpdate vacío, revirtiendo recharge_requests a pending');
-            await supabase
-              .from('recharge_requests')
-              .update({ status: 'pending', approved_by: null, approved_at: null })
-              .eq('id', req.id);
-            throw new Error(
-              'No se encontraron deudas pendientes para saldar. El alumno puede no tener pagos pendientes o ya fueron procesados. El comprobante quedó como pendiente para revisión manual.'
-            );
-          }
-
-          // 🔑 PASO 2: Leer metadata actual de todas las transacciones (para merge)
-          if (txIdsToUpdate.size > 0) {
-            const { data: currentTxs, error: readErr } = await supabase
-              .from('transactions')
-              .select('id, metadata, payment_status')
-              .in('id', Array.from(txIdsToUpdate));
-
-            // ── BUG B FIX: Si falla la lectura, revertir y lanzar error (antes solo se logueaba) ──
-            if (readErr) {
-              console.error('❌ Error leyendo transacciones:', readErr);
-              await supabase
-                .from('recharge_requests')
-                .update({ status: 'pending', approved_by: null, approved_at: null })
-                .eq('id', req.id);
-              throw new Error(`Error al leer transacciones pendientes: ${readErr.message}`);
-            }
-
-            // 🔑 PASO 3: Actualizar cada transacción con metadata mergeada
-            const successfullyUpdatedIds: string[] = [];
-            for (const tx of (currentTxs || [])) {
-              if (tx.payment_status === 'paid') {
-                console.log(`⏭️ Tx ${tx.id} ya está pagada, saltando`);
-                continue;
-              }
-              const { error: updateErr } = await supabase
-                .from('transactions')
-                .update({
-                  payment_status: 'paid',
-                  payment_method: req.payment_method,
-                  metadata: { ...(tx.metadata || {}), ...paymentMeta, last_payment_rejected: false },
-                  ...calcBillingFlags('ticket', req.payment_method),
-                })
-                .eq('id', tx.id)
-                // ── BUG C FIX: incluir 'partial' además de 'pending' ──
-                .in('payment_status', ['pending', 'partial']);
-
-              if (updateErr) {
-                console.error(`❌ Error actualizando tx ${tx.id}:`, updateErr);
-                failedCount++;
-                // ROLLBACK: revertir transacciones ya marcadas como pagadas
-                if (successfullyUpdatedIds.length > 0) {
-                  console.warn(`⚠️ ROLLBACK: revirtiendo ${successfullyUpdatedIds.length} transacciones`);
-                  await supabase
-                    .from('transactions')
-                    .update({ payment_status: 'pending', payment_method: null })
-                    .in('id', successfullyUpdatedIds);
-                }
-                throw new Error(`Fallo al actualizar transacción ${tx.id}. Se revirtieron ${successfullyUpdatedIds.length} transacciones previas.`);
-              } else {
-                updatedCount++;
-                successfullyUpdatedIds.push(tx.id);
-              }
-            }
-          }
-
-          // 🔑 PASO 4: Confirmar lunch_orders activas
-          // Recopilar IDs de órdenes desde req.lunch_order_ids + metadata de transacciones actualizadas
-          const orderIdsToConfirm = new Set<string>(req.lunch_order_ids || []);
-
-          // Fallback: extraer lunch_order_id de las transacciones que acabamos de marcar como pagadas
-          if (txIdsToUpdate.size > 0) {
-            const { data: updatedTxMeta } = await supabase
-              .from('transactions')
-              .select('metadata')
-              .in('id', Array.from(txIdsToUpdate));
-
-            (updatedTxMeta || []).forEach(tx => {
-              if (tx.metadata?.lunch_order_id) {
-                orderIdsToConfirm.add(tx.metadata.lunch_order_id);
-              }
-            });
-          }
-
-          if (orderIdsToConfirm.size > 0) {
-            const { data: activeOrders } = await supabase
-              .from('lunch_orders')
-              .select('id')
-              .in('id', Array.from(orderIdsToConfirm))
-              .eq('is_cancelled', false)
-              .neq('status', 'cancelled');
-
-            const activeIds = (activeOrders || []).map(o => o.id);
-            if (activeIds.length > 0) {
-              const { error: orderErr } = await supabase
-                .from('lunch_orders')
-                .update({ status: 'confirmed' })
-                .in('id', activeIds);
-
-              if (orderErr) console.error('❌ Error confirmando orders:', orderErr);
-              else console.log(`✅ [VoucherApproval] ${activeIds.length} lunch_orders confirmadas`);
-            }
-          }
-
-          console.log(`✅ [VoucherApproval] Aprobación completa: ${updatedCount} tx actualizadas, ${failedCount} errores`);
-
-          const label = isDebtPayment ? 'Pago de deuda aprobado' : 'Pago de almuerzo aprobado';
-          toast({
-            title: `${label}`,
-            description: failedCount > 0
-              ? `Se confirmo el pago de S/ ${req.amount.toFixed(2)} pero ${failedCount} transaccion(es) no se pudieron actualizar. Contacta soporte.`
-              : `Se confirmo el pago total de S/ ${req.amount.toFixed(2)} de ${req.students?.full_name || 'el alumno'}. ${updatedCount} deuda(s) liquidadas.`,
-          });
-
-          // ── Emision automatica de Boleta/Factura si el padre lo solicito ──
-          const rInvType = (req as any).invoice_type as string | null;
-          const rInvClient = (req as any).invoice_client_data as Record<string, string> | null;
-          const updatedTxIds = Array.from(txIdsToUpdate);
-          const schoolIdForEmit = req.school_id;
-          if (rInvType && (rInvType === 'boleta' || rInvType === 'factura') && updatedTxIds.length > 0) {
-            try {
-              const round2 = (n: number) => Math.round(n * 100) / 100;
-              const totalForInvoice = round2(req.amount);
-
-              // ── PARCHE IGV DINÁMICO: leer igv_porcentaje de billing_config ────
-              // Evita usar el 18% estático. Las MYPE usan 10.5% (Ley 32219).
-              let igvPct = 18; // fallback seguro si no hay config
+            // Solo emitir si el padre eligió boleta/factura con datos completos
+            if (splitInvType && (splitInvType === 'boleta' || splitInvType === 'factura')) {
+              // ── IGV dinámico (igual que en el flujo normal) ───────────────────
+              let igvPct = 18;
               try {
                 const { data: cfg } = await supabase
                   .from('billing_config')
                   .select('igv_porcentaje')
-                  .eq('school_id', schoolIdForEmit || req.school_id)
+                  .eq('school_id', req.school_id)
                   .maybeSingle();
                 if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
-              } catch { /* si falla, usa 18% de fallback */ }
+              } catch { /* usa 18% de fallback */ }
 
-              // ── MATEMÁTICA DE CENTAVOS — garantía 100% de que base + igv = total ──
-              // Evita el ruido IEEE 754 del punto flotante (ej. 13.33/1.105 = 12.0634...)
-              // floor() absorbe el residuo en base; igv se lleva el resto → suma exacta.
-              const totalCents   = Math.round(totalForInvoice * 100);
-              const divisorX100  = 100 + igvPct;                          // 110.5 para 10.5%
-              const baseCents    = Math.floor(totalCents * 100 / divisorX100);
-              const igvCents     = totalCents - baseCents;
-              const base         = baseCents / 100;
-              const igv          = igvCents  / 100;
+              // ── Matemática de centavos sin ruido IEEE 754 ─────────────────────
+              const totalCents  = Math.round(fiscalAmount * 100);
+              const divisorX100 = 100 + igvPct;
+              const baseCents   = Math.floor(totalCents * 100 / divisorX100);
+              const igvCents    = totalCents - baseCents;
+              const base        = baseCents / 100;
+              const igv         = igvCents  / 100;
 
-              const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
-                body: {
-                  school_id: schoolIdForEmit || req.school_id,
-                  tipo: rInvType === 'factura' ? 1 : 2,
-                  cliente: {
-                    doc_type:     rInvClient?.doc_type || '-',
-                    doc_number:   rInvClient?.doc_number || '-',
-                    razon_social: rInvClient?.razon_social || req.students?.full_name || 'Consumidor Final',
-                    direccion:    rInvClient?.direccion || '-',
+              const { data: emitResult, error: emitErr } = await supabase.functions.invoke(
+                'generate-document',
+                {
+                  body: {
+                    school_id:      req.school_id,
+                    transaction_id: fiscalTxId,
+                    tipo: splitInvType === 'factura' ? 1 : 2,
+                    cliente: {
+                      doc_type:     splitInvClient?.doc_type || '-',
+                      doc_number:   splitInvClient?.doc_number || '-',
+                      razon_social: splitInvClient?.razon_social || req.students?.full_name || 'Consumidor Final',
+                      direccion:    splitInvClient?.direccion || '-',
+                    },
+                    items: [{
+                      unidad_de_medida: 'NIU',
+                      codigo:           'PAGO',
+                      descripcion:      `Pago deuda (billetera+voucher) — ${req.students?.full_name || 'Alumno'}`,
+                      cantidad:         1,
+                      valor_unitario:   base,
+                      precio_unitario:  fiscalAmount,
+                      descuento:        '',
+                      subtotal:         base,
+                      tipo_de_igv:      1,
+                      igv,
+                      total:            fiscalAmount,
+                      anticipo_regularizacion: false,
+                    }],
+                    monto_total:    fiscalAmount,
+                    payment_method: req.payment_method,
                   },
-                  items: [{
-                    unidad_de_medida: 'NIU',
-                    codigo: 'PAGO',
-                    descripcion: `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
-                    cantidad: 1,
-                    valor_unitario: base,
-                    precio_unitario: totalForInvoice,
-                    descuento: '',
-                    subtotal: base,
-                    tipo_de_igv: 1,
-                    igv,
-                    total: totalForInvoice,
-                    anticipo_regularizacion: false,
-                  }],
-                  monto_total: totalForInvoice,
-                  payment_method: req.payment_method,
-                },
-              });
+                }
+              );
 
               if (!emitErr && emitResult?.success && emitResult.documento?.id) {
+                // Marcar la transacción fiscal como enviada a SUNAT
                 await supabase
                   .from('transactions')
                   .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
-                  .in('id', updatedTxIds);
-                toast({ title: '✅ Comprobante emitido', description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} generada automaticamente con IGV ${igvPct}%.` });
+                  .eq('id', fiscalTxId);
+                toast({
+                  title: '✅ Boleta emitida',
+                  description: `${splitInvType === 'factura' ? 'Factura' : 'Boleta'} de S/ ${fiscalAmount.toFixed(2)} generada con IGV ${igvPct}%.`,
+                });
               } else {
-                // ── PARCHE FALLO SILENCIOSO: Nubefact rechazó o falló ─────────
-                // Marcar como 'excluded' para que el Cierre Mensual NO las tome.
-                // El admin debe verificar manualmente y re-emitir desde Facturación.
-                const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
-                await supabase
-                  .from('transactions')
-                  .update({ billing_status: 'excluded' })
-                  .in('id', updatedTxIds)
-                  .eq('billing_status', 'pending'); // solo si aún están pending
+                // Nubefact falló: marcar la transacción fiscal como 'failed' para
+                // que el CierreMensual la detecte y el admin pueda reintentarla.
+                const nubefactError = emitResult?.error || emitErr?.message || 'Error desconocido';
+                console.warn('[split] Nubefact falló:', nubefactError);
+                if (fiscalTxId) {
+                  await supabase
+                    .from('transactions')
+                    .update({ billing_status: 'failed' })
+                    .eq('id', fiscalTxId)
+                    .eq('billing_status', 'pending');
+                }
                 toast({
                   variant: 'destructive',
-                  title: '⚠️ Pago aprobado — Nubefact falló',
-                  description: `El pago se registró correctamente, pero el comprobante no se pudo emitir. Las transacciones fueron marcadas como "excluidas" del cierre automático. Revísalas manualmente en Facturación → Comprobantes. Error: ${nubefactError}`,
-                  duration: 10000,
+                  title: '⚠️ Cobro exitoso — Error SUNAT',
+                  description:
+                    `El pago de S/ ${fiscalAmount.toFixed(2)} se procesó correctamente ` +
+                    `pero la boleta no se pudo emitir. Fue marcada como "Error SUNAT" para reintento manual. ` +
+                    `Revisa en Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${nubefactError}`,
+                  duration: 12000,
                 });
               }
-            } catch (invoiceErr: any) {
-              // ── PARCHE FALLO SILENCIOSO: excepción inesperada ─────────────────
-              logErrorAsync('nubefact', `Emisión automática falló con excepción: ${invoiceErr?.message ?? 'Desconocido'}`, {
-                schoolId: req.school_id,
-                context: { req_id: req.id, amount: req.amount, tx_ids: updatedTxIds, error: invoiceErr?.message },
-              });
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'excluded' })
-                .in('id', updatedTxIds)
-                .eq('billing_status', 'pending');
+            } else {
+              // Sin tipo de comprobante elegido: el pago quedó registrado sin boleta
+              // La transacción fiscal queda en 'pending' para emisión manual posterior
               toast({
-                variant: 'destructive',
-                title: '⚠️ Pago aprobado — Error al emitir comprobante',
-                description: `El pago de S/ ${req.amount.toFixed(2)} fue aprobado, pero ocurrió un error al generar el comprobante SUNAT. Revisa manualmente en Facturación. Error: ${invoiceErr?.message || 'Desconocido'}`,
-                duration: 10000,
+                title: '✅ Pago aprobado',
+                description:
+                  `S/ ${walletUsed.toFixed(2)} de billetera + S/ ${fiscalAmount.toFixed(2)} de voucher ` +
+                  `procesados. Sin comprobante SUNAT (el padre no solicitó boleta).`,
               });
             }
+          } catch (invEx: any) {
+            console.warn('Error al generar boleta split:', invEx.message);
+            if (fiscalTxId) {
+              await supabase
+                .from('transactions')
+                .update({ billing_status: 'failed' })
+                .eq('id', fiscalTxId)
+                .eq('billing_status', 'pending');
+            }
+            toast({
+              variant: 'destructive',
+              title: '⚠️ Cobro exitoso — Error SUNAT (excepción)',
+              description: `El cobro se procesó pero la emisión de boleta falló con excepción. Marcada como "Error SUNAT". Reintenta desde Cierre Mensual. Detalle: ${invEx.message}`,
+              duration: 10000,
+            });
           }
-
-        } else {
-          // ── PAGO PARCIAL: voucher aprobado, órdenes siguen pendientes hasta cubrir el total ──
-          const falta = Math.max(0, totalDebt - totalApproved);
-          toast({
-            title: '✅ Comprobante parcial aprobado',
-            description: `S/ ${totalApproved.toFixed(2)} de S/ ${totalDebt.toFixed(2)} recibidos de ${req.students?.full_name || 'el alumno'}. Falta S/ ${falta.toFixed(2)} para confirmar el almuerzo.`,
-          });
         }
-      } else {
-        // ── RECARGA DE SALDO ──
+
+        fetchRequests();
+        return;
+      }
+
+      // ── CAMINO C: RECARGA DE SALDO ──
         // Obtener school_id del estudiante si no viene en la request
         let schoolId = req.school_id;
         if (!schoolId) {
@@ -1316,7 +1461,6 @@ export const VoucherApproval = () => {
             description: `Se acreditaron S/ ${req.amount.toFixed(2)} a ${req.students?.full_name || 'el alumno'}. Saldo disponible: S/ ${finalBalance.toFixed(2)}.`,
           });
         }
-      }
 
       fetchRequests();
       emitSync(['debtors', 'transactions', 'balances', 'dashboard']);
@@ -1550,6 +1694,57 @@ export const VoucherApproval = () => {
         </Button>
       </div>
 
+      {/* ── Kill Switch: Estado del Motor IA — SOLO visible para admin_general ── */}
+      {role === 'admin_general' && (
+        <div className={`flex items-center justify-between rounded-xl border px-4 py-3 gap-3 ${
+          voucherAiDisabled
+            ? 'bg-amber-50 border-amber-300'
+            : 'bg-emerald-50 border-emerald-300'
+        }`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full ${
+              voucherAiDisabled ? 'bg-amber-100' : 'bg-emerald-100'
+            }`}>
+              {voucherAiDisabled
+                ? <PowerOff className="h-4 w-4 text-amber-600" />
+                : <BrainCircuit className="h-4 w-4 text-emerald-600" />
+              }
+            </div>
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold ${voucherAiDisabled ? 'text-amber-800' : 'text-emerald-800'}`}>
+                Motor IA de Auditoría:{' '}
+                <span className="font-bold">
+                  {voucherAiDisabled ? '🔴 DESACTIVADO — Modo Manual' : '🟢 ACTIVO'}
+                </span>
+              </p>
+              <p className={`text-xs mt-0.5 ${voucherAiDisabled ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {voucherAiDisabled
+                  ? 'Los montos y N° de operación del padre se usan sin verificación por OpenAI.'
+                  : 'GPT-4o Vision analiza cada voucher antes de aprobar. Consume créditos de OpenAI.'}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={aiToggleLoading}
+            className={`shrink-0 gap-1.5 font-semibold ${
+              voucherAiDisabled
+                ? 'border-emerald-400 text-emerald-700 hover:bg-emerald-100'
+                : 'border-red-300 text-red-700 hover:bg-red-50'
+            }`}
+            onClick={toggleVoucherAi}
+          >
+            {aiToggleLoading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : voucherAiDisabled
+                ? <><Power className="h-3.5 w-3.5" /> Reactivar IA</>
+                : <><PowerOff className="h-3.5 w-3.5" /> Desactivar IA</>
+            }
+          </Button>
+        </div>
+      )}
+
       {/* Filtro de sede — solo para admin_general */}
       {canViewAll && allSchools.length > 0 && (
         <div className="flex items-center gap-2">
@@ -1664,6 +1859,52 @@ export const VoucherApproval = () => {
                         )}
                       </div>
 
+                      {/* ── Badge de pago dividido con billetera ── */}
+                      {Number(req.wallet_amount || 0) > 0 && (
+                        <div className="mt-1 bg-emerald-50 border border-emerald-300 rounded-lg px-3 py-2 space-y-1">
+                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                            <Wallet className="h-3.5 w-3.5" />
+                            Pago dividido — Billetera interna aplicada
+                          </p>
+                          <div className="grid grid-cols-3 gap-1 text-xs">
+                            <div className="text-center bg-white rounded p-1.5 border border-emerald-100">
+                              <p className="text-gray-500">Deuda total</p>
+                              <p className="font-bold text-gray-800">
+                                S/ {(Number(req.wallet_amount || 0) + Number(req.amount || 0)).toFixed(2)}
+                              </p>
+                            </div>
+                            <div className="text-center bg-emerald-100 rounded p-1.5 border border-emerald-200">
+                              <p className="text-emerald-700">De billetera</p>
+                              <p className="font-bold text-emerald-800">
+                                − S/ {Number(req.wallet_amount).toFixed(2)}
+                              </p>
+                            </div>
+                            <div className="text-center bg-blue-50 rounded p-1.5 border border-blue-200">
+                              <p className="text-blue-700">Voucher (fiscal)</p>
+                              <p className="font-bold text-blue-800">
+                                S/ {Number(req.amount || 0).toFixed(2)}
+                              </p>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-emerald-700">
+                            ✅ Al aprobar, el sistema debitará S/ {Number(req.wallet_amount).toFixed(2)} de
+                            la billetera del alumno y generará una boleta por S/ {Number(req.amount || 0).toFixed(2)}.
+                          </p>
+                          <div className="mt-1 bg-amber-50 border border-amber-300 rounded px-2 py-1.5">
+                            <p className="text-[10px] font-semibold text-amber-800 flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                              ¿Necesitas anular este pago después?
+                            </p>
+                            <p className="text-[10px] text-amber-700 mt-0.5">
+                              Si después hay que devolverlo, deberás hacer DOS pasos manualmente:
+                              (1) Nota de Crédito a SUNAT por S/ {Number(req.amount || 0).toFixed(2)} y
+                              (2) recargar S/ {Number(req.wallet_amount).toFixed(2)} en la billetera del alumno.
+                              El sistema no puede revertir un pago dividido de forma automática.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Descripción del pago */}
                       {req.description && (
                         <p className={`text-xs rounded px-2 py-1 mt-1 ${
@@ -1714,6 +1955,21 @@ export const VoucherApproval = () => {
                           </div>
                         )}
                       </div>
+
+                      {/* ── Badge: Monto declarado por usuario ──────────────────────── */}
+                      {voucherAiDisabled && req.status === 'pending' && (
+                        <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+                          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-semibold text-amber-800">
+                              Monto declarado por usuario — Validación manual requerida
+                            </p>
+                            <p className="text-[11px] text-amber-700 mt-0.5">
+                              La IA está desactivada. El monto S/ {req.amount.toFixed(2)} y el N° de operación fueron ingresados por el padre sin verificación automática.
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Tickets asociados (para pagos de almuerzo) */}
                       {(req as any)._ticket_codes && (req as any)._ticket_codes.length > 0 && (

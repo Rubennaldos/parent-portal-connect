@@ -160,6 +160,11 @@ interface Student {
   school_id?: string;
   free_account?: boolean;
   kiosk_disabled?: boolean;
+  limit_type?: string;
+  daily_limit?: number;
+  weekly_limit?: number;
+  monthly_limit?: number;
+  current_period_spent?: number;
 }
 
 interface Product {
@@ -981,7 +986,7 @@ const POS = () => {
       // Construir la consulta base
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`);
       
@@ -1042,10 +1047,18 @@ const POS = () => {
             // Calcular estados básicos sin consulta a BD
             const statusMap = new Map();
             for (const s of cachedResults) {
+              const lt = s.limit_type;
+              const hasLimit = lt && lt !== 'none';
+              const limitAmt = lt === 'daily' ? s.daily_limit : lt === 'weekly' ? s.weekly_limit : s.monthly_limit;
+              const limitLabel = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
               statusMap.set(s.id, {
                 canPurchase: !s.kiosk_disabled,
-                statusText: s.kiosk_disabled ? '🚫 Kiosco desactivado' : `💰 S/ ${(s.balance || 0).toFixed(2)} (offline)`,
-                statusColor: s.kiosk_disabled ? 'text-red-500' : 'text-emerald-600',
+                statusText: s.kiosk_disabled
+                  ? '🚫 Kiosco Desactivado'
+                  : hasLimit
+                  ? `🟠 Tope ${limitLabel}: S/ ${(limitAmt ?? 0).toFixed(2)}`
+                  : `💰 S/ ${(s.balance || 0).toFixed(2)} (offline)`,
+                statusColor: s.kiosk_disabled ? 'text-red-600' : hasLimit ? 'text-amber-600' : 'text-emerald-600',
               });
             }
             setStudentAccountStatuses(statusMap);
@@ -1124,7 +1137,7 @@ const POS = () => {
       // Consulta de alumnos
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name)')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name), limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
         .eq('is_active', true)
         .ilike('full_name', `%${query.trim()}%`);
 
@@ -1175,13 +1188,22 @@ const POS = () => {
               const status = await getAccountStatus(item.data as Student);
               statusMap.set(item.data.id, status);
             } catch {
-              statusMap.set(item.data.id, {
-                canPurchase: !item.data.kiosk_disabled,
-                statusText: item.data.kiosk_disabled
-                  ? '🍽️ Sin cuenta — Solo almuerzo'
-                  : `💰 Saldo: S/ ${(item.data.balance || 0).toFixed(2)}`,
-                statusColor: item.data.kiosk_disabled ? 'text-orange-600' : 'text-emerald-600',
-              });
+              {
+                const s = item.data as Student;
+                const lt = s.limit_type;
+                const hasLimit = lt && lt !== 'none';
+                const limitAmt = lt === 'daily' ? s.daily_limit : lt === 'weekly' ? s.weekly_limit : s.monthly_limit;
+                const limitLabel = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
+                statusMap.set(s.id, {
+                  canPurchase: !s.kiosk_disabled,
+                  statusText: s.kiosk_disabled
+                    ? '🚫 Kiosco Desactivado'
+                    : hasLimit
+                    ? `🟠 Tope ${limitLabel}: S/ ${(limitAmt ?? 0).toFixed(2)}`
+                    : `💰 Saldo: S/ ${(s.balance || 0).toFixed(2)}`,
+                  statusColor: s.kiosk_disabled ? 'text-red-600' : hasLimit ? 'text-amber-600' : 'text-emerald-600',
+                });
+              }
             }
           })
         );
@@ -1199,6 +1221,19 @@ const POS = () => {
     }
   };
 
+  // Helper para resolver badge de tope del alumno — muestra disponible real
+  const getLimitBadge = (student: Student): { text: string; color: string } | null => {
+    const lt = student.limit_type;
+    if (!lt || lt === 'none') return null;
+    const limitAmt = lt === 'daily'   ? (student.daily_limit   ?? 0)
+                   : lt === 'weekly'  ? (student.weekly_limit  ?? 0)
+                   : (student.monthly_limit ?? 0);
+    const spent = student.current_period_spent ?? 0;
+    const avail = Math.max(0, limitAmt - spent);
+    const label  = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
+    return { text: `🟠 Tope ${label}: S/ ${avail.toFixed(2)} disp.`, color: 'text-amber-600' };
+  };
+
   // ✅ Función helper para determinar el estado de cuenta del estudiante
   const getAccountStatus = async (student: Student): Promise<{
     canPurchase: boolean;
@@ -1206,23 +1241,25 @@ const POS = () => {
     statusColor: string;
     reason?: string;
   }> => {
-    // 0. Cuenta del kiosco desactivada por el padre
+    // 0. Kiosco desactivado
     if (student.kiosk_disabled) {
       return {
         canPurchase: false,
-        statusText: '🍽️ Sin cuenta — Solo almuerzo',
-        statusColor: 'text-orange-600',
-        reason: 'El padre desactivó la cuenta del kiosco. Solo puede pedir almuerzo desde el calendario.',
+        statusText: '🚫 Kiosco Desactivado',
+        statusColor: 'text-red-600',
+        reason: 'El padre desactivó el kiosco. Este alumno solo puede pedir almuerzo desde el calendario.',
       };
     }
 
     // 1. Cuenta Libre (free_account = true o null)
     if (student.free_account !== false) {
-      const balance = student.balance || 0;
-      const balanceText = balance > 0 ? ` | 💰 Saldo: S/ ${balance.toFixed(2)}` : '';
+      const limitBadge = getLimitBadge(student);
+      if (limitBadge) {
+        return { canPurchase: true, statusText: limitBadge.text, statusColor: limitBadge.color };
+      }
       return {
         canPurchase: true,
-        statusText: `✨ Cuenta Libre${balanceText}`,
+        statusText: '✨ Cuenta Libre',
         statusColor: 'text-emerald-600'
       };
     }
@@ -1240,7 +1277,11 @@ const POS = () => {
       };
     }
 
-    // 4. Con saldo
+    // 4. Con saldo — mostrar tope si está activo
+    const limitBadge = getLimitBadge(student);
+    if (limitBadge) {
+      return { canPurchase: true, statusText: `${limitBadge.text} | 💰 S/ ${balance.toFixed(2)}`, statusColor: limitBadge.color };
+    }
     return {
       canPurchase: true,
       statusText: `💰 Saldo: S/ ${balance.toFixed(2)}`,
@@ -1265,7 +1306,7 @@ const POS = () => {
     (async () => {
       const { data } = await supabase
         .from('students')
-        .select('balance, free_account, kiosk_disabled')
+        .select('balance, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
         .eq('id', studentId)
         .single();
       if (reqId !== balanceFetchId.current) return;
@@ -1579,9 +1620,30 @@ const POS = () => {
 
     if (clientMode === 'student') {
       if (!selectedStudent) return 'Selecciona un alumno para continuar.';
-      // Cuenta libre (free_account = true o null) → siempre puede comprar (genera deuda si no tiene saldo)
+
+      // ── Kiosco desactivado ──────────────────────────────────────────
+      if (selectedStudent.kiosk_disabled) {
+        return 'El estudiante tiene el kiosco desactivado. Solo puede pedir almuerzos desde el calendario.';
+      }
+
+      // ── Topes de consumo (UI pre-check) ────────────────────────────
+      const lt = selectedStudent.limit_type;
+      if (lt && lt !== 'none') {
+        const limitAmount = lt === 'daily'   ? (selectedStudent.daily_limit   ?? 0)
+                          : lt === 'weekly'  ? (selectedStudent.weekly_limit  ?? 0)
+                          : (selectedStudent.monthly_limit ?? 0);
+        const periodSpent = selectedStudent.current_period_spent ?? 0;
+        const available   = Math.max(0, limitAmount - periodSpent);
+        const cartTotal   = getTotal(); // En POS todos los items son de cafetería
+        if (limitAmount > 0 && cartTotal > available) {
+          return `El total del carrito (S/ ${cartTotal.toFixed(2)}) supera tu límite disponible de S/ ${available.toFixed(2)} (tope ${lt === 'daily' ? 'diario' : lt === 'weekly' ? 'semanal' : 'mensual'}: S/ ${limitAmount.toFixed(2)}).`;
+        }
+      }
+
+      // ── Cuenta libre → siempre puede comprar ────────────────────────
       if (selectedStudent.free_account !== false) return null;
-      // Con Recargas (free_account = false) → necesita saldo suficiente
+
+      // ── Con Recargas → necesita saldo suficiente ────────────────────
       if (selectedStudent.balance >= getTotal()) return null;
       return `Saldo insuficiente (S/ ${selectedStudent.balance.toFixed(2)}). El alumno necesita recargar para poder comprar.`;
     }
@@ -1640,8 +1702,9 @@ const POS = () => {
     setShowInvoiceClientModal(false);
     setIsGeneratingInvoice(true);
 
-    // Capturamos el total ANTES de que processCheckout resetee el carrito
-    // (el reset ocurre en setTimeout 500ms, Nubefact puede tardar más).
+    // Capturamos carrito Y total ANTES de que processCheckout resetee el carrito.
+    // resetClient() ocurre en un setTimeout 500 ms; Nubefact puede tardar más.
+    const cartSnapshot = [...cart];
     const montoTotal = getTotal();
 
     try {
@@ -1661,7 +1724,58 @@ const POS = () => {
       // salimos sin llamar a Nubefact. La venta no existe, nada que facturar.
       if (!transactionId) return;
 
-      // ── PASO 2: Llamar a Nubefact ────────────────────────────────────────
+      // ── PASO 2a: Construir ítems con aritmética de enteros (céntimos) ────
+      // Se usa 18 % como tasa estándar. La Edge Function corrige el IGV total
+      // del encabezado desde billing_config; aquí solo necesitamos que
+      // sum(items.subtotal) = total_gravada y sum(items.igv) = total_igv.
+      // Técnica "último ítem absorbe residuo": garantiza cuadre exacto sin
+      // fugas de ±0.01 que SUNAT rechaza por descuadre entre líneas y cabecera.
+      const IGV_PCT_POS = 18;
+      const headerTotalCents = Math.round(montoTotal * 100);
+      const headerDivisorX100 = 100 + IGV_PCT_POS;
+      const headerBaseCents = Math.floor(headerTotalCents * 100 / headerDivisorX100);
+      const headerIgvCents  = headerTotalCents - headerBaseCents;
+
+      // Calcular base e IGV por ítem (sin ajuste de redondeo aún)
+      const rawItemCalcs = cartSnapshot.map((ci, idx) => {
+        const itemTotalCents = Math.round(ci.product.price * ci.quantity * 100);
+        const itemBaseCents  = Math.floor(itemTotalCents * 100 / headerDivisorX100);
+        const itemIgvCents   = itemTotalCents - itemBaseCents;
+        return { ci, idx, itemTotalCents, itemBaseCents, itemIgvCents };
+      });
+
+      // Diferencia de redondeo acumulada (normalmente ±1 céntimo)
+      const sumItemsBaseCents = rawItemCalcs.reduce((s, r) => s + r.itemBaseCents, 0);
+      const sumItemsIgvCents  = rawItemCalcs.reduce((s, r) => s + r.itemIgvCents,  0);
+      const baseAdj = headerBaseCents - sumItemsBaseCents; // aplicar al último ítem
+      const igvAdj  = headerIgvCents  - sumItemsIgvCents;
+
+      const nubefactItems = rawItemCalcs.map((r, i) => {
+        const isLast       = i === rawItemCalcs.length - 1;
+        const adjBase      = r.itemBaseCents + (isLast ? baseAdj : 0);
+        const adjIgv       = r.itemIgvCents  + (isLast ? igvAdj  : 0);
+        const itemBase     = adjBase / 100;
+        const itemIgv      = adjIgv  / 100;
+        const itemTotal    = r.itemTotalCents / 100;
+        // valor_unitario = precio base por unidad (sin IGV)
+        const valUnitario  = +(itemBase / r.ci.quantity).toFixed(2);
+        return {
+          unidad_de_medida:       'NIU',
+          codigo:                 String(r.idx + 1).padStart(3, '0'),
+          descripcion:            r.ci.product.name,
+          cantidad:               r.ci.quantity,
+          valor_unitario:         valUnitario,
+          precio_unitario:        +r.ci.product.price.toFixed(2),
+          descuento:              '',
+          subtotal:               +itemBase.toFixed(2),
+          tipo_de_igv:            1,
+          igv:                    +itemIgv.toFixed(2),
+          total:                  +itemTotal.toFixed(2),
+          anticipo_regularizacion: false,
+        };
+      });
+
+      // ── PASO 2b: Llamar a Nubefact ───────────────────────────────────────
       // La venta ya está registrada. Si Nubefact falla, la transacción
       // queda sin invoice_id (recuperable luego). NO se borra.
       const result = await generarComprobante({
@@ -1676,6 +1790,7 @@ const POS = () => {
           email:      clientData.email      || undefined,
         },
         monto_total: montoTotal,
+        items:        nubefactItems,
       });
 
       // ── PASO 3: Manejar respuesta de Nubefact ────────────────────────────
@@ -1686,21 +1801,29 @@ const POS = () => {
         if (pdfUrl) setLastInvoicePdfUrl(pdfUrl);
 
         // ── PASO 3a: Vincular invoice_id y marcar billing_status='sent' ──
-        // Fire-and-forget: si este UPDATE falla, la venta y el comprobante
-        // ya existen; el vínculo se puede recuperar después.
-        if (invoiceId || transactionId) {
-          supabase
+        // AWAIT obligatorio: si este UPDATE falla, la boleta existe en SUNAT
+        // pero la BD dice 'pending' → CierreMensual la reintentaría y la
+        // emitiría dos veces. Un error aquí es un incidente fiscal, no un aviso.
+        try {
+          const { error: linkErr } = await supabase
             .from('transactions')
             .update({
               ...(invoiceId ? { invoice_id: invoiceId } : {}),
               billing_status: 'sent',
             })
-            .eq('id', transactionId)
-            .then(({ error: linkErr }) => {
-              if (linkErr) {
-                console.warn('⚠️ No se pudo vincular invoice_id / billing_status en la transacción:', linkErr.message);
-              }
-            });
+            .eq('id', transactionId);
+          if (linkErr) throw linkErr;
+        } catch (linkErr: any) {
+          console.error('🚨 [POS] Comprobante emitido en SUNAT pero falló el UPDATE en BD:', linkErr?.message);
+          toast({
+            variant: 'destructive',
+            title: '🚨 Comprobante emitido — Error en BD',
+            description:
+              'La boleta/factura fue aceptada por SUNAT, pero no se pudo actualizar el ' +
+              'registro en la base de datos. NO reintentes la emisión. Avisa al administrador ' +
+              'para que lo actualice manualmente desde Cierre Mensual.',
+            duration: 20000,
+          });
         }
 
         // ── PASO 3b: Mostrar resultado al cajero ─────────────────────────
@@ -1741,17 +1864,31 @@ const POS = () => {
         }
 
       } else {
-        // Nubefact devolvió error — la venta YA está registrada, no se borra.
-        // El cajero ve el aviso; el invoice_id queda NULL para reintentarlo después.
-        console.error('❌ Error Nubefact (transacción conservada):', result.error, { transactionId });
+        // Nubefact devolvió error — la venta YA está registrada en BD, no se borra.
+        // Marcamos billing_status='failed' para que CierreMensual pueda rescatarla.
+        const nubefactErrMsg = result.error ?? 'Error desconocido de Nubefact';
+        console.error('❌ [POS] Error Nubefact (transacción conservada):', nubefactErrMsg, { transactionId });
+
+        // UPDATE sincrónico: si falla silenciosamente, la transacción quedaría en
+        // 'pending' indefinidamente y sería invisible para CierreMensual → Fallidas.
+        const { error: failErr } = await supabase
+          .from('transactions')
+          .update({ billing_status: 'failed' })
+          .eq('id', transactionId)
+          .eq('billing_status', 'pending'); // guard: solo actualizar si aún está pendiente
+        if (failErr) {
+          console.error('⚠️ [POS] No se pudo marcar la transacción como failed:', failErr.message);
+        }
+
         toast({
-          title: '⚠️ Venta registrada, error en comprobante',
+          title: '⚠️ Venta guardada — Error en comprobante SUNAT',
           description:
-            result.error ||
-            'La venta se registró correctamente, pero no se pudo generar el comprobante electrónico. ' +
-            'Puedes reintentarlo desde el módulo de Facturación.',
+            `La venta se registró en la base de datos, pero SUNAT/Nubefact rechazó la emisión. ` +
+            `La transacción fue marcada como "Error SUNAT". ` +
+            `Reinténtala desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
+            `NO vuelvas a cobrar. Error: ${nubefactErrMsg}`,
           variant: 'destructive',
-          duration: 8000,
+          duration: 12000,
         });
       }
 
@@ -2058,6 +2195,13 @@ const POS = () => {
             variant: 'destructive',
             title: '💳 Saldo Insuficiente',
             description: detail || 'El alumno no tiene saldo suficiente. Recarga la cuenta.',
+          });
+        } else if (msg.includes('SPENDING_LIMIT')) {
+          const detail = msg.split('SPENDING_LIMIT: ')[1] || '';
+          toast({
+            variant: 'destructive',
+            title: '🛡️ Límite de Consumo Alcanzado',
+            description: detail || 'Este alumno ha llegado a su tope de consumo para el período. El padre puede ajustar el tope desde el portal.',
           });
         } else if (msg.includes('KIOSK_DISABLED')) {
           toast({
@@ -3170,13 +3314,30 @@ const POS = () => {
                     <div className="flex-1 min-w-0">
                       <h3 className="font-bold text-xs sm:text-lg text-white leading-tight truncate">{selectedStudent.full_name}</h3>
                       <p className="text-[10px] sm:text-xs text-emerald-100 font-medium">{selectedStudent.grade} - {selectedStudent.section}</p>
-                      {selectedStudent.free_account !== false && (
-                        <div className="mt-1">
+                      <div className="mt-1">
+                        {selectedStudent.kiosk_disabled ? (
+                          <span className="text-[8px] sm:text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold shadow-md">
+                            🚫 KIOSCO DESACTIVADO
+                          </span>
+                        ) : selectedStudent.limit_type && selectedStudent.limit_type !== 'none' ? (() => {
+                          const lt = selectedStudent.limit_type;
+                          const limitAmt = lt === 'daily'  ? (selectedStudent.daily_limit   ?? 0)
+                                         : lt === 'weekly' ? (selectedStudent.weekly_limit  ?? 0)
+                                         : (selectedStudent.monthly_limit ?? 0);
+                          const spent    = selectedStudent.current_period_spent ?? 0;
+                          const avail    = Math.max(0, limitAmt - spent);
+                          const label    = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
+                          return (
+                            <span className="text-[8px] sm:text-xs bg-amber-400 text-amber-900 px-2 py-0.5 rounded-full font-bold shadow-md">
+                              🟠 Tope {label}: S/ {avail.toFixed(2)} disp.
+                            </span>
+                          );
+                        })() : (
                           <span className="text-[8px] sm:text-xs bg-green-400 text-green-900 px-2 py-0.5 rounded-full font-bold shadow-md">
                             ✓ CUENTA LIBRE
                           </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                     
                     {/* Botón CAMBIAR más pequeño en móvil */}
@@ -3336,35 +3497,71 @@ const POS = () => {
                     </div>
                   )}
 
-                  {/* Cuenta Libre → puede comprar siempre */}
-                  {selectedStudent && selectedStudent.free_account !== false && (
-                    <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${
-                      selectedStudent.balance >= getTotal()
-                        ? 'bg-blue-50 border-blue-300'
-                        : 'bg-green-50 border-green-300'
-                    }`}>
-                      <Check className={`h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 ${
-                        selectedStudent.balance >= getTotal() ? 'text-blue-600' : 'text-green-600'
-                      }`} />
-                      <div>
-                        {selectedStudent.balance >= getTotal() ? (
-                          <>
-                            <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
-                            <p className="text-[8px] sm:text-xs text-blue-700">
-                              Saldo: S/ {selectedStudent.balance.toFixed(2)} → S/ {(selectedStudent.balance - getTotal()).toFixed(2)}
+                  {/* Estado de pago del alumno — dinámico según kiosco + topes */}
+                  {selectedStudent && (() => {
+                    const s = selectedStudent;
+                    const lt = s.limit_type;
+                    const hasLimit = lt && lt !== 'none';
+                    const limitAmt = lt === 'daily'  ? (s.daily_limit   ?? 0)
+                                   : lt === 'weekly' ? (s.weekly_limit  ?? 0)
+                                   : (s.monthly_limit ?? 0);
+                    const spent    = s.current_period_spent ?? 0;
+                    const avail    = Math.max(0, limitAmt - spent);
+                    const total    = getTotal();
+                    const limitLabel = lt === 'daily' ? 'diario' : lt === 'weekly' ? 'semanal' : 'mensual';
+                    const exceedsLimit = hasLimit && limitAmt > 0 && total > avail;
+
+                    // 1) Kiosco desactivado
+                    if (s.kiosk_disabled) return null; // El bloqueo ya aparece en checkoutBlockReason
+
+                    // 2) Tope activo — mostrar estado del límite
+                    if (hasLimit && limitAmt > 0) {
+                      return (
+                        <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${exceedsLimit ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'}`}>
+                          <span className="text-base flex-shrink-0">{exceedsLimit ? '⛔' : '🟠'}</span>
+                          <div>
+                            <p className={`font-bold text-[9px] sm:text-sm ${exceedsLimit ? 'text-red-800' : 'text-amber-800'}`}>
+                              {exceedsLimit ? 'Tope superado' : `Tope ${limitLabel}: S/ ${limitAmt.toFixed(2)}`}
                             </p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
-                            <p className="text-[8px] sm:text-xs text-green-700">
-                              Se registrará como deuda pendiente
+                            <p className={`text-[8px] sm:text-xs ${exceedsLimit ? 'text-red-700' : 'text-amber-700'}`}>
+                              {exceedsLimit
+                                ? `Disponible: S/ ${avail.toFixed(2)} — Carrito: S/ ${total.toFixed(2)}`
+                                : `Gastado: S/ ${spent.toFixed(2)} · Disponible: S/ ${avail.toFixed(2)}`
+                              }
                             </p>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // 3) Cuenta Libre sin tope
+                    if (s.free_account !== false) {
+                      return (
+                        <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${
+                          s.balance >= total ? 'bg-blue-50 border-blue-300' : 'bg-green-50 border-green-300'
+                        }`}>
+                          <Check className={`h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 ${s.balance >= total ? 'text-blue-600' : 'text-green-600'}`} />
+                          <div>
+                            {s.balance >= total ? (
+                              <>
+                                <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
+                                <p className="text-[8px] sm:text-xs text-blue-700">
+                                  Saldo: S/ {s.balance.toFixed(2)} → S/ {(s.balance - total).toFixed(2)}
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
+                                <p className="text-[8px] sm:text-xs text-green-700">Se registrará como deuda pendiente</p>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  })()}
 
                   {/* Mensaje de bloqueo — solo se muestra si el carrito no está vacío y hay razón */}
                   {cart.length > 0 && checkoutBlockReason() && (
@@ -3652,32 +3849,41 @@ const POS = () => {
               </div>
             )}
 
-              {/* YAPE / PLIN / TARJETA / TRANSFERENCIA: código de operación obligatorio */}
+              {/* YAPE / PLIN / TARJETA / TRANSFERENCIA: código de operación OBLIGATORIO */}
               {(paymentMethod === 'yape' || paymentMethod === 'transferencia' || paymentMethod === 'tarjeta') && (
                 <div className={`border-2 rounded-xl p-3 ${
-                  paymentMethod === 'tarjeta'
+                  !transactionCode.trim()
+                    ? 'bg-red-50 border-red-400'
+                    : paymentMethod === 'tarjeta'
                     ? 'bg-blue-50 border-blue-200'
                     : paymentMethod === 'yape'
                     ? 'bg-purple-50 border-purple-200'
                     : 'bg-cyan-50 border-cyan-200'
                 }`}>
                   <Label className={`text-sm font-bold mb-1 block ${
-                    paymentMethod === 'tarjeta' ? 'text-blue-900' : paymentMethod === 'yape' ? 'text-purple-900' : 'text-cyan-900'
+                    !transactionCode.trim()
+                      ? 'text-red-700'
+                      : paymentMethod === 'tarjeta' ? 'text-blue-900' : paymentMethod === 'yape' ? 'text-purple-900' : 'text-cyan-900'
                   }`}>
                     {paymentMethod === 'tarjeta' ? 'N° de Operación (Voucher) *' : 'Código de Operación *'}
+                    {!transactionCode.trim() && <span className="ml-1 text-red-600">— requerido para continuar</span>}
                   </Label>
                   <Input
                     type="text"
                     value={transactionCode}
                     onChange={(e) => setTransactionCode(e.target.value)}
                     placeholder={paymentMethod === 'tarjeta' ? 'Ej: 123456' : 'Ej: OP12345678'}
-                    className="h-12 text-lg font-semibold uppercase"
+                    className={`h-12 text-lg font-semibold uppercase ${!transactionCode.trim() ? 'border-red-400 focus:border-red-500' : ''}`}
                     autoFocus
                   />
                   <p className={`text-xs mt-1 ${
-                    paymentMethod === 'tarjeta' ? 'text-blue-600' : paymentMethod === 'yape' ? 'text-purple-600' : 'text-cyan-600'
+                    !transactionCode.trim()
+                      ? 'text-red-500 font-semibold'
+                      : paymentMethod === 'tarjeta' ? 'text-blue-600' : paymentMethod === 'yape' ? 'text-purple-600' : 'text-cyan-600'
                   }`}>
-                    {paymentMethod === 'tarjeta'
+                    {!transactionCode.trim()
+                      ? '⚠️ Debes ingresar el número de operación para poder cobrar'
+                      : paymentMethod === 'tarjeta'
                       ? 'N° impreso en el voucher de la terminal'
                       : paymentMethod === 'yape'
                       ? 'Código de confirmación Yape / Plin (obligatorio)'
@@ -3847,7 +4053,12 @@ const POS = () => {
                   setShowConfirmDialog(false);
                   setShowDocumentTypeDialog(true);
                 }}
-                disabled={!paymentMethod || isProcessing}
+                disabled={
+                  !paymentMethod ||
+                  isProcessing ||
+                  // Métodos digitales exigen el código antes de continuar
+                  (['yape', 'tarjeta', 'transferencia'].includes(paymentMethod) && !transactionCode.trim())
+                }
                 className="w-full h-14 text-lg font-black bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300 rounded-xl"
               >
                 {isProcessing ? (
@@ -3876,7 +4087,7 @@ const POS = () => {
 
       {/* MODAL DE CONFIRMACIÓN PARA CUENTA DE CRÉDITO */}
       <Dialog open={showCreditConfirmDialog} onOpenChange={setShowCreditConfirmDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold flex items-center gap-2">
               <CheckCircle2 className="h-7 w-7 text-emerald-600" />
@@ -4068,7 +4279,7 @@ const POS = () => {
       {/* Modal para ver foto ampliada del estudiante */}
       {selectedStudent?.photo_url && (
         <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Foto de {selectedStudent.full_name}</DialogTitle>
             </DialogHeader>
@@ -4090,7 +4301,7 @@ const POS = () => {
 
       {/* MODAL DE SELECCIÓN DE COMPROBANTE */}
       <Dialog open={showDocumentTypeDialog} onOpenChange={setShowDocumentTypeDialog}>
-        <DialogContent className="sm:max-w-[700px]">
+        <DialogContent className="sm:max-w-[700px]" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">
               Selecciona Tipo de Comprobante

@@ -239,7 +239,7 @@ export const SuppliersTab = () => {
 
       {/* Modal crear/editar proveedor */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-[#8B4513]" />

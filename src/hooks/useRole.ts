@@ -45,14 +45,11 @@ export function useRole(): UseRoleReturn {
         // 🔒 SUPERADMIN - Configurable via variable de entorno (fallback al email original)
         const superadminEmail = import.meta.env.VITE_SUPERADMIN_EMAIL || 'superadmin@limacafe28.com';
         if (user.email === superadminEmail) {
-          console.log('🔐 SuperAdmin detectado:', user.email);
           setRole('superadmin');
           setLoading(false);
           return;
         }
 
-        console.log('🔍 useRole: Buscando rol para usuario:', user.id);
-        
         const { data, error } = await supabase
           .from('profiles')
           .select('role')
@@ -63,8 +60,7 @@ export function useRole(): UseRoleReturn {
           console.error('❌ useRole: Error al buscar rol:', error);
           throw error;
         }
-        
-        console.log('✅ useRole: Rol encontrado:', data?.role);
+
         setRole(data?.role || 'parent');
       } catch (err) {
         console.error('Error al obtener rol:', err);

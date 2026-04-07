@@ -560,7 +560,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
 
         {/* ── Modal Billetera ── */}
         <Dialog open={!!selectedStudent} onOpenChange={open => { if (!open) setSelectedStudent(null); }}>
-          <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-blue-900">
                 <Wallet className="h-5 w-5 text-blue-500" />
@@ -741,7 +741,7 @@ export const KioskWalletReport = ({ canViewAllSchools, userSchoolId, schools }: 
 
         {/* ── Visor comprobante ampliado ── */}
         <Dialog open={!!previewImage} onOpenChange={open => { if (!open) setPreviewImage(null); }}>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Eye className="h-4 w-4" /> Comprobante de recarga

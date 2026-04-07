@@ -582,11 +582,11 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               
               const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
 
-              // 🎫 Generar ticket_code
+              // 🎫 Generar ticket_code T-CAL-
               let ticketCode: string | null = null;
               try {
                 const { data: ticketNumber, error: ticketErr } = await supabase
-                  .rpc('get_next_ticket_number', { p_user_id: parentId });
+                  .rpc('get_next_calendar_ticket');
                 if (!ticketErr && ticketNumber) {
                   ticketCode = ticketNumber;
                 }
@@ -617,11 +617,11 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               // Se crea una transacción pendiente igual que cuenta libre.
               const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
 
-              // 🎫 Generar ticket_code
+              // 🎫 Generar ticket_code T-CAL-
               let ticketCode2: string | null = null;
               try {
                 const { data: ticketNumber, error: ticketErr } = await supabase
-                  .rpc('get_next_ticket_number', { p_user_id: parentId });
+                  .rpc('get_next_calendar_ticket');
                 if (!ticketErr && ticketNumber) {
                   ticketCode2 = ticketNumber;
                 }
@@ -1062,7 +1062,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
 
         {/* Modal de Detalle de Menú (también en embedded) */}
         <Dialog open={showMenuDetail} onOpenChange={setShowMenuDetail}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Menú del Día</DialogTitle>
             </DialogHeader>
@@ -1136,7 +1136,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
   // Modo Dialog (modal)
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto">
+      <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-2xl">
             <Calendar className="h-6 w-6 text-green-600" />

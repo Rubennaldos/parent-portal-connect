@@ -93,7 +93,8 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
   if (!dailyTotals) {
     return (
       <Dialog open onOpenChange={onClose}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg" aria-describedby={undefined}>
+          <DialogTitle className="sr-only">Diálogo</DialogTitle>
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
           </div>
@@ -204,7 +205,7 @@ export default function CashClosureDialog({ cashRegister, movements, config, onC
   // ═══════════════════════════════════════════════════════════════
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold">
             <Lock className="h-5 w-5 text-red-600" />

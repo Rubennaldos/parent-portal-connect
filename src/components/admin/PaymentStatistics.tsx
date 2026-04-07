@@ -3,17 +3,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  TrendingUp, 
-  DollarSign, 
-  CreditCard, 
+import {
+  TrendingUp,
+  DollarSign,
+  CreditCard,
   AlertCircle,
   CheckCircle2,
   XCircle,
   Clock,
   Download,
   Calendar,
-  Loader2
+  Loader2,
 } from 'lucide-react';
 import {
   Select,
@@ -23,84 +23,106 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
 interface PaymentStats {
-  total_amount: number;
-  total_transactions: number;
+  total_amount:    number;
+  total_count:     number;
   approved_amount: number;
-  approved_count: number;
-  pending_amount: number;
-  pending_count: number;
+  approved_count:  number;
+  pending_amount:  number;
+  pending_count:   number;
   rejected_amount: number;
-  rejected_count: number;
+  rejected_count:  number;
 }
 
 interface RecentTransaction {
-  id: string;
-  amount: number;
-  status: string;
+  id:              string;
+  amount:          number;
+  status:          string;
   payment_gateway: string;
-  payment_method: string;
-  created_at: string;
-  parent_email?: string;
-  student_name?: string;
+  payment_method:  string;
+  created_at:      string;
 }
 
+// ─── Helpers de presentación (solo UI, sin aritmética) ────────────────────────
+
+const STATUS_ICONS: Record<string, JSX.Element> = {
+  approved:   <CheckCircle2 className="h-4 w-4 text-green-600" />,
+  pending:    <Clock        className="h-4 w-4 text-yellow-600" />,
+  processing: <Clock        className="h-4 w-4 text-yellow-600" />,
+  rejected:   <XCircle      className="h-4 w-4 text-red-600" />,
+  cancelled:  <XCircle      className="h-4 w-4 text-red-600" />,
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  approved:   'Aprobado',
+  pending:    'Pendiente',
+  processing: 'Procesando',
+  rejected:   'Rechazado',
+  cancelled:  'Cancelado',
+  refunded:   'Reembolsado',
+  expired:    'Expirado',
+};
+
+const GATEWAY_LABELS: Record<string, string> = {
+  niubiz:      'Niubiz (Visa)',
+  izipay:      'Izipay',
+  culqi:       'Culqi',
+  mercadopago: 'Mercado Pago',
+  manual:      'Manual',
+};
+
+const fmt = (n: number) => `S/ ${Number(n).toFixed(2)}`;
+
+// ─── Componente ───────────────────────────────────────────────────────────────
+
 export function PaymentStatistics() {
-  const [stats, setStats] = useState<PaymentStats | null>(null);
-  const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState('7'); // días
-  const { toast } = useToast();
+  const [stats, setStats]       = useState<PaymentStats | null>(null);
+  const [recent, setRecent]     = useState<RecentTransaction[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [daysAgo, setDaysAgo]   = useState('7');
+  const { toast }               = useToast();
 
   useEffect(() => {
-    fetchStats();
-    fetchRecentTransactions();
-  }, [timeRange]);
+    fetchAll();
+  }, [daysAgo]);
 
-  const fetchStats = async () => {
+  /**
+   * Un único RPC que devuelve stats + últimas 10 tx.
+   * Toda la aritmética ocurre en Postgres con NUMERIC y ROUND(...,2).
+   * No hay parseFloat, no hay bucles de suma en JS.
+   */
+  const fetchAll = async () => {
     try {
       setLoading(true);
-      const daysAgo = new Date();
-      daysAgo.setDate(daysAgo.getDate() - parseInt(timeRange));
 
-      const { data, error } = await supabase
-        .from('payment_transactions')
-        .select('amount, status')
-        .gte('created_at', daysAgo.toISOString());
+      const { data, error } = await supabase.rpc('get_billing_payment_stats', {
+        p_school_id: null,
+        p_days_ago:  parseInt(daysAgo, 10),
+      });
 
       if (error) throw error;
 
-      const stats: PaymentStats = {
-        total_amount: 0,
-        total_transactions: data?.length || 0,
-        approved_amount: 0,
-        approved_count: 0,
-        pending_amount: 0,
-        pending_count: 0,
-        rejected_amount: 0,
-        rejected_count: 0,
-      };
+      const result = data as (PaymentStats & { recent_transactions: RecentTransaction[] });
 
-      data?.forEach((tx) => {
-        stats.total_amount += parseFloat(tx.amount.toString());
-        if (tx.status === 'approved') {
-          stats.approved_amount += parseFloat(tx.amount.toString());
-          stats.approved_count++;
-        } else if (tx.status === 'pending' || tx.status === 'processing') {
-          stats.pending_amount += parseFloat(tx.amount.toString());
-          stats.pending_count++;
-        } else if (tx.status === 'rejected' || tx.status === 'cancelled') {
-          stats.rejected_amount += parseFloat(tx.amount.toString());
-          stats.rejected_count++;
-        }
+      setStats({
+        total_amount:    result.total_amount,
+        total_count:     result.total_count,
+        approved_amount: result.approved_amount,
+        approved_count:  result.approved_count,
+        pending_amount:  result.pending_amount,
+        pending_count:   result.pending_count,
+        rejected_amount: result.rejected_amount,
+        rejected_count:  result.rejected_count,
       });
+      setRecent(result.recent_transactions ?? []);
 
-      setStats(stats);
-    } catch (error: any) {
-      console.error('Error fetching stats:', error);
+    } catch (err: any) {
+      console.error('Error cargando estadísticas de pago:', err);
       toast({
-        variant: 'destructive',
-        title: 'Error',
+        variant:     'destructive',
+        title:       'Error',
         description: 'No se pudieron cargar las estadísticas',
       });
     } finally {
@@ -108,98 +130,29 @@ export function PaymentStatistics() {
     }
   };
 
-  const fetchRecentTransactions = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('payment_transactions')
-        .select(`
-          id,
-          amount,
-          status,
-          payment_gateway,
-          payment_method,
-          created_at,
-          user_id,
-          student_id
-        `)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      setRecentTransactions(data || []);
-    } catch (error: any) {
-      console.error('Error fetching transactions:', error);
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'approved':
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />;
-      case 'pending':
-      case 'processing':
-        return <Clock className="h-4 w-4 text-yellow-600" />;
-      case 'rejected':
-      case 'cancelled':
-        return <XCircle className="h-4 w-4 text-red-600" />;
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-600" />;
-    }
-  };
-
-  const getStatusLabel = (status: string) => {
-    const labels: Record<string, string> = {
-      approved: 'Aprobado',
-      pending: 'Pendiente',
-      processing: 'Procesando',
-      rejected: 'Rechazado',
-      cancelled: 'Cancelado',
-      refunded: 'Reembolsado',
-      expired: 'Expirado',
-    };
-    return labels[status] || status;
-  };
-
-  const getGatewayLabel = (gateway: string) => {
-    const labels: Record<string, string> = {
-      niubiz: 'Niubiz (Visa)',
-      izipay: 'Izipay',
-      culqi: 'Culqi',
-      mercadopago: 'Mercado Pago',
-      manual: 'Manual',
-    };
-    return labels[gateway] || gateway;
-  };
-
   const exportToCSV = () => {
-    if (!recentTransactions.length) return;
+    if (!recent.length) return;
 
     const headers = ['Fecha', 'Monto', 'Estado', 'Pasarela', 'Método'];
-    const rows = recentTransactions.map((tx) => [
+    const rows = recent.map((tx) => [
       new Date(tx.created_at).toLocaleString('es-PE'),
-      `S/ ${tx.amount.toFixed(2)}`,
-      getStatusLabel(tx.status),
-      getGatewayLabel(tx.payment_gateway),
+      fmt(tx.amount),
+      STATUS_LABELS[tx.status] ?? tx.status,
+      GATEWAY_LABELS[tx.payment_gateway] ?? tx.payment_gateway,
       tx.payment_method || 'N/A',
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map((row) => row.join(',')),
-    ].join('\n');
-
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `pagos_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
 
-    toast({
-      title: '✅ Exportado',
-      description: 'Archivo CSV descargado exitosamente',
-    });
+    toast({ title: '✅ Exportado', description: 'Archivo CSV descargado.' });
   };
 
+  // ── Loading state ──────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -208,13 +161,15 @@ export function PaymentStatistics() {
     );
   }
 
+  // ── UI (puramente visual — ningún cálculo aquí) ───────────────────────────
   return (
     <div className="space-y-6">
-      {/* Selector de rango de tiempo */}
+
+      {/* ── Barra de controles ── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Calendar className="h-5 w-5 text-muted-foreground" />
-          <Select value={timeRange} onValueChange={setTimeRange}>
+          <Select value={daysAgo} onValueChange={setDaysAgo}>
             <SelectTrigger className="w-[180px]">
               <SelectValue />
             </SelectTrigger>
@@ -226,14 +181,16 @@ export function PaymentStatistics() {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={exportToCSV} variant="outline" size="sm">
+        <Button onClick={exportToCSV} variant="outline" size="sm" disabled={!recent.length}>
           <Download className="h-4 w-4 mr-2" />
           Exportar CSV
         </Button>
       </div>
 
-      {/* Tarjetas de estadísticas */}
+      {/* ── Tarjetas de estadísticas ── */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+
+        {/* Total */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -243,9 +200,9 @@ export function PaymentStatistics() {
           <CardContent>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold">S/ {stats?.total_amount.toFixed(2) || '0.00'}</p>
+                <p className="text-2xl font-bold">{fmt(stats?.total_amount ?? 0)}</p>
                 <p className="text-xs text-muted-foreground">
-                  {stats?.total_transactions || 0} transacciones
+                  {stats?.total_count ?? 0} transacciones
                 </p>
               </div>
               <DollarSign className="h-8 w-8 text-muted-foreground" />
@@ -253,6 +210,7 @@ export function PaymentStatistics() {
           </CardContent>
         </Card>
 
+        {/* Aprobados */}
         <Card className="border-green-200 bg-green-50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-green-800">
@@ -263,10 +221,10 @@ export function PaymentStatistics() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-2xl font-bold text-green-900">
-                  S/ {stats?.approved_amount.toFixed(2) || '0.00'}
+                  {fmt(stats?.approved_amount ?? 0)}
                 </p>
                 <p className="text-xs text-green-700">
-                  {stats?.approved_count || 0} pagos exitosos
+                  {stats?.approved_count ?? 0} pagos exitosos
                 </p>
               </div>
               <CheckCircle2 className="h-8 w-8 text-green-600" />
@@ -274,6 +232,7 @@ export function PaymentStatistics() {
           </CardContent>
         </Card>
 
+        {/* Pendientes */}
         <Card className="border-yellow-200 bg-yellow-50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-yellow-800">
@@ -284,10 +243,10 @@ export function PaymentStatistics() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-2xl font-bold text-yellow-900">
-                  S/ {stats?.pending_amount.toFixed(2) || '0.00'}
+                  {fmt(stats?.pending_amount ?? 0)}
                 </p>
                 <p className="text-xs text-yellow-700">
-                  {stats?.pending_count || 0} en proceso
+                  {stats?.pending_count ?? 0} en proceso
                 </p>
               </div>
               <Clock className="h-8 w-8 text-yellow-600" />
@@ -295,6 +254,7 @@ export function PaymentStatistics() {
           </CardContent>
         </Card>
 
+        {/* Rechazados */}
         <Card className="border-red-200 bg-red-50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-red-800">
@@ -305,10 +265,10 @@ export function PaymentStatistics() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-2xl font-bold text-red-900">
-                  S/ {stats?.rejected_amount.toFixed(2) || '0.00'}
+                  {fmt(stats?.rejected_amount ?? 0)}
                 </p>
                 <p className="text-xs text-red-700">
-                  {stats?.rejected_count || 0} fallidos
+                  {stats?.rejected_count ?? 0} fallidos
                 </p>
               </div>
               <XCircle className="h-8 w-8 text-red-600" />
@@ -317,42 +277,44 @@ export function PaymentStatistics() {
         </Card>
       </div>
 
-      {/* Transacciones recientes */}
+      {/* ── Transacciones recientes ── */}
       <Card>
         <CardHeader>
           <CardTitle>Transacciones Recientes</CardTitle>
           <CardDescription>Últimas 10 transacciones procesadas</CardDescription>
         </CardHeader>
         <CardContent>
-          {recentTransactions.length === 0 ? (
+          {recent.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>No hay transacciones aún</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {recentTransactions.map((tx) => (
+              {recent.map((tx) => (
                 <div
                   key={tx.id}
                   className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3">
-                    {getStatusIcon(tx.status)}
+                    {STATUS_ICONS[tx.status] ?? <AlertCircle className="h-4 w-4 text-gray-600" />}
                     <div>
-                      <p className="font-medium">S/ {tx.amount.toFixed(2)}</p>
+                      <p className="font-medium">{fmt(tx.amount)}</p>
                       <p className="text-xs text-muted-foreground">
                         {new Date(tx.created_at).toLocaleDateString('es-PE', {
-                          day: '2-digit',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
+                          day: '2-digit', month: 'short',
+                          hour: '2-digit', minute: '2-digit',
                         })}
                       </p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-medium">{getGatewayLabel(tx.payment_gateway)}</p>
-                    <p className="text-xs text-muted-foreground">{getStatusLabel(tx.status)}</p>
+                    <p className="text-sm font-medium">
+                      {GATEWAY_LABELS[tx.payment_gateway] ?? tx.payment_gateway}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {STATUS_LABELS[tx.status] ?? tx.status}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -363,4 +325,3 @@ export function PaymentStatistics() {
     </div>
   );
 }
-

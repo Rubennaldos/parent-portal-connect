@@ -406,7 +406,7 @@ export default function Auth() {
 
       {/* Modal de Recuperación de Contraseña */}
       <Dialog open={showPasswordRecoveryModal} onOpenChange={setShowPasswordRecoveryModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-lg flex items-center gap-2">
               <HelpCircle className="h-5 w-5 text-[#8B4513]" />

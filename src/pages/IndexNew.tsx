@@ -323,7 +323,7 @@ const Index = () => {
 
           {/* Modal de Historial */}
           <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
-            <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto" aria-describedby={undefined}>
               <DialogHeader>
                 <div className="flex items-center justify-between">
                   <DialogTitle className="text-2xl">
@@ -378,7 +378,7 @@ const Index = () => {
 
           {/* Modal de Settings (placeholder) */}
           <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-            <DialogContent>
+            <DialogContent aria-describedby={undefined}>
               <DialogHeader>
                 <DialogTitle>Configuración de {selectedStudent.full_name}</DialogTitle>
               </DialogHeader>

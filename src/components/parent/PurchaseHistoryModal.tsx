@@ -109,7 +109,7 @@ export const PurchaseHistoryModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-2xl flex items-center gap-2">
             <ShoppingBag className="h-6 w-6 text-[#8B4513]" />

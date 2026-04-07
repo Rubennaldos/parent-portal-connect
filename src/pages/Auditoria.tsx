@@ -44,6 +44,9 @@ import {
   X,
   ZoomIn,
   Info,
+  Power,
+  PowerOff,
+  BrainCircuit,
 } from 'lucide-react';
 import {
   procesarVoucherConIA,
@@ -196,6 +199,10 @@ const Auditoria = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({ total: 0, validos: 0, sospechosos: 0, rechazados: 0, logs_hoy: 0 });
 
+  // ── Kill Switch IA ────────────────────────────────────────────────────────
+  const [voucherAiDisabled, setVoucherAiDisabled] = useState<boolean>(true);
+  const [aiToggleLoading, setAiToggleLoading] = useState(false);
+
   // Panel de análisis manual
   const [urlPrueba, setUrlPrueba] = useState('');
   const [analizando, setAnalizando] = useState(false);
@@ -242,6 +249,7 @@ const Auditoria = () => {
   useEffect(() => {
     if (user && (role === 'admin_general' || role === 'superadmin')) {
       fetchAll();
+      loadAiConfig();
     }
   }, [user, role]);
 
@@ -249,6 +257,42 @@ const Auditoria = () => {
     setLoading(true);
     await Promise.all([fetchSchoolsList(), fetchVouchers(), fetchLogs(), fetchStats()]);
     setLoading(false);
+  };
+
+  const loadAiConfig = async () => {
+    try {
+      const { data } = await supabase
+        .from('billing_config')
+        .select('disable_voucher_ai')
+        .limit(1)
+        .maybeSingle();
+      setVoucherAiDisabled(data?.disable_voucher_ai !== false);
+    } catch {
+      setVoucherAiDisabled(true);
+    }
+  };
+
+  const toggleVoucherAi = async () => {
+    const nuevoEstado = !voucherAiDisabled;
+    setAiToggleLoading(true);
+    try {
+      const { error } = await supabase
+        .from('billing_config')
+        .update({ disable_voucher_ai: nuevoEstado })
+        .not('id', 'is', null);
+      if (error) throw error;
+      setVoucherAiDisabled(nuevoEstado);
+      toast({
+        title: nuevoEstado ? '🔴 IA de Auditoría desactivada' : '🟢 IA de Auditoría reactivada',
+        description: nuevoEstado
+          ? 'Modo Manual activo. Los montos del padre se usan sin verificación automática.'
+          : 'GPT-4o Vision analizará cada voucher antes de aprobar.',
+      });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al cambiar estado de la IA', description: err.message });
+    } finally {
+      setAiToggleLoading(false);
+    }
   };
 
   const fetchSchoolsList = async () => {
@@ -1079,6 +1123,55 @@ const Auditoria = () => {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* ── Kill Switch: Estado del Motor IA ──────────────────────────────── */}
+        <div className={`flex items-center justify-between rounded-xl border px-4 py-3 gap-3 ${
+          voucherAiDisabled
+            ? 'bg-amber-50 border-amber-300'
+            : 'bg-emerald-50 border-emerald-300'
+        }`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full ${
+              voucherAiDisabled ? 'bg-amber-100' : 'bg-emerald-100'
+            }`}>
+              {voucherAiDisabled
+                ? <PowerOff className="h-4 w-4 text-amber-600" />
+                : <BrainCircuit className="h-4 w-4 text-emerald-600" />
+              }
+            </div>
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold ${voucherAiDisabled ? 'text-amber-800' : 'text-emerald-800'}`}>
+                Motor IA de Auditoría:{' '}
+                <span className="font-bold">
+                  {voucherAiDisabled ? '🔴 DESACTIVADO — Modo Manual' : '🟢 ACTIVO'}
+                </span>
+              </p>
+              <p className={`text-xs mt-0.5 ${voucherAiDisabled ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {voucherAiDisabled
+                  ? 'Los vouchers se aprueban manualmente. Los montos del padre son la fuente de verdad. No se consume OpenAI.'
+                  : 'GPT-4o Vision analiza cada voucher antes de aprobar. Consume créditos de OpenAI.'}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={aiToggleLoading}
+            className={`shrink-0 gap-1.5 font-semibold ${
+              voucherAiDisabled
+                ? 'border-emerald-400 text-emerald-700 hover:bg-emerald-100'
+                : 'border-red-300 text-red-700 hover:bg-red-50'
+            }`}
+            onClick={toggleVoucherAi}
+          >
+            {aiToggleLoading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : voucherAiDisabled
+                ? <><Power className="h-3.5 w-3.5" /> Reactivar IA</>
+                : <><PowerOff className="h-3.5 w-3.5" /> Desactivar IA</>
+            }
+          </Button>
         </div>
 
         {/* ── Panel de Análisis Manual ── */}

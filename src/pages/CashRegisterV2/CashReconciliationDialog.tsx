@@ -210,6 +210,24 @@ export default function CashReconciliationDialog({
     setSaving(true);
 
     try {
+      // ── Guard: verificar si ya existe un arqueo para esta sesión ─────────
+      // Evita el error 409 (duplicate key uq_cash_reconciliation_session) si
+      // el admin abre el modal de una sesión que ya fue cerrada previamente.
+      const { data: existingRecon } = await supabase
+        .from('cash_reconciliations')
+        .select('id')
+        .eq('cash_session_id', session.id)
+        .maybeSingle();
+      if (existingRecon) {
+        toast({
+          title: 'Esta caja ya fue cerrada previamente',
+          description: 'El arqueo ya existe en el sistema. Actualiza la página para ver el estado actualizado.',
+        });
+        onClosed();
+        onClose();
+        return;
+      }
+
       // ── Vector 5: Log de auditoría PRIMERO ────────────────────────────────
       // Si el log falla, el cierre se aborta. El cajero no puede irse sin rastro.
       const { error: logError } = await supabase.from('huella_digital_logs').insert({
@@ -237,35 +255,38 @@ export default function CashReconciliationDialog({
         throw new Error(`No se pudo registrar el log de auditoría. Sin rastro no se permite el cierre. Detalle: ${logError.message}`);
       }
 
-      // ── Registrar arqueo ──────────────────────────────────────────────────
-      const { error: reconError } = await supabase.from('cash_reconciliations').insert({
-        cash_session_id: session.id,
-        school_id: schoolId,
-        system_cash: systemCash,
-        system_yape: digitalInfo.yapePlin,
-        system_plin: 0,
-        system_transferencia: digitalInfo.transferencia,
-        system_tarjeta: systemTarjeta,
-        system_mixto: 0,
-        system_total: safeAdd(systemCash, systemTarjeta),
-        physical_cash: declaredCashNum,
-        physical_yape: 0,
-        physical_plin: 0,
-        physical_transferencia: 0,
-        physical_tarjeta: declaredTarjetaNum,
-        physical_mixto: 0,
-        physical_total: safeAdd(declaredCashNum, declaredTarjetaNum),
-        variance_cash: varianceCash,
-        variance_yape: 0,
-        variance_plin: 0,
-        variance_transferencia: 0,
-        variance_tarjeta: varianceTarjeta,
-        variance_mixto: 0,
-        variance_total: varianceTotal,
-        declared_overage: varianceTotal < 0 ? Math.abs(varianceTotal) : 0,
-        declared_deficit: varianceTotal > 0 ? varianceTotal : 0,
-        reconciled_by: user.id,
-      });
+      // ── Registrar arqueo (upsert — si ya existe por colisión, actualiza) ──
+      const { error: reconError } = await supabase.from('cash_reconciliations').upsert(
+        {
+          cash_session_id: session.id,
+          school_id: schoolId,
+          system_cash: systemCash,
+          system_yape: digitalInfo.yapePlin,
+          system_plin: 0,
+          system_transferencia: digitalInfo.transferencia,
+          system_tarjeta: systemTarjeta,
+          system_mixto: 0,
+          system_total: safeAdd(systemCash, systemTarjeta),
+          physical_cash: declaredCashNum,
+          physical_yape: 0,
+          physical_plin: 0,
+          physical_transferencia: 0,
+          physical_tarjeta: declaredTarjetaNum,
+          physical_mixto: 0,
+          physical_total: safeAdd(declaredCashNum, declaredTarjetaNum),
+          variance_cash: varianceCash,
+          variance_yape: 0,
+          variance_plin: 0,
+          variance_transferencia: 0,
+          variance_tarjeta: varianceTarjeta,
+          variance_mixto: 0,
+          variance_total: varianceTotal,
+          declared_overage: varianceTotal < 0 ? Math.abs(varianceTotal) : 0,
+          declared_deficit: varianceTotal > 0 ? varianceTotal : 0,
+          reconciled_by: user.id,
+        },
+        { onConflict: 'cash_session_id' },
+      );
       if (reconError) throw reconError;
 
       // ── Cerrar sesión ─────────────────────────────────────────────────────
@@ -297,6 +318,21 @@ export default function CashReconciliationDialog({
       onClose();
     } catch (err: any) {
       console.error('[CashReconciliation] Error closing:', err);
+
+      // ── Caja ya cerrada (duplicate key 23505 o uq_cash_reconciliation_session) ──
+      const isDuplicateKey =
+        err?.code === '23505' ||
+        (typeof err?.message === 'string' && err.message.includes('uq_cash_reconciliation_session'));
+      if (isDuplicateKey) {
+        toast({
+          title: 'Esta caja ya fue cerrada previamente',
+          description: 'El arqueo ya existe en el sistema. Actualiza la página para ver el estado actualizado.',
+        });
+        onClosed();
+        onClose();
+        return;
+      }
+
       // ── V2: Mensaje claro para error de red / apagón ─────────────────────
       const isNetworkError =
         err instanceof TypeError ||
@@ -321,6 +357,7 @@ export default function CashReconciliationDialog({
       <DialogContent
         className="max-w-lg max-h-[95vh] overflow-y-auto"
         // ── V1: Bloquear cierre accidental por clic fuera o ESC ─────────────
+          aria-describedby={undefined}
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >

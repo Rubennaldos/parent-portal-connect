@@ -206,7 +206,7 @@ export const MoreMenu = ({ userEmail, onLogout }: MoreMenuProps) => {
 
       {/* Modal Consentimiento Fotos */}
       <Dialog open={showPhotoInfo} onOpenChange={setShowPhotoInfo}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-xl flex items-center gap-2">
               <Camera className="h-6 w-6 text-[#8B4513]" />

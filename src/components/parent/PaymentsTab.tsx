@@ -67,6 +67,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const [invoiceClientData, setInvoiceClientData] = useState<InvoiceClientData | null>(null);
   const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
   const [showInvoiceClientModal, setShowInvoiceClientModal] = useState(false);
+  // Monto del pago en curso — necesario para la validación SUNAT de S/ 700
+  const [pendingInvoiceTotal, setPendingInvoiceTotal] = useState<number>(0);
 
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
@@ -180,9 +182,17 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           metadata: t.metadata,
         }));
 
-        // Inyectar deuda de kiosco si el balance es negativo
-        // ID sintético (no UUID) — se filtra antes de enviar a la BD
-        const kioskDebt = student.balance < 0 ? Math.abs(student.balance) : 0;
+        // Inyectar deuda de kiosco SOLO si el balance es negativo Y no existen
+        // transacciones pendientes de cafetería en la BD.
+        // Si ya hay transacciones "Compra POS (Cuenta Libre)" con payment_status='pending',
+        // esas transacciones YA representan la misma deuda que el balance negativo.
+        // Añadir el item sintético encima causaría doble conteo.
+        const hasPendingCafeTransactions = mappedTransactions.some(
+          t => !(t.metadata as any)?.lunch_order_id
+        );
+        const kioskDebt = student.balance < 0 && !hasPendingCafeTransactions
+          ? Math.abs(student.balance)
+          : 0;
         if (kioskDebt > 0) {
           mappedTransactions.unshift({
             id: `__kiosk_balance__${student.id}`,
@@ -378,6 +388,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       });
       return;
     }
+    // Calcular el total combinado antes de abrir el selector (para la regla de S/ 700)
+    const combined = buildCombinedPaymentData();
+    setPendingInvoiceTotal(combined.totalAmount);
     setCombinedMode(true);
     setSelectedDebt(null);
     setShowInvoiceSelector(true);
@@ -392,17 +405,24 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       setSelectedTxByStudent(prev => new Map(prev).set(debt.student_id, new Set(allIds)));
     }
     setSelectedDebt(debt);
+    // Calcular el total seleccionado antes de abrir el selector (para la regla de S/ 700).
+    // Usa la misma lógica que getPaymentData: si hay selección parcial la usa; si no, todos.
+    const existingSelection = selectedTxByStudent.get(debt.student_id);
+    const effectiveIds = existingSelection && existingSelection.size > 0 ? existingSelection : new Set(allIds);
+    const total = debt.pending_transactions
+      .filter(tx => effectiveIds.has(tx.id))
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    setPendingInvoiceTotal(total);
     setShowInvoiceSelector(true);
   };
 
-  const proceedToPayment = (type: InvoiceType | null) => {
+  const proceedToPayment = (type: InvoiceType) => {
     setInvoiceType(type);
     setShowInvoiceSelector(false);
-    if (type === 'factura') {
-      setShowInvoiceClientModal(true);
-    } else {
-      setShowPaymentModal(true);
-    }
+    // Tanto boleta como factura pasan por InvoiceClientModal:
+    //  - Factura: requiere RUC + Razón Social + Dirección (obligatorios)
+    //  - Boleta:  requiere DNI si el monto >= S/ 700 (regla SUNAT)
+    setShowInvoiceClientModal(true);
   };
 
   /**
@@ -490,6 +510,14 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       </div>
     );
   }
+
+  // No mostrar la barra flotante "Pagar seleccionadas" encima de modales (selector de comprobante,
+  // datos SUNAT, pasarela de pago, detalle POS) — Radix Dialog suele usar z-50 y quedar tapado.
+  const hideStickyPayBar =
+    showPaymentModal ||
+    showInvoiceClientModal ||
+    showInvoiceSelector ||
+    !!posDetailStudent;
 
   return (
     <div className="space-y-3">
@@ -620,10 +648,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           <div
             key={debt.student_id}
             id={debt.student_id === debts[0]?.student_id ? 'cart-student-debt-card' : undefined}
-            className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100"
           >
-            {/* ── Fila compacta del hijo ── */}
-            <div className="flex items-center gap-3 px-4 py-3">
+            {/* ── Fila compacta del hijo — sticky mientras se hace scroll en el detalle ── */}
+            <div className={`flex items-center gap-3 px-4 py-3 bg-white rounded-t-2xl${isExpanded ? ' sticky top-0 z-10 shadow-sm' : ''}`}>
               {/* Avatar */}
               <div className="shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-rose-400 to-orange-400 flex items-center justify-center shadow-md overflow-hidden">
                 {debt.student_photo ? (
@@ -667,13 +695,24 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   )}
                 </div>
                 {hasPayableItems && (
-                  <button
-                    id="cart-pay-selected-btn"
-                    onClick={(e) => { e.stopPropagation(); handlePayDebt(debt); }}
-                    className="px-3 py-2 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold shadow-md active:scale-95 transition-all"
-                  >
-                    Pagar
-                  </button>
+                  <div className="flex flex-col items-end gap-0.5">
+                    {!noneSelected && !allSelected && (
+                      <span className="text-[9px] text-emerald-600 font-semibold">
+                        {selectedIds.size} selec. · S/ {selectedTotal.toFixed(2)}
+                      </span>
+                    )}
+                    <button
+                      id="cart-pay-selected-btn"
+                      onClick={(e) => { e.stopPropagation(); handlePayDebt(debt); }}
+                      className="px-3 py-2 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold shadow-md active:scale-95 transition-all whitespace-nowrap"
+                    >
+                      {noneSelected
+                        ? 'Pagar'
+                        : !allSelected
+                        ? `Pagar S/ ${selectedTotal.toFixed(2)}`
+                        : 'Pagar'}
+                    </button>
+                  </div>
                 )}
                 {hasSomeCovered && !hasPayableItems && (
                   <div className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-50 border border-blue-200">
@@ -694,7 +733,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
             {/* ── Detalle expandible ── */}
             {isExpanded && (
-              <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-2">
+              <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-2 rounded-b-2xl">
 
                 {/* Aviso revisión parcial */}
                 {hasSomeCovered && hasPayableItems && (
@@ -807,19 +846,26 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   );
                 })}
 
-                {/* Botón pagar seleccionadas (solo si hay pagables) */}
-                {hasPayableItems && (
-                  <button
-                    onClick={() => handlePayDebt(debt)}
-                    disabled={noneSelected}
-                    className="w-full h-11 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-md active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-1"
-                  >
-                    <Banknote className="h-5 w-5" />
-                    {noneSelected ? 'Selecciona al menos 1 compra' : `Pagar seleccionadas — S/ ${selectedTotal.toFixed(2)}`}
-                  </button>
-                )}
+                {/* Espacio para que el contenido no quede tapado por el botón sticky */}
+                {hasPayableItems && <div className="h-14" />}
               </div>
             )}
+          {/* ── Botón sticky fondo de pantalla — solo cuando el acordeón está abierto ── */}
+          {isExpanded && hasPayableItems && !hideStickyPayBar && (
+            <div className="fixed bottom-[6.5rem] left-0 right-0 z-[60] px-4 pointer-events-none">
+              <button
+                onClick={() => handlePayDebt(debt)}
+                disabled={noneSelected}
+                className="pointer-events-auto w-full py-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                style={{ boxShadow: '0 4px 24px rgba(16,185,129,0.35)' }}
+              >
+                <Banknote className="h-5 w-5 shrink-0" />
+                {noneSelected
+                  ? 'Selecciona al menos 1 compra'
+                  : `Pagar seleccionadas — S/ ${selectedTotal.toFixed(2)}`}
+              </button>
+            </div>
+          )}
           </div>
         );
       })}
@@ -834,22 +880,16 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           }
         }
       }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm" aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle className="text-center">Tipo de comprobante</DialogTitle>
+            <DialogTitle className="text-center">¿Qué comprobante necesitas?</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <Button
-              variant="outline"
-              className="w-full h-14 text-base justify-start gap-3 hover:bg-blue-50 hover:border-blue-300"
-              onClick={() => proceedToPayment(null)}
-            >
-              <Receipt className="h-5 w-5 text-blue-600" />
-              <div className="text-left">
-                <p className="font-medium">Sin comprobante</p>
-                <p className="text-xs text-gray-500">Se generara automaticamente una boleta resumen</p>
-              </div>
-            </Button>
+            {pendingInvoiceTotal > 0 && (
+              <p className="text-center text-sm text-slate-500">
+                Total a pagar: <span className="font-bold text-slate-700">S/ {pendingInvoiceTotal.toFixed(2)}</span>
+              </p>
+            )}
             <Button
               variant="outline"
               className="w-full h-14 text-base justify-start gap-3 hover:bg-green-50 hover:border-green-300"
@@ -857,8 +897,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             >
               <Receipt className="h-5 w-5 text-green-600" />
               <div className="text-left">
-                <p className="font-medium">Boleta</p>
-                <p className="text-xs text-gray-500">Comprobante a nombre del padre/madre</p>
+                <p className="font-medium">Boleta electrónica</p>
+                <p className="text-xs text-gray-500">
+                  {pendingInvoiceTotal >= 700
+                    ? 'Requiere DNI obligatorio (monto mayor a S/ 700)'
+                    : 'A nombre del padre/madre o Consumidor Final'}
+                </p>
               </div>
             </Button>
             <Button
@@ -868,24 +912,26 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             >
               <FileText className="h-5 w-5 text-purple-600" />
               <div className="text-left">
-                <p className="font-medium">Factura</p>
-                <p className="text-xs text-gray-500">Requiere RUC y razon social</p>
+                <p className="font-medium">Factura electrónica</p>
+                <p className="text-xs text-gray-500">Para empresas — requiere RUC y razón social</p>
               </div>
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal de datos del cliente para factura ── */}
+      {/* ── Modal de datos del cliente (boleta Y factura) ── */}
       <InvoiceClientModal
         open={showInvoiceClientModal}
         onClose={() => {
           setShowInvoiceClientModal(false);
           setSelectedDebt(null);
           setCombinedMode(false);
+          setInvoiceType(null);
         }}
-        defaultType="factura"
+        defaultType={invoiceType ?? 'boleta'}
         lockedType
+        totalAmount={pendingInvoiceTotal}
         parentId={userId}
         onConfirm={(data) => {
           setInvoiceClientData(data);

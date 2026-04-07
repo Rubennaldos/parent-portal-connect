@@ -522,7 +522,7 @@ export default function CashDayDashboard({
 
       let query = supabase
         .from('transactions')
-        .select('id, created_at, amount, payment_method, metadata, student:student_id(full_name)')
+        .select('id, created_at, amount, payment_method, metadata, student:students(full_name)')
         .eq('type', 'purchase')
         .in('payment_method', methods)
         .neq('payment_status', 'cancelled')
@@ -1174,7 +1174,7 @@ export default function CashDayDashboard({
 
       {/* ── DRILL-DOWN MODAL (lupa) ───────────────────────────────────────── */}
       <Dialog open={!!drillDown} onOpenChange={() => setDrillDown(null)}>
-        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-gray-900">
               <Eye className="h-5 w-5 text-blue-500" />

@@ -598,7 +598,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
 
       {/* Modal para ver la foto del comprobante */}
       <Dialog open={!!viewingImage} onOpenChange={() => setViewingImage(null)}>
-        <DialogContent className="max-w-md p-4">
+        <DialogContent className="max-w-md p-4" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-sm font-semibold">Foto del comprobante</DialogTitle>
           </DialogHeader>

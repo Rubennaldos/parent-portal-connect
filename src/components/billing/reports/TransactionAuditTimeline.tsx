@@ -111,11 +111,29 @@ export const TransactionAuditTimeline = ({ transactionId }: Props) => {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
+  // Guard: los IDs con prefijo "lunch_" son pedidos de almuerzo aún no
+  // materializados como transacciones reales — no tienen registro en audit_billing_logs.
+  const isLunchOrder = transactionId?.startsWith('lunch_');
+
   useEffect(() => {
-    if (!transactionId) return;
+    if (!transactionId || isLunchOrder) return;
     fetchLogs();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactionId]);
+
+  if (isLunchOrder) {
+    return (
+      <div className="mt-2 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 text-sm">
+        <Clock className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+        <div>
+          <p className="font-semibold">Origen: Pedido de Almuerzo directo.</p>
+          <p className="text-xs text-amber-700 mt-0.5">
+            Se registrará en el historial de auditoría automáticamente al procesar el pago.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const fetchLogs = async () => {
     setLoading(true);

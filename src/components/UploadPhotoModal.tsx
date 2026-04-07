@@ -187,7 +187,7 @@ export const UploadPhotoModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-2xl flex items-center gap-2">
             <Camera className="h-6 w-6 text-[#8B4513]" />

@@ -133,7 +133,7 @@ export function CashRegisterSettings({ schoolId, onClose }: CashRegisterSettings
   if (loading) {
     return (
       <Dialog open onOpenChange={onClose}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Configuración de Cierre de Caja</DialogTitle>
           </DialogHeader>

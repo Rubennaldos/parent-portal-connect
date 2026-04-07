@@ -170,7 +170,7 @@ export default function TreasuryTransferFlow({ open, onClose, session, schoolId 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
             <Send className="h-5 w-5 text-indigo-600" />
@@ -241,7 +241,7 @@ export default function TreasuryTransferFlow({ open, onClose, session, schoolId 
 
         {/* Modal crear transferencia */}
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Nueva Transferencia a Tesorería</DialogTitle>
             </DialogHeader>
@@ -271,7 +271,7 @@ export default function TreasuryTransferFlow({ open, onClose, session, schoolId 
 
         {/* Modal recibir transferencia */}
         <Dialog open={!!receivingId} onOpenChange={() => setReceivingId(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Confirmar Recepción en Tesorería</DialogTitle>
             </DialogHeader>

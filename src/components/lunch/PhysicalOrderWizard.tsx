@@ -834,6 +834,9 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
       // 🆕 Crear transacción PAGADA para pagos inmediatos (efectivo, tarjeta, yape, transferencia)
       if (paymentType === 'cash' && cashPaymentMethod && cashPaymentMethod !== 'pagar_luego' && totalPrice > 0) {
+        // Extraer número de operación para la columna dedicada (Parte 1 Opción A)
+        const wizardOpNumber = paymentDetails.operationNumber?.trim().toUpperCase() || null;
+
         const transactionData: any = {
           type: 'purchase',
           amount: -Math.abs(totalPrice),
@@ -844,6 +847,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           manual_client_name: manualName,
           ticket_code: ticketCode,
           created_by: user?.id,
+          // Columna dedicada para búsqueda y auditoría
+          operation_number: wizardOpNumber,
           metadata: {
             lunch_order_id: insertedOrderId,
             source: 'physical_order_wizard_paid',
@@ -852,7 +857,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             quantity,
             payment_details: {
               ...paymentDetails,
-              operationNumber: paymentDetails.operationNumber?.trim().toUpperCase() || '',
+              operationNumber: wizardOpNumber || '',
             }
           },
           ...calcBillingFlags('ticket', cashPaymentMethod),
@@ -896,7 +901,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-2xl">Nuevo Pedido de Almuerzo</DialogTitle>
           {selectedDate && (

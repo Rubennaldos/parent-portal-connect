@@ -215,7 +215,7 @@ export const FamilyManagerModal = ({ open, onClose }: Props) => {
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) handleClose(); }}>
-      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-lg font-black">Gestionar Familias de Productos</DialogTitle>
         </DialogHeader>
