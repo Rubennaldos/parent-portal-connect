@@ -1251,7 +1251,6 @@ const Products = () => {
     toast({ title: '✅ Excel/CSV generado', description: 'El reporte se ha descargado correctamente' });
   };
 
-  const canViewAllSchools = role === 'admin_general';
   const isAdminGeneral = role === 'admin_general';
   // Logística y admin_general pueden crear productos globales (sin sede)
   const isLogistica = role === 'logistica';
