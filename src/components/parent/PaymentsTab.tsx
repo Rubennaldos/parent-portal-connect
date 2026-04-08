@@ -479,6 +479,37 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     setShowInvoiceSelector(true);
   };
 
+  /**
+   * Llamado desde PosConsumptionModal cuando el padre presiona "Pagar selección".
+   * Cierra el modal y abre la pasarela con el monto parcial elegido.
+   */
+  const handlePosPayment = (studentId: string, totalSeleccionado: number) => {
+    setPosDetailStudent(null);
+    const debt = debts.find(d => d.student_id === studentId);
+    if (!debt) return;
+
+    // Crea una copia del debt con el monto del kiosco reemplazado por el seleccionado
+    const modifiedDebt: StudentDebt = {
+      ...debt,
+      total_debt: totalSeleccionado,
+      pending_transactions: debt.pending_transactions.map(tx =>
+        tx.metadata?.is_kiosk_balance_debt
+          ? { ...tx, amount: totalSeleccionado }
+          : tx
+      ),
+    };
+
+    // Forzar selección a solo la tx virtual del kiosco
+    const kioskTx = debt.pending_transactions.find(tx => tx.metadata?.is_kiosk_balance_debt);
+    if (kioskTx) {
+      setSelectedTxByStudent(prev => new Map(prev).set(studentId, new Set([kioskTx.id])));
+    }
+
+    setSelectedDebt(modifiedDebt);
+    setPendingInvoiceTotal(totalSeleccionado);
+    setShowInvoiceSelector(true);
+  };
+
   const proceedToPayment = (type: InvoiceType) => {
     setInvoiceType(type);
     setShowInvoiceSelector(false);
@@ -1215,6 +1246,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           studentId={posDetailStudent.id}
           studentName={posDetailStudent.name}
           kioskDebt={posDetailStudent.debt}
+          onPay={(total) => handlePosPayment(posDetailStudent.id, total)}
         />
       )}
 
