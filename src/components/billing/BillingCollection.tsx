@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getBillingStatusBadge } from '@/lib/billingUtils';
+import { PosConsumptionModal } from '@/components/parent/PosConsumptionModal';
 import { InvoiceClientModal, type InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
@@ -214,6 +215,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
   const [showDebtorDetailModal, setShowDebtorDetailModal] = useState(false);
   const [selectedDebtorForDetail, setSelectedDebtorForDetail] = useState<any>(null);
+  // Modal de desglose de consumos POS (saldo negativo kiosco)
+  const [showKioskDetailModal, setShowKioskDetailModal] = useState(false);
+  const [kioskDetailData, setKioskDetailData] = useState<{ studentId: string; studentName: string; kioskDebt: number } | null>(null);
   // Deuda histórica real (sin filtros de fecha) para comparar con el total filtrado
   const [historicalDebt, setHistoricalDebt] = useState<{ total: number; count: number } | null>(null);
   const [loadingHistoricalDebt, setLoadingHistoricalDebt] = useState(false);
@@ -4135,18 +4139,28 @@ Si tienes dudas, comunícate con la administración de tu sede.
                       </div>
                       {/* Botón ver detalle individual */}
                       <button
-                        title="Ver detalle completo"
+                        title={t.metadata?.is_kiosk_balance_debt ? 'Ver consumos del kiosco' : 'Ver detalle completo'}
                         className="shrink-0 p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-blue-500 hover:text-blue-700"
                         onClick={() => {
-                          setSelectedTransaction({
-                            ...t,
-                            client_name: selectedDebtorForDetail.client_name,
-                            client_type: selectedDebtorForDetail.client_type,
-                            parent_name: selectedDebtorForDetail.parent_name,
-                            parent_phone: selectedDebtorForDetail.parent_phone,
-                            school_name: selectedDebtorForDetail.school_name,
-                          });
-                          setShowDetailsModal(true);
+                          if (t.metadata?.is_kiosk_balance_debt && selectedDebtorForDetail.student_id) {
+                            // Para saldo negativo kiosco → abrir desglose de consumos POS
+                            setKioskDetailData({
+                              studentId: selectedDebtorForDetail.student_id,
+                              studentName: selectedDebtorForDetail.client_name,
+                              kioskDebt: Math.abs(t.amount),
+                            });
+                            setShowKioskDetailModal(true);
+                          } else {
+                            setSelectedTransaction({
+                              ...t,
+                              client_name: selectedDebtorForDetail.client_name,
+                              client_type: selectedDebtorForDetail.client_type,
+                              parent_name: selectedDebtorForDetail.parent_name,
+                              parent_phone: selectedDebtorForDetail.parent_phone,
+                              school_name: selectedDebtorForDetail.school_name,
+                            });
+                            setShowDetailsModal(true);
+                          }
                         }}
                       >
                         <Eye className="h-4 w-4" />
@@ -4770,6 +4784,17 @@ Si tienes dudas, comunícate con la administración de tu sede.
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Modal de desglose de consumos POS (saldo negativo kiosco) ── */}
+      {kioskDetailData && (
+        <PosConsumptionModal
+          open={showKioskDetailModal}
+          onClose={() => { setShowKioskDetailModal(false); setKioskDetailData(null); }}
+          studentId={kioskDetailData.studentId}
+          studentName={kioskDetailData.studentName}
+          kioskDebt={kioskDetailData.kioskDebt}
+        />
+      )}
 
     </div>
   );
