@@ -47,6 +47,7 @@ import {
   FileDown,
   Sheet,
   ExternalLink,
+  CreditCard,
 } from "lucide-react";
 import { 
   Dialog,
@@ -246,6 +247,10 @@ export const SalesList = () => {
   const [editClientRUC, setEditClientRUC] = useState('');
   const [editDocumentType, setEditDocumentType] = useState<'ticket' | 'boleta' | 'factura'>('ticket');
   
+  // Modal de editar medio de pago
+  const [showEditPayment, setShowEditPayment] = useState(false);
+  const [editPaymentMethod, setEditPaymentMethod] = useState('');
+
   // Modal de anular venta
   const [showAnnul, setShowAnnul] = useState(false);
   const [annulReason, setAnnulReason] = useState('');
@@ -702,6 +707,44 @@ export const SalesList = () => {
         variant: 'destructive',
         title: 'Error',
         description: 'No se pudo actualizar la información',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // ========== EDITAR MEDIO DE PAGO ==========
+  const handleOpenEditPayment = (transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    setEditPaymentMethod(transaction.payment_method || 'efectivo');
+    setShowEditPayment(true);
+  };
+
+  const handleSavePaymentMethod = async () => {
+    if (!selectedTransaction || !editPaymentMethod) return;
+
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .update({ payment_method: editPaymentMethod })
+        .eq('id', selectedTransaction.id);
+
+      if (error) throw error;
+
+      toast({
+        title: '✅ Medio de Pago Actualizado',
+        description: `Ticket ${selectedTransaction.ticket_code}: cambiado a ${editPaymentMethod.toUpperCase()}`,
+      });
+
+      setShowEditPayment(false);
+      fetchTransactions();
+    } catch (error: any) {
+      console.error('Error updating payment method:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No se pudo actualizar el medio de pago',
       });
     } finally {
       setIsProcessing(false);
@@ -1969,6 +2012,17 @@ export const SalesList = () => {
                                 >
                                   <Eye className="h-3 w-3" />
                                 </Button>
+                                {/* Editar medio de pago — vista agrupada */}
+                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && permissions.canEdit && (
+                                  <Button
+                                    size="sm" variant="ghost"
+                                    className="h-6 w-6 p-0 text-amber-500 hover:text-amber-700 hover:bg-amber-50 shrink-0"
+                                    onClick={() => handleOpenEditPayment(t)}
+                                    title="Editar medio de pago"
+                                  >
+                                    <CreditCard className="h-3 w-3" />
+                                  </Button>
+                                )}
                                 {/* Anular desde vista agrupada */}
                                 {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && (
                                   <Button
@@ -2134,15 +2188,26 @@ export const SalesList = () => {
                               {t.payment_status !== 'cancelled' && (
                                 <>
                                   {permissions.canEdit && (
-                                    <Button 
-                                      variant="ghost" 
-                                      size="sm"
-                                      className="h-8 w-8 p-0 hover:bg-blue-50"
-                                      onClick={() => handleOpenEditClient(t)}
-                                      title="Editar datos del cliente"
-                                    >
-                                      <Edit className="h-4 w-4 text-blue-600" />
-                                    </Button>
+                                    <>
+                                      <Button 
+                                        variant="ghost" 
+                                        size="sm"
+                                        className="h-8 w-8 p-0 hover:bg-blue-50"
+                                        onClick={() => handleOpenEditClient(t)}
+                                        title="Editar datos del cliente"
+                                      >
+                                        <Edit className="h-4 w-4 text-blue-600" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0 hover:bg-amber-50"
+                                        onClick={() => handleOpenEditPayment(t)}
+                                        title="Editar medio de pago"
+                                      >
+                                        <CreditCard className="h-4 w-4 text-amber-600" />
+                                      </Button>
+                                    </>
                                   )}
                                   {/* Tachito: siempre visible */}
                                   <Button 
@@ -2359,6 +2424,60 @@ export const SalesList = () => {
             </Button>
             <Button onClick={handleSaveClientData} disabled={isProcessing}>
               {isProcessing ? 'Guardando...' : 'Guardar Cambios'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: Editar Medio de Pago */}
+      <Dialog open={showEditPayment} onOpenChange={setShowEditPayment}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-amber-600" />
+              Editar Medio de Pago
+            </DialogTitle>
+            <DialogDescription>
+              Ticket: {selectedTransaction?.ticket_code}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <Label>Nuevo medio de pago</Label>
+            <Select value={editPaymentMethod} onValueChange={setEditPaymentMethod}>
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="efectivo">💵 Efectivo</SelectItem>
+                <SelectItem value="yape">📱 Yape</SelectItem>
+                <SelectItem value="yape_qr">📱 Yape QR</SelectItem>
+                <SelectItem value="yape_numero">📱 Yape Número</SelectItem>
+                <SelectItem value="plin">📱 Plin</SelectItem>
+                <SelectItem value="plin_qr">📱 Plin QR</SelectItem>
+                <SelectItem value="tarjeta">💳 Tarjeta</SelectItem>
+                <SelectItem value="transferencia">🏦 Transferencia</SelectItem>
+                <SelectItem value="mixto">🔀 Mixto</SelectItem>
+                <SelectItem value="saldo">🏦 Saldo (kiosco)</SelectItem>
+              </SelectContent>
+            </Select>
+            {selectedTransaction?.payment_method && (
+              <p className="text-xs text-muted-foreground">
+                Actual: <span className="font-semibold">{selectedTransaction.payment_method.toUpperCase()}</span>
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditPayment(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSavePaymentMethod}
+              disabled={isProcessing || !editPaymentMethod || editPaymentMethod === selectedTransaction?.payment_method}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isProcessing ? 'Guardando...' : 'Guardar Cambio'}
             </Button>
           </DialogFooter>
         </DialogContent>

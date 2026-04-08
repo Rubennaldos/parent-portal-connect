@@ -62,6 +62,7 @@ import { BalanceHero } from '@/components/parent/BalanceHero';
 import { HeroActions } from '@/components/parent/HeroActions';
 import { ServicesGrid } from '@/components/parent/ServicesGrid';
 import { ChildCarouselHeader } from '@/components/parent/ChildCarouselHeader';
+import { BalanceSaldoModal } from '@/components/parent/BalanceSaldoModal';
 
 interface Student {
   id: string;
@@ -151,6 +152,7 @@ const Index = () => {
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showNotifSheet, setShowNotifSheet] = useState(false);
+  const [showBalanceSaldo, setShowBalanceSaldo] = useState(false);
   const { count: unreadNotifCount, clearCount: clearNotifCount } = useUnreadNotifCount();
   const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
@@ -936,6 +938,13 @@ const Index = () => {
                         onMessages={() => setShowNotifSheet(true)}
                         unreadNotifCount={unreadNotifCount}
                         onAddStudent={() => setShowAddStudent(true)}
+                        onBalance={() => {
+                          if (!isTransitioning && active) {
+                            setSelectedStudent(active);
+                            setShowBalanceSaldo(true);
+                          }
+                        }}
+                        studentBalance={active && active.balance > 0 ? active.balance : 0}
                       />
                     </>
                   );
@@ -1121,6 +1130,17 @@ const Index = () => {
         onClose={() => setShowAddStudent(false)}
         onSuccess={fetchStudents}
       />
+
+      {/* Modal: Detalle de Saldo del hijo activo */}
+      {selectedStudent && (
+        <BalanceSaldoModal
+          isOpen={showBalanceSaldo}
+          onClose={() => setShowBalanceSaldo(false)}
+          studentId={selectedStudent.id}
+          studentName={selectedStudent.full_name}
+          currentBalance={selectedStudent.balance}
+        />
+      )}
 
       {/* Modal de Calendario de Pedidos de Almuerzos */}
       <LunchOrderCalendar
