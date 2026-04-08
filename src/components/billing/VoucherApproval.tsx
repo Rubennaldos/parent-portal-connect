@@ -947,11 +947,11 @@ export const VoucherApproval = () => {
           } else if (msg.includes('NO_DEBTS_FOUND')) {
             toast({
               variant: 'destructive',
-              title: '⚠️ Sin deudas vinculadas',
+              title: '⚠️ Alumno sin deuda activa',
               description:
-                'El voucher no tiene transacciones ni almuerzos vinculados. ' +
-                'Edita los campos paid_transaction_ids y/o lunch_order_ids en la solicitud y vuelve a intentarlo. ' +
-                'Si el problema persiste, contacta soporte.',
+                `${req.students?.full_name || 'El alumno'} no tiene transacciones pendientes ` +
+                'ni saldo negativo en kiosco. Es posible que la deuda ya fue saldada por otro pago. ' +
+                'Recarga la lista de deudores y verifica antes de proceder.',
               duration: 12000,
             });
           } else {
@@ -982,12 +982,27 @@ export const VoucherApproval = () => {
         const updatedTxIds: string[] = Array.isArray(rpcData?.updated_tx_ids)
           ? rpcData.updated_tx_ids
           : [];
-        const approvedAmount = Number(rpcData?.amount ?? req.amount);
+        const approvedAmount  = Number(rpcData?.amount ?? req.amount);
+        const fifoUsed        = Boolean(rpcData?.fifo_used);
+        const balanceCredit   = Number(rpcData?.balance_credit_applied ?? 0);
 
-        const label = isDebtPayment ? 'Pago de deuda aprobado' : 'Pago de almuerzo aprobado';
+        // Descripción del resultado según el camino tomado
+        const studentName = req.students?.full_name || 'el alumno';
+        let resultDesc = `Se confirmó el pago de S/ ${approvedAmount.toFixed(2)} de ${studentName}. `;
+        if (fifoUsed && updatedTxIds.length === 0 && balanceCredit > 0.01) {
+          // Camino kiosco puro: ajuste de balance sin transacciones pendientes
+          resultDesc += `Saldo kiosco recuperado: S/ ${balanceCredit.toFixed(2)}.`;
+        } else if (fifoUsed && balanceCredit > 0.01) {
+          // Camino mixto: transacciones + ajuste de balance
+          resultDesc += `${updatedTxIds.length} deuda(s) liquidada(s) + saldo kiosco ajustado S/ ${balanceCredit.toFixed(2)}.`;
+        } else {
+          resultDesc += `${updatedTxIds.length} deuda(s) liquidada(s).`;
+        }
+
+        const label = isDebtPayment ? '✅ Pago de deuda aprobado' : '✅ Pago de almuerzo aprobado';
         toast({
           title: label,
-          description: `Se confirmó el pago de S/ ${approvedAmount.toFixed(2)} de ${req.students?.full_name || 'el alumno'}. ${updatedTxIds.length} deuda(s) liquidadas.`,
+          description: resultDesc,
         });
 
         // ── Emisión automática de Boleta/Factura si el padre lo solicitó ──
