@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info, Wallet, ShoppingBag } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Clock, Receipt, XCircle, Send, Banknote, CheckSquare, Square, UtensilsCrossed, Users, FileText, ChevronDown, ChevronUp, Info, Wallet, ShoppingBag, Gift, Sparkles, History, ArrowDownLeft } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
@@ -43,6 +43,16 @@ interface StudentDebt {
   pending_transactions: PendingTransaction[];
 }
 
+interface WalletTransaction {
+  id: string;
+  student_id: string;
+  student_name?: string;
+  amount: number;
+  type: 'cancellation_credit' | 'payment_debit' | 'manual_adjustment';
+  description: string | null;
+  created_at: string;
+}
+
 interface PaymentsTabProps {
   userId: string;
   isActive?: boolean; // 🔄 Para refrescar cuando la pestaña se activa
@@ -79,6 +89,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const getUseWallet = (studentId: string) => useWalletByStudent.get(studentId) ?? false;
   const toggleWallet = (studentId: string) =>
     setUseWalletByStudent(prev => new Map(prev).set(studentId, !prev.get(studentId)));
+
+  // ── Billetera virtual: datos globales ──
+  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
+  const [totalWalletBalance, setTotalWalletBalance] = useState<number>(0);
+  const [walletHistoryOpen, setWalletHistoryOpen] = useState(false);
+  const [loadingWallet, setLoadingWallet] = useState(false);
 
   // ── UI: acordeón por hijo + info hub ──
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
@@ -123,11 +139,13 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   useEffect(() => {
     fetchDebts();
+    fetchWalletData();
   }, [userId]);
 
   useEffect(() => {
     if (isActive) {
       fetchDebts();
+      fetchWalletData();
     }
   }, [isActive]);
 
@@ -135,6 +153,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   useEffect(() => {
     if (voucherSyncTs > 0) {
       fetchDebts();
+      fetchWalletData();
       toast({ title: '🔄 Carrito actualizado', description: 'Un administrador procesó tu comprobante.', duration: 4000 });
     }
   }, [voucherSyncTs]);
@@ -143,82 +162,81 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     try {
       setLoading(true);
 
-      const { data: students, error: studentsError } = await supabase
-        .from('students')
-        .select('id, full_name, photo_url, free_account, school_id, balance, wallet_balance')
-        .eq('parent_id', userId)
-        .eq('is_active', true);
+      // ── Una sola fuente de verdad: get_parent_debts + students en paralelo ──
+      // Antes: 1 query a students + N queries a transactions (una por hijo).
+      // Ahora: 2 queries en paralelo, sin importar cuántos hijos tenga el padre.
+      const [studentsResult, debtsResult] = await Promise.all([
+        supabase
+          .from('students')
+          .select('id, full_name, photo_url, school_id, balance, wallet_balance')
+          .eq('parent_id', userId)
+          .eq('is_active', true),
+        supabase.rpc('get_parent_debts', { p_parent_id: userId }),
+      ]);
 
-      if (studentsError) throw studentsError;
+      if (studentsResult.error) throw studentsResult.error;
+      if (debtsResult.error)    throw debtsResult.error;
 
-      if (!students || students.length === 0) {
+      const students  = studentsResult.data ?? [];
+      const debtRows  = (debtsResult.data ?? []) as Array<{
+        deuda_id:    string;
+        student_id:  string;
+        school_id:   string;
+        monto:       number;
+        descripcion: string;
+        fecha:       string;
+        fuente:      string;
+        es_almuerzo: boolean;
+        metadata:    any;
+        ticket_code: string | null;
+      }>;
+
+      if (students.length === 0) {
         setDebts([]);
         return;
       }
 
+      // Índice: student_id → info del alumno
+      const studentMap = new Map(students.map(s => [s.id, s]));
+
+      // Agrupar filas de deuda por alumno
+      const rowsByStudent = new Map<string, typeof debtRows>();
+      for (const row of debtRows) {
+        if (!row.student_id) continue;
+        const existing = rowsByStudent.get(row.student_id) ?? [];
+        existing.push(row);
+        rowsByStudent.set(row.student_id, existing);
+      }
+
+      // Construir StudentDebt[] manteniendo el mismo shape que usa el render
       const debtsData: StudentDebt[] = [];
 
       for (const student of students) {
-        // ✅ Sin delay — se muestra en tiempo real
-        const { data: transactions, error: transError } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('student_id', student.id)
-          .eq('type', 'purchase')
-          .in('payment_status', ['pending', 'partial'])
-          .eq('is_deleted', false)
-          .order('created_at', { ascending: false });
+        const rows = rowsByStudent.get(student.id) ?? [];
+        if (rows.length === 0) continue;
 
-        if (transError) throw transError;
-
-        const mappedTransactions: PendingTransaction[] = (transactions || []).map(t => ({
-          id: t.id,
-          student_id: t.student_id,
+        const mappedTransactions: PendingTransaction[] = rows.map(row => ({
+          id:          row.deuda_id,
+          student_id:  student.id,
           student_name: student.full_name,
-          amount: Math.abs(t.amount),
-          description: t.description,
-          created_at: t.created_at,
-          ticket_code: t.ticket_code,
-          metadata: t.metadata,
+          amount:      Number(row.monto),
+          description: row.descripcion,
+          created_at:  row.fecha,
+          ticket_code: row.ticket_code ?? undefined,
+          metadata:    row.metadata,
         }));
 
-        // Inyectar deuda de kiosco SOLO si el balance es negativo Y no existen
-        // transacciones pendientes de cafetería en la BD.
-        // Si ya hay transacciones "Compra POS (Cuenta Libre)" con payment_status='pending',
-        // esas transacciones YA representan la misma deuda que el balance negativo.
-        // Añadir el item sintético encima causaría doble conteo.
-        const hasPendingCafeTransactions = mappedTransactions.some(
-          t => !(t.metadata as any)?.lunch_order_id
-        );
-        const kioskDebt = student.balance < 0 && !hasPendingCafeTransactions
-          ? Math.abs(student.balance)
-          : 0;
-        if (kioskDebt > 0) {
-          mappedTransactions.unshift({
-            id: `__kiosk_balance__${student.id}`,
-            student_id: student.id,
-            student_name: student.full_name,
-            amount: kioskDebt,
-            description: 'Deuda de Cafetería / Kiosco',
-            created_at: new Date().toISOString(),
-            ticket_code: undefined,
-            metadata: { is_kiosk_balance_debt: true },
-          });
-        }
-
-        if (mappedTransactions.length > 0) {
-          const totalDebt = mappedTransactions.reduce((sum, t) => sum + t.amount, 0);
-          debtsData.push({
-            student_id: student.id,
-            student_name: student.full_name,
-            student_photo: student.photo_url,
-            student_balance: student.balance || 0,
-            wallet_balance: student.wallet_balance || 0,
-            school_id: student.school_id,
-            total_debt: totalDebt,
-            pending_transactions: mappedTransactions,
-          });
-        }
+        const totalDebt = mappedTransactions.reduce((sum, t) => sum + t.amount, 0);
+        debtsData.push({
+          student_id:      student.id,
+          student_name:    student.full_name,
+          student_photo:   student.photo_url,
+          student_balance: student.balance    ?? 0,
+          wallet_balance:  student.wallet_balance ?? 0,
+          school_id:       student.school_id,
+          total_debt:      totalDebt,
+          pending_transactions: mappedTransactions,
+        });
       }
 
       setDebts(debtsData);
@@ -308,6 +326,51 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchWalletData = async () => {
+    setLoadingWallet(true);
+    try {
+      const { data: students, error: studentsError } = await supabase
+        .from('students')
+        .select('id, full_name, wallet_balance')
+        .eq('parent_id', userId)
+        .eq('is_active', true);
+
+      if (studentsError) throw studentsError;
+
+      const allStudents = students ?? [];
+      const total = allStudents.reduce((sum, s) => sum + (Number(s.wallet_balance) || 0), 0);
+      setTotalWalletBalance(total);
+
+      if (total > 0) {
+        const studentIds = allStudents.map(s => s.id);
+        const { data: txs, error: txError } = await supabase
+          .from('wallet_transactions')
+          .select('id, student_id, amount, type, description, created_at')
+          .in('student_id', studentIds)
+          .order('created_at', { ascending: false })
+          .limit(30);
+
+        if (txError) throw txError;
+
+        const nameMap = new Map(allStudents.map(s => [s.id, s.full_name]));
+        setWalletTransactions(
+          (txs ?? []).map(tx => ({
+            ...tx,
+            amount: Number(tx.amount),
+            type: tx.type as WalletTransaction['type'],
+            student_name: nameMap.get(tx.student_id),
+          }))
+        );
+      } else {
+        setWalletTransactions([]);
+      }
+    } catch (err: any) {
+      console.error('Error al cargar billetera:', err);
+    } finally {
+      setLoadingWallet(false);
     }
   };
 
@@ -488,6 +551,152 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     return null;
   };
 
+  // ── COMPONENTE: Banner de Billetera Virtual ─────────────────────────────────
+  const WalletBanner = () => {
+    const hasBalance = totalWalletBalance > 0;
+
+    if (!hasBalance && walletTransactions.length === 0 && !loadingWallet) return null;
+
+    return (
+      <div
+        className={`rounded-2xl overflow-hidden transition-all duration-300 ${
+          hasBalance
+            ? 'shadow-lg shadow-emerald-100 border border-emerald-200 bg-gradient-to-br from-emerald-50 via-teal-50 to-emerald-50'
+            : 'border border-slate-100 bg-white shadow-sm'
+        }`}
+      >
+        {/* Cabecera del banner */}
+        <div className="px-4 py-3 flex items-center gap-3">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+              hasBalance
+                ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-md shadow-emerald-200'
+                : 'bg-slate-100'
+            }`}
+          >
+            {hasBalance ? (
+              <Sparkles className="h-5 w-5 text-white" />
+            ) : (
+              <Wallet className="h-5 w-5 text-slate-400" />
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {loadingWallet ? (
+              <div className="h-4 w-32 bg-slate-200 animate-pulse rounded" />
+            ) : hasBalance ? (
+              <>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">
+                  Billetera Virtual
+                </p>
+                <p className="text-xl font-black text-emerald-700 leading-tight">
+                  S/ {totalWalletBalance.toFixed(2)}{' '}
+                  <span className="text-sm font-semibold text-emerald-500">a favor</span>
+                </p>
+                <p className="text-[10px] text-emerald-600 mt-0.5">
+                  ✨ Se descuenta automáticamente al pagar
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Billetera Virtual
+                </p>
+                <p className="text-sm font-semibold text-slate-400">Sin saldo disponible</p>
+              </>
+            )}
+          </div>
+
+          {(hasBalance || walletTransactions.length > 0) && (
+            <button
+              onClick={() => setWalletHistoryOpen(p => !p)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                hasBalance
+                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 active:scale-95'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200 active:scale-95'
+              }`}
+            >
+              <History className="h-3.5 w-3.5" />
+              {walletHistoryOpen ? 'Ocultar' : 'Historial'}
+              <ChevronDown
+                className={`h-3 w-3 transition-transform duration-200 ${
+                  walletHistoryOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+          )}
+        </div>
+
+        {/* Historial de movimientos */}
+        {walletHistoryOpen && (
+          <div className="border-t border-emerald-100 px-4 pb-4 pt-3 space-y-2">
+            {walletTransactions.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-2">
+                Aún no hay movimientos registrados
+              </p>
+            ) : (
+              walletTransactions.map(tx => (
+                <div
+                  key={tx.id}
+                  className="flex items-start gap-2.5 py-2 border-b border-slate-50 last:border-0"
+                >
+                  {/* Badge tipo */}
+                  {tx.type === 'cancellation_credit' ? (
+                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                      <Gift className="h-2.5 w-2.5" />
+                      CRÉDITO
+                    </span>
+                  ) : tx.type === 'payment_debit' ? (
+                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                      <ArrowDownLeft className="h-2.5 w-2.5" />
+                      PAGO APLICADO
+                    </span>
+                  ) : (
+                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">
+                      <CreditCard className="h-2.5 w-2.5" />
+                      AJUSTE
+                    </span>
+                  )}
+
+                  {/* Descripción y fecha */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-700 leading-snug">
+                      {tx.description ??
+                        (tx.type === 'cancellation_credit'
+                          ? 'Devolución por almuerzo anulado'
+                          : tx.type === 'payment_debit'
+                          ? 'Descuento aplicado en pago'
+                          : 'Ajuste de saldo')}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-[10px] text-slate-400">
+                        {format(new Date(tx.created_at), "dd/MM/yyyy · HH:mm", { locale: es })}
+                      </p>
+                      {tx.student_name && debts.length > 1 && (
+                        <p className="text-[10px] text-slate-400 truncate">
+                          · {tx.student_name.split(' ')[0]}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Monto */}
+                  <p
+                    className={`shrink-0 text-sm font-black ${
+                      tx.amount > 0 ? 'text-emerald-600' : 'text-blue-600'
+                    }`}
+                  >
+                    {tx.amount > 0 ? '+' : ''}S/ {Math.abs(tx.amount).toFixed(2)}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -501,12 +710,19 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   if (debts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 px-4">
-        <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-4">
-          <Check className="h-8 w-8 text-emerald-500" />
+      <div className="space-y-4 pb-6">
+        {/* Billetera aunque no haya deuda */}
+        <WalletBanner />
+
+        <div className="flex flex-col items-center justify-center py-12 px-4">
+          <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-4">
+            <Check className="h-8 w-8 text-emerald-500" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-800 mb-1">Todo al día</h3>
+          <p className="text-sm text-slate-400 text-center">
+            No tienes pagos pendientes. Aquí aparecerán tus almuerzos y consumos por pagar.
+          </p>
         </div>
-        <h3 className="text-lg font-bold text-slate-800 mb-1">Todo al día</h3>
-        <p className="text-sm text-slate-400 text-center">No tienes pagos pendientes. Aquí aparecerán tus almuerzos y consumos por pagar.</p>
       </div>
     );
   }
@@ -521,6 +737,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
   return (
     <div className="space-y-3">
+
+      {/* ── Billetera Virtual — siempre lo primero que ve el padre ── */}
+      <WalletBanner />
 
       {/* ── SmartInfoCard — Hub de información colapsable ── */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -770,15 +989,28 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   return (
                     <div
                       key={transaction.id}
-                      onClick={() => !isCoveredByPending && toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
+                      onClick={() => {
+                        if (isKioskBalance) {
+                          // Clic en el ítem abre directamente el desglose de consumos
+                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, debt: transaction.amount });
+                        } else if (!isCoveredByPending) {
+                          toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
+                        }
+                      }}
                       className={`p-3 rounded-xl border bg-white transition-all ${
-                        isCoveredByPending
+                        isKioskBalance
+                          ? 'border-rose-200 bg-rose-50/20 cursor-pointer hover:bg-rose-50/60 active:scale-[0.98]'
+                          : isCoveredByPending
                           ? 'border-blue-100 opacity-70 cursor-default'
                           : `cursor-pointer ${isSelected ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'}`
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        {!isCoveredByPending ? (
+                        {isKioskBalance ? (
+                          <div className="h-4 w-4 shrink-0 flex items-center justify-center">
+                            <ShoppingBag className="h-4 w-4 text-rose-400" />
+                          </div>
+                        ) : !isCoveredByPending ? (
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
@@ -790,28 +1022,17 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                             <Send className="h-3.5 w-3.5 text-blue-400" />
                           </div>
                         )}
-                        {isKioskBalance
-                          ? <ShoppingBag className="h-4 w-4 text-rose-400 shrink-0" />
-                          : isLunch
-                          ? <UtensilsCrossed className="h-4 w-4 text-orange-400 shrink-0" />
-                          : <Receipt className="h-4 w-4 text-slate-400 shrink-0" />
-                        }
+                        {!isKioskBalance && (
+                          isLunch
+                            ? <UtensilsCrossed className="h-4 w-4 text-orange-400 shrink-0" />
+                            : <Receipt className="h-4 w-4 text-slate-400 shrink-0" />
+                        )}
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-xs text-slate-800 truncate">{transaction.description}</p>
                           {isKioskBalance ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPosDetailStudent({
-                                  id: debt.student_id,
-                                  name: debt.student_name,
-                                  debt: transaction.amount,
-                                });
-                              }}
-                              className="text-[10px] text-blue-500 hover:text-blue-700 font-semibold mt-0.5 flex items-center gap-1 active:scale-95 transition-all"
-                            >
-                              👁 Ver detalle de consumos
-                            </button>
+                            <p className="text-[10px] text-rose-500 font-semibold mt-0.5 flex items-center gap-1">
+                              👁 Toca para ver qué consumió tu hijo
+                            </p>
                           ) : (
                             <p className="text-[10px] text-slate-400">
                               {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
