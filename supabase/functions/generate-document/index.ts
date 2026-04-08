@@ -191,21 +191,78 @@ serve(async (req) => {
       fecha = `${String(hoyLima.getUTCDate()).padStart(2, "0")}-${String(hoyLima.getUTCMonth() + 1).padStart(2, "0")}-${hoyLima.getUTCFullYear()}`;
     }
 
-    // 8. Items del comprobante (Nubefact format)
-    const itemsNubefact = items ?? [{
-      unidad_de_medida: "NIU",
-      codigo: "001",
-      descripcion: "Consumo cafetería / almuerzo",
-      cantidad: 1,
-      valor_unitario: +base_imponible.toFixed(2),
-      precio_unitario: +monto_total.toFixed(2),
-      descuento: "",
-      subtotal: +base_imponible.toFixed(2),
-      tipo_de_igv: 1,
-      igv: +igv_monto.toFixed(2),
-      total: +monto_total.toFixed(2),
-      anticipo_regularizacion: false,
-    }];
+    // 8. Items del comprobante — SIEMPRE recalculados con igv_pct de billing_config.
+    //
+    // POR QUÉ recalculamos en lugar de usar los items enviados por el cliente:
+    //   El POS puede enviar ítems calculados con 18 % (hardcodeado).
+    //   Si billing_config.igv_porcentaje = 10.5 % (MYPE), la Edge Function
+    //   pone total_igv = 0.81 en el encabezado, pero la suma de ítems da 1.30.
+    //   Nubefact rechaza con "IGV TOTAL ≠ IGV DE LINEAS".
+    //   Solución: recalcular ítems con la misma tasa que el encabezado.
+    //
+    // Técnica "último ítem absorbe residuo":
+    //   Garantiza sum(item.igv) == total_igv y sum(item.subtotal) == base_imponible
+    //   sin fugas de ±0.01 que SUNAT rechaza.
+    let itemsNubefact: Record<string, unknown>[];
+
+    if (items && items.length > 0) {
+      // Recalcular todos los ítems con la tasa correcta (billing_config)
+      const divisorX100 = 100 + igv_pct;
+
+      const rawCalcs = (items as any[]).map((item: any) => {
+        const qty          = Number(item.cantidad)        || 1;
+        const precioUnit   = Number(item.precio_unitario) || 0;
+        const itemTotalCents = Math.round(precioUnit * qty * 100);
+        const itemBaseCents  = Math.floor(itemTotalCents * 100 / divisorX100);
+        const itemIgvCents   = itemTotalCents - itemBaseCents;
+        return { item, qty, precioUnit, itemTotalCents, itemBaseCents, itemIgvCents };
+      });
+
+      // Diferencia de redondeo: header vs suma de ítems
+      const sumItemsBaseCents = rawCalcs.reduce((s, r) => s + r.itemBaseCents, 0);
+      const sumItemsIgvCents  = rawCalcs.reduce((s, r) => s + r.itemIgvCents,  0);
+      const baseAdj = baseCents - sumItemsBaseCents;
+      const igvAdj  = igvCents  - sumItemsIgvCents;
+
+      itemsNubefact = rawCalcs.map((r, i) => {
+        const isLast   = i === rawCalcs.length - 1;
+        const adjBase  = r.itemBaseCents + (isLast ? baseAdj : 0);
+        const adjIgv   = r.itemIgvCents  + (isLast ? igvAdj  : 0);
+        const itemBase = adjBase / 100;
+        const itemIgv  = adjIgv  / 100;
+        const itemTot  = r.itemTotalCents / 100;
+        return {
+          unidad_de_medida:        r.item.unidad_de_medida || "NIU",
+          codigo:                  r.item.codigo           || String(i + 1).padStart(3, "0"),
+          descripcion:             r.item.descripcion      || "Consumo",
+          cantidad:                r.qty,
+          valor_unitario:          +(itemBase / r.qty).toFixed(2),
+          precio_unitario:         +r.precioUnit.toFixed(2),
+          descuento:               r.item.descuento        || "",
+          subtotal:                +itemBase.toFixed(2),
+          tipo_de_igv:             r.item.tipo_de_igv ?? 1,
+          igv:                     +itemIgv.toFixed(2),
+          total:                   +itemTot.toFixed(2),
+          anticipo_regularizacion: false,
+        };
+      });
+    } else {
+      // Un solo ítem resumen (cuando el cliente no envía detalle de ítems)
+      itemsNubefact = [{
+        unidad_de_medida: "NIU",
+        codigo:           "001",
+        descripcion:      "Consumo cafetería / almuerzo",
+        cantidad:         1,
+        valor_unitario:   +base_imponible.toFixed(2),
+        precio_unitario:  +monto_total.toFixed(2),
+        descuento:        "",
+        subtotal:         +base_imponible.toFixed(2),
+        tipo_de_igv:      1,
+        igv:              +igv_monto.toFixed(2),
+        total:            +monto_total.toFixed(2),
+        anticipo_regularizacion: false,
+      }];
+    }
 
     // 9. Tipo de documento del cliente
     // Nubefact: 0=sin doc, 1=DNI, 6=RUC
