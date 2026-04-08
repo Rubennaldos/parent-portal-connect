@@ -42,6 +42,7 @@ import {
   Download,
   Flag,
   Wifi,
+  Check,
 } from 'lucide-react';
 import {
   Dialog,
@@ -1066,6 +1067,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
   // Starting point selection
   const [startingListIndex, setStartingListIndex] = useState(0);
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>(''); // para modo by_grade_classroom
+  const [selectedGrades, setSelectedGrades] = useState<Set<string>>(new Set()); // para modo by_grade (multi-select)
 
   // Data
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
@@ -1130,10 +1132,11 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
         sessionStartedAt,
         modifyCount: modifyCountRef.current,
         selectedGradeFilter,
+        selectedGrades: [...selectedGrades],
       };
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
     } catch {}
-  }, [setupDone, mode, personType, sessionId, sessionStartedAt, SESSION_KEY, propDate, paymentFilter, selectedGradeFilter]);
+  }, [setupDone, mode, personType, sessionId, sessionStartedAt, SESSION_KEY, propDate, paymentFilter, selectedGradeFilter, selectedGrades]);
 
   const clearSessionStorage = useCallback(() => {
     try { sessionStorage.removeItem(SESSION_KEY); } catch {}
@@ -1173,6 +1176,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
           if (data.sessionStartedAt) setSessionStartedAt(data.sessionStartedAt);
           if (data.modifyCount) modifyCountRef.current = data.modifyCount;
           if (data.selectedGradeFilter) setSelectedGradeFilter(data.selectedGradeFilter);
+          if (data.selectedGrades?.length) setSelectedGrades(new Set(data.selectedGrades as string[]));
         } else {
           // Session from a different day, remove
           sessionStorage.removeItem(SESSION_KEY);
@@ -1221,14 +1225,54 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
     return [...new Set(studentOrders.map(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim()).filter(Boolean))].sort();
   }, [deliveryOrders, selectedGradeFilter]);
 
+  // Funciones de selección múltiple de grados (modo by_grade)
+  const toggleGradeSelection = useCallback((grade: string) => {
+    setSelectedGrades(prev => {
+      const next = new Set(prev);
+      if (next.has(grade)) next.delete(grade); else next.add(grade);
+      return next;
+    });
+    setStartingListIndex(0);
+  }, []);
+
+  const toggleAllGrades = useCallback(() => {
+    setSelectedGrades(prev =>
+      prev.size === availableGrades.length ? new Set() : new Set(availableGrades)
+    );
+    setStartingListIndex(0);
+  }, [availableGrades]);
+
+  // Grados activos para el modo by_grade: los seleccionados, o todos si no se seleccionó ninguno
+  const activeGrades = useMemo(() => {
+    if (mode !== 'by_grade' || selectedGrades.size === 0) return availableGrades;
+    return availableGrades.filter(g => selectedGrades.has(g));
+  }, [mode, selectedGrades, availableGrades]);
+
+  // Total de pedidos de los grados activos (para el botón de confirmación)
+  const activeGradesOrderCount = useMemo(() => {
+    if (mode !== 'by_grade') return 0;
+    const grades = selectedGrades.size > 0 ? selectedGrades : new Set(availableGrades);
+    return deliveryOrders.filter(o => o.student_id && o.student_grade && grades.has(o.student_grade)).length;
+  }, [mode, selectedGrades, availableGrades, deliveryOrders]);
+
   // Preview de la lista según el modo actual (para el selector de punto de inicio)
   const previewLists = useMemo(() => {
     if (!mode || personType !== 'students') return [];
     if (mode === 'by_classroom') return availableClassrooms;
-    if (mode === 'by_grade') return availableGrades;
+    if (mode === 'by_grade') return activeGrades;
     if (mode === 'by_grade_classroom') return classroomsInGrade;
     return [];
-  }, [mode, personType, availableClassrooms, availableGrades, classroomsInGrade]);
+  }, [mode, personType, availableClassrooms, activeGrades, classroomsInGrade]);
+
+  // filteredOrders: array que alimenta DeliveryPanel en modo by_grade.
+  // Cuando hay grados seleccionados, solo pasan los pedidos de esos grados.
+  // Los profesores y pedidos sin grado nunca se filtran fuera.
+  const filteredOrders = useMemo(() => {
+    if (mode !== 'by_grade' || selectedGrades.size === 0) return deliveryOrders;
+    return deliveryOrders.filter(
+      o => !o.student_id || !o.student_grade || selectedGrades.has(o.student_grade)
+    );
+  }, [mode, selectedGrades, deliveryOrders]);
 
   // Resetear startingListIndex si queda fuera de rango al cambiar de modo/grado
   useEffect(() => {
@@ -1848,7 +1892,9 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
       const cls = [...new Set(typeOrders.map(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim()).filter(Boolean))].sort();
       return cls.length > 0 ? cls : ['Todos'];
     } else if (dMode === 'by_grade') {
-      const gr = [...new Set(typeOrders.map(o => o.student_grade).filter(Boolean) as string[])].sort();
+      const allGr = [...new Set(typeOrders.map(o => o.student_grade).filter(Boolean) as string[])].sort();
+      // Si hay grados seleccionados, filtrar; si no, mostrar todos
+      const gr = selectedGrades.size > 0 ? allGr.filter(g => selectedGrades.has(g)) : allGr;
       return gr.length > 0 ? gr : ['Todos'];
     } else if (dMode === 'by_grade_classroom') {
       // Filtrar solo aulas del grado seleccionado
@@ -2030,7 +2076,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                       <p className="text-xs text-gray-500">{summary.totalStudents} pedidos</p>
                     </button>
                     <button
-                      onClick={() => { setPersonType('teachers'); setMode(null); setSelectedGradeFilter(''); setStartingListIndex(0); }}
+                      onClick={() => { setPersonType('teachers'); setMode(null); setSelectedGradeFilter(''); setSelectedGrades(new Set()); setStartingListIndex(0); }}
                       className={cn(
                         "p-4 rounded-xl border-2 transition-all text-center",
                         personType === 'teachers'
@@ -2054,7 +2100,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                     {personType === 'students' && (
                       <>
                         <button
-                          onClick={() => { setMode('by_classroom'); setStartingListIndex(0); setSelectedGradeFilter(''); }}
+                          onClick={() => { setMode('by_classroom'); setStartingListIndex(0); setSelectedGradeFilter(''); setSelectedGrades(new Set()); }}
                           className={cn(
                             "p-4 rounded-xl border-2 transition-all text-center",
                             mode === 'by_classroom' ? "border-orange-500 bg-orange-50 shadow-lg" : "border-gray-200 hover:border-orange-300"
@@ -2065,7 +2111,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                           <p className="text-[10px] text-gray-500">Una lista por aula</p>
                         </button>
                         <button
-                          onClick={() => { setMode('by_grade'); setStartingListIndex(0); setSelectedGradeFilter(''); }}
+                          onClick={() => { setMode('by_grade'); setStartingListIndex(0); setSelectedGradeFilter(''); setSelectedGrades(new Set()); }}
                           className={cn(
                             "p-4 rounded-xl border-2 transition-all text-center",
                             mode === 'by_grade' ? "border-orange-500 bg-orange-50 shadow-lg" : "border-gray-200 hover:border-orange-300"
@@ -2076,7 +2122,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                           <p className="text-[10px] text-gray-500">Una lista por grado</p>
                         </button>
                         <button
-                          onClick={() => { setMode('by_grade_classroom'); setStartingListIndex(0); setSelectedGradeFilter(''); }}
+                          onClick={() => { setMode('by_grade_classroom'); setStartingListIndex(0); setSelectedGradeFilter(''); setSelectedGrades(new Set()); }}
                           className={cn(
                             "p-4 rounded-xl border-2 transition-all text-center col-span-2",
                             mode === 'by_grade_classroom' ? "border-orange-500 bg-orange-50 shadow-lg" : "border-gray-200 hover:border-orange-300"
@@ -2093,7 +2139,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                       </>
                     )}
                     <button
-                      onClick={() => { setMode('alphabetical'); setStartingListIndex(0); setSelectedGradeFilter(''); }}
+                      onClick={() => { setMode('alphabetical'); setStartingListIndex(0); setSelectedGradeFilter(''); setSelectedGrades(new Set()); }}
                       className={cn(
                         "p-4 rounded-xl border-2 transition-all text-center",
                         mode === 'alphabetical' ? "border-orange-500 bg-orange-50 shadow-lg" : "border-gray-200 hover:border-orange-300"
@@ -2104,7 +2150,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                       <p className="text-[10px] text-gray-500">A-Z por nombre</p>
                     </button>
                     <button
-                      onClick={() => { setMode('all'); setStartingListIndex(0); setSelectedGradeFilter(''); }}
+                      onClick={() => { setMode('all'); setStartingListIndex(0); setSelectedGradeFilter(''); setSelectedGrades(new Set()); }}
                       className={cn(
                         "p-4 rounded-xl border-2 transition-all text-center",
                         mode === 'all' ? "border-orange-500 bg-orange-50 shadow-lg" : "border-gray-200 hover:border-orange-300"
@@ -2117,6 +2163,71 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                   </div>
                 </CardContent>
               </Card>
+
+              {/* ── Selector múltiple de grados (modo by_grade) ── */}
+              {mode === 'by_grade' && personType === 'students' && availableGrades.length > 0 && (
+                <Card className="mb-6 bg-white/80 backdrop-blur border-2 border-orange-200 animate-in fade-in-0 slide-in-from-top-2">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-semibold text-gray-700">
+                        📚 ¿Qué grados vas a entregar?
+                      </p>
+                      <button
+                        onClick={toggleAllGrades}
+                        className="text-xs font-semibold text-orange-600 hover:text-orange-800 transition-colors px-2 py-0.5 rounded-lg hover:bg-orange-50"
+                      >
+                        {selectedGrades.size === availableGrades.length ? 'Quitar todos' : 'Seleccionar todos'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {availableGrades.map(grade => {
+                        const count = deliveryOrders.filter(o => o.student_id && o.student_grade === grade).length;
+                        const isSelected = selectedGrades.has(grade);
+                        return (
+                          <button
+                            key={grade}
+                            onClick={() => toggleGradeSelection(grade)}
+                            className={cn(
+                              "relative p-3 rounded-xl border-2 transition-all text-center",
+                              isSelected
+                                ? "border-orange-500 bg-orange-50 shadow-md scale-[1.02]"
+                                : "border-gray-200 hover:border-orange-300 hover:bg-orange-50/40"
+                            )}
+                          >
+                            {isSelected && (
+                              <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center">
+                                <Check className="w-2.5 h-2.5 text-white" />
+                              </span>
+                            )}
+                            <GraduationCap className={cn("h-4 w-4 mx-auto mb-1", isSelected ? "text-orange-600" : "text-gray-400")} />
+                            <p className={cn("font-bold text-sm leading-tight", isSelected ? "text-orange-800" : "text-gray-700")}>{grade}</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">{count} pedidos</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Resumen de selección */}
+                    {selectedGrades.size > 0 ? (
+                      <div className="mt-3 pt-3 border-t border-orange-100 flex items-center justify-between">
+                        <p className="text-xs text-orange-700 font-semibold">
+                          ✅ {selectedGrades.size} grado{selectedGrades.size !== 1 ? 's' : ''} · {activeGradesOrderCount} pedidos
+                        </p>
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {[...selectedGrades].sort().map(g => (
+                            <Badge key={g} className="bg-orange-100 text-orange-700 text-[10px] font-semibold">{g}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-3 pt-3 border-t border-gray-100 text-[11px] text-gray-400 text-center">
+                        Sin selección = se mostrarán todos los grados
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Selector de grado (para modo by_grade_classroom) */}
               {mode === 'by_grade_classroom' && personType === 'students' && (
@@ -2257,11 +2368,21 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
 
               <Button
                 onClick={() => startDelivery()}
-                disabled={!mode || (mode === 'by_grade_classroom' && !selectedGradeFilter)}
-                className="w-full h-14 text-lg font-bold bg-orange-600 hover:bg-orange-700 rounded-xl shadow-lg"
+                disabled={
+                  !mode ||
+                  (mode === 'by_grade_classroom' && !selectedGradeFilter) ||
+                  (mode === 'by_grade' && personType === 'students' && selectedGrades.size === 0)
+                }
+                className="w-full h-14 text-lg font-bold bg-orange-600 hover:bg-orange-700 rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <UtensilsCrossed className="h-5 w-5 mr-2" />
-                🚀 Iniciar Entrega
+                {mode === 'by_grade' && personType === 'students' ? (
+                  selectedGrades.size > 0
+                    ? `✅ Confirmar selección · ${selectedGrades.size} grado${selectedGrades.size !== 1 ? 's' : ''} · ${activeGradesOrderCount} pedidos`
+                    : '📚 Selecciona al menos un grado'
+                ) : (
+                  '🚀 Iniciar Entrega'
+                )}
                 {mode === 'by_grade_classroom' && selectedGradeFilter && (
                   <span className="ml-2 text-sm font-normal opacity-80">({selectedGradeFilter})</span>
                 )}
@@ -2349,7 +2470,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
         )}>
           <DeliveryPanel
             panelId="panel-1"
-            orders={deliveryOrders}
+            orders={mode === 'by_grade' ? filteredOrders : deliveryOrders}
             personType={personType}
             mode={mode!}
             availableLists={availableLists}
