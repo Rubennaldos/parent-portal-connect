@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getBillingStatusBadge } from '@/lib/billingUtils';
 import { PosConsumptionModal } from '@/components/parent/PosConsumptionModal';
@@ -218,6 +218,9 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   // Modal de desglose de consumos POS (saldo negativo kiosco)
   const [showKioskDetailModal, setShowKioskDetailModal] = useState(false);
   const [kioskDetailData, setKioskDetailData] = useState<{ studentId: string; studentName: string; kioskDebt: number } | null>(null);
+  // Items de kiosco embebidos dentro del modal de detalle de deuda pendiente
+  const [kioskItemsInDetail, setKioskItemsInDetail] = useState<any[]>([]);
+  const [loadingKioskItemsInDetail, setLoadingKioskItemsInDetail] = useState(false);
   // Deuda histórica real (sin filtros de fecha) para comparar con el total filtrado
   const [historicalDebt, setHistoricalDebt] = useState<{ total: number; count: number } | null>(null);
   const [loadingHistoricalDebt, setLoadingHistoricalDebt] = useState(false);
@@ -2292,6 +2295,37 @@ Si tienes dudas, comunícate con la administración de tu sede.
       setShowCancelWalletModal(true);
     }
   };
+
+  // ── CARGAR ÍTEMS DE KIOSCO EMBEBIDOS EN EL MODAL DE DETALLE ─────────────
+  useEffect(() => {
+    if (!showDetailsModal || !selectedTransaction?.metadata?.is_kiosk_balance_debt || !selectedTransaction?.student_id) {
+      setKioskItemsInDetail([]);
+      return;
+    }
+    const fetchKioskItems = async () => {
+      setLoadingKioskItemsInDetail(true);
+      try {
+        const { data, error: fetchErr } = await supabase
+          .from('transactions')
+          .select('id, created_at, amount, description, ticket_code, metadata')
+          .eq('student_id', selectedTransaction.student_id)
+          .eq('type', 'purchase')
+          .filter('metadata->>source', 'eq', 'pos')
+          .in('payment_status', ['paid', 'pending'])
+          .eq('is_deleted', false)
+          .order('created_at', { ascending: false })
+          .limit(300);
+        if (fetchErr) throw fetchErr;
+        const posOnly = (data ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
+        setKioskItemsInDetail(posOnly);
+      } catch {
+        setKioskItemsInDetail([]);
+      } finally {
+        setLoadingKioskItemsInDetail(false);
+      }
+    };
+    fetchKioskItems();
+  }, [showDetailsModal, selectedTransaction?.id]);
 
   // ── EJECUTAR LA ANULACIÓN CON CRÉDITO DE BILLETERA ───────────────────────
   const handleCancelWithWallet = async () => {
@@ -4491,8 +4525,61 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     <h3 className="font-bold text-xl text-gray-900 mb-3 flex items-center gap-2">
                       🍽️ Detalle de Consumo
                     </h3>
-                    
-                    {/* Fechas e informaci�n del consumo */}
+
+                    {/* ── Lista embebida: saldo negativo kiosco ── */}
+                    {selectedTransaction.metadata?.is_kiosk_balance_debt ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-gray-500 mb-2">
+                          Consumos registrados en el kiosco que generaron este saldo negativo:
+                        </p>
+                        {loadingKioskItemsInDetail ? (
+                          <div className="space-y-2">
+                            {[1, 2, 3].map(i => (
+                              <div key={i} className="animate-pulse bg-slate-200 rounded-lg h-12 w-full" />
+                            ))}
+                          </div>
+                        ) : kioskItemsInDetail.length === 0 ? (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                            <p className="text-xs font-bold text-amber-700">⚠️ Sin historial digital detallado</p>
+                            <p className="text-[11px] text-amber-600 mt-0.5">
+                              La deuda existe pero los consumos individuales no están registrados digitalmente.
+                              Pueden ser de efectivo o períodos anteriores al sistema.
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            {kioskItemsInDetail.map(c => (
+                              <div
+                                key={c.id}
+                                className="flex items-center justify-between px-3 py-2.5 bg-white rounded-xl border border-slate-200"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold text-slate-700 truncate">
+                                    {c.description || 'Consumo en Cafetería'}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    {format(new Date(c.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                                    {c.ticket_code && <span className="ml-1.5 text-slate-300">· {c.ticket_code}</span>}
+                                  </p>
+                                </div>
+                                <p className="text-sm font-black text-rose-500 shrink-0 ml-3">
+                                  −S/ {Math.abs(c.amount).toFixed(2)}
+                                </p>
+                              </div>
+                            ))}
+                            <div className="flex justify-between items-center pt-2 border-t border-blue-200 mt-1">
+                              <span className="text-xs text-gray-500">Total consumos registrados</span>
+                              <span className="text-sm font-black text-rose-500">
+                                −S/ {kioskItemsInDetail.reduce((s, c) => s + Math.abs(c.amount), 0).toFixed(2)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                        <p className="text-[10px] text-gray-400 text-right pt-1">
+                          Ref. interna: <span className="font-mono">{selectedTransaction.id}</span>
+                        </p>
+                      </div>
+                    ) : (
                     <div className="space-y-1.5 bg-white/60 rounded-lg p-3">
                       {/* Descripci�n del consumo */}
                       <div className="flex justify-between text-sm">
@@ -4569,9 +4656,12 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         </div>
                       )}
                     </div>
+                    )}
                   </div>
 
-                  {/* 📋 Qui�n realiz� el pedido */}
+                  {/* 📋 Responsable del pedido — oculto para kiosk balance debt */}
+                  {!selectedTransaction.metadata?.is_kiosk_balance_debt && (
+                  /* Responsable del pedido */
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
                       📋 {isPending ? 'Responsable del Pedido' : 'Registrado por'}
@@ -4596,11 +4686,12 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">ID de transacci�n:</span>
-                        <span className="font-mono text-xs text-gray-500">{selectedTransaction.id}</span>
+                        <span className="text-gray-400 text-xs">Referencia interna</span>
+                        <span className="font-mono text-[10px] text-gray-400">{selectedTransaction.id}</span>
                       </div>
                     </div>
                   </div>
+                  )}
 
 
                   {/* Historial de Auditoría — solo visible para admin_general */}
