@@ -324,38 +324,62 @@ serve(async (req) => {
     });
     nubefactData = await nubefactRes1.json();
 
-    // Fallback de emergencia: si Nubefact dice "ya existe", obtener el SIGUIENTE correlativo
-    // atómico (consumiendo un número y creando un hueco deliberado) y reintentar UNA vez.
-    const errStr1 = JSON.stringify(nubefactData.errors ?? "").toLowerCase();
-    const yaExiste1 = errStr1.includes("ya existe") || errStr1.includes("already exists") ||
-                      errStr1.includes("duplicado") || errStr1.includes("duplicate");
+    // Fallback de emergencia: si Nubefact dice "ya existe", avanzar la secuencia
+    // hasta encontrar un número libre. Máximo MAX_SKIP intentos para no crear
+    // huecos infinitos. Cada intento consume un número en invoice_sequences.
+    //
+    // CAUSA COMÚN: las boletas rechazadas por SUNAT (ej. error IGV) SÍ quedan
+    // registradas en Nubefact con su número. Cuando se reintenta, invoice_sequences
+    // da el mismo número ya ocupado. Este loop salta todos los fantasmas.
+    const isYaExiste = (data: any): boolean => {
+      const s = JSON.stringify(data?.errors ?? "").toLowerCase();
+      return s.includes("ya existe") || s.includes("already exists") ||
+             s.includes("duplicado") || s.includes("duplicate");
+    };
 
-    if (yaExiste1) {
+    const MAX_SKIP = 5; // máximo de huecos consecutivos permitidos
+    let skipCount  = 0;
+
+    while (isYaExiste(nubefactData) && skipCount < MAX_SKIP) {
+      skipCount++;
       console.error(
-        `🚨 [generate-document] ALERTA SECUENCIA: el correlativo atómico ${serie}-${numero} ` +
-        `ya existe en Nubefact. Esto indica desfase en invoice_sequences. ` +
-        `Consumiendo siguiente número como emergencia y reintentando.`
+        `🚨 [generate-document] DESFASE SECUENCIA (intento ${skipCount}/${MAX_SKIP}): ` +
+        `${serie}-${String(numero).padStart(8,"0")} ya existe en Nubefact. ` +
+        `Avanzando a siguiente número. ` +
+        `ACCIÓN RECOMENDADA: ejecutar migración 20260408_resync_invoice_sequences.sql`
       );
 
-      // Obtener el siguiente número de la secuencia (consumiéndolo — crea un hueco intencional)
-      const { data: nextNumeroFallback, error: seqErrFb } = await supabase
+      const { data: nextFallback, error: seqErrFb } = await supabase
         .rpc("get_next_invoice_numero", { p_school_id: school_id, p_serie: serie });
 
-      if (!seqErrFb && nextNumeroFallback != null) {
-        numero = nextNumeroFallback;
-        payload.numero = numero;
-        console.warn(`[generate-document] Reintentando con correlativo de emergencia: ${serie}-${numero}`);
-
-        const nubefactRes2 = await fetch(cfg.nubefact_ruta.trim(), {
-          method:  "POST",
-          headers: nubefactHeaders,
-          body:    JSON.stringify({ ...payload, numero }),
-        });
-        nubefactData = await nubefactRes2.json();
-      } else {
-        // Si ni siquiera podemos obtener el fallback, dejar nubefactData con el error original
+      if (seqErrFb || nextFallback == null) {
         console.error(`[generate-document] No se pudo obtener correlativo de emergencia:`, seqErrFb);
+        break;
       }
+
+      numero         = nextFallback;
+      payload.numero = numero;
+      console.warn(`[generate-document] Reintentando con correlativo ${serie}-${String(numero).padStart(8,"0")}`);
+
+      const nubefactRetry = await fetch(cfg.nubefact_ruta.trim(), {
+        method:  "POST",
+        headers: nubefactHeaders,
+        body:    JSON.stringify({ ...payload, numero }),
+      });
+      nubefactData = await nubefactRetry.json();
+    }
+
+    if (skipCount > 0 && !isYaExiste(nubefactData)) {
+      console.log(`✅ [generate-document] Correlativo válido encontrado en intento ${skipCount + 1}: ${serie}-${String(numero).padStart(8,"0")}`);
+    }
+
+    if (skipCount >= MAX_SKIP && isYaExiste(nubefactData)) {
+      console.error(
+        `🚫 [generate-document] Se alcanzó el límite de ${MAX_SKIP} saltos para la serie ${serie}. ` +
+        `La secuencia está gravemente desfasada. ` +
+        `Ejecutar URGENTE: SELECT set_invoice_sequence('${serie}', <numero_correcto>, 'AJUSTE_MANUAL_OK'); ` +
+        `donde <numero_correcto> es el ÚLTIMO número real en el panel de Nubefact.`
+      );
     }
 
     // 12. Estado SUNAT
@@ -501,16 +525,27 @@ serve(async (req) => {
     );
 
     if (!nubefactOk) {
-      const errMsg = typeof nubefactData.errors === "string"
+      const rawErr = typeof nubefactData.errors === "string"
         ? nubefactData.errors
         : JSON.stringify(nubefactData.errors ?? nubefactData);
+
+      // Enriquecer el mensaje cuando el desfase persiste tras los reintentos
+      const isSequenceError = isYaExiste(nubefactData);
+      const errMsg = isSequenceError
+        ? `Desfase de correlativo: ${rawErr}. ` +
+          `Ejecuta en Supabase SQL Editor: ` +
+          `SELECT set_invoice_sequence('${serie}', <ULTIMO_NUMERO_REAL_EN_NUBEFACT>, 'AJUSTE_MANUAL_OK');`
+        : rawErr;
+
       console.error(`❌ Nubefact rechazó ${serie}-${numero}: ${errMsg}`);
       return new Response(
         JSON.stringify({
-          success:   false,
-          error:     errMsg,
-          documento: savedInvoice ?? null,
-          nubefact:  nubefactData,
+          success:        false,
+          error:          errMsg,
+          sequence_error: isSequenceError,
+          serie,
+          documento:      savedInvoice ?? null,
+          nubefact:       nubefactData,
         }),
         { headers: { ...cors, "Content-Type": "application/json" } }
       );
