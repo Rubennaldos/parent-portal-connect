@@ -134,10 +134,8 @@ const Index = () => {
   // Guardar la pestaña activa cuando cambia + refrescar datos
   useEffect(() => {
     sessionStorage.setItem('parentPortalTab', activeTab);
-    // Refrescar contador de pagos pendientes al cambiar de pestaña
-    fetchPendingPaymentsCount();
-    // Refrescar deudas del StudentCard cuando el padre vuelve a "alumnos"
-    if (activeTab === 'alumnos' && students.length > 0) {
+    // Refrescar deudas y contador al cambiar de pestaña
+    if (students.length > 0) {
       calculateStudentDebts(students);
     }
   }, [activeTab]);
@@ -178,20 +176,22 @@ const Index = () => {
     fetchStudents();
     fetchParentProfile();
     checkOnboardingStatus();
-    fetchPendingPaymentsCount();
+    // calculateStudentDebts se llama dentro de fetchStudents al completar
   }, [user]);
 
   useEffect(() => {
     if (!user) return;
-    const interval = setInterval(fetchPendingPaymentsCount, 30000);
+    // Refrescar deudas cada 30s usando la fuente única (view_student_debts vía RPC)
+    const interval = setInterval(() => {
+      if (students.length > 0) calculateStudentDebts(students);
+    }, 30000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, students]);
 
   // Auto-refresh saldos y deudas cuando admin aprueba recarga/voucher (Realtime)
   useEffect(() => {
     if (balanceSyncTs > 0 && user) {
-      fetchStudents();
-      fetchPendingPaymentsCount();
+      fetchStudents(); // calculateStudentDebts se llama dentro de fetchStudents
       toast({ title: '🔄 Datos actualizados', description: 'El saldo de tus hijos se actualizó.', duration: 4000 });
     }
   }, [balanceSyncTs]);
@@ -512,66 +512,62 @@ const Index = () => {
     }
   };
 
-  // ✅ Calcular deuda de cada estudiante — 1 sola query para todos los hijos (no N+1)
+  // Fuente única: get_parent_debts → view_student_debts
+  // Incluye transacciones reales + almuerzos virtuales + saldo negativo.
+  // También actualiza pendingPaymentsCount con el mismo resultado.
   const calculateStudentDebts = async (studentsData: Student[]) => {
     const debtsMap: Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }> = {};
 
-    // Inicializar mapa con ceros (incluye alumnos sin deudas y con free_account=false)
     for (const student of studentsData) {
       debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
     }
 
-    // Consultar TODOS los alumnos — las deudas de almuerzo aplican sin importar free_account
-    const billableIds = studentsData.map(s => s.id);
-
-    if (billableIds.length === 0) {
+    if (!user || studentsData.length === 0) {
       setStudentDebts(debtsMap);
       return;
     }
 
     try {
-      // UNA sola query para todos los hijos (antes era 1 query por hijo)
-      const { data: allPendingTx } = await supabase
-        .from('transactions')
-        .select('id, student_id, amount, metadata')
-        .in('student_id', billableIds)
-        .eq('type', 'purchase')
-        .in('payment_status', ['pending', 'partial'])
-        .eq('is_deleted', false);
+      const billableIds = studentsData.map(s => s.id);
 
-      // Obtener IDs de transacciones ya cubiertas por vouchers pendientes (en revisión)
-      // para excluirlas del chip de la Home — misma lógica que PaymentsTab
-      const { data: pendingVouchers } = await supabase
-        .from('recharge_requests')
-        .select('paid_transaction_ids')
-        .in('student_id', billableIds)
-        .eq('status', 'pending')
-        .in('request_type', ['debt_payment', 'lunch_payment']);
+      // 2 queries en paralelo: deudas reales + vouchers en revisión
+      const [debtsResult, vouchersResult] = await Promise.all([
+        supabase.rpc('get_parent_debts', { p_parent_id: user.id }),
+        supabase
+          .from('recharge_requests')
+          .select('paid_transaction_ids')
+          .in('student_id', billableIds)
+          .eq('status', 'pending')
+          .in('request_type', ['debt_payment', 'lunch_payment']),
+      ]);
 
       const inReviewTxIds = new Set<string>();
-      for (const v of pendingVouchers ?? []) {
+      for (const v of vouchersResult.data ?? []) {
         if (Array.isArray(v.paid_transaction_ids)) {
           v.paid_transaction_ids.forEach((id: string) => inReviewTxIds.add(id));
         }
       }
 
-      // Agregar en memoria — excluir transacciones "en revisión"
-      for (const tx of allPendingTx ?? []) {
-        if (!debtsMap[tx.student_id]) continue;
-        if (inReviewTxIds.has(tx.id)) continue; // Excluir: ya tiene voucher enviado
-        const abs = Math.abs(tx.amount);
-        if ((tx.metadata as any)?.lunch_order_id) {
-          debtsMap[tx.student_id].lunchDebt += abs;
+      let totalPayableItems = 0;
+      for (const row of debtsResult.data ?? []) {
+        if (!row.student_id || !debtsMap[row.student_id]) continue;
+        if (inReviewTxIds.has(row.deuda_id)) continue;
+        const amt = Number(row.monto);
+        if (row.es_almuerzo) {
+          debtsMap[row.student_id].lunchDebt += amt;
         } else {
-          debtsMap[tx.student_id].kioskDebt += abs;
+          debtsMap[row.student_id].kioskDebt += amt;
         }
-        debtsMap[tx.student_id].totalDebt += abs;
+        debtsMap[row.student_id].totalDebt += amt;
+        totalPayableItems++;
       }
+
+      setStudentDebts(debtsMap);
+      setPendingPaymentsCount(totalPayableItems);
     } catch (error) {
       console.error('Error calculating student debts:', error);
+      setStudentDebts(debtsMap);
     }
-
-    setStudentDebts(debtsMap);
   };
 
   // ⏳ Obtener recargas pendientes de aprobación por estudiante
@@ -596,41 +592,8 @@ const Index = () => {
     }
   };
 
-  // 🔴 Contar pagos pendientes (transacciones pending de los hijos del padre)
-  // Reutiliza los IDs ya cargados en `students` state para evitar una query extra a students.
-  const fetchPendingPaymentsCount = async () => {
-    if (!user) return;
-    try {
-      // Usar IDs del estado si ya están cargados; si no, hacer la query mínima
-      const studentIds = students.length > 0
-        ? students.map(s => s.id)
-        : await (async () => {
-            const { data } = await supabase
-              .from('students')
-              .select('id')
-              .eq('parent_id', user.id)
-              .eq('is_active', true);
-            return (data ?? []).map(s => s.id);
-          })();
-
-      if (studentIds.length === 0) {
-        setPendingPaymentsCount(0);
-        return;
-      }
-
-      const { count, error } = await supabase
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .in('student_id', studentIds)
-        .eq('type', 'purchase')
-        .in('payment_status', ['pending', 'partial'])
-        .eq('is_deleted', false);
-
-      if (!error) setPendingPaymentsCount(count || 0);
-    } catch (err) {
-      console.error('Error fetching pending payments count:', err);
-    }
-  };
+  // fetchPendingPaymentsCount eliminado: el conteo lo calcula calculateStudentDebts
+  // usando get_parent_debts → view_student_debts (fuente única de verdad).
 
   const handleRecharge = async (_amount: number, _method: string) => {
     toast({
@@ -1287,33 +1250,12 @@ const Index = () => {
         } : null}
       />
 
-      {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Inicio · Historial · Perfil) ── */}
+      {/* ── NAVEGACIÓN INFERIOR v0 — 3 ítems (Historial de Pagos · Inicio · Perfil) ── */}
       <nav id="bottom-nav-bar" className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100/50 shadow-lg z-50">
         <div className="px-6 pb-4">
           <div className="flex items-center justify-around h-20">
 
-            {/* Inicio */}
-            {(() => {
-              const isActive = activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito';
-              return (
-                <button
-                  id="nav-tab-alumnos"
-                  onClick={() => setActiveTab('alumnos')}
-                  className="flex flex-col items-center gap-1 px-6 active:scale-95 transition-transform"
-                >
-                  <div className={`p-2.5 rounded-2xl transition-all duration-200 ${
-                    isActive
-                      ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
-                      : 'bg-transparent hover:bg-slate-100'
-                  }`}>
-                    <Home className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                  </div>
-                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Inicio</span>
-                </button>
-              );
-            })()}
-
-            {/* Historial */}
+            {/* Historial de Pagos */}
             {(() => {
               const isActive = activeTab === 'historial';
               return (
@@ -1335,9 +1277,30 @@ const Index = () => {
                       ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
                       : 'bg-transparent hover:bg-slate-100'
                   }`}>
-                    <History className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    <CreditCard className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                   </div>
-                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Historial</span>
+                  <span className={`text-[10px] font-semibold text-center leading-tight ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Historial{'\n'}de Pagos</span>
+                </button>
+              );
+            })()}
+
+            {/* Inicio — CENTRO */}
+            {(() => {
+              const isActive = activeTab === 'alumnos' || activeTab === 'almuerzos' || activeTab === 'carrito';
+              return (
+                <button
+                  id="nav-tab-alumnos"
+                  onClick={() => setActiveTab('alumnos')}
+                  className="flex flex-col items-center gap-1 px-6 active:scale-95 transition-transform"
+                >
+                  <div className={`p-2.5 rounded-2xl transition-all duration-200 ${
+                    isActive
+                      ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-300/40'
+                      : 'bg-transparent hover:bg-slate-100'
+                  }`}>
+                    <Home className={`w-6 h-6 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  </div>
+                  <span className={`text-xs font-semibold ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>Inicio</span>
                 </button>
               );
             })()}

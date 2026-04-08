@@ -1,10 +1,10 @@
 /**
  * ServicesGrid — Cuadrícula de servicios secundarios, estilo Yape.
  *
- * Fila 1: Historial · Mensajes (destacado) · Topes
+ * Fila 1: Historial de Compras · Mensajes (destacado) · Topes
  * Fila 2: Soporte · Agregar Hijo
  */
-import { Clock, Headphones, ShieldCheck, MessageSquare, UserPlus } from 'lucide-react';
+import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus } from 'lucide-react';
 
 interface ServicesGridProps {
   onViewHistory:   () => void;
@@ -33,13 +33,13 @@ export function ServicesGrid({
       {/* ── Fila 1: 3 botones ── */}
       <div className="grid grid-cols-3 gap-2 mb-2">
 
-        {/* HISTORIAL */}
+        {/* HISTORIAL DE COMPRAS */}
         <ServiceButton
-          label="Historial"
-          Icon={Clock}
-          iconBg="bg-gradient-to-br from-emerald-100 to-teal-100"
-          iconColor="text-emerald-500"
-          ring="ring-emerald-200/50"
+          label={"Historial de\nCompras"}
+          Icon={ShoppingBag}
+          iconBg="bg-gradient-to-br from-orange-100 to-amber-100"
+          iconColor="text-orange-500"
+          ring="ring-orange-200/50"
           onClick={onViewHistory}
         />
 

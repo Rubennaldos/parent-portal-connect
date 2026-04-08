@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { supabaseConfig } from '@/config/supabase.config';
 import { useToast } from '@/hooks/use-toast';
 
 interface ChangePasswordModalProps {
@@ -63,21 +65,27 @@ export const ChangePasswordModal = ({ open, onOpenChange }: ChangePasswordModalP
     setLoading(true);
 
     try {
-      console.log('🔐 Intentando cambiar contraseña...');
+      // Paso 1: Verificar la contraseña actual usando un cliente AISLADO.
+      // storageKey único evita que este login temporal contamine la sesión
+      // activa del usuario. persistSession: false + autoRefreshToken: false
+      // garantizan que el cliente aislado no deja rastros en localStorage.
+      const { data: currentUser } = await supabase.auth.getUser();
+      if (!currentUser.user?.email) throw new Error('No se pudo obtener el email del usuario');
 
-      // Paso 1: Verificar contraseña actual usando signInWithPassword
-      const { data: user } = await supabase.auth.getUser();
-      if (!user.user?.email) {
-        throw new Error('No se pudo obtener el email del usuario');
-      }
+      const verifyClient = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
+        auth: {
+          persistSession:   false,
+          autoRefreshToken: false,
+          storageKey:       'sb-verify-password-check',  // ← aislado, no choca con la sesión principal
+        },
+      });
 
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: user.user.email,
+      const { error: verifyError } = await verifyClient.auth.signInWithPassword({
+        email:    currentUser.user.email,
         password: currentPassword,
       });
 
-      if (signInError) {
-        console.error('❌ Contraseña actual incorrecta:', signInError);
+      if (verifyError) {
         toast({
           variant: 'destructive',
           title: '❌ Contraseña Incorrecta',
@@ -87,9 +95,7 @@ export const ChangePasswordModal = ({ open, onOpenChange }: ChangePasswordModalP
         return;
       }
 
-      console.log('✅ Contraseña actual verificada');
-
-      // Paso 2: Actualizar contraseña
+      // Paso 2: Actualizar la contraseña en la sesión real (no en el cliente aislado).
       const { error: updateError } = await supabase.auth.updateUser({
         password: newPassword,
       });

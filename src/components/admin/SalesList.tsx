@@ -46,7 +46,6 @@ import {
   List,
   FileDown,
   Sheet,
-  FileText,
   ExternalLink,
 } from "lucide-react";
 import { 
@@ -751,7 +750,13 @@ export const SalesList = () => {
       const tempClient = createClient(
         supabaseConfig.url,
         supabaseConfig.anonKey,
-        { auth: { persistSession: false, autoRefreshToken: false } }
+        {
+          auth: {
+            persistSession:   false,
+            autoRefreshToken: false,
+            storageKey:       'sb-admin-verify-temp',  // ← aislado, no pisa la sesión principal
+          },
+        }
       );
 
       const { data: authData, error: authError } = await tempClient.auth.signInWithPassword({

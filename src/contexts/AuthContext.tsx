@@ -67,10 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!mounted) return;
 
       if (event === 'TOKEN_REFRESHED') {
-        // Actualizar la sesión con el nuevo JWT — NO hacer no-op o los requests
-        // posteriores enviarán el token expirado y fallarán con "JWT expired"
-        console.log('[Auth] 🔄 Token refrescado — actualizando session state');
+        // Actualizar TANTO session como user con el nuevo JWT.
+        // Si solo se actualiza session, los componentes que lean `user` del contexto
+        // siguen usando el objeto con el token expirado → requests fallidos.
+        console.log('[Auth] 🔄 Token refrescado — actualizando session y user');
         setSession(session);
+        setUser(session?.user ?? null);
         return;
       }
 

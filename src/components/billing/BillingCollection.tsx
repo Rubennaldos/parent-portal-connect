@@ -2822,18 +2822,16 @@ Si tienes dudas, comunícate con la administración de tu sede.
                                 setSelectedDebtorForDetail(debtor);
                                 setHistoricalDebt(null);
                                 setShowDebtorDetailModal(true);
-                                // Cargar deuda histórica real (sin filtros de fecha ni período)
+                                // Deuda histórica total (sin filtros de fecha) — usa view_student_debts
                                 if (debtor.student_id) {
                                   setLoadingHistoricalDebt(true);
                                   try {
                                     const { data } = await supabase
-                                      .from('transactions')
-                                      .select('id, amount')
+                                      .from('view_student_debts')
+                                      .select('monto')
                                       .eq('student_id', debtor.student_id)
-                                      .eq('type', 'purchase')
-                                      .in('payment_status', ['pending', 'partial'])
-                                      .eq('is_deleted', false);
-                                    const total = (data ?? []).reduce((s, t) => s + Math.abs(t.amount), 0);
+                                      .neq('fuente', 'saldo_negativo');
+                                    const total = (data ?? []).reduce((s, r) => s + Number(r.monto), 0);
                                     setHistoricalDebt({ total, count: (data ?? []).length });
                                   } catch { /* silencioso */ }
                                   finally { setLoadingHistoricalDebt(false); }
@@ -4107,6 +4105,11 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-bold text-gray-400">#{idx + 1}</span>
+                            {t.metadata?.is_kiosk_balance_debt && (
+                              <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-xs font-bold">
+                                🏪 Saldo negativo kiosco
+                              </span>
+                            )}
                             {t.metadata?.order_date && (
                               <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-bold">
                                 📅 {format(new Date(t.metadata.order_date + 'T12:00:00'), "d MMM", { locale: es })}
@@ -4392,15 +4395,17 @@ Si tienes dudas, comunícate con la administración de tu sede.
                           <div className="flex justify-between">
                             <span className="text-gray-600">Método de pago:</span>
                             <span className="font-semibold text-gray-900 capitalize">
-                              {selectedTransaction.payment_method 
-                                ? selectedTransaction.payment_method === 'teacher_account' 
-                                  ? 'Cuenta Profesor' 
-                                  : selectedTransaction.payment_method === 'mixto'
-                                    ? '🔀 Pago Mixto'
-                                    : selectedTransaction.payment_method
-                                : selectedTransaction.ticket_code 
-                                  ? 'Pago directo en caja' 
-                                  : 'Método no registrado'}
+                              {selectedTransaction.metadata?.is_kiosk_balance_debt
+                                ? 'Saldo negativo acumulado en kiosco'
+                                : selectedTransaction.payment_method 
+                                  ? selectedTransaction.payment_method === 'teacher_account' 
+                                    ? 'Cuenta Profesor' 
+                                    : selectedTransaction.payment_method === 'mixto'
+                                      ? '🔀 Pago Mixto'
+                                      : selectedTransaction.payment_method
+                                  : selectedTransaction.ticket_code 
+                                    ? 'Pago directo en caja' 
+                                    : 'Método no registrado'}
                             </span>
                           </div>
                           {/* Desglose pago dividido/mixto */}

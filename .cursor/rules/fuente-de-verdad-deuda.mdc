@@ -1,0 +1,64 @@
+---
+description: Regla de arquitectura: toda deuda debe venir de view_student_debts
+alwaysApply: true
+---
+
+# REGLA DE ARQUITECTURA — Fuente Única de Verdad para Deudas
+
+## LA REGLA
+
+**TODA lectura de deuda pendiente DEBE pasar por `view_student_debts`.**
+
+Está **PROHIBIDO** calcular deuda directamente desde `transactions` o `lunch_orders` en TypeScript o en RPCs nuevos.
+
+## CANALES PERMITIDOS
+
+| Contexto | Qué usar |
+|----------|----------|
+| Portal de Padres (frontend) | `supabase.rpc('get_parent_debts', { p_parent_id })` |
+| Admin Cobranzas (frontend) | `supabase.rpc('get_billing_consolidated_debtors', {...})` |
+| Consulta puntual admin (modal) | `supabase.from('view_student_debts').select(...)` |
+| Nuevo RPC de negocio | `SELECT ... FROM view_student_debts WHERE ...` |
+
+## PATRÓN PROHIBIDO
+
+```typescript
+// ❌ MAL — query directa que duplica lógica
+const { data } = await supabase
+  .from('transactions')
+  .select('id, amount')
+  .in('payment_status', ['pending', 'partial'])
+  .eq('type', 'purchase')
+  .eq('is_deleted', false);
+
+const total = data.reduce((s, t) => s + Math.abs(t.amount), 0);
+```
+
+## PATRÓN CORRECTO
+
+```typescript
+// ✅ BIEN — fuente única
+const { data } = await supabase.rpc('get_parent_debts', { p_parent_id: userId });
+const total = (data ?? []).reduce((s, r) => s + Number(r.monto), 0);
+```
+
+## POR QUÉ
+
+- `view_student_debts` incluye los 3 tramos: transacciones reales + almuerzos virtuales + saldo negativo.
+- Las queries directas a `transactions` **no incluyen almuerzos virtuales** → montos distintos entre Admin y Padre.
+- Si la lógica de deuda cambia algún día, se cambia **solo en la vista**. Sin tocar TypeScript.
+
+## COLUMNAS DE LA VISTA
+
+```
+deuda_id    → ID único (tx real: UUID | almuerzo virtual: 'lunch_XXX' | kiosco: 'kiosk_balance_XXX')
+student_id  → UUID del alumno
+school_id   → UUID de la sede
+monto       → Importe positivo en soles (ABS ya aplicado)
+descripcion → Texto legible
+fecha       → TIMESTAMPTZ
+fuente      → 'transaccion' | 'almuerzo_virtual' | 'saldo_negativo'
+es_almuerzo → boolean
+metadata    → JSONB con lunch_order_id, etc.
+ticket_code → código de ticket (solo transacciones reales)
+```

@@ -6,6 +6,22 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
+// ─── Persistencia local de notificaciones leídas ─────────────────────────────
+// Guarda hasta 300 IDs leídos en localStorage para que el badge
+// no reaparezca al refrescar aunque la actualización en DB falle (p.ej. RLS global).
+const LS_KEY = 'erp_read_notif_ids';
+function getLocalReadIds(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) ?? '[]')); } catch { return new Set(); }
+}
+function saveLocalReadIds(ids: string[]) {
+  try {
+    const existing = getLocalReadIds();
+    ids.forEach(id => existing.add(id));
+    const trimmed = [...existing].slice(-300); // máximo 300 entradas
+    localStorage.setItem(LS_KEY, JSON.stringify(trimmed));
+  } catch { /* silencioso */ }
+}
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 type NotifType = 'info' | 'reminder' | 'alert' | 'payment';
@@ -52,13 +68,17 @@ export function useUnreadNotifCount() {
       if (!user) { setCount(0); return; }
       userIdRef.current = user.id;
       const now = new Date().toISOString();
-      const { count: c } = await supabase
+      // Traemos IDs en lugar de solo count para poder cruzar con localStorage
+      const { data } = await supabase
         .from('in_app_notifications')
-        .select('id', { count: 'exact', head: true })
+        .select('id')
         .eq('is_read', false)
         .or(`user_id.eq.${user.id},user_id.is.null`)
         .or(`expiration_date.is.null,expiration_date.gt.${now}`);
-      setCount(c ?? 0);
+      // Filtrar los ya leídos localmente (por si el update en DB no persistió, p.ej. RLS global)
+      const localRead = getLocalReadIds();
+      const unread = (data ?? []).filter(n => !localRead.has(n.id));
+      setCount(unread.length);
     } catch {
       // Silenciar: tabla puede no existir aún
     }
@@ -115,6 +135,9 @@ export function NotificationsSheet({ open, onOpenChange, onClearCount }: Notific
 
   const markAllReadInDB = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
+    // 1. Guardar en localStorage inmediatamente (optimistic persistente)
+    saveLocalReadIds(ids);
+    // 2. Intentar persistir en BD (puede fallar silenciosamente para notificaciones globales)
     await supabase.from('in_app_notifications').update({ is_read: true }).in('id', ids);
   }, []);
 
@@ -135,6 +158,11 @@ export function NotificationsSheet({ open, onOpenChange, onClearCount }: Notific
 
       const notifs = (data as Notification[]) ?? [];
       setNotifications(notifs.map(n => ({ ...n, is_read: true }))); // mark all as read visually
+
+      // Guardar TODOS los IDs vistos en localStorage (no solo los no leídos)
+      // Así se persiste aunque el update en DB no funcione (ej. notifs globales con RLS)
+      const allIds = notifs.map(n => n.id);
+      if (allIds.length > 0) saveLocalReadIds(allIds);
 
       // Persiste la lectura en la BD en segundo plano
       const unreadIds = notifs.filter(n => !n.is_read).map(n => n.id);
