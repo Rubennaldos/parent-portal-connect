@@ -300,8 +300,8 @@ export function PosConsumptionModal({
                           ))}
                         </div>
                       ) : (
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Compra en cafetería
+                        <p className="text-[10px] text-slate-400 italic mt-0.5">
+                          Detalle no disponible — consumo registrado antes del sistema digital
                         </p>
                       )}
 
