@@ -42,9 +42,10 @@ interface Consumo {
   ticket_code: string | null;
   payment_method: string | null;
   metadata: any;
+  sale_items?: ProductItem[]; // productos del carrito (tabla sales.items)
 }
 
-/** Ítem de producto dentro de metadata.items */
+/** Ítem de producto del carrito POS (columna sales.items) */
 interface ProductItem {
   name: string;
   quantity: number;
@@ -66,26 +67,18 @@ const Skeleton = ({ className }: { className?: string }) => (
   <div className={`animate-pulse bg-slate-100 rounded-lg ${className ?? ''}`} />
 );
 
-/** Extrae un array de productos legibles desde metadata */
-function parseProductItems(metadata: any): ProductItem[] {
-  if (!metadata) return [];
-
-  // Soporte para múltiples estructuras de metadata de POS
-  const rawItems: any[] =
-    metadata.items       ??
-    metadata.cart_items  ??
-    metadata.products    ??
-    metadata.line_items  ??
-    [];
-
+/**
+ * Extrae un array de productos legibles desde un array JSONB de sales.items.
+ * El RPC complete_pos_sale_v2 guarda cada línea con:
+ *   { product_name, quantity, unit_price, subtotal, is_custom, product_id }
+ */
+function parseSaleItems(rawItems: any[]): ProductItem[] {
   if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
-
   return rawItems.map((it: any) => ({
-    name:     it.name || it.descripcion || it.product_name || it.nombre || 'Producto',
+    name:     it.product_name || it.name || it.descripcion || it.nombre || 'Producto',
     quantity: Number(it.quantity ?? it.cantidad ?? it.qty ?? 1),
-    price:    it.price != null ? Number(it.price)
-            : it.precio != null ? Number(it.precio)
-            : it.unit_price != null ? Number(it.unit_price)
+    price:    it.unit_price != null ? Number(it.unit_price)
+            : it.price     != null ? Number(it.price)
             : undefined,
   }));
 }
@@ -119,7 +112,8 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      const { data, error: fetchErr } = await supabase
+      // 1. Transacciones POS del alumno
+      const { data: txData, error: txErr } = await supabase
         .from('transactions')
         .select('id, created_at, amount, description, ticket_code, payment_method, metadata')
         .eq('student_id', studentId)
@@ -130,12 +124,34 @@ export function PosConsumptionModal({
         .order('created_at', { ascending: false })
         .limit(300);
 
-      if (fetchErr) throw fetchErr;
+      if (txErr) throw txErr;
 
-      const posOnly = (data ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
-      setConsumos(posOnly);
-      // Seleccionar todo por defecto
-      setSelectedIds(new Set(posOnly.map((c: Consumo) => c.id)));
+      const posOnly = (txData ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
+
+      // 2. Detalles de productos desde tabla `sales` (una query para todas)
+      let salesMap: Map<string, ProductItem[]> = new Map();
+      if (posOnly.length > 0) {
+        const txIds = posOnly.map((t: any) => t.id);
+        const { data: salesData } = await supabase
+          .from('sales')
+          .select('transaction_id, items')
+          .in('transaction_id', txIds);
+
+        (salesData ?? []).forEach((s: any) => {
+          if (s.transaction_id && Array.isArray(s.items)) {
+            salesMap.set(s.transaction_id, parseSaleItems(s.items));
+          }
+        });
+      }
+
+      // 3. Fusionar productos en cada consumo
+      const enriched: Consumo[] = posOnly.map((t: any) => ({
+        ...t,
+        sale_items: salesMap.get(t.id) ?? [],
+      }));
+
+      setConsumos(enriched);
+      setSelectedIds(new Set(enriched.map((c) => c.id)));
     } catch {
       setError('No se pudieron cargar los consumos. Intenta de nuevo.');
     } finally {
@@ -237,7 +253,7 @@ export function PosConsumptionModal({
                 const source   = c.metadata?.source ?? 'pos';
                 const label    = c.description
                   || (source === 'pos' ? 'Consumo en Cafetería' : `Consumo (${source})`);
-                const products = parseProductItems(c.metadata);
+                const products = c.sale_items ?? [];
                 const isSelected = selectedIds.has(c.id);
 
                 return (
