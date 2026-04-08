@@ -1,17 +1,13 @@
 /**
- * PosConsumptionModal — Estado de Cuenta de Cafetería / Kiosco
+ * PosConsumptionModal — Estado de Cuenta de Cafetería
  *
- * v2: multi-select + detalle de productos + botón "Pagar selección"
- *
- * Muestra un estado de cuenta justificado:
- *  (−) Consumos en cafetería (source = 'pos')
- *  (+) Abonos y recargas previas
- *  (=) Deuda actual = Math.abs(students.balance)
- *
- * El padre puede seleccionar qué consumos pagar ahora.
- * Al presionar "Pagar selección (S/ XX.XX)", se llama onPay(totalSeleccionado).
+ * v3: diseño de extracto bancario limpio
+ *  - Sección ABONOS (recargas reales desde la BD)
+ *  - Sección CONSUMOS (compras POS)
+ *  - Saldo final real (students.balance via kioskDebt)
+ *  - Botón de pago solo si hay deuda real
  */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -20,18 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import {
   ShoppingBag,
   AlertCircle,
-  TrendingDown,
-  TrendingUp,
-  Minus,
+  ArrowDownLeft,
+  ArrowUpRight,
   CreditCard,
-  CheckSquare,
-  Square,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface Consumo {
@@ -42,36 +35,39 @@ interface Consumo {
   ticket_code: string | null;
   payment_method: string | null;
   metadata: any;
-  sale_items?: ProductItem[]; // productos del carrito (tabla sales.items)
+  sale_items?: ProductItem[];
 }
 
-/** Ítem de producto del carrito POS (columna sales.items) */
+interface Recarga {
+  id: string;
+  created_at: string;
+  amount: number;
+  description: string | null;
+  payment_method: string | null;
+  metadata: any;
+}
+
 interface ProductItem {
   name: string;
   quantity: number;
   price?: number;
 }
 
-interface PosConsumptionModalProps {
+export interface PosConsumptionModalProps {
   open: boolean;
   onClose: () => void;
   studentId: string;
   studentName: string;
-  /** Math.abs(students.balance) — deuda oficial actual */
+  /** Math.abs(students.balance) cuando balance < 0; 0 si el alumno está al día */
   kioskDebt: number;
-  /** Callback cuando el padre presiona "Pagar selección" */
-  onPay?: (totalSeleccionado: number) => void;
+  /** Callback cuando el padre presiona "Pagar deuda" */
+  onPay?: (total: number) => void;
 }
 
 const Skeleton = ({ className }: { className?: string }) => (
   <div className={`animate-pulse bg-slate-100 rounded-lg ${className ?? ''}`} />
 );
 
-/**
- * Extrae un array de productos legibles desde un array JSONB de sales.items.
- * El RPC complete_pos_sale_v2 guarda cada línea con:
- *   { product_name, quantity, unit_price, subtotal, is_custom, product_id }
- */
 function parseSaleItems(rawItems: any[]): ProductItem[] {
   if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
   return rawItems.map((it: any) => ({
@@ -83,6 +79,19 @@ function parseSaleItems(rawItems: any[]): ProductItem[] {
   }));
 }
 
+function paymentMethodLabel(method: string | null): string {
+  if (!method) return '';
+  const map: Record<string, string> = {
+    yape: 'Yape',
+    plin: 'Plin',
+    efectivo: 'Efectivo',
+    transferencia: 'Transferencia',
+    saldo: 'Saldo',
+    nfc: 'Tarjeta',
+  };
+  return map[method.toLowerCase()] ?? method;
+}
+
 export function PosConsumptionModal({
   open,
   onClose,
@@ -92,41 +101,39 @@ export function PosConsumptionModal({
   onPay,
 }: PosConsumptionModalProps) {
   const [consumos, setConsumos]   = useState<Consumo[]>([]);
+  const [recargas, setRecargas]   = useState<Recarga[]>([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  // Set de IDs seleccionados — inicia vacío; se llena al cargar
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
   useEffect(() => {
     if (!open || !studentId) return;
-    fetchConsumos();
+    fetchMovimientos();
   }, [open, studentId]);
 
-  // Resetear selección al cerrar
   useEffect(() => {
-    if (!open) setSelectedIds(new Set());
+    if (!open) {
+      setConsumos([]);
+      setRecargas([]);
+      setError(null);
+    }
   }, [open]);
 
-  const fetchConsumos = async () => {
+  const fetchMovimientos = async () => {
     setLoading(true);
     setError(null);
     try {
-      // RPC seguro: obtiene transacciones POS + items de productos en una sola llamada.
-      // Evita el problema de RLS en la tabla `sales` que bloquea a los padres.
-      const { data, error: rpcErr } = await supabase
+      // Consumos POS via RPC (evita RLS en tabla sales)
+      const { data: posData, error: posErr } = await supabase
         .rpc('get_student_pos_consumptions', { p_student_id: studentId });
+      if (posErr) throw posErr;
 
-      if (rpcErr) throw rpcErr;
-
-      const enriched: Consumo[] = (data ?? []).map((row: any) => ({
+      const enriched: Consumo[] = (posData ?? []).map((row: any) => ({
         id:             row.id,
         created_at:     row.created_at,
         amount:         row.amount,
         description:    row.description,
         ticket_code:    row.ticket_code,
         payment_method: row.payment_method,
-        payment_status: row.payment_status,
         metadata:       row.metadata,
         sale_items:     Array.isArray(row.sale_items)
                           ? parseSaleItems(row.sale_items)
@@ -136,45 +143,28 @@ export function PosConsumptionModal({
                                 : []
                             ),
       }));
-
       setConsumos(enriched);
-      setSelectedIds(new Set(enriched.map((c) => c.id)));
+
+      // Recargas aprobadas (acceso directo a transactions)
+      const { data: rechargeData } = await supabase
+        .from('transactions')
+        .select('id, created_at, amount, description, payment_method, metadata')
+        .eq('student_id', studentId)
+        .eq('type', 'recharge')
+        .eq('payment_status', 'paid')
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: true });
+
+      setRecargas(rechargeData ?? []);
     } catch {
-      setError('No se pudieron cargar los consumos. Intenta de nuevo.');
+      setError('No se pudieron cargar los movimientos. Intenta de nuevo.');
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Cálculos ────────────────────────────────────────────────────────────
-  const allIds = useMemo(() => consumos.map(c => c.id), [consumos]);
-  const allSelected  = selectedIds.size === allIds.length && allIds.length > 0;
-  const noneSelected = selectedIds.size === 0;
-
-  const totalConsumo = consumos.reduce((acc, c) => acc + Math.abs(c.amount), 0);
-
-  const totalSelected = consumos
-    .filter(c => selectedIds.has(c.id))
-    .reduce((acc, c) => acc + Math.abs(c.amount), 0);
-
-  const abonosHistoricos =
-    totalConsumo > kioskDebt ? parseFloat((totalConsumo - kioskDebt).toFixed(2)) : 0;
-  const saldoCalculado = parseFloat((totalConsumo - abonosHistoricos).toFixed(2));
-
-  // ── Handlers ────────────────────────────────────────────────────────────
-  const toggleOne = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(allIds));
-  };
-
   const firstName = studentName.split(' ')[0];
+  const hayDeuda  = kioskDebt > 0.009;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -197,230 +187,159 @@ export function PosConsumptionModal({
           </div>
         </DialogHeader>
 
-        {/* ── Cuerpo: lista de consumos ── */}
-        <div className="px-4 py-3 max-h-[48vh] overflow-y-auto space-y-1.5">
+        {/* ── Cuerpo ── */}
+        <div className="px-4 py-3 max-h-[52vh] overflow-y-auto space-y-4">
+
           {loading ? (
-            <>{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</>
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+            </div>
+
           ) : error ? (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-3">
               <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
               <p className="text-xs text-red-600">{error}</p>
             </div>
-          ) : consumos.length === 0 ? (
-            <div className="text-center py-6">
-              <p className="text-sm text-slate-400">No se encontraron consumos digitales.</p>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed px-4">
-                La deuda puede provenir de consumos en efectivo o períodos anteriores al sistema digital.
-              </p>
-            </div>
+
           ) : (
             <>
-              {/* Encabezado de sección + Seleccionar todo */}
-              <div className="flex items-center justify-between px-1 pb-1">
-                <div className="flex items-center gap-1.5">
-                  <TrendingDown className="w-3 h-3 text-rose-400" />
-                  <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">
+              {/* ── Sección ABONOS ── */}
+              {recargas.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider px-1 flex items-center gap-1">
+                    <ArrowUpRight className="w-3 h-3" />
+                    Abonos recibidos
+                  </p>
+                  {recargas.map((r) => {
+                    const refCode = r.metadata?.reference_code;
+                    const method  = paymentMethodLabel(r.payment_method);
+                    return (
+                      <div
+                        key={r.id}
+                        className="flex items-center gap-3 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl"
+                      >
+                        <ArrowUpRight className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-emerald-800">
+                            Recarga{method ? ` via ${method}` : ''}
+                          </p>
+                          <p className="text-[10px] text-emerald-600 mt-0.5">
+                            {format(new Date(r.created_at), "d 'de' MMMM yyyy", { locale: es })}
+                            {refCode && <span className="ml-1.5 text-emerald-500">· Ref: {refCode}</span>}
+                          </p>
+                        </div>
+                        <p className="text-sm font-black text-emerald-600 shrink-0">
+                          +S/ {Number(r.amount).toFixed(2)}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── Sección CONSUMOS ── */}
+              {consumos.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider px-1 flex items-center gap-1">
+                    <ArrowDownLeft className="w-3 h-3" />
                     Consumos en cafetería
                   </p>
-                </div>
-                {onPay && (
-                  <button
-                    onClick={toggleAll}
-                    className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-emerald-600 transition-colors"
-                  >
-                    {allSelected
-                      ? <><CheckSquare className="h-3.5 w-3.5 text-emerald-500" /> Desmarcar todo</>
-                      : <><Square className="h-3.5 w-3.5" /> Seleccionar todo</>
-                    }
-                  </button>
-                )}
-              </div>
-
-              {consumos.map((c) => {
-                const source   = c.metadata?.source ?? 'pos';
-                const label    = c.description
-                  || (source === 'pos' ? 'Consumo en Cafetería' : `Consumo (${source})`);
-                const products = c.sale_items ?? [];
-                const isSelected = selectedIds.has(c.id);
-
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => onPay && toggleOne(c.id)}
-                    className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border transition-all duration-150 ${
-                      onPay ? 'cursor-pointer' : ''
-                    } ${
-                      isSelected
-                        ? 'bg-emerald-50/60 border-emerald-200 shadow-sm shadow-emerald-50'
-                        : 'bg-slate-50/70 border-slate-100 opacity-60'
-                    }`}
-                  >
-                    {/* Checkbox (solo cuando hay onPay) */}
-                    {onPay && (
-                      <div className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => toggleOne(c.id)}
-                          className="border-slate-300 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
-                        />
-                      </div>
-                    )}
-
-                    {/* Contenido */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-700 truncate">{label}</p>
-
-                      {/* Productos del carrito */}
-                      {products.length > 0 ? (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {products.map((p, i) => (
-                            <span
-                              key={i}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[9px] font-medium text-slate-600"
-                            >
-                              <span className="font-bold text-slate-700">{p.quantity}×</span>
-                              {p.name}
-                              {p.price != null && (
-                                <span className="text-slate-400 ml-0.5">S/{p.price.toFixed(2)}</span>
-                              )}
-                            </span>
-                          ))}
+                  {consumos.map((c) => {
+                    const products = c.sale_items ?? [];
+                    return (
+                      <div
+                        key={c.id}
+                        className="flex items-start gap-3 px-3 py-2.5 bg-white border border-slate-200 rounded-xl"
+                      >
+                        <ArrowDownLeft className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          {products.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {products.map((p, i) => (
+                                <span
+                                  key={i}
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[9px] font-medium text-slate-700"
+                                >
+                                  <span className="font-bold">{p.quantity}×</span>
+                                  {p.name}
+                                  {p.price != null && (
+                                    <span className="text-slate-400 ml-0.5">S/{p.price.toFixed(2)}</span>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs font-semibold text-slate-700">Compra en cafetería</p>
+                          )}
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            {format(new Date(c.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                            {c.ticket_code && (
+                              <span className="ml-1.5 text-slate-300">· {c.ticket_code}</span>
+                            )}
+                          </p>
                         </div>
-                      ) : (
-                        <p className="text-[10px] text-slate-400 italic mt-0.5">
-                          Detalle no disponible — consumo registrado antes del sistema digital
+                        <p className="text-sm font-black text-rose-500 shrink-0">
+                          −S/ {Math.abs(c.amount).toFixed(2)}
                         </p>
-                      )}
-
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        {format(new Date(c.created_at), "d MMM yyyy · HH:mm", { locale: es })}
-                        {c.ticket_code && (
-                          <span className="ml-1.5 text-slate-300">· {c.ticket_code}</span>
-                        )}
-                      </p>
-                    </div>
-
-                    <p className={`text-sm font-black shrink-0 ${isSelected ? 'text-rose-500' : 'text-slate-300'}`}>
-                      −S/ {Math.abs(c.amount).toFixed(2)}
-                    </p>
-                  </div>
-                );
-              })}
-            </>
-          )}
-
-          {/* ── Fila de ajuste: Abonos y Recargas Previas ── */}
-          {!loading && !error && abonosHistoricos > 0 && (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center gap-2 px-1">
-                <div className="h-px flex-1 bg-slate-200" />
-                <Minus className="w-3 h-3 text-slate-300" />
-                <div className="h-px flex-1 bg-slate-200" />
-              </div>
-              <div className="flex items-center gap-1.5 px-1 pb-0.5">
-                <TrendingUp className="w-3 h-3 text-emerald-500" />
-                <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
-                  Abonos aplicados
-                </p>
-              </div>
-              <div className="flex items-center gap-3 px-3 py-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-emerald-700">Abonos y Recargas Previas</p>
-                  <p className="text-[10px] text-emerald-600 mt-0.5 leading-relaxed">
-                    Pagos históricos que redujeron la deuda. Pueden incluir recargas en efectivo
-                    o abonos registrados antes del sistema digital.
-                  </p>
+                      </div>
+                    );
+                  })}
                 </div>
-                <p className="text-sm font-black text-emerald-600 shrink-0">
-                  +S/ {abonosHistoricos.toFixed(2)}
-                </p>
-              </div>
-            </div>
+              )}
+
+              {/* Estado vacío */}
+              {consumos.length === 0 && recargas.length === 0 && (
+                <div className="text-center py-8">
+                  <ShoppingBag className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-sm text-slate-400">Sin movimientos registrados</p>
+                  {hayDeuda && (
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed px-4">
+                      La deuda puede ser de un período anterior al sistema digital.
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* ── Footer: cierre contable + botón de pago ── */}
+        {/* ── Footer: saldo + botón ── */}
         {!loading && !error && (
           <div className="px-5 pt-3 pb-5 border-t border-slate-100 bg-slate-50/60 space-y-3">
 
-            {/* Resumen numérico */}
-            {consumos.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs text-slate-500">
-                  <span>Total consumos registrados</span>
-                  <span className="font-semibold text-rose-400">−S/ {totalConsumo.toFixed(2)}</span>
+            {/* Línea de saldo */}
+            {hayDeuda ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                    Deuda pendiente
+                  </p>
+                  <p className="text-[9px] text-slate-400 mt-0.5">
+                    Saldo oficial de {firstName} en el sistema
+                  </p>
                 </div>
-                {abonosHistoricos > 0 && (
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>Abonos y recargas previas</span>
-                    <span className="font-semibold text-emerald-500">+S/ {abonosHistoricos.toFixed(2)}</span>
-                  </div>
-                )}
-                {/* Resumen de selección */}
-                {onPay && !allSelected && selectedIds.size > 0 && (
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>{selectedIds.size} ítem(s) seleccionado(s)</span>
-                    <span className="font-semibold text-emerald-600">−S/ {totalSelected.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="h-px bg-slate-200" />
+                <p className="text-2xl font-black text-rose-500">
+                  S/ {kioskDebt.toFixed(2)}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-emerald-700">Sin deuda pendiente</p>
+                  <p className="text-[9px] text-emerald-600">{firstName} está al día con la cafetería</p>
+                </div>
               </div>
             )}
 
-            {/* Total final */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
-                  Deuda actual
-                </p>
-                <p className="text-[9px] text-slate-400 mt-0.5">
-                  Saldo oficial de {firstName} en el sistema
-                </p>
-              </div>
-              <p className="text-2xl font-black text-rose-500">
-                S/ {kioskDebt.toFixed(2)}
-              </p>
-            </div>
-
-            {/* Advertencias de integridad */}
-            {consumos.length > 0 && Math.abs(saldoCalculado - kioskDebt) > 0.1 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                <p className="text-[9px] text-amber-600 leading-relaxed">
-                  ⚠️ Existe una pequeña diferencia de S/ {Math.abs(saldoCalculado - kioskDebt).toFixed(2)} entre
-                  el cálculo y el saldo oficial. Contacta a administración si necesitas el detalle exacto.
-                </p>
-              </div>
-            )}
-            {consumos.length === 0 && kioskDebt > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-                <p className="text-[10px] font-bold text-amber-700">⚠️ Sin historial digital</p>
-                <p className="text-[9px] text-amber-600 leading-relaxed mt-0.5">
-                  La deuda de S/ {kioskDebt.toFixed(2)} existe pero no hay consumos digitales registrados.
-                  Puede ser por consumos en efectivo o un ajuste anterior. Consulta a administración.
-                </p>
-              </div>
-            )}
-
-            {/* ── Botón de Pago ── */}
-            {onPay && consumos.length > 0 && (
+            {/* Botón de pago — solo si hay deuda real */}
+            {hayDeuda && onPay && (
               <Button
-                disabled={noneSelected}
-                onClick={() => {
-                  if (!noneSelected) onPay(totalSelected);
-                }}
-                className={`w-full rounded-xl font-bold text-sm py-3 transition-all ${
-                  noneSelected
-                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                    : 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md active:scale-95'
-                }`}
+                onClick={() => onPay(kioskDebt)}
+                className="w-full rounded-xl font-bold text-sm py-3 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md active:scale-95"
               >
                 <CreditCard className="w-4 h-4 mr-2 shrink-0" />
-                {noneSelected
-                  ? 'Selecciona al menos un consumo'
-                  : allSelected
-                  ? `Pagar todo — S/ ${totalSelected.toFixed(2)}`
-                  : `Pagar selección — S/ ${totalSelected.toFixed(2)}`
-                }
+                Pagar deuda — S/ {kioskDebt.toFixed(2)}
               </Button>
             )}
           </div>

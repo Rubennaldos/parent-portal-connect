@@ -101,7 +101,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const [infoHubOpen, setInfoHubOpen] = useState(false);
 
   // ── Modal de detalle de consumos POS ──
-  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; debt: number } | null>(null);
+  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; debt: number; readonly?: boolean } | null>(null);
 
   // ── Selección individual de transacciones por estudiante ──
   // Mapa: student_id → Set de transaction IDs seleccionados
@@ -1013,17 +1013,23 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                 {debt.pending_transactions.map((transaction) => {
                   const isKioskBalance = !!transaction.metadata?.is_kiosk_balance_debt;
                   const isLunch = !isKioskBalance && !!(transaction.metadata?.lunch_order_id || transaction.description?.toLowerCase().includes('almuerzo'));
+                  const isPos = !isKioskBalance && !isLunch;
                   const isSelected = selectedIds.has(transaction.id);
                   const vStatus = voucherStatuses.get(transaction.id);
                   const isCoveredByPending = coveredByPendingVoucher.includes(transaction.id);
+                  const posKioskDebt = (debt.student_balance ?? 0) < 0
+                    ? Math.abs(debt.student_balance ?? 0)
+                    : 0;
 
                   return (
                     <div
                       key={transaction.id}
                       onClick={() => {
                         if (isKioskBalance) {
-                          // Clic en el ítem abre directamente el desglose de consumos
                           setPosDetailStudent({ id: debt.student_id, name: debt.student_name, debt: transaction.amount });
+                        } else if (isPos && !isCoveredByPending) {
+                          // Abre detalle en modo solo lectura (sin botón de pago)
+                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, debt: posKioskDebt, readonly: true });
                         } else if (!isCoveredByPending) {
                           toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
                         }
@@ -1031,6 +1037,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                       className={`p-3 rounded-xl border bg-white transition-all ${
                         isKioskBalance
                           ? 'border-rose-200 bg-rose-50/20 cursor-pointer hover:bg-rose-50/60 active:scale-[0.98]'
+                          : isPos && !isCoveredByPending
+                          ? 'border-slate-200 cursor-pointer hover:border-rose-200 hover:bg-rose-50/10 active:scale-[0.98]'
                           : isCoveredByPending
                           ? 'border-blue-100 opacity-70 cursor-default'
                           : `cursor-pointer ${isSelected ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'}`
@@ -1063,6 +1071,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                           {isKioskBalance ? (
                             <p className="text-[10px] text-rose-500 font-semibold mt-0.5 flex items-center gap-1">
                               👁 Toca para ver qué consumió tu hijo
+                            </p>
+                          ) : isPos && !isCoveredByPending ? (
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {format(new Date(transaction.created_at), "d 'de' MMMM, yyyy • HH:mm", { locale: es })}
+                              {transaction.ticket_code && ` · ${transaction.ticket_code}`}
+                              <span className="ml-1.5 text-rose-400 font-medium">· Ver detalle →</span>
                             </p>
                           ) : (
                             <p className="text-[10px] text-slate-400">
@@ -1246,7 +1260,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           studentId={posDetailStudent.id}
           studentName={posDetailStudent.name}
           kioskDebt={posDetailStudent.debt}
-          onPay={(total) => handlePosPayment(posDetailStudent.id, total)}
+          onPay={posDetailStudent.readonly ? undefined : (total) => handlePosPayment(posDetailStudent.id, total)}
         />
       )}
 
