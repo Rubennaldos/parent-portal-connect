@@ -172,7 +172,14 @@ export const CierreMensual = () => {
 
   const isAdmin = role === 'admin_general' || role === 'superadmin';
 
-  const [selectedMonth, setSelectedMonth]         = useState('2026-03');
+  // ── Mes seleccionado: default al mes actual (Lima UTC-5), NO hardcodeado ────
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const hoyLima = new Date(Date.now() - 5 * 60 * 60 * 1000);
+    const y = hoyLima.getUTCFullYear();
+    const m = String(hoyLima.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  });
+
   // Fecha de emisión que figurará en todas las boletas del cierre.
   // Default = último día del mes seleccionado (contadora puede retrofechar hasta 7 días → SUNAT).
   const [emissionDateOverride, setEmissionDateOverride] = useState<string>(() => {
@@ -227,6 +234,10 @@ export const CierreMensual = () => {
   const [retryingExcluded, setRetryingExcluded] = useState(false);
   const excludedCount = excludedRows.length;
   const excludedTotal = round2(excludedRows.reduce((s, r) => s + Math.abs(r.amount), 0));
+
+  // Conteo rápido de transacciones 'failed' en el mes seleccionado (sin scan completo)
+  // Permite mostrar aviso de alerta cuando el usuario abre el Cierre sin escanear.
+  const [failedCountInMonth, setFailedCountInMonth] = useState<number>(0);
 
   // ── Cargar school_id del usuario ─────────────────────────────────────────────
   useEffect(() => {
@@ -286,6 +297,26 @@ export const CierreMensual = () => {
       .eq('billing_status', 'processing')
       .lt('billing_processing_at', ttlCutoff)
       .then(({ count }) => setZombieCount(count ?? 0));
+
+    // Conteo rápido de 'failed' en el mes seleccionado → avisa al admin antes de que escanee
+    const { start: fStart, end: fEnd } = (() => {
+      const [year, month] = selectedMonth.split('-').map(Number);
+      return {
+        start: new Date(Date.UTC(year, month - 1, 1, 5, 0, 0)).toISOString(),
+        end:   new Date(Date.UTC(year, month,     1, 5, 0, 0)).toISOString(),
+      };
+    })();
+    supabase
+      .from('transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', schoolId)
+      .in('billing_status', ['failed', 'excluded'])
+      .eq('is_taxable', true)
+      .eq('payment_status', 'paid')
+      .neq('amount', 0)
+      .gte('created_at', fStart)
+      .lt('created_at', fEnd)
+      .then(({ count }) => setFailedCountInMonth(count ?? 0));
 
     // Las transacciones de kiosco se guardan con amount negativo (débitos),
     // por eso se usa Math.abs() al mostrar. La alerta de "negativos" no aplica aquí.
@@ -1449,23 +1480,31 @@ export const CierreMensual = () => {
       </div>
 
       {/* ── Panel de Excluidas (Nubefact falló) ── */}
-      <div className="border border-orange-300 rounded-xl overflow-hidden">
+      <div className={`rounded-xl overflow-hidden border ${failedCountInMonth > 0 ? 'border-red-400 shadow-sm shadow-red-100' : 'border-orange-300'}`}>
         <button
           onClick={() => setShowExcluded(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 bg-orange-50 hover:bg-orange-100 transition-colors text-left"
+          className={`w-full flex items-center justify-between px-4 py-3 transition-colors text-left ${failedCountInMonth > 0 ? 'bg-red-50 hover:bg-red-100' : 'bg-orange-50 hover:bg-orange-100'}`}
         >
           <div className="flex items-center gap-2">
-            <XCircle className="h-4 w-4 text-orange-600 shrink-0" />
-            <span className="text-sm font-semibold text-orange-800">
+            <XCircle className={`h-4 w-4 shrink-0 ${failedCountInMonth > 0 ? 'text-red-600' : 'text-orange-600'}`} />
+            <span className={`text-sm font-semibold ${failedCountInMonth > 0 ? 'text-red-800' : 'text-orange-800'}`}>
               Reintentar Fallidas — Error SUNAT
             </span>
-            <span className="text-xs text-orange-600 hidden sm:inline">
-              — Transacciones con billing_status "failed" o "excluded" (is_taxable=true)
-            </span>
+            {/* Badge de alerta inmediata cuando hay fallidas sin escanear */}
+            {failedCountInMonth > 0 && !excludedScanned && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white animate-pulse">
+                {failedCountInMonth} con error
+              </span>
+            )}
+            {failedCountInMonth === 0 && (
+              <span className="text-xs text-orange-600 hidden sm:inline">
+                — Transacciones con billing_status "failed" o "excluded" (is_taxable=true)
+              </span>
+            )}
           </div>
           {showExcluded
-            ? <ChevronUp   className="h-4 w-4 text-orange-600 shrink-0" />
-            : <ChevronDown className="h-4 w-4 text-orange-600 shrink-0" />}
+            ? <ChevronUp   className={`h-4 w-4 shrink-0 ${failedCountInMonth > 0 ? 'text-red-600' : 'text-orange-600'}`} />
+            : <ChevronDown className={`h-4 w-4 shrink-0 ${failedCountInMonth > 0 ? 'text-red-600' : 'text-orange-600'}`} />}
         </button>
 
         {showExcluded && (
