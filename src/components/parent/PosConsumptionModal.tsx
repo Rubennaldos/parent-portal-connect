@@ -112,42 +112,29 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      // 1. Transacciones POS del alumno
-      const { data: txData, error: txErr } = await supabase
-        .from('transactions')
-        .select('id, created_at, amount, description, ticket_code, payment_method, metadata')
-        .eq('student_id', studentId)
-        .eq('type', 'purchase')
-        .filter('metadata->>source', 'eq', 'pos')
-        .in('payment_status', ['paid', 'pending'])
-        .eq('is_deleted', false)
-        .order('created_at', { ascending: false })
-        .limit(300);
+      // RPC seguro: obtiene transacciones POS + items de productos en una sola llamada.
+      // Evita el problema de RLS en la tabla `sales` que bloquea a los padres.
+      const { data, error: rpcErr } = await supabase
+        .rpc('get_student_pos_consumptions', { p_student_id: studentId });
 
-      if (txErr) throw txErr;
+      if (rpcErr) throw rpcErr;
 
-      const posOnly = (txData ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
-
-      // 2. Detalles de productos desde tabla `sales` (una query para todas)
-      let salesMap: Map<string, ProductItem[]> = new Map();
-      if (posOnly.length > 0) {
-        const txIds = posOnly.map((t: any) => t.id);
-        const { data: salesData } = await supabase
-          .from('sales')
-          .select('transaction_id, items')
-          .in('transaction_id', txIds);
-
-        (salesData ?? []).forEach((s: any) => {
-          if (s.transaction_id && Array.isArray(s.items)) {
-            salesMap.set(s.transaction_id, parseSaleItems(s.items));
-          }
-        });
-      }
-
-      // 3. Fusionar productos en cada consumo
-      const enriched: Consumo[] = posOnly.map((t: any) => ({
-        ...t,
-        sale_items: salesMap.get(t.id) ?? [],
+      const enriched: Consumo[] = (data ?? []).map((row: any) => ({
+        id:             row.id,
+        created_at:     row.created_at,
+        amount:         row.amount,
+        description:    row.description,
+        ticket_code:    row.ticket_code,
+        payment_method: row.payment_method,
+        payment_status: row.payment_status,
+        metadata:       row.metadata,
+        sale_items:     Array.isArray(row.sale_items)
+                          ? parseSaleItems(row.sale_items)
+                          : parseSaleItems(
+                              typeof row.sale_items === 'string'
+                                ? JSON.parse(row.sale_items)
+                                : []
+                            ),
       }));
 
       setConsumos(enriched);
