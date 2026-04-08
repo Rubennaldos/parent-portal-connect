@@ -1391,8 +1391,8 @@ Gracias.`;
           .select('id, created_at, amount, description, ticket_code, metadata')
           .eq('student_id', studentIdForKiosk)
           .eq('type', 'purchase')
-          .filter('metadata->>source', 'eq', 'pos')
-          .in('payment_status', ['paid', 'pending'])
+          // Sin filtro de source — compatibilidad con registros sin metadata.source
+          .in('payment_status', ['paid', 'pending', 'partial'])
           .eq('is_deleted', false)
           .order('created_at', { ascending: false })
           .limit(300);
@@ -2364,12 +2364,13 @@ Si tienes dudas, comunícate con la administración de tu sede.
           .select('id, created_at, amount, description, ticket_code, metadata')
           .eq('student_id', selectedTransaction.student_id)
           .eq('type', 'purchase')
-          .filter('metadata->>source', 'eq', 'pos')
-          .in('payment_status', ['paid', 'pending'])
+          // Sin filtro de source — algunos registros POS no tienen metadata.source='pos'
+          .in('payment_status', ['paid', 'pending', 'partial'])
           .eq('is_deleted', false)
           .order('created_at', { ascending: false })
           .limit(300);
         if (fetchErr) throw fetchErr;
+        // Excluir almuerzos (tienen lunch_order_id en metadata)
         const posOnly = (data ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
         setKioskItemsInDetail(posOnly);
       } catch {
@@ -4230,25 +4231,18 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         title={t.metadata?.is_kiosk_balance_debt ? 'Ver consumos del kiosco' : 'Ver detalle completo'}
                         className="shrink-0 p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-blue-500 hover:text-blue-700"
                         onClick={() => {
-                          if (t.metadata?.is_kiosk_balance_debt && selectedDebtorForDetail.student_id) {
-                            // Para saldo negativo kiosco → abrir desglose de consumos POS
-                            setKioskDetailData({
-                              studentId: selectedDebtorForDetail.student_id,
-                              studentName: selectedDebtorForDetail.client_name,
-                              kioskDebt: Math.abs(t.amount),
-                            });
-                            setShowKioskDetailModal(true);
-                          } else {
-                            setSelectedTransaction({
-                              ...t,
-                              client_name: selectedDebtorForDetail.client_name,
-                              client_type: selectedDebtorForDetail.client_type,
-                              parent_name: selectedDebtorForDetail.parent_name,
-                              parent_phone: selectedDebtorForDetail.parent_phone,
-                              school_name: selectedDebtorForDetail.school_name,
-                            });
-                            setShowDetailsModal(true);
-                          }
+                          // Para TODOS los tipos (incluyendo kiosk balance) → showDetailsModal
+                          // Se garantiza que student_id llega al selectedTransaction
+                          setSelectedTransaction({
+                            ...t,
+                            student_id: t.student_id || selectedDebtorForDetail.student_id,
+                            client_name: selectedDebtorForDetail.client_name,
+                            client_type: selectedDebtorForDetail.client_type,
+                            parent_name: selectedDebtorForDetail.parent_name,
+                            parent_phone: selectedDebtorForDetail.parent_phone,
+                            school_name: selectedDebtorForDetail.school_name,
+                          });
+                          setShowDetailsModal(true);
                         }}
                       >
                         <Eye className="h-4 w-4" />
@@ -4446,15 +4440,26 @@ Si tienes dudas, comunícate con la administración de tu sede.
                         <span className="font-semibold text-gray-900">{schoolName}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Cuenta:</span>
-                        {hasAccount ? (
-                          <span className="font-semibold text-green-700 flex items-center gap-1">
-                            ✅ Tiene cuenta en el sistema
-                          </span>
+                        {selectedTransaction.metadata?.is_kiosk_balance_debt ? (
+                          <>
+                            <span className="text-gray-600">Tipo de cobro:</span>
+                            <span className="font-semibold text-indigo-700 text-sm">
+                              Consumo Directo (Crédito)
+                            </span>
+                          </>
                         ) : (
-                          <span className="font-semibold text-red-600 flex items-center gap-1">
-                            ❌ No tiene cuenta
-                          </span>
+                          <>
+                            <span className="text-gray-600">Cuenta:</span>
+                            {hasAccount ? (
+                              <span className="font-semibold text-green-700 flex items-center gap-1">
+                                ✅ Tiene cuenta en el sistema
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-orange-600 flex items-center gap-1">
+                                ⚠️ Sin acceso digital
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                       {hasAccount && accountEmail && (
@@ -4593,42 +4598,54 @@ Si tienes dudas, comunícate con la administración de tu sede.
                             ))}
                           </div>
                         ) : kioskItemsInDetail.length === 0 ? (
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
-                            <p className="text-xs font-bold text-amber-700">⚠️ Sin historial digital detallado</p>
-                            <p className="text-[11px] text-amber-600 mt-0.5">
-                              La deuda existe pero los consumos individuales no están registrados digitalmente.
-                              Pueden ser de efectivo o períodos anteriores al sistema.
+                          <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+                            <p className="text-sm font-semibold text-slate-700">Saldo consolidado de períodos anteriores</p>
+                            <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                              Este saldo acumulado proviene de consumos en el kiosco registrados fuera del sistema digital actual.
+                              El monto de <strong>S/ {Math.abs(selectedTransaction.amount).toFixed(2)}</strong> es la deuda neta vigente del alumno.
                             </p>
                           </div>
-                        ) : (
-                          <>
-                            {kioskItemsInDetail.map(c => (
-                              <div
-                                key={c.id}
-                                className="flex items-center justify-between px-3 py-2.5 bg-white rounded-xl border border-slate-200"
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-semibold text-slate-700 truncate">
-                                    {c.description || 'Consumo en Cafetería'}
-                                  </p>
-                                  <p className="text-[10px] text-slate-400 mt-0.5">
-                                    {format(new Date(c.created_at), "d MMM yyyy · HH:mm", { locale: es })}
-                                    {c.ticket_code && <span className="ml-1.5 text-slate-300">· {c.ticket_code}</span>}
+                        ) : (() => {
+                          const sumItems = kioskItemsInDetail.reduce((s, c) => s + Math.abs(c.amount), 0);
+                          const totalDebt = Math.abs(selectedTransaction.amount);
+                          const hasMismatch = Math.abs(sumItems - totalDebt) > 0.10;
+                          return (
+                            <>
+                              {kioskItemsInDetail.map(c => (
+                                <div
+                                  key={c.id}
+                                  className="flex items-center justify-between px-3 py-2.5 bg-white rounded-xl border border-slate-200"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-slate-700 truncate">
+                                      {c.description || 'Consumo en Cafetería'}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">
+                                      {format(new Date(c.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                                      {c.ticket_code && <span className="ml-1.5 text-slate-300">· {c.ticket_code}</span>}
+                                    </p>
+                                  </div>
+                                  <p className="text-sm font-black text-rose-500 shrink-0 ml-3">
+                                    −S/ {Math.abs(c.amount).toFixed(2)}
                                   </p>
                                 </div>
-                                <p className="text-sm font-black text-rose-500 shrink-0 ml-3">
-                                  −S/ {Math.abs(c.amount).toFixed(2)}
-                                </p>
+                              ))}
+                              <div className="flex justify-between items-center pt-2 border-t border-blue-200 mt-1">
+                                <span className="text-xs text-gray-500">Total consumos registrados</span>
+                                <span className="text-sm font-black text-rose-500">
+                                  −S/ {sumItems.toFixed(2)}
+                                </span>
                               </div>
-                            ))}
-                            <div className="flex justify-between items-center pt-2 border-t border-blue-200 mt-1">
-                              <span className="text-xs text-gray-500">Total consumos registrados</span>
-                              <span className="text-sm font-black text-rose-500">
-                                −S/ {kioskItemsInDetail.reduce((s, c) => s + Math.abs(c.amount), 0).toFixed(2)}
-                              </span>
-                            </div>
-                          </>
-                        )}
+                              {hasMismatch && (
+                                <div className="mt-2 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
+                                  <p className="text-[11px] text-sky-700 leading-relaxed">
+                                    ℹ️ El monto total incluye ajustes de saldo manuales o recargas aplicadas (diferencia: S/ {Math.abs(sumItems - totalDebt).toFixed(2)}).
+                                  </p>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         <p className="text-[10px] text-gray-400 text-right pt-1">
                           Ref. interna: <span className="font-mono">{selectedTransaction.id}</span>
                         </p>
