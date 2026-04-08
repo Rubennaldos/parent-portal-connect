@@ -2165,7 +2165,12 @@ const POS = () => {
         p_client_mode:      clientMode,
         p_student_id:       clientMode === 'student' ? (selectedStudent?.id ?? null) : null,
         p_teacher_id:       clientMode === 'teacher' ? (selectedTeacher?.id ?? null) : null,
-        p_payment_method:   paymentMethod || 'efectivo',
+        // Para alumnos y profesores el método lo resuelve el RPC por p_client_mode
+        // (saldo, debt, teacher_account). Pasar null evita que se clasifique como efectivo.
+        // Para clientes genéricos, paymentMethod siempre está seteado desde el selector.
+        p_payment_method:   (clientMode === 'student' || clientMode === 'teacher')
+                              ? null
+                              : (paymentMethod || 'efectivo'),
         p_payment_metadata: paymentMeta,
         p_billing_data: billingData
           ? { document_type: billingData.document_type, client_name: billingData.client_name, client_dni_ruc: billingData.client_dni_ruc }
