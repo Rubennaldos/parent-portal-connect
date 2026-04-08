@@ -18,10 +18,30 @@ import {
   Wallet,
   RefreshCw,
   FileText,
+  Ticket,
+  Package,
+  ChevronRight,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import jsPDF from 'jspdf';
+
+interface SaleItem {
+  product_id: string | null;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+}
+
+interface TicketDetail {
+  id: string;
+  ticket_code: string | null;
+  amount: number;
+  description: string | null;
+  created_at: string;
+  items: SaleItem[];  // vacío si no hay detalle de productos
+}
 
 interface PaymentRecord {
   id: string;
@@ -37,9 +57,10 @@ interface PaymentRecord {
   created_at: string;
   request_type: 'recharge' | 'lunch_payment' | 'debt_payment' | null;
   description: string | null;
+  paid_transaction_ids?: string[];
   studentName: string;
   approverName: string | null;
-  // Comprobantes SUNAT individuales (puede haber más de uno si el voucher cubrió varias deudas)
+  // Comprobantes SUNAT individuales
   sunat_invoices?: { pdf_url: string | null; full_number: string | null; invoice_type: string | null }[];
 }
 
@@ -68,6 +89,9 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Detalles de tickets por record id (lazy loaded)
+  const [ticketDetailsMap, setTicketDetailsMap] = useState<Map<string, TicketDetail[]>>(new Map());
+  const [loadingTickets, setLoadingTickets] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchHistory();
@@ -132,6 +156,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           created_at: r.created_at,
           request_type: r.request_type as 'recharge' | 'lunch_payment' | 'debt_payment' | null,
           description: r.description,
+          paid_transaction_ids: Array.isArray(r.paid_transaction_ids) ? r.paid_transaction_ids : [],
           studentName,
           approverName: r.approved_by ? (approverMap[r.approved_by] ?? 'Administrador') : null,
         };
@@ -209,6 +234,70 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── Carga lazy de tickets al expandir ──────────────────────────────────────
+  const loadTicketDetails = async (record: PaymentRecord) => {
+    const txIds = record.paid_transaction_ids ?? [];
+    if (txIds.length === 0) return;
+    if (ticketDetailsMap.has(record.id)) return; // ya cargado
+
+    setLoadingTickets(prev => new Set(prev).add(record.id));
+    try {
+      // 1. Datos básicos de cada transacción
+      const { data: txData } = await supabase
+        .from('transactions')
+        .select('id, ticket_code, amount, description, created_at, metadata')
+        .in('id', txIds)
+        .order('created_at', { ascending: true });
+
+      if (!txData || txData.length === 0) {
+        setTicketDetailsMap(prev => new Map(prev).set(record.id, []));
+        return;
+      }
+
+      // 2. Intentar obtener ítems de productos desde la tabla sales
+      //    (transaction_id en sales es TEXT, txIds son UUIDs-como-string → compatibles)
+      const { data: salesData } = await supabase
+        .from('sales')
+        .select('transaction_id, items')
+        .in('transaction_id', txIds);
+
+      const salesMap = new Map<string, SaleItem[]>();
+      if (salesData) {
+        salesData.forEach((s: any) => {
+          const items: SaleItem[] = Array.isArray(s.items)
+            ? s.items.map((it: any) => ({
+                product_id:   it.product_id ?? null,
+                product_name: it.product_name ?? 'Producto',
+                quantity:     Number(it.quantity ?? 1),
+                unit_price:   Number(it.unit_price ?? 0),
+                subtotal:     Number(it.subtotal ?? 0),
+              }))
+            : [];
+          salesMap.set(s.transaction_id, items);
+        });
+      }
+
+      const details: TicketDetail[] = txData.map((tx: any) => ({
+        id:          tx.id,
+        ticket_code: tx.ticket_code ?? null,
+        amount:      Math.abs(Number(tx.amount)),
+        description: tx.description ?? null,
+        created_at:  tx.created_at,
+        items:       salesMap.get(tx.id) ?? [],
+      }));
+
+      setTicketDetailsMap(prev => new Map(prev).set(record.id, details));
+    } catch (err) {
+      console.error('Error cargando detalles de tickets:', err);
+    } finally {
+      setLoadingTickets(prev => {
+        const next = new Set(prev);
+        next.delete(record.id);
+        return next;
+      });
     }
   };
 
@@ -449,7 +538,11 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
             >
               {/* ── Fila compacta siempre visible ── */}
               <button
-                onClick={() => setExpandedId(isExpanded ? null : record.id)}
+                onClick={() => {
+                  const next = isExpanded ? null : record.id;
+                  setExpandedId(next);
+                  if (next) loadTicketDetails(record);
+                }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
               >
                 {/* Ícono tipo */}
@@ -492,6 +585,79 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                     <p className="text-[11px] text-slate-600 bg-white rounded-xl px-3 py-2 leading-snug border border-slate-100">
                       {record.description}
                     </p>
+                  )}
+
+                  {/* ── Detalles de tickets pagados ── */}
+                  {record.request_type !== 'recharge' && (record.paid_transaction_ids ?? []).length > 0 && (
+                    <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
+                      {/* Encabezado tickets */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-100">
+                        <Ticket className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                        <span className="text-[11px] font-semibold text-slate-600">
+                          {(record.paid_transaction_ids ?? []).length} ticket{(record.paid_transaction_ids ?? []).length !== 1 ? 's' : ''} incluido{(record.paid_transaction_ids ?? []).length !== 1 ? 's' : ''} en este pago
+                        </span>
+                      </div>
+
+                      {/* Estado de carga */}
+                      {loadingTickets.has(record.id) && (
+                        <div className="flex items-center justify-center gap-2 py-4">
+                          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                          <span className="text-[11px] text-slate-400">Cargando tickets...</span>
+                        </div>
+                      )}
+
+                      {/* Lista de tickets */}
+                      {!loadingTickets.has(record.id) && (ticketDetailsMap.get(record.id) ?? []).map((ticket, idx) => (
+                        <div
+                          key={ticket.id}
+                          className={`px-3 py-2.5 ${idx > 0 ? 'border-t border-slate-100' : ''}`}
+                        >
+                          {/* Fila principal del ticket */}
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <div className="flex-1 min-w-0">
+                              {ticket.ticket_code && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-mono bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mb-1">
+                                  <Hash className="h-2.5 w-2.5" />
+                                  {ticket.ticket_code}
+                                </span>
+                              )}
+                              <p className="text-[10px] text-slate-400">
+                                {format(new Date(ticket.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                              </p>
+                            </div>
+                            <span className="text-xs font-bold text-slate-800 shrink-0">
+                              S/ {ticket.amount.toFixed(2)}
+                            </span>
+                          </div>
+
+                          {/* Ítems de productos */}
+                          {ticket.items.length > 0 ? (
+                            <div className="space-y-1 pl-1">
+                              {ticket.items.map((item, i) => (
+                                <div key={i} className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <Package className="h-3 w-3 text-slate-300 shrink-0" />
+                                    <span className="text-[10px] text-slate-600 truncate">
+                                      {item.quantity > 1 && (
+                                        <span className="font-semibold text-slate-800">{item.quantity}× </span>
+                                      )}
+                                      {item.product_name}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] text-slate-400 shrink-0">
+                                    S/ {item.subtotal.toFixed(2)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-slate-300 pl-1 italic">
+                              Detalle no disponible
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
 
                   {/* Detalles del pago */}
