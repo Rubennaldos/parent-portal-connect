@@ -1356,7 +1356,7 @@ Gracias.`;
 
     // Obtener los items reales de transacciones POS (transaction_items)
     const realTxIds = debtor.transactions
-      .filter((t: any) => !t.id?.toString().startsWith('lunch_') && t.id)
+      .filter((t: any) => !t.id?.toString().startsWith('lunch_') && t.id && !t.metadata?.is_kiosk_balance_debt)
       .map((t: any) => t.id);
 
     let itemsByTxId = new Map<string, any[]>();
@@ -1380,6 +1380,32 @@ Gracias.`;
       }
     }
 
+    // Obtener consumos POS del alumno para transacciones de saldo negativo kiosco
+    const kioskDebtTx = debtor.transactions.find((t: any) => t.metadata?.is_kiosk_balance_debt);
+    let kioskPosItems: any[] = [];
+    const studentIdForKiosk = kioskDebtTx?.student_id || debtor.transactions[0]?.student_id;
+    if (kioskDebtTx && studentIdForKiosk) {
+      try {
+        const { data: posData } = await supabase
+          .from('transactions')
+          .select('id, created_at, amount, description, ticket_code, metadata')
+          .eq('student_id', studentIdForKiosk)
+          .eq('type', 'purchase')
+          .filter('metadata->>source', 'eq', 'pos')
+          .in('payment_status', ['paid', 'pending'])
+          .eq('is_deleted', false)
+          .order('created_at', { ascending: false })
+          .limit(300);
+        kioskPosItems = (posData ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
+      } catch (e) {
+        console.error('Error fetching kiosk POS items for PDF:', e);
+      }
+    }
+
+    // Referencia interna: la primera transacción real (no-lunch virtual)
+    const firstRealTx = debtor.transactions.find((t: any) => !t.id?.toString().startsWith('lunch_'));
+    const referenceId = firstRealTx?.id;
+
     generateBillingPDF({
       student_name: debtor.client_name,
       parent_name: debtor.parent_name,
@@ -1388,14 +1414,40 @@ Gracias.`;
       period_name: periodName,
       start_date: startDate,
       end_date: endDate,
+      reference_id: referenceId,
       transactions: debtor.transactions.map(t => {
+        const isKioskDebt = t.metadata?.is_kiosk_balance_debt === true;
+
         // Construir descripcion enriquecida con detalles del consumo
         let desc = t.description || 'Consumo';
+
+        // Si es deuda de kiosco, adjuntar los items POS
+        if (isKioskDebt) {
+          const orderDate = t.created_at;
+          return {
+            id: t.id,
+            created_at: orderDate,
+            payment_date: undefined,
+            ticket_code: t.ticket_code,
+            description: 'Saldo negativo kiosco',
+            amount: t.amount,
+            menu_name: null,
+            menu_date: null,
+            payment_method: null,
+            is_kiosk_balance_debt: true,
+            kiosk_items: kioskPosItems.map((p: any) => ({
+              description: p.description || 'Consumo en cafeteria',
+              amount: p.amount,
+              created_at: p.created_at,
+              ticket_code: p.ticket_code,
+            })),
+          };
+        }
 
         // Si tiene items reales de POS, mostrar los productos en vez de la descripcion generica
         const items = itemsByTxId.get(t.id);
         if (items && items.length > 0) {
-          const productLines = items.map((item: any) => 
+          const productLines = items.map((item: any) =>
             `${item.product_name}${item.quantity > 1 ? ` x${item.quantity}` : ''}`
           );
           desc = productLines.join(', ');
@@ -1415,6 +1467,8 @@ Gracias.`;
           menu_name: t.metadata?.menu_name || null,
           menu_date: t.metadata?.menu_date || null,
           payment_method: t.payment_method || null,
+          is_kiosk_balance_debt: false,
+          kiosk_items: undefined,
         };
       }),
       total_amount: debtor.total_amount,
@@ -4737,6 +4791,19 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   ) : (
                     <Button
                       onClick={() => {
+                        // Enriquecer la transacción con los items de kiosco ya cargados en state
+                        const enrichedTx = selectedTransaction.metadata?.is_kiosk_balance_debt
+                          ? {
+                              ...selectedTransaction,
+                              is_kiosk_balance_debt: true,
+                              kiosk_items: kioskItemsInDetail.map((p: any) => ({
+                                description: p.description || 'Consumo en cafeteria',
+                                amount: p.amount,
+                                created_at: p.created_at,
+                                ticket_code: p.ticket_code,
+                              })),
+                            }
+                          : selectedTransaction;
                         generatePDF({
                           id: selectedTransaction.teacher_id || selectedTransaction.student_id || 'manual',
                           client_name: clientName,
@@ -4745,7 +4812,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                           school_name: schoolName,
                           total_amount: Math.abs(selectedTransaction.amount),
                           transaction_count: 1,
-                          transactions: [selectedTransaction],
+                          transactions: [enrichedTx],
                         } as Debtor);
                         setShowDetailsModal(false);
                       }}
