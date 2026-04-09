@@ -60,17 +60,26 @@ export default function Teacher() {
     }
   }, [user]);
 
+  // Carga inicial: en cuanto el perfil esté disponible, cargar TODO de una vez
+  // para que el tab "Inicio" muestre datos reales sin tener que cambiar de pestaña.
   useEffect(() => {
-    // Cargar datos según la pestaña activa
     if (teacherProfile) {
-      if (activeTab === 'history') {
-        fetchPurchaseHistory();
-      } else if (activeTab === 'payments') {
-        fetchCurrentBalance();
-        fetchPendingAndPaidTransactions();
-      }
+      fetchPurchaseHistory();
+      fetchCurrentBalance();
+      fetchPendingAndPaidTransactions();
     }
-  }, [activeTab, teacherProfile]);
+  }, [teacherProfile]);
+
+  // Re-carga al cambiar de pestaña (para datos frescos)
+  useEffect(() => {
+    if (!teacherProfile) return;
+    if (activeTab === 'history') {
+      fetchPurchaseHistory();
+    } else if (activeTab === 'payments') {
+      fetchCurrentBalance();
+      fetchPendingAndPaidTransactions();
+    }
+  }, [activeTab]);
 
   const fetchCurrentBalance = async () => {
     if (!teacherProfile) return;
@@ -672,9 +681,25 @@ export default function Teacher() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4">
+                      {/* Deuda pendiente — el número que coincide con Cobranzas */}
+                      {currentBalance < 0 && (
+                        <div className="flex items-center justify-between p-4 bg-red-50 border border-red-200 rounded-lg">
+                          <div>
+                            <p className="text-sm font-semibold text-red-700">⚠️ Deuda Pendiente</p>
+                            <p className="text-2xl font-bold text-red-600">
+                              S/ {Math.abs(currentBalance).toFixed(2)}
+                            </p>
+                            <p className="text-xs text-red-500 mt-1">
+                              Tickets sin pagar — coordina con administración
+                            </p>
+                          </div>
+                          <DollarSign className="h-10 w-10 text-red-500" />
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between p-4 bg-purple-50 rounded-lg">
                         <div>
-                          <p className="text-sm text-gray-600">Total Gastado</p>
+                          <p className="text-sm text-gray-600">Total Gastado (histórico)</p>
                           <p className="text-2xl font-bold text-purple-600">
                             S/ {totalSpent.toFixed(2)}
                           </p>
@@ -682,13 +707,17 @@ export default function Teacher() {
                         <ShoppingBag className="h-10 w-10 text-purple-600" />
                       </div>
                       
-                      <div className="p-4 bg-green-50 rounded-lg">
+                      <div className={`p-4 rounded-lg ${currentBalance < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
                         <div className="flex items-center gap-2 mb-2">
-                          <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-                          <p className="text-sm font-semibold text-green-800">Cuenta Activa</p>
+                          <div className={`h-2 w-2 rounded-full animate-pulse ${currentBalance < 0 ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                          <p className={`text-sm font-semibold ${currentBalance < 0 ? 'text-red-800' : 'text-green-800'}`}>
+                            {currentBalance < 0 ? 'Deuda activa' : 'Cuenta Activa'}
+                          </p>
                         </div>
-                        <p className="text-xs text-green-700">
-                          Tu cuenta está habilitada para compras sin restricciones.
+                        <p className={`text-xs ${currentBalance < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                          {currentBalance < 0
+                            ? `Tienes S/ ${Math.abs(currentBalance).toFixed(2)} pendiente de pago. Ve a la pestaña Pagos para ver el detalle.`
+                            : 'Tu cuenta está habilitada para compras sin restricciones.'}
                         </p>
                       </div>
                     </div>
