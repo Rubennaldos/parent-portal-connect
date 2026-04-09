@@ -11,23 +11,33 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- similitud trigrama
 CREATE EXTENSION IF NOT EXISTS unaccent;  -- normalización de tildes
 
--- ── Índices GIN en full_name (inmutable: ya existe → no hace nada) ──────────
--- Estos índices permiten que word_similarity() sea O(log n)
+-- ── Helper IMMUTABLE para usar en índices ────────────────────────────────────
+-- unaccent() es STABLE por defecto → no puede usarse en expresiones de índice.
+-- Solución estándar: wrapper IMMUTABLE que llama a unaccent().
+-- (Seguro porque unaccent solo lee su diccionario, nunca cambia entre filas)
 
-CREATE INDEX IF NOT EXISTS idx_students_name_trgm
-  ON students USING gin (unaccent(lower(full_name)) gin_trgm_ops);
+CREATE OR REPLACE FUNCTION immutable_unaccent(t text)
+RETURNS text
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT public.unaccent(t); $$;
 
-CREATE INDEX IF NOT EXISTS idx_teacher_profiles_name_trgm
-  ON teacher_profiles USING gin (unaccent(lower(full_name)) gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_profiles_name_trgm
-  ON profiles USING gin (unaccent(lower(full_name)) gin_trgm_ops);
-
--- ── Helper: normalizar texto (quitar tildes + minúsculas + espacios) ─────────
+-- normalize_search: quitar tildes + minúsculas + espacios (usable en índices)
 CREATE OR REPLACE FUNCTION normalize_search(t text)
 RETURNS text
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT unaccent(lower(trim(t))); $$;
+AS $$ SELECT immutable_unaccent(lower(trim(t))); $$;
+
+-- ── Índices GIN en full_name (usa la función IMMUTABLE) ──────────────────────
+-- Estos índices permiten que word_similarity() sea O(log n)
+
+CREATE INDEX IF NOT EXISTS idx_students_name_trgm
+  ON students USING gin (normalize_search(full_name) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_teacher_profiles_name_trgm
+  ON teacher_profiles USING gin (normalize_search(full_name) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_name_trgm
+  ON profiles USING gin (normalize_search(full_name) gin_trgm_ops);
 
 -- ── RPC principal: search_persons_v2 ─────────────────────────────────────────
 -- Busca alumnos, profesores y admins en paralelo.
