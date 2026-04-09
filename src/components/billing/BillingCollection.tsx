@@ -137,6 +137,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const txSyncTs = useDebouncedSync('transactions', 600);
 
   const isLunchTx = (t: any): boolean => {
+    // El RPC calcula is_lunch / es_almuerzo en el servidor — usar como fuente primaria
+    if (t.is_lunch   === true) return true;
+    if (t.es_almuerzo === true) return true;
+    // Fallbacks para datos que no vienen del RPC (transacciones locales / PDF)
     if (t.metadata?.lunch_order_id) return true;
     if (t.metadata?.source === 'lunch_order' || t.metadata?.source === 'lunch') return true;
     if (t.id?.toString().startsWith('lunch_')) return true;
@@ -167,25 +171,40 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       const rawDate = t.metadata?.order_created_at || t.created_at;
       const dateStr = format(new Date(rawDate), 'dd/MM', { locale: es });
 
-      // Nombre del consumo
+      // Las compras POS suelen guardarse con amount negativo; siempre mostramos positivo
+      const lineAmount = Math.abs(Number(t.amount ?? 0));
+
+      // ── Caso especial: deuda de saldo negativo kiosco ──────────────────────
+      if (t.metadata?.is_kiosk_balance_debt) {
+        const kioskItems = itemsByTxId.get(t.id);
+        if (kioskItems && kioskItems.length > 0) {
+          // Tenemos consumos POS reales — listarlos
+          const lines = kioskItems.map((k: any) => {
+            const kDate = format(new Date(k.created_at || rawDate), 'dd/MM', { locale: es });
+            const desc  = k.description || k.product_name || 'Consumo kiosco';
+            const amt   = Math.abs(Number(k.amount ?? 0));
+            return `  • ${kDate}: ${desc} *(S/ ${amt.toFixed(2)})*`;
+          }).join('\n');
+          return `- Saldo negativo en kiosco *(S/ ${lineAmount.toFixed(2)})*:\n${lines}`;
+        }
+        return `- ${dateStr}: Saldo negativo acumulado en kiosco *(S/ ${lineAmount.toFixed(2)})*`;
+      }
+
+      // ── POS / Almuerzo normales ──────────────────────────────────────────
       let productDesc: string;
       const items = itemsByTxId.get(t.id);
       if (items && items.length > 0) {
-        // POS: listar productos con cantidad
         productDesc = items
           .map((i: any) => `${i.product_name}${i.quantity > 1 ? ` x${i.quantity}` : ''}`)
           .join(', ');
       } else if (t.metadata?.menu_name) {
         productDesc = `Almuerzo - ${t.metadata.menu_name}`;
       } else if (t.description) {
-        // Limpiar "Almuerzo - Menú del día - 15/03/2026" para no repetir la fecha
         productDesc = t.description.replace(/\s*-\s*\d{2}\/\d{2}\/\d{4}$/, '');
       } else {
         productDesc = 'Consumo';
       }
 
-      // Las compras POS suelen guardarse con amount negativo; en el mensaje siempre mostramos monto positivo
-      const lineAmount = Math.abs(Number(t.amount ?? 0));
       return `- ${dateStr}: ${productDesc} *(S/ ${lineAmount.toFixed(2)})*`;
     }).join('\n');
   };
@@ -1237,7 +1256,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
     // ── 1. Obtener items de POS para el desglose ──
     const posIds = debtor.transactions
-      .filter((t: any) => !isLunchTx(t) && t.id && !t.id.toString().startsWith('lunch_'))
+      .filter((t: any) => !isLunchTx(t) && t.id && !t.id.toString().startsWith('lunch_') && !t.metadata?.is_kiosk_balance_debt)
       .map((t: any) => t.id);
 
     const itemsByTxId = new Map<string, any[]>();
@@ -1255,6 +1274,30 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         });
       } catch (e) {
         console.error('[copyMessage] Error fetching transaction_items:', e);
+      }
+    }
+
+    // ── 1b. Para deudas de saldo negativo kiosco: buscar consumos POS reales ──
+    const kioskDebtTxs = debtor.transactions.filter((t: any) => t.metadata?.is_kiosk_balance_debt);
+    for (const kioskTx of kioskDebtTxs) {
+      const studentId = kioskTx.student_id || debtor.transactions[0]?.student_id || null;
+      if (!studentId) continue;
+      try {
+        const { data: posData } = await supabase
+          .from('transactions')
+          .select('id, created_at, amount, description, ticket_code, metadata')
+          .eq('student_id', studentId)
+          .eq('type', 'purchase')
+          .eq('is_deleted', false)
+          .in('payment_status', ['paid', 'pending', 'partial'])
+          .filter('metadata->>lunch_order_id', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (posData && posData.length > 0) {
+          itemsByTxId.set(kioskTx.id, posData);
+        }
+      } catch (e) {
+        console.error('[copyMessage] Error fetching kiosk POS items:', e);
       }
     }
 
