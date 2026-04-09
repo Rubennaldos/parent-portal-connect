@@ -1278,23 +1278,27 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
     }
 
     // ── 1b. Para deudas de saldo negativo kiosco: buscar consumos POS reales ──
+    // NOTA: el RPC no incluye student_id dentro de cada tx individual.
+    // debtor.id = debtor_key = student_id::text para alumnos.
     const kioskDebtTxs = debtor.transactions.filter((t: any) => t.metadata?.is_kiosk_balance_debt);
-    for (const kioskTx of kioskDebtTxs) {
-      const studentId = kioskTx.student_id || debtor.transactions[0]?.student_id || null;
-      if (!studentId) continue;
+    if (kioskDebtTxs.length > 0 && debtor.client_type === 'student' && debtor.id) {
       try {
         const { data: posData } = await supabase
           .from('transactions')
           .select('id, created_at, amount, description, ticket_code, metadata')
-          .eq('student_id', studentId)
+          .eq('student_id', debtor.id)
           .eq('type', 'purchase')
           .eq('is_deleted', false)
           .in('payment_status', ['paid', 'pending', 'partial'])
-          .filter('metadata->>lunch_order_id', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(30);
-        if (posData && posData.length > 0) {
-          itemsByTxId.set(kioskTx.id, posData);
+          .limit(50);
+        // Filtrar almuerzos en cliente (evita problemas con sintaxis JSON en PostgREST)
+        const filtered = (posData ?? []).filter((t: any) => !t.metadata?.lunch_order_id);
+        if (filtered.length > 0) {
+          // Asignar los consumos a CADA transacción kiosk balance
+          kioskDebtTxs.forEach((kioskTx: any) => {
+            itemsByTxId.set(kioskTx.id, filtered);
+          });
         }
       } catch (e) {
         console.error('[copyMessage] Error fetching kiosk POS items:', e);
@@ -1407,9 +1411,11 @@ Gracias.`;
     }
 
     // Obtener consumos POS del alumno para transacciones de saldo negativo kiosco
+    // NOTA: el RPC no incluye student_id en cada tx individual — usar debtor.id
     const kioskDebtTx = debtor.transactions.find((t: any) => t.metadata?.is_kiosk_balance_debt);
     let kioskPosItems: any[] = [];
-    const studentIdForKiosk = kioskDebtTx?.student_id || debtor.transactions[0]?.student_id;
+    // debtor.id = student UUID para alumnos (debtor_key = student_id::text)
+    const studentIdForKiosk = debtor.client_type === 'student' ? debtor.id : null;
     if (kioskDebtTx && studentIdForKiosk) {
       try {
         const { data: posData } = await supabase
@@ -1417,7 +1423,6 @@ Gracias.`;
           .select('id, created_at, amount, description, ticket_code, metadata')
           .eq('student_id', studentIdForKiosk)
           .eq('type', 'purchase')
-          // Sin filtro de source — compatibilidad con registros sin metadata.source
           .in('payment_status', ['paid', 'pending', 'partial'])
           .eq('is_deleted', false)
           .order('created_at', { ascending: false })
