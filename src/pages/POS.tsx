@@ -4047,14 +4047,12 @@ const POS = () => {
                       return;
                     }
                   }
-                  const esEfectivoUnico = paymentMethod === 'efectivo';
-                  if (!esEfectivoUnico) {
-                    setShowConfirmDialog(false);
-                    setPendingInvoiceType('boleta');
-                    setInvoiceTypeLocked(false);
-                    setShowInvoiceClientModal(true);
-                    return;
-                  }
+                  // Todos los métodos de pago pasan por el selector de comprobante.
+                  // TICKET  → handleConfirmCheckout() directo, sin datos fiscales.
+                  // BOLETA  → abre InvoiceClientModal con tipo = boleta.
+                  // FACTURA → abre InvoiceClientModal con tipo = factura.
+                  // Esto garantiza que el script de cierre de día pueda agrupar
+                  // todos los TICKET de cualquier método en una sola boleta SUNAT.
                   setShowConfirmDialog(false);
                   setShowDocumentTypeDialog(true);
                 }}
