@@ -936,7 +936,18 @@ export const VoucherApproval = () => {
         );
 
         if (rpcErr) {
-          const msg = rpcErr.message || '';
+          const msg = rpcErr.message || rpcErr.details || '';
+          // Log completo para diagnóstico — no se muestra al usuario
+          console.error('[VoucherApproval] Error al aprobar voucher:', {
+            request_id: req.id,
+            student: req.students?.full_name,
+            amount: req.amount,
+            error_message: rpcErr.message,
+            error_details: rpcErr.details,
+            error_hint: rpcErr.hint,
+            error_code: rpcErr.code,
+          });
+
           if (msg.includes('ALREADY_PROCESSED') || msg.includes('RACE_CONDITION')) {
             toast({
               title: '⚠️ Ya fue procesado',
@@ -954,8 +965,39 @@ export const VoucherApproval = () => {
                 'Recarga la lista de deudores y verifica antes de proceder.',
               duration: 12000,
             });
+          } else if (msg.includes('NOT_FOUND')) {
+            toast({
+              variant: 'destructive',
+              title: '⚠️ Solicitud no encontrada',
+              description: 'No se encontró la solicitud en la base de datos. Recarga la lista e intenta de nuevo.',
+            });
+            fetchRequests();
+          } else if (
+            msg.toLowerCase().includes('coalesce') ||
+            msg.toLowerCase().includes('cannot be matched') ||
+            msg.toLowerCase().includes('type') ||
+            msg.toLowerCase().includes('uuid')
+          ) {
+            // Error de tipo SQL — indica un bug en el RPC, no en los datos
+            toast({
+              variant: 'destructive',
+              title: '🔧 Error técnico en el servidor',
+              description:
+                'Hubo un problema interno al procesar la aprobación. ' +
+                'El comprobante NO fue aprobado. ' +
+                'Contacta a soporte con este ID: ' + req.id.slice(0, 8),
+              duration: 15000,
+            });
           } else {
-            throw rpcErr;
+            // Error desconocido — mostrar mensaje genérico sin el SQL crudo
+            toast({
+              variant: 'destructive',
+              title: '❌ Error al aprobar',
+              description:
+                `No se pudo aprobar el comprobante de ${req.students?.full_name || 'el alumno'}. ` +
+                `Intenta de nuevo. Si el error persiste, anota el ID ${req.id.slice(0, 8)} y contacta soporte.`,
+              duration: 12000,
+            });
           }
           return;
         }
