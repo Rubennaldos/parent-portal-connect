@@ -6,12 +6,10 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ReporteVentasPeriodo } from '@/components/admin/reports/ReporteVentasPeriodo';
-import { ReporteDeudasCobranzas } from '@/components/admin/reports/ReporteDeudasCobranzas';
 import { ReporteItemizado } from '@/components/admin/reports/ReporteItemizado';
 import { ReporteArqueo } from '@/components/admin/reports/ReporteArqueo';
 import {
   TrendingUp,
-  AlertCircle,
   UtensilsCrossed,
   Wallet,
   ClipboardList,
@@ -25,7 +23,6 @@ import {
 
 export type ReportType =
   | 'ventas_periodo'
-  | 'deudas_cobranzas'
   | 'almuerzos'
   | 'recargas'
   | 'arqueo_caja';
@@ -52,18 +49,6 @@ const REPORTS: ReportCard[] = [
     gradient:    'from-emerald-50 to-teal-50',
     iconBg:      'bg-emerald-100',
     iconColor:   'text-emerald-600',
-    badge:       'Disponible',
-    badgeColor:  'bg-emerald-100 text-emerald-700',
-    available:   true,
-  },
-  {
-    id:          'deudas_cobranzas',
-    title:       'Deudas y Cobranzas',
-    description: 'Resumen de deudas pendientes por alumno, familia y sede. Incluye deuda de kiosco y almuerzos.',
-    icon:        AlertCircle,
-    gradient:    'from-rose-50 to-pink-50',
-    iconBg:      'bg-rose-100',
-    iconColor:   'text-rose-600',
     badge:       'Disponible',
     badgeColor:  'bg-emerald-100 text-emerald-700',
     available:   true,
@@ -238,7 +223,6 @@ function ReportCardItem({
 
 const REPORT_META: Record<ReportType, { title: string; icon: React.ElementType; color: string }> = {
   ventas_periodo:   { title: 'Ventas por Período',         icon: TrendingUp,      color: 'text-emerald-600' },
-  deudas_cobranzas: { title: 'Deudas y Cobranzas',         icon: AlertCircle,     color: 'text-rose-600'    },
   almuerzos:        { title: 'Ventas Itemizadas',           icon: UtensilsCrossed, color: 'text-amber-600'   },
   recargas:         { title: 'Kardex e Inventario',         icon: Wallet,          color: 'text-blue-600'    },
   arqueo_caja:      { title: 'Arqueo de Caja',              icon: ClipboardList,   color: 'text-violet-600'  },
@@ -274,11 +258,6 @@ function ReportViewer({
       {/* ── Reporte 1: Ventas por Período ── */}
       {reportType === 'ventas_periodo' && (
         <ReporteVentasPeriodo schoolId={schoolId} />
-      )}
-
-      {/* ── Reporte 2: Deudas y Cobranzas ── */}
-      {reportType === 'deudas_cobranzas' && (
-        <ReporteDeudasCobranzas schoolId={schoolId} />
       )}
 
       {/* ── Reportes 3 y 4: Itemizado (Ventas Producto + Kardex) ── */}

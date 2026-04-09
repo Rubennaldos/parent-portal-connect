@@ -9,7 +9,7 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { FileText, FileSpreadsheet, Download, Calendar, Building2, Info } from 'lucide-react';
+import { FileText, FileSpreadsheet, Download, Calendar, Building2, Info, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -60,17 +60,29 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
   const { toast }                        = useToast();
 
   const today = new Date();
-  const [dateFrom, setDateFrom] = useState<string>(format(today, 'yyyy-MM-dd'));
-  const [dateTo,   setDateTo]   = useState<string>(format(today, 'yyyy-MM-dd'));
-  const [loading,  setLoading]  = useState(false);
+  const [dateFrom,  setDateFrom]  = useState<string>(format(today, 'yyyy-MM-dd'));
+  const [dateTo,    setDateTo]    = useState<string>(format(today, 'yyyy-MM-dd'));
+  const [timeFrom,  setTimeFrom]  = useState<string>('00:00');
+  const [timeTo,    setTimeTo]    = useState<string>('23:59');
+  const [loading,   setLoading]   = useState(false);
 
   // ── Fetch fresco de la BD ──────────────────────────────────────────────────
   const fetchData = async (): Promise<TxRow[]> => {
-    const limaMs = 5 * 60 * 60 * 1000;
+    // Lima = UTC-5 → para convertir hora Lima a UTC, sumar 5 horas
+    const limaOffsetMs = 5 * 60 * 60 * 1000;
     const [fY, fM, fD] = dateFrom.split('-').map(Number);
     const [tY, tM, tD] = dateTo.split('-').map(Number);
-    const startUTC = new Date(Date.UTC(fY, fM - 1, fD)  + limaMs);
-    const endUTC   = new Date(Date.UTC(tY, tM - 1, tD + 1) + limaMs - 1);
+    const [fromH, fromMin] = timeFrom.split(':').map(Number);
+    const [toH,   toMin]   = timeTo.split(':').map(Number);
+
+    // Inicio: fecha inicio a hora inicio Lima → UTC
+    const startUTC = new Date(
+      Date.UTC(fY, fM - 1, fD, fromH, fromMin, 0) + limaOffsetMs
+    );
+    // Fin: fecha fin a hora fin Lima → UTC (incluye el minuto completo)
+    const endUTC = new Date(
+      Date.UTC(tY, tM - 1, tD, toH, toMin, 59) + limaOffsetMs
+    );
 
     const PAGE = 1000;
     let allData: TxRow[] = [];
@@ -259,55 +271,74 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
     const promedio     = cantidadTx > 0 ? totalVentas / cantidadTx : 0;
 
     const wb = XLSX.utils.book_new();
-    const ws: XLSX.WorkSheet = {};
-    const set = (cell: string, v: unknown) => { ws[cell] = { v }; };
 
-    set('A1', 'ARQUEO DE CAJA — LIMA CAFE');
-    set('A2', `Período: ${label}   |   Generado: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`);
-
-    set('A4', 'TOTAL VENTAS');   set('B4', `S/ ${totalVentas.toFixed(2)}`);
-    set('C4', 'TRANSACCIONES');  set('D4', cantidadTx);
-    set('E4', 'PROMEDIO');       set('F4', `S/ ${promedio.toFixed(2)}`);
-
-    const headers = ['ID Ticket', 'Cliente', 'Sede', 'Fecha / Hora', 'Categoría', 'Cajero', 'Método de Pago', 'Monto (S/)'];
-    headers.forEach((h, i) => set(`${String.fromCharCode(65 + i)}6`, h));
-
-    data.forEach((t, idx) => {
-      const row        = 7 + idx;
-      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'Venta General';
-      const categoria  = isLunch(t) ? 'Almuerzo' : 'Cafetería';
-      const cajero     = (t as any).profiles?.full_name || (t as any).profiles?.email || 'Sistema';
-      const metodo     = t.payment_method
+    // ── Sheet 1: Transactions (filterable) ────────────────────────────────
+    const txHeaders = [
+      'Ticket ID', 'Client', 'School', 'Date', 'Time', 'Hour',
+      'Category', 'Cashier', 'Payment Method', 'Amount (S/)',
+    ];
+    const txRows: (string | number)[][] = [txHeaders];
+    data.forEach(t => {
+      const dt         = new Date(t.created_at);
+      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'General Sale';
+      const category   = isLunch(t) ? 'Lunch' : 'Cafeteria/Kiosk';
+      const cashier    = (t as any).profiles?.full_name || (t as any).profiles?.email || 'System';
+      const method     = t.payment_method
         ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1)
-        : 'Efectivo';
-
-      set(`A${row}`, t.ticket_code || '—');
-      set(`B${row}`, clientName);
-      set(`C${row}`, t.school?.name ?? '—');
-      set(`D${row}`, format(new Date(t.created_at), 'dd/MM/yyyy HH:mm'));
-      set(`E${row}`, categoria);
-      set(`F${row}`, cajero);
-      set(`G${row}`, metodo);
-      ws[`H${row}`] = { v: Math.abs(t.amount || 0), t: 'n' };
+        : 'Cash';
+      txRows.push([
+        t.ticket_code || '',
+        clientName,
+        t.school?.name ?? '',
+        format(dt, 'yyyy-MM-dd'),         // Date separado — filtreable
+        format(dt, 'HH:mm:ss'),           // Time separado — filtreable
+        dt.getHours(),                    // Hour (número) — filtreable
+        category,
+        cashier,
+        method,
+        Math.abs(t.amount || 0),
+      ]);
     });
+    // Fila de total
+    txRows.push(['TOTAL', '', '', '', '', '', '', '', '', totalVentas]);
 
-    const lastRow = 7 + cantidadTx;
-    set(`G${lastRow}`, 'TOTAL GENERAL');
-    ws[`H${lastRow}`] = { v: totalVentas, t: 'n' };
-
-    ws['!ref']  = `A1:H${lastRow}`;
-    ws['!cols'] = [
-      { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 18 },
-      { wch: 14 }, { wch: 24 }, { wch: 16 }, { wch: 12 },
+    const wsTx = XLSX.utils.aoa_to_sheet(txRows);
+    wsTx['!cols'] = [
+      { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 6 },
+      { wch: 16 }, { wch: 24 }, { wch: 16 }, { wch: 12 },
     ];
-    ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-    ];
+    // AutoFilter en todas las columnas de datos
+    wsTx['!autofilter'] = { ref: `A1:J${txRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsTx, 'Transactions');
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Arqueo');
-    XLSX.writeFile(wb, `arqueo_ventas_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`);
-    toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas desde la base de datos.` });
+    // ── Sheet 2: Summary by Payment Method ────────────────────────────────
+    const byMethod: Record<string, { total: number; count: number }> = {};
+    data.forEach(t => {
+      const m = (t.payment_method || 'cash').toLowerCase();
+      if (!byMethod[m]) byMethod[m] = { total: 0, count: 0 };
+      byMethod[m].total += Math.abs(t.amount || 0);
+      byMethod[m].count += 1;
+    });
+    const summaryRows: (string | number)[][] = [
+      ['Payment Method', 'Total (S/)', 'Transactions', '% of Total'],
+      ...Object.entries(byMethod)
+        .sort((a, b) => b[1].total - a[1].total)
+        .map(([m, v]) => [
+          m.charAt(0).toUpperCase() + m.slice(1),
+          v.total,
+          v.count,
+          totalVentas > 0 ? Math.round((v.total / totalVentas) * 10000) / 100 : 0,
+        ]),
+      ['TOTAL', totalVentas, cantidadTx, 100],
+    ];
+    const wsSum = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSum['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 14 }];
+    wsSum['!autofilter'] = { ref: `A1:D${summaryRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary by Method');
+
+    const timeRange = timeFrom === '00:00' && timeTo === '23:59' ? '' : `_${timeFrom.replace(':', '')}h-${timeTo.replace(':', '')}h`;
+    XLSX.writeFile(wb, `cash_register_${dateFrom}_${dateTo}${timeRange}_${format(new Date(), 'HHmm')}.xlsx`);
+    toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas. Hoja "Transactions" tiene AutoFilter activado.` });
   };
 
   // ── Resumen por método de pago (previa al export) ──────────────────────────
@@ -361,13 +392,14 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* Rango de fechas */}
               <div className="flex items-center gap-2 bg-slate-50 border rounded-lg px-3 py-2">
                 <span className="text-xs text-slate-500 font-medium">Desde</span>
                 <input
                   type="date"
                   value={dateFrom}
                   max={dateTo}
-                  onChange={e => setDateFrom(e.target.value)}
+                  onChange={e => { setDateFrom(e.target.value); setPreview(null); }}
                   className="text-sm font-semibold text-slate-800 bg-transparent focus:outline-none"
                 />
               </div>
@@ -379,17 +411,37 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
                   value={dateTo}
                   min={dateFrom}
                   max={format(new Date(), 'yyyy-MM-dd')}
-                  onChange={e => setDateTo(e.target.value)}
+                  onChange={e => { setDateTo(e.target.value); setPreview(null); }}
                   className="text-sm font-semibold text-slate-800 bg-transparent focus:outline-none"
                 />
               </div>
+
+              {/* Filtro de hora */}
+              <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+                <Clock className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+                <span className="text-xs text-violet-600 font-medium">Hora</span>
+                <input
+                  type="time"
+                  value={timeFrom}
+                  onChange={e => { setTimeFrom(e.target.value); setPreview(null); }}
+                  className="text-sm font-semibold text-slate-800 bg-transparent focus:outline-none w-20"
+                />
+                <span className="text-slate-400 text-xs">—</span>
+                <input
+                  type="time"
+                  value={timeTo}
+                  onChange={e => { setTimeTo(e.target.value); setPreview(null); }}
+                  className="text-sm font-semibold text-slate-800 bg-transparent focus:outline-none w-20"
+                />
+              </div>
+
               <Button
                 variant="ghost"
                 size="sm"
                 className="text-xs text-blue-600 hover:bg-blue-50"
                 onClick={() => {
                   const t = format(new Date(), 'yyyy-MM-dd');
-                  setDateFrom(t); setDateTo(t); setPreview(null);
+                  setDateFrom(t); setDateTo(t); setTimeFrom('00:00'); setTimeTo('23:59'); setPreview(null);
                 }}
               >
                 Hoy

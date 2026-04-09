@@ -9,6 +9,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import * as XLSX from 'xlsx';
 import {
   TrendingUp,
   RefreshCw,
@@ -120,27 +121,82 @@ export function ReporteVentasPeriodo({ schoolId }: Props) {
     setDateTo(PRESET_RANGES[idx].to());
   };
 
-  const exportCSV = () => {
+  const exportExcel = () => {
     if (!report) return;
-    const rows = [
-      ['Fuente', 'Total', 'Pagado', 'Pendiente', 'Anulado', 'Efectivo', 'Digital', 'Tarjeta', 'Saldo', 'Mixto', 'Otro', 'Tickets'],
-      ['Quiosco',
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: Summary by Source ─────────────────────────────────────────
+    const summaryHeaders = [
+      'Source', 'Total (S/)', 'Paid (S/)', 'Pending (S/)', 'Cancelled (S/)',
+      'Cash (S/)', 'Digital (S/)', 'Card (S/)', 'Balance (S/)', 'Mixed (S/)', 'Other (S/)', 'Tickets',
+    ];
+    const summaryRows = [
+      summaryHeaders,
+      ['Quiosco (Kiosk)',
         report.quiosco.total, report.quiosco.paid, report.quiosco.pending, report.quiosco.cancelled,
         report.quiosco.efectivo, report.quiosco.digital, report.quiosco.tarjeta, report.quiosco.saldo,
         report.quiosco.mixto, report.quiosco.otro, report.quiosco.count],
-      ['Comedor',
+      ['Comedor (Cafeteria)',
         report.comedor.total, report.comedor.paid, report.comedor.pending, report.comedor.cancelled,
         report.comedor.efectivo, report.comedor.digital, report.comedor.tarjeta, report.comedor.saldo,
         report.comedor.mixto, report.comedor.otro, report.comedor.count],
+      ['TOTAL',
+        report.quiosco.total + report.comedor.total,
+        report.grand_total.paid, report.grand_total.pending,
+        (report.quiosco.cancelled ?? 0) + (report.comedor.cancelled ?? 0),
+        report.quiosco.efectivo + report.comedor.efectivo,
+        report.quiosco.digital + report.comedor.digital,
+        report.quiosco.tarjeta + report.comedor.tarjeta,
+        report.quiosco.saldo + report.comedor.saldo,
+        report.quiosco.mixto + report.comedor.mixto,
+        report.quiosco.otro + report.comedor.otro,
+        report.quiosco.count + report.comedor.count],
     ];
-    const csv = rows.map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `ventas_${dateFrom}_${dateTo}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSummary['!cols'] = summaryHeaders.map(() => ({ wch: 16 }));
+    wsSummary['!autofilter'] = { ref: `A1:L${summaryRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    // ── Sheet 2: Daily Detail ──────────────────────────────────────────────
+    if (report.by_day && report.by_day.length > 0) {
+      const dailyHeaders = ['Date', 'Day of Week', 'Kiosk (S/)', 'Cafeteria (S/)', 'Total (S/)', 'Tickets'];
+      const dailyRows = [
+        dailyHeaders,
+        ...report.by_day.map(d => {
+          const dt = new Date(d.date + 'T12:00:00');
+          return [
+            format(dt, 'yyyy-MM-dd'),
+            format(dt, 'EEEE'),
+            d.quiosco,
+            d.comedor,
+            d.total,
+            d.count,
+          ];
+        }),
+        ['TOTAL', '', report.quiosco.total, report.comedor.total,
+          report.quiosco.total + report.comedor.total,
+          report.quiosco.count + report.comedor.count],
+      ];
+      const wsDaily = XLSX.utils.aoa_to_sheet(dailyRows);
+      wsDaily['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 10 }];
+      wsDaily['!autofilter'] = { ref: `A1:F${dailyRows.length}` };
+      XLSX.utils.book_append_sheet(wb, wsDaily, 'Daily Detail');
+    }
+
+    // ── Sheet 3: By School (solo si hay más de una sede) ──────────────────
+    if (report.by_school && report.by_school.length > 1) {
+      const schoolHeaders = ['School', 'Kiosk (S/)', 'Cafeteria (S/)', 'Total (S/)', 'Paid (S/)', 'Pending (S/)'];
+      const schoolRows = [
+        schoolHeaders,
+        ...report.by_school.map(s => [s.school_name, s.quiosco, s.comedor, s.total, s.paid, s.pending]),
+      ];
+      const wsSchool = XLSX.utils.aoa_to_sheet(schoolRows);
+      wsSchool['!cols'] = [{ wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
+      wsSchool['!autofilter'] = { ref: `A1:F${schoolRows.length}` };
+      XLSX.utils.book_append_sheet(wb, wsSchool, 'By School');
+    }
+
+    XLSX.writeFile(wb, `sales_report_${dateFrom}_${dateTo}.xlsx`);
   };
 
   return (
@@ -200,9 +256,9 @@ export function ReporteVentasPeriodo({ schoolId }: Props) {
             {loading ? 'Cargando...' : 'Generar Reporte'}
           </Button>
           {report && (
-            <Button variant="outline" onClick={exportCSV} className="gap-2 text-emerald-700 border-emerald-300">
+            <Button variant="outline" onClick={exportExcel} className="gap-2 text-emerald-700 border-emerald-300">
               <Download className="w-4 h-4" />
-              Exportar CSV
+              Exportar Excel
             </Button>
           )}
         </div>

@@ -12,6 +12,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
+import * as XLSX from 'xlsx';
 import {
   Package,
   RefreshCw,
@@ -125,38 +126,70 @@ export function ReporteItemizado({ schoolId }: Props) {
     setDateTo(PRESET_RANGES[idx].to());
   };
 
-  const exportCSV = () => {
+  const exportExcel = () => {
     if (!report) return;
-    let csv = '';
-    if (activeTab === 'ventas') {
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet: Sales by Product ────────────────────────────────────────────
+    if (report.ventas && report.ventas.length > 0) {
+      const headers = ['Rank', 'Product', 'Qty Sold', 'Revenue (S/)', 'Avg Price (S/)', 'Min Price (S/)', 'Max Price (S/)', 'Tickets'];
       const rows = [
-        ['Producto', 'Cant. Vendida', 'Revenue S/', 'Precio Prom.', 'Precio Mín.', 'Precio Máx.', 'Tickets'],
-        ...(report.ventas ?? []).map(v => [
-          v.product_name, v.qty_sold, v.revenue.toFixed(2),
-          v.avg_unit_price.toFixed(2), v.min_price.toFixed(2), v.max_price.toFixed(2), v.ticket_count,
+        headers,
+        ...report.ventas.map((v, i) => [
+          i + 1,
+          v.product_name,
+          v.qty_sold,
+          v.revenue,
+          v.avg_unit_price,
+          v.min_price,
+          v.max_price,
+          v.ticket_count,
         ]),
       ];
-      csv = rows.map(r => r.join(',')).join('\n');
-    } else if (activeTab === 'kardex') {
-      const rows = [
-        ['Producto', 'Ventas POS', 'Ajustes (merma)', 'Entradas compra', 'Delta Neto'],
-        ...(report.kardex ?? []).map(k => [
-          k.product_name, k.ventas_pos, k.ajustes_manual, k.entradas_compra, k.net_delta,
-        ]),
-      ];
-      csv = rows.map(r => r.join(',')).join('\n');
-    } else {
-      const rows = [
-        ['Producto', 'Sede', 'Stock Actual'],
-        ...(report.stock_actual ?? []).map(s => [s.product_name, s.school_name, s.current_stock]),
-      ];
-      csv = rows.map(r => r.join(',')).join('\n');
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{ wch: 6 }, { wch: 34 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+      ws['!autofilter'] = { ref: `A1:H${rows.length}` };
+      XLSX.utils.book_append_sheet(wb, ws, 'Sales by Product');
     }
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a    = document.createElement('a');
-    a.href     = URL.createObjectURL(blob);
-    a.download = `reporte_itemizado_${activeTab}_${dateFrom}_${dateTo}.csv`;
-    a.click();
+
+    // ── Sheet: Kardex ──────────────────────────────────────────────────────
+    if (report.kardex && report.kardex.length > 0) {
+      const headers = ['Product', 'POS Sales (qty)', 'Manual Adjustments', 'Purchase Entries', 'Net Delta'];
+      const rows = [
+        headers,
+        ...report.kardex.map(k => [
+          k.product_name,
+          -Math.abs(k.ventas_pos),
+          k.ajustes_manual,
+          k.entradas_compra,
+          k.net_delta,
+        ]),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{ wch: 34 }, { wch: 16 }, { wch: 20 }, { wch: 18 }, { wch: 12 }];
+      ws['!autofilter'] = { ref: `A1:E${rows.length}` };
+      XLSX.utils.book_append_sheet(wb, ws, 'Kardex');
+    }
+
+    // ── Sheet: Current Stock ──────────────────────────────────────────────
+    if (report.stock_actual && report.stock_actual.length > 0) {
+      const headers = ['Product', 'School / Location', 'Current Stock', 'Status'];
+      const rows = [
+        headers,
+        ...report.stock_actual.map(s => [
+          s.product_name,
+          s.school_name,
+          s.current_stock,
+          s.current_stock <= 5 ? 'LOW' : s.current_stock <= 15 ? 'MEDIUM' : 'OK',
+        ]),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{ wch: 34 }, { wch: 26 }, { wch: 14 }, { wch: 10 }];
+      ws['!autofilter'] = { ref: `A1:D${rows.length}` };
+      XLSX.utils.book_append_sheet(wb, ws, 'Current Stock');
+    }
+
+    XLSX.writeFile(wb, `itemized_report_${dateFrom}_${dateTo}.xlsx`);
   };
 
   // ── Top 10 para el gráfico ─────────────────────────────────────────────────
@@ -211,9 +244,9 @@ export function ReporteItemizado({ schoolId }: Props) {
             {loading ? 'Cargando...' : 'Generar Reporte'}
           </Button>
           {report && (
-            <Button variant="outline" onClick={exportCSV} className="gap-2 text-teal-700 border-teal-300">
+            <Button variant="outline" onClick={exportExcel} className="gap-2 text-teal-700 border-teal-300">
               <Download className="w-4 h-4" />
-              Exportar CSV
+              Exportar Excel
             </Button>
           )}
         </div>
