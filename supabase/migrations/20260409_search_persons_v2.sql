@@ -11,21 +11,16 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- similitud trigrama
 CREATE EXTENSION IF NOT EXISTS unaccent;  -- normalización de tildes
 
--- ── Helper IMMUTABLE para usar en índices ────────────────────────────────────
--- unaccent() es STABLE por defecto → no puede usarse en expresiones de índice.
--- Solución estándar: wrapper IMMUTABLE que llama a unaccent().
--- (Seguro porque unaccent solo lee su diccionario, nunca cambia entre filas)
+-- ── normalize_search: quitar tildes + minúsculas + espacios ─────────────────
+-- Declarada IMMUTABLE (requerido para índices de expresión en PostgreSQL).
+-- unaccent() es STABLE por defecto; al llamarla con schema calificado
+-- dentro de una función IMMUTABLE, PostgreSQL acepta la expresión de índice.
+-- Es seguro porque unaccent solo lee su diccionario interno, nunca varía.
 
-CREATE OR REPLACE FUNCTION immutable_unaccent(t text)
-RETURNS text
-LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT public.unaccent(t); $$;
-
--- normalize_search: quitar tildes + minúsculas + espacios (usable en índices)
 CREATE OR REPLACE FUNCTION normalize_search(t text)
 RETURNS text
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT immutable_unaccent(lower(trim(t))); $$;
+AS $$ SELECT public.unaccent(lower(trim(t))); $$;
 
 -- ── Índices GIN en full_name (usa la función IMMUTABLE) ──────────────────────
 -- Estos índices permiten que word_similarity() sea O(log n)
