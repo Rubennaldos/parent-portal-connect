@@ -2292,7 +2292,7 @@ const POS = () => {
         items:          cart,
         total:          serverTotal,      // ← total del servidor, no del navegador
         paymentMethod:  clientMode === 'generic' ? paymentMethod : 'credito',
-        documentType:   clientMode === 'generic' ? (requiresInvoice ? 'factura' : 'ticket') : 'ticket',
+        documentType:   billingData?.document_type || 'ticket',
         timestamp:      new Date(),
         cashierEmail:   user?.email || 'No disponible',
         newBalance:     actualNewBalance,

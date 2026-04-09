@@ -360,14 +360,19 @@ export function RechargeModal({
   };
 
   // ── Helper: verificar duplicado de código de operación ──
-  const checkDuplicate = async (code: string): Promise<boolean> => {
+  // Devuelve { isDuplicate: false } si el único registro existente está en 'rejected'
+  // (los rechazados se pueden reutilizar). Solo bloquea 'pending' y 'approved'.
+  const checkDuplicate = async (code: string): Promise<{ isDuplicate: boolean; existingStatus?: string }> => {
     const { data } = await supabase
       .from('recharge_requests')
-      .select('id')
+      .select('id, status')
       .eq('reference_code', code.trim())
-      .neq('status', 'rejected')
+      .neq('status', 'rejected')   // rechazados NO bloquean el reintento
       .limit(1);
-    return !!(data && data.length > 0);
+    if (data && data.length > 0) {
+      return { isDuplicate: true, existingStatus: data[0].status };
+    }
+    return { isDuplicate: false };
   };
 
   // ── Pago 100% con billetera: no requiere voucher bancario ───────────────────
@@ -509,13 +514,20 @@ export function RechargeModal({
     try {
       // ── Verificar duplicados en BD para TODOS los códigos ──
       for (const code of allCodes) {
-        const isDuplicate = await checkDuplicate(code);
+        const { isDuplicate, existingStatus } = await checkDuplicate(code);
         if (isDuplicate) {
+          const statusLabel =
+            existingStatus === 'approved' ? 'ya fue APROBADO' :
+            existingStatus === 'pending'  ? 'está PENDIENTE de revisión' :
+                                            'ya está en proceso';
           toast({
             variant: 'destructive',
-            title: '🚫 Voucher ya emitido o usado',
-            description: `El código "${code}" ya fue registrado en el sistema. Si crees que es un error, contacta al administrador.`,
-            duration: 8000,
+            title: '🚫 Código ya registrado',
+            description:
+              `El código "${code}" ${statusLabel} en el sistema. ` +
+              `Si tu comprobante anterior fue RECHAZADO, puedes usar el mismo código sin problema. ` +
+              `Si está pendiente o aprobado, usa un número de operación diferente.`,
+            duration: 10000,
           });
           setLoading(false);
           return;
@@ -673,18 +685,18 @@ export function RechargeModal({
 
       // ── Clasificar el error y dar mensaje humano ──────────────────────────
 
-      // 1. Código de operación duplicado (race condition o doble envío)
+      // 1. Código de operación duplicado (constraint BD — puede ocurrir por race condition)
       if (
         rawMsg.includes('idx_recharge_unique_ref_code') ||
         (rawMsg.toLowerCase().includes('duplicate key') && rawMsg.toLowerCase().includes('reference'))
       ) {
         toast({
           variant: 'destructive',
-          title: '⚠️ Código ya registrado',
+          title: '⚠️ Código de operación duplicado',
           description:
-            `El número de operación que ingresaste ya existe en el sistema. ` +
-            `Si tu comprobante anterior fue rechazado, intenta con el mismo número — debería funcionar. ` +
-            `Si no, usa otro número de operación o contacta al administrador.`,
+            `Ese número de operación ya tiene un pago PENDIENTE o APROBADO en el sistema. ` +
+            `Si tu comprobante anterior fue RECHAZADO, el sistema permite reutilizar el mismo código — ` +
+            `actualiza la página e intenta de nuevo. De lo contrario, usa un número diferente.`,
           duration: 12000,
         });
         return;

@@ -1,33 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- RPC: process_traditional_voucher_approval
--- Aprueba un voucher de almuerzo o deuda (sin billetera interna).
--- Reemplaza el bucle multi-paso del frontend (Camino B) con una única operación
--- atómica que bloquea el registro, actualiza transacciones y confirma almuerzos.
+-- FIX: COALESCE types uuid[] and jsonb cannot be matched
+-- en RPC process_traditional_voucher_approval
 --
--- Parámetros:
---   p_request_id  — ID del recharge_request a aprobar
---   p_admin_id    — ID del usuario administrador que aprueba
+-- Causa: COALESCE(v_updated_ids, '[]'::jsonb) mezcla tipos incompatibles.
+--   v_updated_ids es uuid[] pero '[]'::jsonb es jsonb.
+--   PostgreSQL no puede combinar automáticamente uuid[] con jsonb en COALESCE.
 --
--- Retorna JSONB con:
---   success              bool
---   approved_request_id  uuid
---   updated_tx_ids       uuid[]   — vacío si is_partial=true
---   amount               numeric
---   student_id           uuid
---   school_id            uuid
---   payment_method       text
---   billing_status_set   text     — valor que se usó en las transacciones
---   invoice_type         text     — null si el padre no pidió comprobante
---   invoice_client_data  jsonb
---   is_partial           bool     — true si el total acumulado aún no cubre la deuda
---   total_debt           numeric
---   total_approved       numeric
---   shortage             numeric  — total_debt - total_approved (0 si no parcial)
---
--- Errores conocidos (capturar por substring en el frontend):
---   ALREADY_PROCESSED  — la solicitud ya no está en estado 'pending'
---   NOT_FOUND          — la solicitud no existe
---   NO_DEBTS_FOUND     — no hay transacciones ni almuerzos vinculados (sin FIFO fallback)
+-- Solución: convertir v_updated_ids a jsonb primero con to_jsonb(),
+--   usando '{}'::uuid[] como valor por defecto vacío dentro del COALESCE
+--   (ambos del mismo tipo uuid[]) ANTES de convertir a jsonb.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION process_traditional_voucher_approval(
@@ -52,7 +33,6 @@ DECLARE
 BEGIN
 
   -- ── PASO 1: BLOQUEO OPTIMISTA ──────────────────────────────────────────────
-  -- SELECT FOR UPDATE evita doble-aprobación concurrente.
   SELECT * INTO v_req
   FROM   recharge_requests
   WHERE  id = p_request_id
@@ -76,10 +56,6 @@ BEGIN
   WHERE id = p_request_id;
 
   -- ── PASO 3: RECOPILAR IDs DE TRANSACCIONES ────────────────────────────────
-  -- Fuente A: paid_transaction_ids (referencias explícitas del padre/app)
-  -- Fuente B: transacciones vinculadas por metadata->>'lunch_order_id' (usa índice funcional)
-  -- SIN FIFO fallback: si no hay vinculación, se lanza error para revisión manual.
-
   v_lunch_ids := COALESCE(v_req.lunch_order_ids, '{}');
 
   SELECT array_agg(DISTINCT t_id) INTO v_tx_ids
@@ -92,7 +68,6 @@ BEGIN
     UNION
 
     -- Fuente B: transacciones pendientes vinculadas a los lunch_order_ids por metadata JSONB
-    -- Aprovecha el índice idx_transactions_lunch_order_id
     SELECT t.id AS t_id
     FROM   transactions t
     WHERE  array_length(v_lunch_ids, 1) > 0
@@ -103,12 +78,10 @@ BEGIN
   ) combined;
 
   -- Validar que existe algo que procesar
-  -- (transacciones O almuerzos sin transacción — el CONFIRM de lunch_orders es suficiente)
   IF (v_tx_ids IS NULL OR array_length(v_tx_ids, 1) = 0)
      AND (v_lunch_ids IS NULL OR array_length(v_lunch_ids, 1) = 0)
      AND (v_req.paid_transaction_ids IS NULL OR array_length(v_req.paid_transaction_ids, 1) = 0)
   THEN
-    -- Sin FIFO fallback: error explícito para que el admin lo resuelva manualmente.
     RAISE EXCEPTION
       'NO_DEBTS_FOUND: La solicitud % no tiene transacciones ni almuerzos vinculados. '
       'Edita los campos paid_transaction_ids y/o lunch_order_ids antes de aprobar.',
@@ -119,41 +92,34 @@ BEGIN
   IF v_req.request_type = 'lunch_payment'
      AND array_length(v_lunch_ids, 1) > 0
   THEN
-    -- Deuda total de las órdenes activas vinculadas
     SELECT COALESCE(SUM(ABS(COALESCE(lo.final_price, 0))), 0)
     INTO   v_total_debt
     FROM   lunch_orders lo
     WHERE  lo.id = ANY(v_lunch_ids)
       AND  lo.is_cancelled = false;
 
-    -- Total ya aprobado (incluye el voucher actual que acabamos de aprobar)
     SELECT COALESCE(SUM(rr.amount), 0)
     INTO   v_total_approved
     FROM   recharge_requests rr
     WHERE  rr.student_id   = v_req.student_id
       AND  rr.request_type IN ('lunch_payment', 'debt_payment')
       AND  rr.status       = 'approved'
-      AND  rr.lunch_order_ids && v_lunch_ids;  -- overlaps (algún almuerzo en común)
+      AND  rr.lunch_order_ids && v_lunch_ids;
 
-    -- Tolerancia de S/ 0.50 por redondeos de múltiples pagos parciales
     v_is_partial := (v_total_approved < (v_total_debt - 0.50));
   END IF;
 
   -- ── PASO 5: ACTUALIZAR TRANSACCIONES (solo si pago completo) ─────────────
-  -- Para pagos parciales: el voucher queda 'approved' pero las deudas siguen 'pending'.
   IF NOT v_is_partial THEN
 
-    -- Determinar billing flags equivalentes a calcBillingFlags('ticket', payment_method)
     IF v_req.payment_method IN ('efectivo', 'cash', 'saldo', 'pagar_luego', 'adjustment') THEN
       v_is_taxable    := false;
       v_billing_status := 'excluded';
     ELSE
       v_is_taxable    := true;
-      v_billing_status := 'pending';  -- CierreMensual lo enviará a SUNAT si no hay boleta inmediata
+      v_billing_status := 'pending';
     END IF;
 
-    -- Actualización ATÓMICA en batch (reemplaza el bucle for del frontend)
-    -- .in('payment_status', ['pending', 'partial']) garantiza idempotencia
     UPDATE transactions t
     SET
       payment_status = 'paid',
@@ -178,7 +144,6 @@ BEGIN
       AND  t.payment_status IN ('pending', 'partial')
       AND  t.is_deleted    = false;
 
-    -- Recopilar IDs efectivamente actualizados (para Nubefact y el toast)
     SELECT array_agg(t.id) INTO v_updated_ids
     FROM   transactions t
     WHERE  t.id            = ANY(v_tx_ids)
@@ -186,7 +151,6 @@ BEGIN
       AND  t.is_deleted     = false;
 
     -- ── PASO 6: CONFIRMAR LUNCH_ORDERS ACTIVOS ──────────────────────────────
-    -- Confirmar órdenes de los lunch_order_ids vinculados
     IF array_length(v_lunch_ids, 1) > 0 THEN
       UPDATE lunch_orders
       SET    status = 'confirmed'
@@ -195,8 +159,6 @@ BEGIN
         AND  status      <> 'cancelled';
     END IF;
 
-    -- Confirmar también órdenes descubiertas por metadata de las transacciones actualizadas
-    -- (por si hay lunch_order_ids en metadata que no estaban en v_req.lunch_order_ids)
     IF v_updated_ids IS NOT NULL AND array_length(v_updated_ids, 1) > 0 THEN
       UPDATE lunch_orders lo
       SET    status = 'confirmed'
@@ -238,12 +200,13 @@ BEGIN
       NOW()
     );
   EXCEPTION WHEN OTHERS THEN
-    -- El fallo de auditoría NO debe revertir la aprobación real.
-    -- Se registra solo en los logs del servidor.
     RAISE WARNING 'Auditoría falló en process_traditional_voucher_approval: %', SQLERRM;
   END;
 
   -- ── PASO 8: RETORNO ────────────────────────────────────────────────────────
+  -- FIX: COALESCE(v_updated_ids, '[]'::jsonb) fallaba porque uuid[] y jsonb
+  -- son tipos incompatibles en COALESCE. Solución: to_jsonb() convierte uuid[]
+  -- a jsonb, y el fallback también es jsonb ('[]'::jsonb). Ambos del mismo tipo.
   RETURN jsonb_build_object(
     'success',             true,
     'approved_request_id', p_request_id,
@@ -264,57 +227,11 @@ BEGIN
 END;
 $$;
 
--- Permisos para el rol autenticado (admins)
 GRANT EXECUTE ON FUNCTION process_traditional_voucher_approval(uuid, uuid)
   TO authenticated;
 
 COMMENT ON FUNCTION process_traditional_voucher_approval IS
+  'v2 — Fix COALESCE uuid[] vs jsonb (usa to_jsonb() en PASO 8). '
   'Aprueba un voucher de lunch_payment o debt_payment de forma atómica. '
-  'Reemplaza el bucle multi-paso del frontend (Camino B). '
   'Bloquea con FOR UPDATE, valida estado pending, actualiza transacciones en batch, '
-  'confirma lunch_orders, y retorna los IDs necesarios para que el frontend llame a Nubefact. '
-  'No incluye FIFO fallback: si no hay transacciones vinculadas, lanza NO_DEBTS_FOUND.';
-
-
--- ═══════════════════════════════════════════════════════════════════════════
--- SCRIPT DE PRUEBA (ejecutar en SQL Editor de Supabase)
--- ═══════════════════════════════════════════════════════════════════════════
-
-/*
-
--- 1. Obtener una solicitud de tipo lunch_payment o debt_payment en estado 'pending':
-SELECT id, request_type, amount, status, student_id, school_id,
-       lunch_order_ids, paid_transaction_ids
-FROM   recharge_requests
-WHERE  status       = 'pending'
-  AND  request_type IN ('lunch_payment', 'debt_payment')
-LIMIT  5;
-
--- 2. Ejecutar el RPC con el ID obtenido:
-SELECT process_traditional_voucher_approval(
-  'RECHARGE_REQUEST_UUID'::uuid,
-  'ADMIN_USER_UUID'::uuid
-);
-
--- 3. Verificar que las transacciones se marcaron como pagadas:
-SELECT id, payment_status, billing_status, payment_method, metadata->>'recharge_request_id'
-FROM   transactions
-WHERE  metadata->>'recharge_request_id' = 'RECHARGE_REQUEST_UUID';
-
--- 4. Verificar que los lunch_orders se confirmaron:
-SELECT id, status, is_cancelled
-FROM   lunch_orders
-WHERE  id = ANY(
-  SELECT unnest(lunch_order_ids)
-  FROM   recharge_requests
-  WHERE  id = 'RECHARGE_REQUEST_UUID'
-);
-
--- 5. Test ALREADY_PROCESSED: volver a llamar con el mismo ID → debe lanzar excepción:
-SELECT process_traditional_voucher_approval(
-  'RECHARGE_REQUEST_UUID'::uuid,
-  'ADMIN_USER_UUID'::uuid
-);
--- Esperado: ERROR: ALREADY_PROCESSED: La solicitud ... ya fue procesada (estado actual: approved).
-
-*/
+  'confirma lunch_orders, y retorna los IDs necesarios para que el frontend llame a Nubefact.';
