@@ -19,7 +19,7 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $func$
 DECLARE
   v_req            record;
   v_lunch_ids      uuid[];
@@ -225,7 +225,7 @@ BEGIN
   );
 
 END;
-$$;
+$func$;
 
 GRANT EXECUTE ON FUNCTION process_traditional_voucher_approval(uuid, uuid)
   TO authenticated;
