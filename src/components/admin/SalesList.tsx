@@ -1560,30 +1560,6 @@ export const SalesList = () => {
                 </Button>
               </div>
 
-              {/* ── PDF ── */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={downloadPDF}
-                className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1"
-                disabled={isExporting || totalCount === 0}
-              >
-                <FileDown className="h-4 w-4" />
-                {isExporting ? 'Preparando…' : 'PDF Arqueo'}
-              </Button>
-
-              {/* ── Excel ── */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={downloadExcel}
-                className="border-green-300 text-green-700 hover:bg-green-50 gap-1"
-                disabled={isExporting || totalCount === 0}
-              >
-                <Sheet className="h-4 w-4" />
-                {isExporting ? 'Preparando…' : 'Excel Arqueo'}
-              </Button>
-
               {selectedIds.size > 0 && (
                 <>
                   <Badge variant="secondary" className="text-sm">

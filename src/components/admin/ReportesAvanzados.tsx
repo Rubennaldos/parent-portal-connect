@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ReporteVentasPeriodo } from '@/components/admin/reports/ReporteVentasPeriodo';
 import { ReporteDeudasCobranzas } from '@/components/admin/reports/ReporteDeudasCobranzas';
+import { ReporteItemizado } from '@/components/admin/reports/ReporteItemizado';
 import {
   TrendingUp,
   AlertCircle,
@@ -68,8 +69,8 @@ const REPORTS: ReportCard[] = [
   },
   {
     id:          'almuerzos',
-    title:       'Reporte de Almuerzos',
-    description: 'Pedidos, confirmaciones y pagos de almuerzos por fecha, menú y sede. Incluye desglose por categoría.',
+    title:       'Ventas Itemizadas (Productos)',
+    description: 'Ranking de productos vendidos: cantidad, revenue, precio promedio y mínimo. Agrupado en servidor para máximo rendimiento.',
     icon:        UtensilsCrossed,
     gradient:    'from-amber-50 to-orange-50',
     iconBg:      'bg-amber-100',
@@ -80,8 +81,8 @@ const REPORTS: ReportCard[] = [
   },
   {
     id:          'recargas',
-    title:       'Recargas de Saldo',
-    description: 'Historial de recargas aprobadas por padre, alumno y sede. Detalla montos, vouchers y estados.',
+    title:       'Kardex e Inventario',
+    description: 'Movimientos de stock por producto: ventas POS, ajustes de merma, entradas de compra y stock actual en tiempo real.',
     icon:        Wallet,
     gradient:    'from-blue-50 to-indigo-50',
     iconBg:      'bg-blue-100',
@@ -235,11 +236,11 @@ function ReportCardItem({
 // ── Visor de reporte ──────────────────────────────────────────────────────────
 
 const REPORT_META: Record<ReportType, { title: string; icon: React.ElementType; color: string }> = {
-  ventas_periodo:   { title: 'Ventas por Período',   icon: TrendingUp,      color: 'text-emerald-600' },
-  deudas_cobranzas: { title: 'Deudas y Cobranzas',   icon: AlertCircle,     color: 'text-rose-600'    },
-  almuerzos:        { title: 'Reporte de Almuerzos', icon: UtensilsCrossed, color: 'text-amber-600'   },
-  recargas:         { title: 'Recargas de Saldo',    icon: Wallet,          color: 'text-blue-600'    },
-  arqueo_caja:      { title: 'Arqueo de Caja',       icon: ClipboardList,   color: 'text-violet-600'  },
+  ventas_periodo:   { title: 'Ventas por Período',         icon: TrendingUp,      color: 'text-emerald-600' },
+  deudas_cobranzas: { title: 'Deudas y Cobranzas',         icon: AlertCircle,     color: 'text-rose-600'    },
+  almuerzos:        { title: 'Ventas Itemizadas',           icon: UtensilsCrossed, color: 'text-amber-600'   },
+  recargas:         { title: 'Kardex e Inventario',         icon: Wallet,          color: 'text-blue-600'    },
+  arqueo_caja:      { title: 'Arqueo de Caja',              icon: ClipboardList,   color: 'text-violet-600'  },
 };
 
 function ReportViewer({
@@ -279,8 +280,14 @@ function ReportViewer({
         <ReporteDeudasCobranzas schoolId={schoolId} />
       )}
 
+      {/* ── Reportes 3 y 4: Itemizado (Ventas Producto + Kardex) ── */}
+      {(reportType === 'almuerzos' || reportType === 'recargas') && (
+        <ReporteItemizado schoolId={schoolId} />
+      )}
+
       {/* ── Otros reportes (próximamente) ── */}
-      {reportType !== 'ventas_periodo' && reportType !== 'deudas_cobranzas' && (
+      {reportType !== 'ventas_periodo' && reportType !== 'deudas_cobranzas'
+       && reportType !== 'almuerzos'   && reportType !== 'recargas' && (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center py-20 gap-4">
           <div className="w-16 h-16 rounded-2xl bg-white shadow-sm border flex items-center justify-center">
             <Icon className={`w-8 h-8 ${meta.color}`} />
