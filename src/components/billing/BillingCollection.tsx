@@ -289,6 +289,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [cxcChecked, setCxcChecked] = useState<Set<string>>(new Set());
   const [cxcCopyingId, setCxcCopyingId] = useState<string | null>(null);
   const [cxcHasGenerated, setCxcHasGenerated] = useState(false);
+  const [cxcSearch, setCxcSearch] = useState('');
 
   // Modal de pago
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -3488,26 +3489,65 @@ Si tienes dudas, comunícate con la administración de tu sede.
               </div>
 
               {/* Toolbar de filtro rápido */}
-              <div className="px-6 py-2 border-b shrink-0 flex items-center gap-2">
-                <button
-                  onClick={() => { const all = new Set(cxcList.map(d => d.id)); setCxcChecked(all); }}
-                  className="text-xs text-green-700 hover:underline"
-                >Marcar todos</button>
-                <span className="text-gray-300">|</span>
-                <button
-                  onClick={() => setCxcChecked(new Set())}
-                  className="text-xs text-red-500 hover:underline"
-                >Limpiar</button>
-                <span className="text-gray-300">|</span>
-                <button
-                  onClick={() => { setCxcList([]); setCxcHasGenerated(false); setCxcStep(1); }}
-                  className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
-                ><ArrowLeft className="h-3 w-3" /> Cambiar filtros</button>
+              <div className="px-4 py-2 border-b shrink-0 space-y-2">
+                {/* Buscador por nombre */}
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={cxcSearch}
+                    onChange={e => setCxcSearch(e.target.value)}
+                    placeholder="Buscar por nombre, padre, teléfono..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  />
+                  {cxcSearch && (
+                    <button
+                      onClick={() => setCxcSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >✕</button>
+                  )}
+                </div>
+                {/* Acciones rápidas */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { const all = new Set(cxcList.map(d => d.id)); setCxcChecked(all); }}
+                    className="text-xs text-green-700 hover:underline"
+                  >Marcar todos</button>
+                  <span className="text-gray-300">|</span>
+                  <button
+                    onClick={() => setCxcChecked(new Set())}
+                    className="text-xs text-red-500 hover:underline"
+                  >Limpiar</button>
+                  <span className="text-gray-300">|</span>
+                  <button
+                    onClick={() => { setCxcList([]); setCxcHasGenerated(false); setCxcStep(1); setCxcSearch(''); }}
+                    className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                  ><ArrowLeft className="h-3 w-3" /> Cambiar filtros</button>
+                  {cxcSearch && (
+                    <>
+                      <span className="text-gray-300">|</span>
+                      <span className="text-xs text-gray-500">
+                        {cxcList.filter(d => {
+                          const norm = (s: string) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() ?? '';
+                          const q = norm(cxcSearch);
+                          return norm(d.client_name).includes(q) || norm(d.parent_name ?? '').includes(q) || (d.parent_phone ?? '').includes(q);
+                        }).length} resultado(s)
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Lista scrolleable */}
               <div className="flex-1 overflow-y-auto divide-y">
-                {cxcList.map((debtor) => {
+                {(cxcSearch.trim()
+                  ? cxcList.filter(d => {
+                      const norm = (s: string) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() ?? '';
+                      const q = norm(cxcSearch.trim());
+                      return norm(d.client_name).includes(q) || norm(d.parent_name ?? '').includes(q) || (d.parent_phone ?? '').includes(q);
+                    })
+                  : cxcList
+                ).map((debtor) => {
                   const isCobrado = cxcChecked.has(debtor.id);
                   const isCopying = cxcCopyingId === debtor.id;
                   return (
