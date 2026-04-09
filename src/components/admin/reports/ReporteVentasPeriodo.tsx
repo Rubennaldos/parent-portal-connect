@@ -6,7 +6,7 @@
  * Llama al RPC get_ventas_periodo_report que aplica lógica de cierre.
  */
 import { useState, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {

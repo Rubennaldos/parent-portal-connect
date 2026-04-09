@@ -9,7 +9,7 @@
  * Queries optimizadas: todo agrupado en supabase, cero loops en cliente.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import {
   RefreshCw,

@@ -9,7 +9,7 @@
  *  - Saldo negativo → fuente = 'saldo_negativo'
  */
 import { useState, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import {
   AlertCircle,

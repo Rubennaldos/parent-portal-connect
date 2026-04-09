@@ -10,7 +10,7 @@
  * Todo agrupado en el servidor → cero riesgo de congelar el navegador.
  */
 import { useState, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import {
   Package,
