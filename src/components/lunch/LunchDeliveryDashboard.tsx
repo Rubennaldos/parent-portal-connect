@@ -207,19 +207,12 @@ function DeliveryPanel({
   const currentListName = availableLists[currentListIndex] || 'Todos';
   const isLastList = currentListIndex >= availableLists.length - 1;
 
-  // Filtered orders
+  // Filtered orders — respeta búsqueda y estado pero NO filtra por lista actual
+  // (mostramos todos los grupos de una vez, sin paginación)
   const currentListOrders = useMemo(() => {
     let filtered = personType === 'students'
       ? orders.filter(o => o.student_id)
       : orders.filter(o => o.teacher_id);
-
-    if ((mode === 'by_classroom' || mode === 'by_grade_classroom') && availableLists.length > 0 && availableLists[0] !== 'Todos') {
-      const cc = availableLists[currentListIndex];
-      filtered = filtered.filter(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim() === cc);
-    } else if (mode === 'by_grade' && availableLists.length > 0 && availableLists[0] !== 'Todos') {
-      const cg = availableLists[currentListIndex];
-      filtered = filtered.filter(o => o.student_grade === cg);
-    }
 
     if (mode === 'alphabetical' || mode === 'all') {
       filtered.sort((a, b) => {
@@ -245,26 +238,36 @@ function DeliveryPanel({
     }
 
     return filtered;
-  }, [orders, personType, mode, availableLists, currentListIndex, searchTerm, statusFilter]);
+  }, [orders, personType, mode, searchTerm, statusFilter]);
 
-  // Progress
+  // Agrupación para vista plana: un bloque por salón/grado, sin paginación
+  const groupedOrders = useMemo(() => {
+    const multiList = availableLists.length > 1 && availableLists[0] !== 'Todos';
+    if (!multiList) return [{ listName: null as string | null, items: currentListOrders }];
+
+    return availableLists.map(listName => {
+      let items: DeliveryOrder[];
+      if (mode === 'by_classroom' || mode === 'by_grade_classroom') {
+        items = currentListOrders.filter(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim() === listName);
+      } else if (mode === 'by_grade') {
+        items = currentListOrders.filter(o => o.student_grade === listName);
+      } else {
+        items = currentListOrders;
+      }
+      return { listName, items };
+    }).filter(g => g.items.length > 0);
+  }, [currentListOrders, availableLists, mode]);
+
+  // Progress — ahora muestra el total global (lista plana, sin paginación)
+  // Progreso GLOBAL (todos los pedidos, sin filtrar por salón)
   const listProgress = useMemo(() => {
-    let base = personType === 'students'
+    const base = personType === 'students'
       ? orders.filter(o => o.student_id)
       : orders.filter(o => o.teacher_id);
-
-    if ((mode === 'by_classroom' || mode === 'by_grade_classroom') && availableLists.length > 0 && availableLists[0] !== 'Todos') {
-      const cc = availableLists[currentListIndex];
-      base = base.filter(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim() === cc);
-    } else if (mode === 'by_grade' && availableLists.length > 0 && availableLists[0] !== 'Todos') {
-      const cg = availableLists[currentListIndex];
-      base = base.filter(o => o.student_grade === cg);
-    }
-
-    const total = base.length;
+    const total     = base.length;
     const delivered = base.filter(o => o.status === 'delivered').length;
     return { total, delivered, pct: total > 0 ? Math.round((delivered / total) * 100) : 0 };
-  }, [orders, personType, mode, availableLists, currentListIndex]);
+  }, [orders, personType]);
 
   const handleToggle = async (order: DeliveryOrder) => {
     setTogglingId(order.id);
@@ -281,13 +284,10 @@ function DeliveryPanel({
             <div className="flex items-center gap-1.5">
               <h2 className={cn("font-bold truncate", compact ? "text-xs" : "text-sm")}>
                 {personType === 'students' ? '👦' : '👨‍🏫'}
-                {currentListName !== 'Todos' ? ` ${currentListName}` : ` ${personType === 'students' ? 'Alumnos' : 'Profesores'}`}
+                {availableLists.length > 1 && availableLists[0] !== 'Todos'
+                  ? ` Todos los salones (${availableLists.length})`
+                  : ` ${personType === 'students' ? 'Alumnos' : 'Profesores'}`}
               </h2>
-              {availableLists.length > 1 && (
-                <Badge variant="outline" className="text-[8px] flex-shrink-0">
-                  {currentListIndex + 1}/{availableLists.length}
-                </Badge>
-              )}
             </div>
             {/* Progress bar */}
             <div className="flex items-center gap-1.5 mt-0.5">
@@ -357,7 +357,7 @@ function DeliveryPanel({
         </div>
       </div>
 
-      {/* ORDER LIST */}
+      {/* ORDER LIST — vista plana sin paginación */}
       <div className="flex-1 overflow-y-auto px-1.5 py-1 space-y-1">
         {currentListOrders.length === 0 ? (
           <div className="text-center py-8 text-gray-400">
@@ -365,7 +365,21 @@ function DeliveryPanel({
             <p className="text-xs font-semibold">{searchTerm ? 'Sin resultados' : 'Lista vacía'}</p>
           </div>
         ) : (
-          currentListOrders.map(order => {
+          groupedOrders.map((group, gi) => (
+            <div key={group.listName ?? 'all'}>
+              {/* Cabecera de salón/grado (solo cuando hay múltiples grupos) */}
+              {group.listName && (
+                <div className={cn(
+                  "sticky top-0 z-10 px-2 py-1 bg-orange-50 border border-orange-200 rounded-md flex items-center justify-between",
+                  gi > 0 ? "mt-2" : ""
+                )}>
+                  <span className="text-[10px] font-bold text-orange-800">{group.listName}</span>
+                  <span className="text-[9px] text-orange-600">
+                    {group.items.filter(o => o.status === 'delivered').length}/{group.items.length} ✅
+                  </span>
+                </div>
+              )}
+              {group.items.map(order => {
             const name = order.student_name || order.teacher_name || 'Sin nombre';
             const isDelivered = order.status === 'delivered';
             const isToggling = togglingId === order.id;
@@ -531,66 +545,11 @@ function DeliveryPanel({
                 )}
               </div>
             );
-          })
+          })}
+            </div>
+          ))
         )}
       </div>
-
-      {/* BOTTOM NAV */}
-      {availableLists.length > 1 && (
-        <div className="bg-white border-t px-2 py-1.5 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={currentListIndex === 0}
-              onClick={() => { setCurrentListIndex(i => i - 1); setSearchTerm(''); setShowListPicker(false); }}
-              className="h-7 text-[10px] gap-1"
-            >
-              <ChevronLeft className="h-3 w-3" />
-              Ant.
-            </Button>
-            <button
-              onClick={() => setShowListPicker(!showListPicker)}
-              className="text-center hover:bg-gray-50 rounded px-2 py-0.5 transition-colors"
-            >
-              <p className="text-[10px] font-bold text-gray-700">{currentListName}</p>
-              <p className="text-[8px] text-blue-500 underline">{currentListIndex + 1}/{availableLists.length} · Ir a...</p>
-            </button>
-            <Button
-              size="sm"
-              disabled={isLastList}
-              onClick={() => { setCurrentListIndex(i => i + 1); setSearchTerm(''); setShowListPicker(false); }}
-              className={cn("h-7 text-[10px] gap-1", isLastList ? "bg-green-600 hover:bg-green-700" : "bg-orange-600 hover:bg-orange-700")}
-            >
-              {isLastList ? '✅ Listo' : 'Sig.'}
-              <ChevronRight className="h-3 w-3" />
-            </Button>
-          </div>
-
-          {/* Picker de lista rápida */}
-          {showListPicker && (
-            <div className="mt-1.5 p-2 bg-gray-50 rounded-lg border max-h-40 overflow-y-auto">
-              <p className="text-[9px] font-semibold text-gray-500 mb-1.5">Ir directamente a:</p>
-              <div className="grid grid-cols-3 gap-1">
-                {availableLists.map((listName, idx) => (
-                  <button
-                    key={listName}
-                    onClick={() => { setCurrentListIndex(idx); setSearchTerm(''); setShowListPicker(false); }}
-                    className={cn(
-                      "text-[10px] p-1.5 rounded border transition-all text-center truncate",
-                      idx === currentListIndex
-                        ? "bg-orange-100 border-orange-400 font-bold text-orange-800"
-                        : "bg-white border-gray-200 hover:border-orange-300 hover:bg-orange-50"
-                    )}
-                  >
-                    {listName}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

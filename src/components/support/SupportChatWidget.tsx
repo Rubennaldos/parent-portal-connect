@@ -498,7 +498,7 @@ ${userMessage}`;
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-[9999] w-14 h-14 bg-gradient-to-br from-violet-600 to-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-transform group"
+        className="fixed bottom-6 left-6 z-[9999] w-14 h-14 bg-gradient-to-br from-violet-600 to-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-transform group"
         title="Soporte IA — ¿Tienes un problema? ¡Reporta aquí!"
       >
         <MessageCircle className="h-6 w-6" />
@@ -510,7 +510,7 @@ ${userMessage}`;
   // ─── Render: Chat minimizado ────────────────────────────────
   if (isMinimized) {
     return (
-      <div className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2">
+      <div className="fixed bottom-6 left-6 z-[9999] flex items-center gap-2">
         <button
           onClick={() => setIsMinimized(false)}
           className="bg-gradient-to-br from-violet-600 to-indigo-700 text-white rounded-full px-4 py-2 shadow-xl flex items-center gap-2 hover:scale-105 transition-transform text-sm font-medium"
@@ -535,7 +535,7 @@ ${userMessage}`;
 
   // ─── Render: Chat abierto ───────────────────────────────────
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] w-[420px] max-w-[calc(100vw-2rem)] h-[600px] max-h-[calc(100vh-3rem)] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
+    <div className="fixed bottom-6 left-6 z-[9999] w-[420px] max-w-[calc(100vw-2rem)] h-[600px] max-h-[calc(100vh-3rem)] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="bg-gradient-to-r from-violet-600 to-indigo-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
