@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ReporteVentasPeriodo } from '@/components/admin/reports/ReporteVentasPeriodo';
 import { ReporteDeudasCobranzas } from '@/components/admin/reports/ReporteDeudasCobranzas';
 import { ReporteItemizado } from '@/components/admin/reports/ReporteItemizado';
+import { ReporteArqueo } from '@/components/admin/reports/ReporteArqueo';
 import {
   TrendingUp,
   AlertCircle,
@@ -285,23 +286,9 @@ function ReportViewer({
         <ReporteItemizado schoolId={schoolId} />
       )}
 
-      {/* ── Otros reportes (próximamente) ── */}
-      {reportType !== 'ventas_periodo' && reportType !== 'deudas_cobranzas'
-       && reportType !== 'almuerzos'   && reportType !== 'recargas' && (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center py-20 gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-white shadow-sm border flex items-center justify-center">
-            <Icon className={`w-8 h-8 ${meta.color}`} />
-          </div>
-          <div className="text-center">
-            <h3 className="text-base font-bold text-slate-700 mb-1">{meta.title}</h3>
-            <p className="text-sm text-slate-400 max-w-sm">
-              Este reporte estará disponible próximamente. Los filtros de fecha, sede y exportación estarán aquí.
-            </p>
-          </div>
-          <Badge variant="outline" className="text-slate-400 border-dashed">
-            Próximamente
-          </Badge>
-        </div>
+      {/* ── Reporte 5: Arqueo de Caja ── */}
+      {reportType === 'arqueo_caja' && (
+        <ReporteArqueo schoolId={schoolId} />
       )}
     </div>
   );

@@ -111,7 +111,9 @@ const SalesList = () => {
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="list" className="w-full">
           <TabsList
-            className={`grid w-full bg-white border rounded-xl p-1 mb-6 grid-cols-${tabCols}`}
+            className={`grid w-full bg-white border rounded-xl p-1 mb-6 ${
+              tabCols === 3 ? 'grid-cols-3' : tabCols === 2 ? 'grid-cols-2' : 'grid-cols-1'
+            }`}
           >
             <TabsTrigger
               value="list"
