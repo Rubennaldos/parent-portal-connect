@@ -668,25 +668,54 @@ export function RechargeModal({
       setUploadPhaseLabel('');
       setStep('success');
     } catch (err: any) {
-      console.error('Error al enviar solicitud:', err);
-      const msg: string = err?.message || '';
+      const rawMsg: string = err?.message || err?.details || String(err) || '';
+      console.error('[RechargeModal] Error al enviar solicitud:', rawMsg, err);
 
-      // Si el error viene del upload (ya tiene mensaje accionable), mostrarlo directo.
-      // Si viene del insert (foto ya subida pero BD falló), dar contexto diferente.
+      // ── Clasificar el error y dar mensaje humano ──────────────────────────
+
+      // 1. Código de operación duplicado (race condition o doble envío)
+      if (
+        rawMsg.includes('idx_recharge_unique_ref_code') ||
+        (rawMsg.toLowerCase().includes('duplicate key') && rawMsg.toLowerCase().includes('reference'))
+      ) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Código ya registrado',
+          description:
+            `El número de operación que ingresaste ya existe en el sistema. ` +
+            `Si tu comprobante anterior fue rechazado, intenta con el mismo número — debería funcionar. ` +
+            `Si no, usa otro número de operación o contacta al administrador.`,
+          duration: 12000,
+        });
+        return;
+      }
+
+      // 2. Error del upload de foto (mensaje ya viene accionable)
       const isUploadError =
-        msg.toLowerCase().includes('foto') ||
-        msg.toLowerCase().includes('subir') ||
-        msg.toLowerCase().includes('imagen') ||
-        msg.toLowerCase().includes('servidor') ||
-        msg.toLowerCase().includes('internet') ||
-        msg.toLowerCase().includes('wifi') ||
-        msg.toLowerCase().includes('tardando');
+        rawMsg.toLowerCase().includes('foto') ||
+        rawMsg.toLowerCase().includes('subir') ||
+        rawMsg.toLowerCase().includes('imagen') ||
+        rawMsg.toLowerCase().includes('servidor') ||
+        rawMsg.toLowerCase().includes('internet') ||
+        rawMsg.toLowerCase().includes('wifi') ||
+        rawMsg.toLowerCase().includes('tardando');
 
+      if (isUploadError) {
+        toast({
+          title: 'Error al subir la foto',
+          description: rawMsg,
+          variant: 'destructive',
+          duration: 10000,
+        });
+        return;
+      }
+
+      // 3. Error genérico de base de datos → mensaje humano sin tecnicismos
       toast({
-        title: isUploadError ? 'Error al subir la foto' : 'Error al guardar tu solicitud',
-        description: isUploadError
-          ? msg
-          : `La foto se subió, pero no se pudo guardar el registro. Espera un momento y vuelve a intentarlo. (${msg})`,
+        title: 'Error al guardar tu solicitud',
+        description:
+          'La foto se subió correctamente, pero no se pudo registrar el comprobante. ' +
+          'Espera un momento y vuelve a intentarlo. Si el error persiste, contacta al administrador.',
         variant: 'destructive',
         duration: 10000,
       });

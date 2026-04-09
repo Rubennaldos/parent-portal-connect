@@ -1065,16 +1065,19 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       // supervisor_red solo ve cafetería (restricción de negocio).
       const txTypeFilter = role === 'supervisor_red' ? 'cafeteria' : null;
 
-      // Para rango de fechas, limitar p_until_date al fin del rango.
-      // Para "Todo el histórico", sin límite (null).
+      // Ambas fechas se envían al servidor — el RPC filtra correctamente.
+      const fromDateUTC = cxcPeriodType === 'range' && cxcDateFrom
+        ? new Date(cxcDateFrom + 'T00:00:00').toISOString()
+        : null;
       const untilDateUTC = cxcPeriodType === 'range' && cxcDateTo
-        ? (() => { const d = new Date(cxcDateTo + 'T23:59:59'); return d.toISOString(); })()
+        ? new Date(cxcDateTo + 'T23:59:59').toISOString()
         : null;
 
       const { data: rpcResult, error: rpcErr } = await supabase.rpc(
         'get_billing_consolidated_debtors',
         {
           p_school_id:        cxcSchoolFilter ?? null,
+          p_from_date:        fromDateUTC,
           p_until_date:       untilDateUTC,
           p_transaction_type: txTypeFilter,
           p_search:           null,
@@ -1125,29 +1128,8 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       let list = [...allDebtors];
 
-      // 1. Filtro de rango de fechas (solo en modo 'range').
-      //    Recalculamos montos desde las transacciones individuales porque los
-      //    campos pre-calculados del deudor cubren el período completo.
-      if (cxcPeriodType === 'range' && (cxcDateFrom || cxcDateTo)) {
-        const from = cxcDateFrom ? new Date(cxcDateFrom + 'T00:00:00') : null;
-        const to   = cxcDateTo   ? new Date(cxcDateTo   + 'T23:59:59') : null;
-        list = list.map(d => {
-          const txFiltered = d.transactions.filter((t: any) => {
-            const txDate = new Date(t.metadata?.order_created_at || t.created_at);
-            if (from && txDate < from) return false;
-            if (to   && txDate > to)   return false;
-            return true;
-          });
-          if (txFiltered.length === 0) return null;
-          const lunch = txFiltered
-            .filter((t: any) => isLunchTx(t))
-            .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
-          const cafe = txFiltered
-            .filter((t: any) => !isLunchTx(t))
-            .reduce((s: number, t: any) => s + Math.abs(t.amount ?? 0), 0);
-          return { ...d, transactions: txFiltered, total_amount: lunch + cafe, lunch_amount: lunch, cafeteria_amount: cafe };
-        }).filter(Boolean) as Debtor[];
-      }
+      // El filtro de fechas se aplica en el SERVIDOR (p_from_date / p_until_date).
+      // No se filtra en el cliente — los montos ya vienen calculados correctamente del RPC.
 
       // 2. Filtro de rubro — usar campos pre-calculados del servidor para
       //    que el monto coincida exactamente con lo que ya calculó el RPC.
@@ -3278,14 +3260,14 @@ Si tienes dudas, comunícate con la administración de tu sede.
                   className={`flex flex-col items-start gap-1 p-4 rounded-xl border-2 text-left transition-all ${cxcPeriodType === 'all' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
                 >
                   <span className="font-bold text-gray-900">📋 Todo el histórico</span>
-                  <span className="text-xs text-gray-500">Usa los filtros de fecha y período ya aplicados en la pantalla principal.</span>
+                  <span className="text-xs text-gray-500">Sin límite de fechas — muestra toda la deuda activa hasta hoy.</span>
                 </button>
                 <button
                   onClick={() => setCxcPeriodType('range')}
                   className={`flex flex-col items-start gap-1 p-4 rounded-xl border-2 text-left transition-all ${cxcPeriodType === 'range' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
                 >
-                  <span className="font-bold text-gray-900">📅 Rango específico</span>
-                  <span className="text-xs text-gray-500">Filtra las transacciones del deudor por un intervalo de fechas personalizado.</span>
+                  <span className="font-bold text-gray-900">📅 Rango de fechas</span>
+                  <span className="text-xs text-gray-500">Solo deudas generadas entre las fechas que elijas. Mismo filtro que el Dashboard.</span>
                 </button>
               </div>
 
@@ -3472,7 +3454,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
                       ? `📅 Desde ${cxcDateFrom}`
                       : cxcPeriodType === 'range' && cxcDateTo
                       ? `📅 Hasta ${cxcDateTo}`
-                      : '📋 Deuda acumulada histórica'}
+                      : '📋 Todo el histórico'}
                   </span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
                     {cxcRubro === 'cafeteria' ? '☕ Solo Cafetería' : cxcRubro === 'lunch' ? '🍽 Solo Almuerzos' : '💰 Todo (cafetería + almuerzos)'}

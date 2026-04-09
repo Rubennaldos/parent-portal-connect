@@ -4,13 +4,15 @@
  * Fila 1: Historial de Compras · Mensajes (destacado) · Topes
  * Fila 2: Soporte · Agregar Hijo
  */
-import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus } from 'lucide-react';
+import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus, Wallet } from 'lucide-react';
 
 interface ServicesGridProps {
   onViewHistory:   () => void;
   onTopes?:        () => void;
   onMessages?:     () => void;
   onAddStudent?:   () => void;
+  onBalance?:      () => void;
+  studentBalance?: number;
   unreadNotifCount?: number;
   supportPhone?:   string;
 }
@@ -20,6 +22,8 @@ export function ServicesGrid({
   onTopes,
   onMessages,
   onAddStudent,
+  onBalance,
+  studentBalance = 0,
   unreadNotifCount = 0,
   supportPhone = '51991236870',
 }: ServicesGridProps) {
@@ -76,8 +80,38 @@ export function ServicesGrid({
 
       </div>
 
-      {/* ── Fila 2: 2 botones ── */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* ── Fila 2: 3 botones ── */}
+      <div className="grid grid-cols-3 gap-2">
+
+        {/* SALDO */}
+        <button
+          onClick={onBalance ?? (() => {})}
+          className="flex flex-col items-center gap-2 p-2 rounded-2xl hover:bg-slate-50/80 active:scale-95 transition-all duration-200"
+        >
+          <div className={`relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm
+            ${studentBalance > 0
+              ? 'bg-gradient-to-br from-emerald-400 to-teal-500 ring-2 ring-emerald-200/60'
+              : 'bg-gradient-to-br from-slate-100 to-slate-200 ring-2 ring-slate-200/50'
+            }`}
+          >
+            <Wallet className={`w-5 h-5 ${studentBalance > 0 ? 'text-white' : 'text-slate-400'}`} />
+            {studentBalance > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[18px] flex items-center justify-center bg-gradient-to-br from-emerald-400 to-emerald-600 border-2 border-white rounded-full shadow-sm text-white text-[8px] font-black px-1">
+                ✓
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col items-center gap-0">
+            <span className={`text-[10px] font-semibold leading-tight text-center ${studentBalance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+              Mi Saldo
+            </span>
+            {studentBalance > 0 && (
+              <span className="text-[9px] font-bold text-emerald-500 leading-none">
+                S/ {studentBalance.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </button>
 
         {/* SOPORTE */}
         <ServiceButton
