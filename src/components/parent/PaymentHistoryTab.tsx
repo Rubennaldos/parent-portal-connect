@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import {
   CheckCircle2,
   XCircle,
@@ -20,7 +18,7 @@ import {
   FileText,
   Ticket,
   Package,
-  ChevronRight,
+  ShieldCheck,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -64,6 +62,26 @@ interface PaymentRecord {
   sunat_invoices?: { pdf_url: string | null; full_number: string | null; invoice_type: string | null }[];
 }
 
+// Cobro directo realizado por admin vía CXC (sin voucher del padre)
+interface DirectPaymentGroup {
+  groupKey: string;          // operationNumber + date + adminId
+  operation_number: string | null;
+  payment_method: string;
+  paid_at: string;           // fecha del primer ticket del grupo
+  admin_id: string | null;
+  admin_name: string | null;
+  school_name: string | null;
+  tickets: {
+    id: string;
+    ticket_code: string | null;
+    amount: number;
+    description: string | null;
+    student_name: string;
+    is_lunch: boolean;
+  }[];
+  total_amount: number;
+}
+
 interface PaymentHistoryTabProps {
   userId: string;
   isActive?: boolean;
@@ -86,10 +104,10 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<PaymentRecord[]>([]);
+  const [directPayments, setDirectPayments] = useState<DirectPaymentGroup[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // Detalles de tickets por record id (lazy loaded)
   const [ticketDetailsMap, setTicketDetailsMap] = useState<Map<string, TicketDetail[]>>(new Map());
   const [loadingTickets, setLoadingTickets] = useState<Set<string>>(new Set());
 
@@ -101,9 +119,129 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
     if (isActive) fetchHistory();
   }, [isActive]);
 
+  // ── Cobros directos realizados por admin vía módulo CXC ───────────────────
+  // Estos cobros no crean recharge_requests — el padre nunca los ve sin esto.
+  const fetchDirectPayments = async () => {
+    try {
+      // 1. Obtener los IDs de los alumnos del padre
+      const { data: students } = await supabase
+        .from('students')
+        .select('id, full_name')
+        .eq('parent_id', userId)
+        .eq('is_active', true);
+
+      if (!students || students.length === 0) return;
+
+      const studentIds = students.map(s => s.id);
+      const studentNameMap = new Map<string, string>(students.map(s => [s.id, s.full_name]));
+
+      // 2. Obtener transacciones pagadas por admin (source: CXC manual)
+      //    Criterio: payment_status = paid, payment_method IS NOT NULL, is_deleted = false
+      //    Solo mostramos los últimos 90 días para no sobrecargar
+      const since = new Date();
+      since.setDate(since.getDate() - 90);
+
+      const { data: txData } = await supabase
+        .from('transactions')
+        .select('id, student_id, ticket_code, amount, description, created_at, payment_method, operation_number, created_by, school_id, metadata')
+        .in('student_id', studentIds)
+        .eq('payment_status', 'paid')
+        .eq('type', 'purchase')
+        .eq('is_deleted', false)
+        .not('payment_method', 'is', null)
+        .gte('created_at', since.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (!txData || txData.length === 0) return;
+
+      // 3. Excluir transacciones ya cubiertas por un recharge_request
+      //    (esas se muestran en la sección de vouchers del padre)
+      const { data: rrData } = await supabase
+        .from('recharge_requests')
+        .select('paid_transaction_ids')
+        .eq('parent_id', userId)
+        .not('paid_transaction_ids', 'is', null);
+
+      const coveredByVoucher = new Set<string>();
+      if (rrData) {
+        rrData.forEach((rr: any) => {
+          if (Array.isArray(rr.paid_transaction_ids)) {
+            rr.paid_transaction_ids.forEach((id: string) => coveredByVoucher.add(id));
+          }
+        });
+      }
+
+      const directTxs = txData.filter(tx => !coveredByVoucher.has(tx.id));
+      if (directTxs.length === 0) return;
+
+      // 4. Obtener nombres de admins en bulk
+      const adminIds = [...new Set(directTxs.filter(t => t.created_by).map(t => t.created_by as string))];
+      let adminMap: Record<string, string> = {};
+      if (adminIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', adminIds);
+        if (profiles) profiles.forEach(p => { adminMap[p.id] = p.full_name; });
+      }
+
+      // 5. Obtener nombres de sedes
+      const schoolIds = [...new Set(directTxs.filter(t => t.school_id).map(t => t.school_id as string))];
+      let schoolMap: Record<string, string> = {};
+      if (schoolIds.length > 0) {
+        const { data: schools } = await supabase
+          .from('schools')
+          .select('id, name')
+          .in('id', schoolIds);
+        if (schools) schools.forEach(s => { schoolMap[s.id] = s.name; });
+      }
+
+      // 6. Agrupar por (operation_number + admin + fecha-día) para mostrar como "evento de cobro"
+      const groupMap = new Map<string, DirectPaymentGroup>();
+      directTxs.forEach(tx => {
+        const dayKey = tx.created_at ? tx.created_at.slice(0, 10) : 'unknown';
+        const groupKey = `${tx.operation_number ?? 'cash'}_${tx.created_by ?? 'unk'}_${dayKey}`;
+
+        if (!groupMap.has(groupKey)) {
+          groupMap.set(groupKey, {
+            groupKey,
+            operation_number: tx.operation_number ?? null,
+            payment_method:   tx.payment_method ?? 'efectivo',
+            paid_at:          tx.created_at,
+            admin_id:         tx.created_by ?? null,
+            admin_name:       tx.created_by ? (adminMap[tx.created_by] ?? 'Administrador') : null,
+            school_name:      tx.school_id ? (schoolMap[tx.school_id] ?? null) : null,
+            tickets:          [],
+            total_amount:     0,
+          });
+        }
+
+        const grp = groupMap.get(groupKey)!;
+        const isLunch = !!(tx.metadata?.lunch_order_id);
+        grp.tickets.push({
+          id:           tx.id,
+          ticket_code:  tx.ticket_code ?? null,
+          amount:       Math.abs(Number(tx.amount)),
+          description:  tx.description ?? null,
+          student_name: studentNameMap.get(tx.student_id ?? '') ?? 'Alumno',
+          is_lunch:     isLunch,
+        });
+        grp.total_amount += Math.abs(Number(tx.amount));
+      });
+
+      setDirectPayments(Array.from(groupMap.values()));
+    } catch (err) {
+      console.error('Error fetching direct payments:', err);
+    }
+  };
+
   const fetchHistory = async () => {
     setLoading(true);
     try {
+      // Cargar cobros directos en paralelo
+      fetchDirectPayments();
+
       const { data, error } = await supabase
         .from('recharge_requests')
         .select(`
@@ -497,14 +635,14 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
     );
   }
 
-  if (records.length === 0) {
+  if (records.length === 0 && directPayments.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4">
         <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mb-4">
           <FileText className="h-7 w-7 text-slate-400" />
         </div>
         <h3 className="text-base font-bold text-slate-700 mb-1">Sin registros</h3>
-        <p className="text-sm text-slate-400 text-center">Aún no has enviado ningún comprobante de pago.</p>
+        <p className="text-sm text-slate-400 text-center">Aún no tienes pagos registrados.</p>
       </div>
     );
   }
@@ -514,7 +652,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
       {/* Encabezado */}
       <div className="flex items-center justify-between mb-3 px-0.5">
         <p className="text-xs text-slate-400">
-          {records.length} comprobante{records.length !== 1 ? 's' : ''} en tu historial
+          {records.length + directPayments.length} registro{(records.length + directPayments.length) !== 1 ? 's' : ''} en tu historial
         </p>
         <button
           onClick={fetchHistory}
@@ -524,6 +662,133 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           Actualizar
         </button>
       </div>
+
+      {/* ── Cobros directos por administración (CXC) ── */}
+      {directPayments.length > 0 && (
+        <div className="mb-4 space-y-2">
+          <div className="flex items-center gap-1.5 px-0.5 mb-1">
+            <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+            <p className="text-[11px] font-semibold text-violet-700 uppercase tracking-wide">
+              Cobros confirmados por administración
+            </p>
+          </div>
+          {directPayments.map((grp) => {
+            const isExpanded = expandedId === grp.groupKey;
+            return (
+              <div
+                key={grp.groupKey}
+                className="bg-white rounded-2xl shadow-sm border-l-4 border-l-violet-400 border border-slate-100 overflow-hidden"
+              >
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : grp.groupKey)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+                >
+                  <div className="shrink-0 w-9 h-9 rounded-xl bg-violet-100 flex items-center justify-center">
+                    <ShieldCheck className="h-4 w-4 text-violet-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm text-slate-800 truncate">
+                      Cobro directo — {grp.tickets.length} ticket{grp.tickets.length !== 1 ? 's' : ''}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {PAYMENT_METHOD_LABEL[grp.payment_method] ?? grp.payment_method}
+                      {grp.operation_number && ` · Op# ${grp.operation_number}`}
+                      {' · '}
+                      {format(new Date(grp.paid_at), "d MMM yyyy", { locale: es })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <Badge variant="outline" className="border-violet-300 bg-violet-50 text-violet-700 text-[10px] gap-0.5">
+                        <CheckCircle2 className="h-3 w-3" /> Cobrado
+                      </Badge>
+                      <p className="text-sm font-black text-slate-800 mt-0.5">S/ {grp.total_amount.toFixed(2)}</p>
+                    </div>
+                    <svg
+                      className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-100 bg-slate-50/60 space-y-3">
+                    {/* Detalles del cobro */}
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                      <div>
+                        <span className="text-slate-400">Método: </span>
+                        <span className="font-semibold text-slate-700">
+                          {PAYMENT_METHOD_LABEL[grp.payment_method] ?? grp.payment_method}
+                        </span>
+                      </div>
+                      {grp.operation_number && (
+                        <div className="flex items-center gap-0.5 min-w-0">
+                          <Hash className="h-3 w-3 text-slate-400 shrink-0" />
+                          <span className="font-mono truncate text-slate-700">{grp.operation_number}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Banner admin que cobró */}
+                    <div className="flex items-center gap-2 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
+                      <ShieldCheck className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+                      <p className="text-[11px] text-violet-700">
+                        Cobrado el {format(new Date(grp.paid_at), "d 'de' MMMM yyyy · HH:mm", { locale: es })}
+                        {grp.admin_name && ` · por ${grp.admin_name}`}
+                      </p>
+                    </div>
+
+                    {/* Lista de tickets incluidos */}
+                    <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-100">
+                        <Ticket className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                        <span className="text-[11px] font-semibold text-slate-600">
+                          {grp.tickets.length} ticket{grp.tickets.length !== 1 ? 's' : ''} en este cobro
+                        </span>
+                      </div>
+                      {grp.tickets.map((tk, idx) => (
+                        <div key={tk.id} className={`px-3 py-2.5 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                                {tk.ticket_code && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-mono bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">
+                                    <Hash className="h-2.5 w-2.5" />
+                                    {tk.ticket_code}
+                                  </span>
+                                )}
+                                {tk.is_lunch && (
+                                  <span className="inline-flex items-center gap-0.5 text-[10px] bg-orange-100 text-orange-600 rounded px-1.5 py-0.5">
+                                    <UtensilsCrossed className="h-2.5 w-2.5" /> Almuerzo
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-500 truncate">{tk.description ?? tk.student_name}</p>
+                            </div>
+                            <span className="text-xs font-bold text-slate-800 shrink-0">S/ {tk.amount.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Comprobantes enviados por el padre (vouchers) ── */}
+      {records.length > 0 && (
+        <div className="flex items-center gap-1.5 px-0.5 mb-2">
+          <Wallet className="h-3.5 w-3.5 text-emerald-600" />
+          <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">
+            Comprobantes enviados por ti
+          </p>
+        </div>
+      )}
 
       {/* Lista compacta de comprobantes */}
       <div className="space-y-2">

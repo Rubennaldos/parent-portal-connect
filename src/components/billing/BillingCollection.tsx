@@ -871,6 +871,44 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
 
       if (rpcError) {
         console.error('❌ [BillingCollection] process_payment_collection falló:', rpcError);
+
+        // Traducir errores técnicos de la BD a mensajes humanos
+        const rawMsg: string = rpcError?.message ?? rpcError?.details ?? '';
+
+        if (rawMsg.includes('FECHA_FUTURA')) {
+          const match = rawMsg.match(/FECHA_FUTURA: (.+)/);
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Almuerzos con fecha futura',
+            description: match?.[1] ?? 'No se puede cobrar almuerzos de fechas futuras. Solo se pueden cobrar almuerzos del día actual o anteriores.',
+            duration: 10000,
+          });
+          setSaving(false);
+          return;
+        }
+
+        if (rawMsg.includes('OPERACION_DUPLICADA')) {
+          const match = rawMsg.match(/OPERACION_DUPLICADA: (.+)/);
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Número de operación ya utilizado',
+            description: match?.[1] ?? 'Este número de operación ya fue registrado para este alumno. Verifique el comprobante antes de continuar.',
+            duration: 10000,
+          });
+          setSaving(false);
+          return;
+        }
+
+        if (rawMsg.includes('CONFLICT')) {
+          toast({
+            variant: 'destructive',
+            title: 'Conflicto de cobro',
+            description: 'Una o más deudas ya fueron cobradas por otro admin. Recarga la lista e intenta de nuevo.',
+          });
+          setSaving(false);
+          return;
+        }
+
         throw rpcError;
       }
 
