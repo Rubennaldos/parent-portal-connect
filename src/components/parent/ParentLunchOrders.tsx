@@ -231,6 +231,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
           .eq('type', 'purchase')
           .eq('is_deleted', false)
           .neq('payment_status', 'cancelled')
+          .in('student_id', studentIds) // solo transacciones de los hijos de este padre
           .not('metadata', 'is', null);
 
         if (txData) {

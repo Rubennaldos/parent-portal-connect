@@ -180,10 +180,14 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         if (txWithInvoice && txWithInvoice.length > 0) {
           const invoiceIds = [...new Set(txWithInvoice.map((t: any) => t.invoice_id as string))];
 
+          // Solo boletas individuales (con datos del cliente real).
+          // Las boletas de "Resumen Ventas Diarias" del admin tienen client_name = 'Consumidor Final'
+          // y NO corresponden al padre — se excluyen explícitamente.
           const { data: invoicesData } = await supabase
             .from('invoices')
-            .select('id, pdf_url, full_number, invoice_type')
-            .in('id', invoiceIds);
+            .select('id, pdf_url, full_number, invoice_type, client_name, client_document_number')
+            .in('id', invoiceIds)
+            .neq('client_name', 'Consumidor Final');
 
           if (invoicesData) {
             // Mapas para lookup rápido
