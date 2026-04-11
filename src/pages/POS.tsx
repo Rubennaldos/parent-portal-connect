@@ -165,6 +165,8 @@ interface Student {
   weekly_limit?: number;
   monthly_limit?: number;
   current_period_spent?: number;
+  /** Cuándo se reinicia el tope (ISO UTC). Si ya pasó, current_period_spent es del período anterior. */
+  next_reset_date?: string | null;
 }
 
 interface Product {
@@ -986,7 +988,7 @@ const POS = () => {
       // Construir la consulta base
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`);
       
@@ -1137,7 +1139,7 @@ const POS = () => {
       // Consulta de alumnos
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name), limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name), limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date')
         .eq('is_active', true)
         .ilike('full_name', `%${query.trim()}%`);
 
@@ -1222,13 +1224,25 @@ const POS = () => {
   };
 
   // Helper para resolver badge de tope del alumno — muestra disponible real
+  /**
+   * Devuelve el gasto real del período actual para un alumno.
+   * Si next_reset_date ya pasó, el período se reinició pero aún no hubo compra
+   * nueva → current_period_spent pertenece al período anterior → retorna 0.
+   */
+  const getEffectiveSpent = (student: Student): number => {
+    if (student.next_reset_date && new Date() >= new Date(student.next_reset_date)) {
+      return 0;
+    }
+    return student.current_period_spent ?? 0;
+  };
+
   const getLimitBadge = (student: Student): { text: string; color: string } | null => {
     const lt = student.limit_type;
     if (!lt || lt === 'none') return null;
     const limitAmt = lt === 'daily'   ? (student.daily_limit   ?? 0)
                    : lt === 'weekly'  ? (student.weekly_limit  ?? 0)
                    : (student.monthly_limit ?? 0);
-    const spent = student.current_period_spent ?? 0;
+    const spent = getEffectiveSpent(student);
     const avail = Math.max(0, limitAmt - spent);
     const label  = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
     return { text: `🟠 Tope ${label}: S/ ${avail.toFixed(2)} disp.`, color: 'text-amber-600' };
@@ -1306,7 +1320,7 @@ const POS = () => {
     (async () => {
       const { data } = await supabase
         .from('students')
-        .select('balance, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent')
+        .select('balance, free_account, kiosk_disabled, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date')
         .eq('id', studentId)
         .single();
       if (reqId !== balanceFetchId.current) return;
@@ -1632,7 +1646,7 @@ const POS = () => {
         const limitAmount = lt === 'daily'   ? (selectedStudent.daily_limit   ?? 0)
                           : lt === 'weekly'  ? (selectedStudent.weekly_limit  ?? 0)
                           : (selectedStudent.monthly_limit ?? 0);
-        const periodSpent = selectedStudent.current_period_spent ?? 0;
+        const periodSpent = getEffectiveSpent(selectedStudent);
         const available   = Math.max(0, limitAmount - periodSpent);
         const cartTotal   = getTotal(); // En POS todos los items son de cafetería
         if (limitAmount > 0 && cartTotal > available) {
@@ -3329,7 +3343,7 @@ const POS = () => {
                           const limitAmt = lt === 'daily'  ? (selectedStudent.daily_limit   ?? 0)
                                          : lt === 'weekly' ? (selectedStudent.weekly_limit  ?? 0)
                                          : (selectedStudent.monthly_limit ?? 0);
-                          const spent    = selectedStudent.current_period_spent ?? 0;
+                          const spent    = getEffectiveSpent(selectedStudent);
                           const avail    = Math.max(0, limitAmt - spent);
                           const label    = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
                           return (
@@ -3510,7 +3524,7 @@ const POS = () => {
                     const limitAmt = lt === 'daily'  ? (s.daily_limit   ?? 0)
                                    : lt === 'weekly' ? (s.weekly_limit  ?? 0)
                                    : (s.monthly_limit ?? 0);
-                    const spent    = s.current_period_spent ?? 0;
+                    const spent    = getEffectiveSpent(s);
                     const avail    = Math.max(0, limitAmt - spent);
                     const total    = getTotal();
                     const limitLabel = lt === 'daily' ? 'diario' : lt === 'weekly' ? 'semanal' : 'mensual';

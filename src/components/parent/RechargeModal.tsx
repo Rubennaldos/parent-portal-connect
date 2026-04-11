@@ -362,17 +362,26 @@ export function RechargeModal({
   // ── Helper: verificar duplicado de código de operación ──
   // Devuelve { isDuplicate: false } si el único registro existente está en 'rejected'
   // (los rechazados se pueden reutilizar). Solo bloquea 'pending' y 'approved'.
-  const checkDuplicate = async (code: string): Promise<{ isDuplicate: boolean; existingStatus?: string }> => {
+  // Si el código ya existe Y es del mismo padre → isOwnRequest = true (no es un error,
+  // significa que su solicitud YA está registrada y puede ir directo a éxito).
+  const checkDuplicate = async (
+    code: string,
+    parentId: string
+  ): Promise<{ isDuplicate: boolean; isOwnRequest: boolean; existingStatus?: string }> => {
     const { data } = await supabase
       .from('recharge_requests')
-      .select('id, status')
+      .select('id, status, parent_id')
       .eq('reference_code', code.trim())
       .neq('status', 'rejected')   // rechazados NO bloquean el reintento
       .limit(1);
     if (data && data.length > 0) {
-      return { isDuplicate: true, existingStatus: data[0].status };
+      return {
+        isDuplicate: true,
+        isOwnRequest: data[0].parent_id === parentId,
+        existingStatus: data[0].status,
+      };
     }
-    return { isDuplicate: false };
+    return { isDuplicate: false, isOwnRequest: false };
   };
 
   // ── Pago 100% con billetera: no requiere voucher bancario ───────────────────
@@ -444,56 +453,42 @@ export function RechargeModal({
       submittingRef.current = false;
       return;
     }
+    // Helper local: salida limpia antes del try (resetea ambos guards)
+    const earlyExit = (title: string, description: string) => {
+      submittingRef.current = false;
+      toast({ title, description, variant: 'destructive' });
+    };
+
     if (requestType === 'recharge' && numAmount > 2000) {
-      toast({ title: 'Monto muy alto', description: 'El monto máximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.', variant: 'destructive' });
+      earlyExit('Monto muy alto', 'El monto máximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.');
       return;
     }
 
     // ── Validar código principal obligatorio ──
     if (!referenceCode.trim()) {
-      toast({
-        title: '🚫 Número de operación obligatorio',
-        description: 'Debes ingresar el número de operación o código de transacción para continuar.',
-        variant: 'destructive',
-      });
+      earlyExit('🚫 Número de operación obligatorio', 'Debes ingresar el número de operación o código de transacción para continuar.');
       return;
     }
 
     // ── Validar foto del comprobante principal obligatoria ──
     if (!voucherFile) {
-      toast({
-        title: '🚫 Foto del comprobante obligatoria',
-        description: 'Debes adjuntar la captura o foto del comprobante de pago para continuar.',
-        variant: 'destructive',
-      });
+      earlyExit('🚫 Foto del comprobante obligatoria', 'Debes adjuntar la captura o foto del comprobante de pago para continuar.');
       return;
     }
 
     // ── Validar comprobantes adicionales ──
     for (const ev of extraVouchers) {
       if (!ev.referenceCode.trim()) {
-        toast({
-          variant: 'destructive',
-          title: '🚫 Código obligatorio en comprobante adicional',
-          description: 'Cada comprobante adicional debe tener su número de operación.',
-        });
+        earlyExit('🚫 Código obligatorio en comprobante adicional', 'Cada comprobante adicional debe tener su número de operación.');
         return;
       }
       if (!ev.voucherFile) {
-        toast({
-          variant: 'destructive',
-          title: '🚫 Foto obligatoria en comprobante adicional',
-          description: 'Cada comprobante adicional debe tener su foto adjuntada.',
-        });
+        earlyExit('🚫 Foto obligatoria en comprobante adicional', 'Cada comprobante adicional debe tener su foto adjuntada.');
         return;
       }
       const evAmount = parseFloat(ev.amount);
       if (!evAmount || evAmount <= 0) {
-        toast({
-          variant: 'destructive',
-          title: 'Monto inválido en comprobante adicional',
-          description: 'Ingresa el monto pagado en cada comprobante adicional.',
-        });
+        earlyExit('Monto inválido en comprobante adicional', 'Ingresa el monto pagado en cada comprobante adicional.');
         return;
       }
     }
@@ -502,20 +497,27 @@ export function RechargeModal({
     const allCodes = [referenceCode.trim(), ...extraVouchers.map(ev => ev.referenceCode.trim())];
     const uniqueCodes = new Set(allCodes);
     if (uniqueCodes.size !== allCodes.length) {
-      toast({
-        variant: 'destructive',
-        title: '🚫 Códigos repetidos',
-        description: 'Cada comprobante debe tener un código de operación diferente.',
-      });
+      earlyExit('🚫 Códigos repetidos', 'Cada comprobante debe tener un código de operación diferente.');
       return;
     }
 
     setLoading(true);
+    // Flag para saber en qué fase ocurrió el error (determina el mensaje genérico correcto)
+    let uploadStarted = false;
     try {
       // ── Verificar duplicados en BD para TODOS los códigos ──
       for (const code of allCodes) {
-        const { isDuplicate, existingStatus } = await checkDuplicate(code);
+        const { isDuplicate, isOwnRequest, existingStatus } = await checkDuplicate(code, user.id);
         if (isDuplicate) {
+          // Si el código ya existe Y es solicitud PROPIA en pending/approved → ya está registrado.
+          // No es un error: mostrar pantalla de éxito directamente.
+          if (isOwnRequest && (existingStatus === 'pending' || existingStatus === 'approved')) {
+            setStep('success');
+            setLoading(false);
+            submittingRef.current = false;
+            return;
+          }
+          // Código de otro padre o estado inesperado → pedir número diferente
           const statusLabel =
             existingStatus === 'approved' ? 'ya fue APROBADO' :
             existingStatus === 'pending'  ? 'está PENDIENTE de revisión' :
@@ -529,7 +531,6 @@ export function RechargeModal({
               `Si está pendiente o aprobado, usa un número de operación diferente.`,
             duration: 10000,
           });
-          setLoading(false);
           return;
         }
       }
@@ -573,6 +574,7 @@ export function RechargeModal({
 
       setUploadPhaseLabel('Subiendo foto...');
       setUploadProgress(0);
+      uploadStarted = true;
 
       const voucherUrl = await uploadVoucherImage(voucherFile, user.id, (pct) => {
         setUploadProgress(Math.round((pct * imageSlice) / 100));
@@ -685,18 +687,35 @@ export function RechargeModal({
 
       // ── Clasificar el error y dar mensaje humano ──────────────────────────
 
-      // 1. Código de operación duplicado (constraint BD — puede ocurrir por race condition)
+      // 1. Código de operación duplicado (constraint BD — race condition entre tabs / doble tap)
       if (
         rawMsg.includes('idx_recharge_unique_ref_code') ||
         (rawMsg.toLowerCase().includes('duplicate key') && rawMsg.toLowerCase().includes('reference'))
       ) {
+        // Verificar si el registro que chocó ES del mismo padre.
+        // Si es propio y está pending/approved → el insert anterior llegó bien → mostrar éxito.
+        try {
+          const { data: myReq } = await supabase
+            .from('recharge_requests')
+            .select('id, status')
+            .eq('reference_code', referenceCode.trim())
+            .eq('parent_id', user.id)
+            .neq('status', 'rejected')
+            .limit(1);
+          if (myReq && myReq.length > 0) {
+            setStep('success');
+            return;
+          }
+        } catch {
+          // si falla la consulta de recuperación, caer en el toast de error
+        }
         toast({
           variant: 'destructive',
-          title: '⚠️ Código de operación duplicado',
+          title: '⚠️ Código ya registrado',
           description:
-            `Ese número de operación ya tiene un pago PENDIENTE o APROBADO en el sistema. ` +
-            `Si tu comprobante anterior fue RECHAZADO, el sistema permite reutilizar el mismo código — ` +
-            `actualiza la página e intenta de nuevo. De lo contrario, usa un número diferente.`,
+            `Ese número de operación ya tiene un pago en el sistema. ` +
+            `Si ya enviaste este comprobante, recarga la página para verlo. ` +
+            `Si tu pago anterior fue RECHAZADO, actualiza la página e intenta de nuevo.`,
           duration: 12000,
         });
         return;
@@ -722,15 +741,28 @@ export function RechargeModal({
         return;
       }
 
-      // 3. Error genérico de base de datos → mensaje humano sin tecnicismos
-      toast({
-        title: 'Error al guardar tu solicitud',
-        description:
-          'La foto se subió correctamente, pero no se pudo registrar el comprobante. ' +
-          'Espera un momento y vuelve a intentarlo. Si el error persiste, contacta al administrador.',
-        variant: 'destructive',
-        duration: 10000,
-      });
+      // 3. Error genérico: distinguir si ocurrió antes o después del upload
+      if (!uploadStarted) {
+        // El error fue antes de intentar subir la foto (BD caída, red cortada, etc.)
+        toast({
+          title: 'No se pudo verificar tu solicitud',
+          description:
+            'Hubo un problema de conexión antes de enviar el comprobante. ' +
+            'Tu foto NO fue subida. Verifica tu conexión e intenta de nuevo.',
+          variant: 'destructive',
+          duration: 10000,
+        });
+      } else {
+        // El error fue después del upload: foto en storage pero registro no guardado
+        toast({
+          title: 'Error al guardar tu solicitud',
+          description:
+            'La foto se subió correctamente, pero no se pudo registrar el comprobante. ' +
+            'Espera un momento y vuelve a intentarlo. Si el error persiste, contacta al administrador.',
+          variant: 'destructive',
+          duration: 10000,
+        });
+      }
     } finally {
       setLoading(false);
       setUploadProgress(null);

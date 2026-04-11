@@ -120,19 +120,38 @@ export function SpendingLimitsModal({
 
   const fetchSpending = async (sid: string) => {
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const startOfWeek = new Date();
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-      startOfWeek.setHours(0, 0, 0, 0);
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      // Lima = UTC-5 permanente (Perú no tiene horario de verano)
+      const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000;
+      const nowUtc  = new Date();
+      const nowLima = new Date(nowUtc.getTime() - LIMA_OFFSET_MS);
+
+      // Medianoche de hoy en Lima → convertida a UTC para la query de Supabase
+      const todayLimaMidnight = new Date(Date.UTC(
+        nowLima.getUTCFullYear(), nowLima.getUTCMonth(), nowLima.getUTCDate(), 0, 0, 0, 0,
+      ));
+      const todayUtc = new Date(todayLimaMidnight.getTime() + LIMA_OFFSET_MS);
+
+      // Lunes de esta semana a medianoche Lima (0=Dom, 1=Lun … 6=Sáb)
+      const dayOfWeek    = nowLima.getUTCDay();
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const mondayLimaMidnight = new Date(todayLimaMidnight.getTime() - daysToMonday * 86_400_000);
+      const mondayUtc = new Date(mondayLimaMidnight.getTime() + LIMA_OFFSET_MS);
+
+      // Día 1 del mes actual a medianoche Lima
+      const firstDayLimaMidnight = new Date(Date.UTC(
+        nowLima.getUTCFullYear(), nowLima.getUTCMonth(), 1, 0, 0, 0, 0,
+      ));
+      const firstDayUtc = new Date(firstDayLimaMidnight.getTime() + LIMA_OFFSET_MS);
+
       const base = () => supabase.from('transactions').select('amount, metadata')
         .eq('student_id', sid).eq('type', 'purchase').eq('is_deleted', false).neq('payment_status', 'cancelled');
       const calc = (rows: any[]) =>
         (rows || []).filter(t => !(t.metadata as any)?.lunch_order_id).reduce((s, t) => s + Math.abs(t.amount), 0);
+
       const [a, b, c] = await Promise.all([
-        base().gte('created_at', todayStr),
-        base().gte('created_at', startOfWeek.toISOString()),
-        base().gte('created_at', startOfMonth.toISOString()),
+        base().gte('created_at', todayUtc.toISOString()),
+        base().gte('created_at', mondayUtc.toISOString()),
+        base().gte('created_at', firstDayUtc.toISOString()),
       ]);
       setSpentToday(calc(a.data ?? []));
       setSpentWeek(calc(b.data ?? []));
