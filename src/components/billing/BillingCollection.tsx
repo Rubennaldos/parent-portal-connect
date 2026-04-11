@@ -875,18 +875,6 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         // Traducir errores técnicos de la BD a mensajes humanos
         const rawMsg: string = rpcError?.message ?? rpcError?.details ?? '';
 
-        if (rawMsg.includes('FECHA_FUTURA')) {
-          const match = rawMsg.match(/FECHA_FUTURA: (.+)/);
-          toast({
-            variant: 'destructive',
-            title: '⚠️ Almuerzos con fecha futura',
-            description: match?.[1] ?? 'No se puede cobrar almuerzos de fechas futuras. Solo se pueden cobrar almuerzos del día actual o anteriores.',
-            duration: 10000,
-          });
-          setSaving(false);
-          return;
-        }
-
         if (rawMsg.includes('OPERACION_DUPLICADA')) {
           const match = rawMsg.match(/OPERACION_DUPLICADA: (.+)/);
           toast({
