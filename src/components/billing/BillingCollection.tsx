@@ -548,11 +548,13 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         : null;
 
       // ── RPC unificado: agrupa, deduplica, pagina y hace todos los joins en Postgres ──
+      // Nota: se usa 'T00:00:00' y 'T23:59:59' para que JavaScript interprete
+      // la hora en zona local (Lima, UTC-5), igual que buildCxcListAsync.
       const fromDateUTC = fromDate
-        ? (() => { const d = new Date(fromDate); d.setHours(0, 0, 0, 0); return d.toISOString(); })()
+        ? new Date(fromDate + 'T00:00:00').toISOString()
         : null;
       const untilDateUTC = untilDate
-        ? (() => { const d = new Date(untilDate); d.setHours(23, 59, 59, 999); return d.toISOString(); })()
+        ? new Date(untilDate + 'T23:59:59').toISOString()
         : null;
 
       // supervisor_red solo ve deudas de cafetería (kiosco/POS), nunca almuerzos.
