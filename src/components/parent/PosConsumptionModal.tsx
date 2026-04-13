@@ -1,11 +1,9 @@
 /**
  * PosConsumptionModal — Estado de Cuenta de Cafetería
  *
- * v3: diseño de extracto bancario limpio
- *  - Sección ABONOS (recargas reales desde la BD)
- *  - Sección CONSUMOS (compras POS)
- *  - Saldo final real (students.balance via kioskDebt)
- *  - Botón de pago solo si hay deuda real
+ * Deuda pendiente kiosco: SUM(ABS(amount)) de transacciones purchase
+ * pending/partial sin lunch_order_id (RPC get_kiosk_pending_debt_total).
+ * No usa students.balance.
  */
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
@@ -58,9 +56,7 @@ export interface PosConsumptionModalProps {
   onClose: () => void;
   studentId: string;
   studentName: string;
-  /** Math.abs(students.balance) cuando balance < 0; 0 si el alumno está al día */
-  kioskDebt: number;
-  /** Callback cuando el padre presiona "Pagar deuda" */
+  /** Callback cuando el padre presiona "Pagar deuda" (monto = suma RPC en pantalla) */
   onPay?: (total: number) => void;
 }
 
@@ -97,13 +93,13 @@ export function PosConsumptionModal({
   onClose,
   studentId,
   studentName,
-  kioskDebt,
   onPay,
 }: PosConsumptionModalProps) {
   const [consumos, setConsumos]   = useState<Consumo[]>([]);
   const [recargas, setRecargas]   = useState<Recarga[]>([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  const [kioskPendingTotal, setKioskPendingTotal] = useState<number>(0);
 
   useEffect(() => {
     if (!open || !studentId) return;
@@ -115,6 +111,7 @@ export function PosConsumptionModal({
       setConsumos([]);
       setRecargas([]);
       setError(null);
+      setKioskPendingTotal(0);
     }
   }, [open]);
 
@@ -122,6 +119,12 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
+      const { data: debtSum, error: debtErr } = await supabase.rpc('get_kiosk_pending_debt_total', {
+        p_student_id: studentId,
+      });
+      if (debtErr) throw debtErr;
+      setKioskPendingTotal(Number(debtSum ?? 0));
+
       // Consumos POS via RPC (evita RLS en tabla sales)
       const { data: posData, error: posErr } = await supabase
         .rpc('get_student_pos_consumptions', { p_student_id: studentId });
@@ -164,7 +167,7 @@ export function PosConsumptionModal({
   };
 
   const firstName = studentName.split(' ')[0];
-  const hayDeuda  = kioskDebt > 0.009;
+  const hayDeuda  = kioskPendingTotal > 0.009;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -294,7 +297,7 @@ export function PosConsumptionModal({
                   <p className="text-sm text-slate-400">Sin movimientos registrados</p>
                   {hayDeuda && (
                     <p className="text-xs text-slate-300 mt-1 leading-relaxed px-4">
-                      La deuda puede ser de un período anterior al sistema digital.
+                      Si ves deuda aquí, corresponde a compras pendientes registradas en el sistema.
                     </p>
                   )}
                 </div>
@@ -315,11 +318,11 @@ export function PosConsumptionModal({
                     Deuda pendiente
                   </p>
                   <p className="text-[9px] text-slate-400 mt-0.5">
-                    Saldo oficial de {firstName} en el sistema
+                    Suma de consumos de cafetería pendientes de pago
                   </p>
                 </div>
                 <p className="text-2xl font-black text-rose-500">
-                  S/ {kioskDebt.toFixed(2)}
+                  S/ {kioskPendingTotal.toFixed(2)}
                 </p>
               </div>
             ) : (
@@ -335,11 +338,11 @@ export function PosConsumptionModal({
             {/* Botón de pago — solo si hay deuda real */}
             {hayDeuda && onPay && (
               <Button
-                onClick={() => onPay(kioskDebt)}
+                onClick={() => onPay(kioskPendingTotal)}
                 className="w-full rounded-xl font-bold text-sm py-3 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md active:scale-95"
               >
                 <CreditCard className="w-4 h-4 mr-2 shrink-0" />
-                Pagar deuda — S/ {kioskDebt.toFixed(2)}
+                Pagar deuda — S/ {kioskPendingTotal.toFixed(2)}
               </Button>
             )}
           </div>

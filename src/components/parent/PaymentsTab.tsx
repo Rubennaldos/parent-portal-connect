@@ -58,6 +58,15 @@ interface PaymentsTabProps {
   isActive?: boolean; // 🔄 Para refrescar cuando la pestaña se activa
 }
 
+/** Compras kiosco pendientes (UUID en transactions), sin almuerzos ni fila sintética de saldo. */
+function isKioskPendingPurchase(tx: PendingTransaction): boolean {
+  if (tx.metadata?.is_kiosk_balance_debt) return false;
+  if (tx.metadata?.lunch_order_id) return false;
+  if (tx.id.startsWith('lunch_')) return false;
+  if (tx.id.startsWith('kiosk_balance_')) return false;
+  return true;
+}
+
 export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const { toast } = useToast();
   const voucherSyncTs = useDebouncedSync('vouchers', 800);
@@ -101,7 +110,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const [infoHubOpen, setInfoHubOpen] = useState(false);
 
   // ── Modal de detalle de consumos POS ──
-  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; debt: number; readonly?: boolean } | null>(null);
+  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; readonly?: boolean } | null>(null);
 
   // ── Selección individual de transacciones por estudiante ──
   // Mapa: student_id → Set de transaction IDs seleccionados
@@ -480,33 +489,32 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   };
 
   /**
-   * Llamado desde PosConsumptionModal cuando el padre presiona "Pagar selección".
-   * Cierra el modal y abre la pasarela con el monto parcial elegido.
+   * Llamado desde PosConsumptionModal al pagar deuda cafetería: selecciona solo
+   * transacciones kiosco pendientes (misma suma que get_kiosk_pending_debt_total).
    */
-  const handlePosPayment = (studentId: string, totalSeleccionado: number) => {
+  const handlePosPayment = (studentId: string, totalFromModal: number) => {
     setPosDetailStudent(null);
     const debt = debts.find(d => d.student_id === studentId);
     if (!debt) return;
 
-    // Crea una copia del debt con el monto del kiosco reemplazado por el seleccionado
-    const modifiedDebt: StudentDebt = {
-      ...debt,
-      total_debt: totalSeleccionado,
-      pending_transactions: debt.pending_transactions.map(tx =>
-        tx.metadata?.is_kiosk_balance_debt
-          ? { ...tx, amount: totalSeleccionado }
-          : tx
-      ),
-    };
-
-    // Forzar selección a solo la tx virtual del kiosco
-    const kioskTx = debt.pending_transactions.find(tx => tx.metadata?.is_kiosk_balance_debt);
-    if (kioskTx) {
-      setSelectedTxByStudent(prev => new Map(prev).set(studentId, new Set([kioskTx.id])));
+    const kioskTxs = debt.pending_transactions.filter(isKioskPendingPurchase);
+    const sumLista = kioskTxs.reduce((s, tx) => s + tx.amount, 0);
+    if (kioskTxs.length === 0 || sumLista < 0.005) {
+      toast({
+        variant: 'destructive',
+        title: 'Sin compras pendientes',
+        description: 'No hay consumos de cafetería pendientes para pagar.',
+      });
+      return;
     }
 
-    setSelectedDebt(modifiedDebt);
-    setPendingInvoiceTotal(totalSeleccionado);
+    if (Math.abs(sumLista - totalFromModal) > 0.05) {
+      console.warn('[PaymentsTab] Total modal vs lista pendientes', { totalFromModal, sumLista });
+    }
+
+    setSelectedTxByStudent(prev => new Map(prev).set(studentId, new Set(kioskTxs.map(t => t.id))));
+    setSelectedDebt(debt);
+    setPendingInvoiceTotal(sumLista);
     setShowInvoiceSelector(true);
   };
 
@@ -830,7 +838,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         )}
       </div>
 
-      {/* ── Barra de Total Pendiente — solo muestra lo pagable (excluye "en revisión") ── */}
+      {/* ── Barra de Total Pendiente — suma de ítems de get_parent_debts (sin saldo almacenado) ── */}
       <div id="cart-total-pending-card" className="bg-white rounded-2xl shadow-sm border border-slate-100 px-4 py-3 flex items-center gap-3">
         <div className="flex-1">
           <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Total pendiente</p>
@@ -1017,19 +1025,16 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                   const isSelected = selectedIds.has(transaction.id);
                   const vStatus = voucherStatuses.get(transaction.id);
                   const isCoveredByPending = coveredByPendingVoucher.includes(transaction.id);
-                  const posKioskDebt = (debt.student_balance ?? 0) < 0
-                    ? Math.abs(debt.student_balance ?? 0)
-                    : 0;
 
                   return (
                     <div
                       key={transaction.id}
                       onClick={() => {
                         if (isKioskBalance) {
-                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, debt: transaction.amount });
+                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name });
                         } else if (isPos && !isCoveredByPending) {
                           // Abre detalle en modo solo lectura (sin botón de pago)
-                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, debt: posKioskDebt, readonly: true });
+                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, readonly: true });
                         } else if (!isCoveredByPending) {
                           toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
                         }
@@ -1259,7 +1264,6 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           onClose={() => setPosDetailStudent(null)}
           studentId={posDetailStudent.id}
           studentName={posDetailStudent.name}
-          kioskDebt={posDetailStudent.debt}
           onPay={posDetailStudent.readonly ? undefined : (total) => handlePosPayment(posDetailStudent.id, total)}
         />
       )}
