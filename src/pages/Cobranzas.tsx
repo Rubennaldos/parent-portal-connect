@@ -21,6 +21,7 @@ import {
   BarChart3,
   Wallet,
   Receipt,
+  History,
 } from 'lucide-react';
 
 // Importar los componentes de cada tab
@@ -32,6 +33,7 @@ import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
 import { VoucherApproval } from '@/components/billing/VoucherApproval';
 import { InvoicesList } from '@/components/billing/InvoicesList';
 import { BillingReportsTab } from '@/components/billing/reports/BillingReportsTab';
+import { PaymentHistory } from '@/components/billing/PaymentHistory';
 
 interface TabPermissions {
   dashboard: boolean;
@@ -44,6 +46,7 @@ interface TabPermissions {
   config_sede: boolean;      // Configuración de sede — solo para gestores de unidad
   comprobantes: boolean;     // Lista de boletas/facturas emitidas
   config_sunat: boolean;     // Configuración Nubefact/SUNAT
+  historial_pagos: boolean;  // Historial de pagos aprobados — solo Admin General
 }
 
 const Cobranzas = () => {
@@ -64,6 +67,7 @@ const Cobranzas = () => {
     config_sede: false,
     comprobantes: false,
     config_sunat: false,
+    historial_pagos: false,
   });
   const [pendingVouchers, setPendingVouchers] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -107,10 +111,11 @@ const Cobranzas = () => {
           statistics: false,
           config: false,
           vouchers: true,
-          pagos_realizados: false, // supervisor_red usa BillingReportsTab (reports)
+          pagos_realizados: false,
           config_sede: false,
           comprobantes: false,
           config_sunat: false,
+          historial_pagos: false,
         });
         setActiveTab('collect');
         fetchPendingVouchers();
@@ -127,10 +132,11 @@ const Cobranzas = () => {
           statistics: true,
           config: true,
           vouchers: true,
-          pagos_realizados: false, // admin_general usa BillingReportsTab (reports), no la versión básica
+          pagos_realizados: false,
           config_sede: false,
           comprobantes: true,
           config_sunat: true,
+          historial_pagos: true, // Solo Admin General ve el historial completo de pagos
         });
         setActiveTab('dashboard');
         fetchPendingVouchers();
@@ -170,6 +176,7 @@ const Cobranzas = () => {
         config_sede: false,
         comprobantes: false,
         config_sunat: false,
+        historial_pagos: false,
       };
 
       // Mapear los permisos de la BD a las pestañas
@@ -290,6 +297,7 @@ const Cobranzas = () => {
   const visibleTabCount = [
     permissions.dashboard,
     permissions.collect,
+    permissions.historial_pagos,
     permissions.pagos_realizados,
     permissions.vouchers,
     permissions.comprobantes,
@@ -387,6 +395,19 @@ const Cobranzas = () => {
                     >
                       <Users className="h-4 w-4" />
                       ¡Cobrar!
+                    </button>
+                  )}
+                  {permissions.historial_pagos && (
+                    <button
+                      onClick={() => setActiveTab('historial_pagos')}
+                      className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
+                        activeTab === 'historial_pagos'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <History className="h-4 w-4" />
+                      Historial de Pagos
                     </button>
                   )}
                   {permissions.pagos_realizados && (
@@ -515,6 +536,19 @@ const Cobranzas = () => {
                       ¡Cobrar!
                     </button>
                   )}
+                  {permissions.historial_pagos && (
+                    <button
+                      onClick={() => setActiveTab('historial_pagos')}
+                      className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+                        activeTab === 'historial_pagos'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      Historial de Pagos
+                    </button>
+                  )}
                   {permissions.pagos_realizados && (
                     <button
                       onClick={() => setActiveTab('pagos_realizados')}
@@ -640,6 +674,13 @@ const Cobranzas = () => {
                       'cobrar'
                     }
                   />
+                </div>
+              )}
+
+              {/* Historial de Pagos — solo Admin General */}
+              {activeTab === 'historial_pagos' && permissions.historial_pagos && (
+                <div className="mt-4 sm:mt-6">
+                  <PaymentHistory />
                 </div>
               )}
 

@@ -176,3 +176,10 @@
     opacity: 0;
   }
 }
+
+/* ── Barra de progreso para PaymentHistory ── */
+@keyframes progressBar {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
+}

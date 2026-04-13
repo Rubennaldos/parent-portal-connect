@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Ban,
   Loader2,
   Image as ImageIcon,
   Download,
@@ -48,7 +49,7 @@ interface PaymentRecord {
   payment_method: string;
   reference_code: string | null;
   voucher_url: string | null;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'voided';
   rejection_reason: string | null;
   approved_at: string | null;
   approved_by: string | null;
@@ -197,11 +198,13 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         if (schools) schools.forEach(s => { schoolMap[s.id] = s.name; });
       }
 
-      // 6. Agrupar por (operation_number + admin + fecha-día) para mostrar como "evento de cobro"
+      // 6. Agrupar por (student_id + operation_number + admin + fecha-día) para mostrar como "evento de cobro"
+      //    El student_id es OBLIGATORIO para evitar que tickets de distintos alumnos
+      //    (o de distintos padres) se fusionen en un mismo grupo contable.
       const groupMap = new Map<string, DirectPaymentGroup>();
       directTxs.forEach(tx => {
         const dayKey = tx.created_at ? tx.created_at.slice(0, 10) : 'unknown';
-        const groupKey = `${tx.operation_number ?? 'cash'}_${tx.created_by ?? 'unk'}_${dayKey}`;
+        const groupKey = `${tx.student_id ?? 'unk'}_${tx.operation_number ?? 'cash'}_${tx.created_by ?? 'unk'}_${dayKey}`;
 
         if (!groupMap.has(groupKey)) {
           groupMap.set(groupKey, {
@@ -287,7 +290,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           payment_method: r.payment_method,
           reference_code: r.reference_code,
           voucher_url: r.voucher_url,
-          status: r.status as 'pending' | 'approved' | 'rejected',
+          status: r.status as 'pending' | 'approved' | 'rejected' | 'voided',
           rejection_reason: r.rejection_reason,
           approved_at: r.approved_at,
           approved_by: r.approved_by,
@@ -606,6 +609,13 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         </Badge>
       );
     }
+    if (status === 'voided') {
+      return (
+        <Badge variant="outline" className="border-gray-300 bg-gray-50 text-gray-500 text-[10px] gap-0.5">
+          <Ban className="h-3 w-3" /> Anulado
+        </Badge>
+      );
+    }
     return (
       <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700 text-[10px] gap-0.5">
         <Clock className="h-3 w-3" /> En revisión
@@ -622,6 +632,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   const borderColor = (status: string) => {
     if (status === 'approved') return 'border-l-emerald-500';
     if (status === 'rejected') return 'border-l-red-500';
+    if (status === 'voided')   return 'border-l-gray-300';
     return 'border-l-blue-500';
   };
 

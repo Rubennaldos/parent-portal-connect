@@ -124,9 +124,10 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 const STATUS_BADGES: Record<string, { label: string; className: string }> = {
-  pending: { label: 'Pendiente', className: 'bg-amber-100 text-amber-800 border-amber-300' },
-  approved: { label: 'Aprobado', className: 'bg-green-100 text-green-800 border-green-300' },
-  rejected: { label: 'Rechazado', className: 'bg-red-100 text-red-800 border-red-300' },
+  pending:  { label: 'Pendiente', className: 'bg-amber-100 text-amber-800 border-amber-300' },
+  approved: { label: 'Aprobado',  className: 'bg-green-100 text-green-800 border-green-300' },
+  rejected: { label: 'Rechazado', className: 'bg-red-100 text-red-800 border-red-300'   },
+  voided:   { label: 'Anulado',   className: 'bg-gray-100 text-gray-500 border-gray-300'  },
 };
 
 export const VoucherApproval = () => {
@@ -1076,7 +1077,11 @@ export const VoucherApproval = () => {
 
             const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
               body: {
-                school_id: schoolIdForEmit || req.school_id,
+                school_id:      schoolIdForEmit || req.school_id,
+                // Pasar la primera transacción actualizada para que invoices.transaction_id
+                // quede registrado. Esto permite que get_payment_history y void_payment
+                // encuentren la boleta desde cualquier dirección del JOIN.
+                transaction_id: updatedTxIds[0] ?? null,
                 tipo: rInvType === 'factura' ? 1 : 2,
                 cliente: {
                   doc_type:     rInvClient?.doc_type     || '-',
@@ -1401,6 +1406,7 @@ export const VoucherApproval = () => {
           created_by: user.id,
           metadata: {
             source: 'voucher_recharge',
+            source_channel: 'parent_web',
             recharge_request_id: req.id,
             reference_code: req.reference_code,
             approved_by: user.id,
@@ -1879,7 +1885,7 @@ export const VoucherApproval = () => {
       ) : (
         <div className="grid gap-4">
           {filteredRequests.map((req) => {
-            const statusInfo = STATUS_BADGES[req.status];
+            const statusInfo = STATUS_BADGES[req.status] ?? { label: req.status, className: 'bg-gray-100 text-gray-500 border-gray-300' };
             const isProcessing = processingId === req.id;
             const isAuditandoIA = auditandoIAId === req.id;
             const isRetenido = retenidoIds.has(req.id);
