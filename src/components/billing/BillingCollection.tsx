@@ -236,7 +236,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [selectedDebtorForDetail, setSelectedDebtorForDetail] = useState<any>(null);
   // Modal de desglose de consumos POS (saldo negativo kiosco)
   const [showKioskDetailModal, setShowKioskDetailModal] = useState(false);
-  const [kioskDetailData, setKioskDetailData] = useState<{ studentId: string; studentName: string; kioskDebt: number } | null>(null);
+  const [kioskDetailData, setKioskDetailData] = useState<{ studentId: string; studentName: string } | null>(null);
   // Items de kiosco embebidos dentro del modal de detalle de deuda pendiente
   const [kioskItemsInDetail, setKioskItemsInDetail] = useState<any[]>([]);
   const [loadingKioskItemsInDetail, setLoadingKioskItemsInDetail] = useState(false);
@@ -2496,19 +2496,6 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
   return (
     <div className="space-y-6">
-      {/* Alerta de API SUNAT no conectado — solo en pestañas relevantes */}
-      {activeTab !== 'pagos' && (
-      <Alert className="bg-amber-50 border-amber-200">
-        <AlertTriangle className="h-5 w-5 text-amber-600" />
-        <AlertDescription className="text-amber-900">
-          <strong>⚠️� API de Facturaci�n SUNAT a�n no conectado</strong>
-          <br />
-          Por el momento, los documentos se generar�n como comprobantes internos. 
-          Pr�ximamente se habilitar� la facturaci�n electr�nica oficial.
-        </AlertDescription>
-      </Alert>
-      )}
-
       {/* Filtros principales — solo visibles en pestaña Cobrar */}
       {activeTab !== 'pagos' && activeTab !== 'config' && (
       <Card>
@@ -5063,7 +5050,6 @@ Si tienes dudas, comunícate con la administración de tu sede.
           onClose={() => { setShowKioskDetailModal(false); setKioskDetailData(null); }}
           studentId={kioskDetailData.studentId}
           studentName={kioskDetailData.studentName}
-          kioskDebt={kioskDetailData.kioskDebt}
         />
       )}
 
