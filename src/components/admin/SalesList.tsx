@@ -3,6 +3,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
+import { getPaymentMethodLabel } from '@/lib/paymentMethodLabels';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseConfig } from '@/config/supabase.config';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1405,9 +1406,7 @@ export const SalesList = () => {
       const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'Cliente Genérico';
       const categoria  = isLunchTransaction(t) ? 'Almuerzo' : 'Cafetería';
       const cajero     = (t as any).profiles?.full_name || (t as any).profiles?.email || 'Sistema';
-      const metodo     = t.payment_method
-        ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1)
-        : 'Efectivo';
+      const metodo     = getPaymentMethodLabel(t.payment_method);
 
       set(`A${row}`, t.ticket_code || '—');
       set(`B${row}`, clientName);
@@ -1970,7 +1969,7 @@ export const SalesList = () => {
                                   </Badge>
                                 )}
                                 <span className="text-slate-500 text-xs truncate flex-1">
-                                  {t.payment_method ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1) : 'Efectivo'}
+                                  {getPaymentMethodLabel(t.payment_method)}
                                   {t.description ? ` · ${t.description}` : ''}
                                 </span>
                                 <span className="font-bold text-emerald-700 shrink-0">

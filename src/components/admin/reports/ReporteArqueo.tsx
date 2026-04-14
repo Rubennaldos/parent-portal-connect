@@ -4,6 +4,7 @@
  * No depende del estado del SalesListGrid.
  */
 import { useState } from 'react';
+import { getPaymentMethodLabel, getPaymentMethodLabelWithIcon, normalizePaymentMethodKey } from '@/lib/paymentMethodLabels';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -190,7 +191,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
           i === 0 ? g.name : '',
           format(new Date(t.created_at), 'dd/MM HH:mm'),
           t.ticket_code || '—',
-          t.payment_method || '—',
+          t.payment_method ? getPaymentMethodLabel(t.payment_method) : '—',
           isLunch(t) ? 'Almuerzo' : (t.description || 'Cafetería'),
           `S/ ${Math.abs(t.amount || 0).toFixed(2)}`,
         ]);
@@ -283,9 +284,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
       const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'General Sale';
       const category   = isLunch(t) ? 'Lunch' : 'Cafeteria/Kiosk';
       const cashier    = (t as any).profiles?.full_name || (t as any).profiles?.email || 'System';
-      const method     = t.payment_method
-        ? t.payment_method.charAt(0).toUpperCase() + t.payment_method.slice(1)
-        : 'Cash';
+      const method     = getPaymentMethodLabel(t.payment_method);
       txRows.push([
         t.ticket_code || '',
         clientName,
@@ -314,17 +313,17 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
     // ── Sheet 2: Summary by Payment Method ────────────────────────────────
     const byMethod: Record<string, { total: number; count: number }> = {};
     data.forEach(t => {
-      const m = (t.payment_method || 'cash').toLowerCase();
+      const m = normalizePaymentMethodKey(t.payment_method);
       if (!byMethod[m]) byMethod[m] = { total: 0, count: 0 };
       byMethod[m].total += Math.abs(t.amount || 0);
       byMethod[m].count += 1;
     });
     const summaryRows: (string | number)[][] = [
-      ['Payment Method', 'Total (S/)', 'Transactions', '% of Total'],
+      ['Método de Pago', 'Total (S/)', 'Transacciones', '% del Total'],
       ...Object.entries(byMethod)
         .sort((a, b) => b[1].total - a[1].total)
         .map(([m, v]) => [
-          m.charAt(0).toUpperCase() + m.slice(1),
+          getPaymentMethodLabel(m),
           v.total,
           v.count,
           totalVentas > 0 ? Math.round((v.total / totalVentas) * 10000) / 100 : 0,
@@ -362,7 +361,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
     }
     const byMethod: Record<string, { method: string; total: number; count: number }> = {};
     data.forEach(t => {
-      const m = t.payment_method || 'efectivo';
+      const m = normalizePaymentMethodKey(t.payment_method);
       if (!byMethod[m]) byMethod[m] = { method: m, total: 0, count: 0 };
       byMethod[m].total += Math.abs(t.amount || 0);
       byMethod[m].count += 1;
@@ -374,10 +373,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
     });
   };
 
-  const methodLabel: Record<string, string> = {
-    efectivo: '💵 Efectivo', yape: '📱 Yape', plin: '📱 Plin',
-    tarjeta: '💳 Tarjeta', transferencia: '🏦 Transferencia', mixto: '🔀 Mixto',
-  };
+  const methodLabel = (m: string) => getPaymentMethodLabelWithIcon(m);
 
   return (
     <div className="space-y-6">
@@ -495,7 +491,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
                 <div className="space-y-2 mb-5">
                   {preview.byMethod.map(m => (
                     <div key={m.method} className="flex items-center justify-between text-sm">
-                      <span className="text-slate-700">{methodLabel[m.method] ?? m.method}</span>
+                      <span className="text-slate-700">{methodLabel(m.method)}</span>
                       <div className="flex items-center gap-3">
                         <Badge variant="outline" className="text-xs">{m.count} tx</Badge>
                         <span className="font-bold text-slate-800 w-24 text-right">S/ {m.total.toFixed(2)}</span>
