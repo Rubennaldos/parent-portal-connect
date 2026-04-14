@@ -415,19 +415,27 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
         );
       }
       return (
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-2 h-7 text-[10px] sm:text-xs text-orange-700 border-orange-300 hover:bg-orange-50 gap-1"
-          onClick={() => setVoidWithVoucherOrder(order)}
-          disabled={voidingWithVoucherId === order.id}
-        >
-          {voidingWithVoucherId === order.id ? (
-            <><Loader2 className="h-3 w-3 animate-spin" />Anulando...</>
-          ) : (
-            <><TriangleAlert className="h-3 w-3" />Anular pedido y comprobante</>
-          )}
-        </Button>
+        <>
+          <div className="mt-2 flex items-start gap-1.5 text-[10px] sm:text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1.5 text-blue-700">
+            <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
+            <span>
+              <strong>Pago en revisión.</strong> Tu comprobante enviado está siendo procesado por el colegio.
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 h-7 text-[10px] sm:text-xs text-orange-700 border-orange-300 hover:bg-orange-50 gap-1"
+            onClick={() => setVoidWithVoucherOrder(order)}
+            disabled={voidingWithVoucherId === order.id}
+          >
+            {voidingWithVoucherId === order.id ? (
+              <><Loader2 className="h-3 w-3 animate-spin" />Anulando...</>
+            ) : (
+              <><TriangleAlert className="h-3 w-3" />Anular pedido y comprobante</>
+            )}
+          </Button>
+        </>
       );
     }
 

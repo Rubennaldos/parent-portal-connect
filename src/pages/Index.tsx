@@ -140,6 +140,10 @@ const Index = () => {
       calculateStudentDebts(students);
     }
   }, [activeTab]);
+
+  // Sub-navegación del módulo de almuerzos: 'comprar' | 'pedidos'
+  const [lunchSubTab, setLunchSubTab] = useState<'comprar' | 'pedidos'>('comprar');
+
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showParentDataForm, setShowParentDataForm] = useState(false);
   const [isParentFormLoading, setIsParentFormLoading] = useState(false);
@@ -1062,20 +1066,26 @@ const Index = () => {
                   </div>
                 </div>
 
-                {/* Sub-nav con pills (Hacer Pedido / Mis Pedidos) */}
+                {/* Sub-nav con pills (Hacer Pedido / Mis Pedidos) — navegación real por estado */}
                 <div className="flex gap-2 mt-3">
                   <button
-                    id="lunch-subtab-hacer-pedido"
-                    onClick={() => { const el = document.getElementById('lunch-content-hacer'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 text-white text-xs font-semibold shadow-sm"
+                    onClick={() => setLunchSubTab('comprar')}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all active:scale-95 ${
+                      lunchSubTab === 'comprar'
+                        ? 'bg-gradient-to-r from-emerald-400 to-teal-500 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    }`}
                   >
                     <UtensilsCrossed className="h-3 w-3" />
                     Hacer Pedido
                   </button>
                   <button
-                    id="lunch-subtab-mis-pedidos"
-                    onClick={() => { const el = document.getElementById('lunch-content-mis-pedidos'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-slate-100 text-slate-500 text-xs font-semibold hover:bg-slate-200 transition-colors"
+                    onClick={() => setLunchSubTab('pedidos')}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all active:scale-95 ${
+                      lunchSubTab === 'pedidos'
+                        ? 'bg-gradient-to-r from-emerald-400 to-teal-500 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    }`}
                   >
                     <Calendar className="h-3 w-3" />
                     Mis Pedidos
@@ -1083,20 +1093,26 @@ const Index = () => {
                 </div>
               </div>
 
-              {/* Contenido — Hacer Pedido */}
-              <div id="lunch-content-hacer">
-                {user && parentProfileData && (
-                  <UnifiedLunchCalendarV2
-                    userType="parent"
-                    userId={user.id}
-                    userSchoolId={parentProfileData.school_id || ''}
-                    onGoToCart={() => setActiveTab('carrito')}
-                  />
-                )}
-              </div>
+              {/* Vista: Hacer Pedido */}
+              {lunchSubTab === 'comprar' && (
+                <div>
+                  {user && parentProfileData && (
+                    <UnifiedLunchCalendarV2
+                      userType="parent"
+                      userId={user.id}
+                      userSchoolId={parentProfileData.school_id || ''}
+                      onGoToCart={() => setActiveTab('carrito')}
+                    />
+                  )}
+                </div>
+              )}
 
-              {/* Sección Mis Pedidos — acordeón (cerrado por defecto) */}
-              <LunchOrdersAccordion userId={user.id} />
+              {/* Vista: Mis Pedidos */}
+              {lunchSubTab === 'pedidos' && (
+                <div className="pt-2">
+                  <ParentLunchOrders parentId={user.id} />
+                </div>
+              )}
             </div>
           ) : null}
         </div>
@@ -1420,34 +1436,5 @@ const Index = () => {
   );
 };
 
-/** Mis Pedidos — sección colapsable para evitar scroll innecesario */
-function LunchOrdersAccordion({ userId }: { userId: string }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div id="lunch-content-mis-pedidos" className="mt-4 border-t border-slate-100">
-      <button
-        onClick={() => setOpen(prev => !prev)}
-        className="w-full flex items-center justify-between px-1 py-3 text-left hover:bg-slate-50/60 transition-colors rounded-xl active:scale-[0.99]"
-      >
-        <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <span className="text-sm font-semibold text-slate-600">Mis Pedidos</span>
-        </div>
-        <div className={`w-6 h-6 flex items-center justify-center transition-transform duration-200 ${open ? 'rotate-180' : ''}`}>
-          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-
-      {open && (
-        <div className="pb-4">
-          <ParentLunchOrders parentId={userId} />
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default Index;
