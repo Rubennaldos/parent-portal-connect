@@ -1,9 +1,12 @@
 /**
- * PosConsumptionModal — Consumos Pendientes de Cafetería
+ * PosConsumptionModal — Consumos de Cafetería
  *
- * Muestra SOLO las compras kiosco con payment_status pending/partial.
- * El total del pie coincide exactamente con get_kiosk_pending_debt_total.
- * No usa students.balance.
+ * Usa la RPC get_student_pos_consumptions que hace JOIN con `sales`
+ * para obtener el detalle de productos de cada compra.
+ *
+ * Dos modos:
+ *  - Normal (showHistory=false): solo pending/partial → deuda real con botón Pagar.
+ *  - Historial (showHistory=true): todas las compras → info de Cuenta Libre, sin botón Pagar.
  */
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
@@ -103,26 +106,14 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      // showHistory=true → todas las compras kiosco (incluyendo paid) para saldo_negativo
-      // showHistory=false → solo pending/partial (deuda explícita en transactions)
-      const statusFilter = showHistory
-        ? ['paid', 'pending', 'partial']
-        : ['pending', 'partial'];
+      // Una sola llamada a la RPC que ya trae JOIN con sales → detalle de productos.
+      // La RPC devuelve paid + pending + partial; filtramos en cliente según modo.
+      const { data: rpcData, error: rpcErr } = await supabase
+        .rpc('get_student_pos_consumptions', { p_student_id: studentId });
 
-      const { data: txData, error: txErr } = await supabase
-        .from('transactions')
-        .select('id, created_at, amount, description, ticket_code, payment_method, payment_status, metadata')
-        .eq('student_id', studentId)
-        .eq('type', 'purchase')
-        .in('payment_status', statusFilter)
-        .eq('is_deleted', false)
-        .is('metadata->>lunch_order_id', null)
-        .order('created_at', { ascending: false })
-        .limit(showHistory ? 50 : 200);
+      if (rpcErr) throw rpcErr;
 
-      if (txErr) throw txErr;
-
-      const enriched: Consumo[] = (txData ?? []).map((row: any) => ({
+      const all: Consumo[] = (rpcData ?? []).map((row: any) => ({
         id:             row.id,
         created_at:     row.created_at,
         amount:         row.amount,
@@ -132,20 +123,21 @@ export function PosConsumptionModal({
         payment_status: row.payment_status,
         metadata:       row.metadata,
         sale_items:     parseSaleItems(
-          Array.isArray(row.metadata?.sale_items)
-            ? row.metadata.sale_items
-            : Array.isArray(row.metadata?.items)
-            ? row.metadata.items
-            : []
+          Array.isArray(row.sale_items) ? row.sale_items : []
         ),
       }));
-      setConsumos(enriched);
 
-      // En showHistory solo contamos pending/partial para el total pagable.
-      // Las filas "paid" se muestran como historial informativo pero NO se suman
-      // al total porque ya fueron procesadas (el saldo negativo viene del balance
-      // acumulado, no de la suma de todas las compras históricas).
-      const total = enriched
+      // showHistory=false → solo compras con deuda pendiente (pending/partial)
+      // showHistory=true  → todo el historial (Cuenta Libre con saldo negativo)
+      const visible = showHistory
+        ? all
+        : all.filter(c => c.payment_status === 'pending' || c.payment_status === 'partial');
+
+      setConsumos(visible);
+
+      // El total pagable siempre se calcula solo sobre pending/partial,
+      // nunca sobre las filas "paid" (ya procesadas).
+      const total = all
         .filter(c => c.payment_status === 'pending' || c.payment_status === 'partial')
         .reduce((sum, c) => sum + Math.abs(c.amount), 0);
       setKioskPendingTotal(total);
