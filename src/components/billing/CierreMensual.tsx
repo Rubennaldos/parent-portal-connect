@@ -1089,18 +1089,39 @@ export const CierreMensual = () => {
               className="h-9 rounded-md border border-input px-3 text-sm bg-white"
             />
           </div>
-          <div className="flex items-center gap-2" title="Fecha que figurará en todas las boletas (la contadora puede retrofechar)">
-            <Receipt className="h-4 w-4 text-indigo-500 shrink-0" />
-            <input
-              type="date"
-              value={emissionDateOverride}
-              onChange={(e) => {
-                setEmissionDateOverride(e.target.value);
-                localStorage.setItem('cierre_emission_date', e.target.value);
-              }}
-              className="h-9 rounded-md border border-indigo-300 px-3 text-sm bg-white text-indigo-700 font-medium"
-            />
-            <span className="text-xs text-indigo-600 hidden sm:inline">fecha emisión</span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2" title="Fecha que figurará en todas las boletas (la contadora puede retrofechar)">
+              <Receipt className="h-4 w-4 text-indigo-500 shrink-0" />
+              <input
+                type="date"
+                value={emissionDateOverride}
+                onChange={(e) => {
+                  setEmissionDateOverride(e.target.value);
+                  localStorage.setItem('cierre_emission_date', e.target.value);
+                }}
+                className={`h-9 rounded-md border px-3 text-sm font-medium bg-white ${
+                  (() => {
+                    const hoyLima = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().split('T')[0];
+                    return emissionDateOverride > hoyLima
+                      ? 'border-orange-400 text-orange-700'
+                      : 'border-indigo-300 text-indigo-700';
+                  })()
+                }`}
+              />
+              <span className="text-xs text-indigo-600 hidden sm:inline">fecha emisión</span>
+            </div>
+            {/* Aviso si la fecha de emisión es posterior a hoy (Lima) */}
+            {(() => {
+              const hoyLima = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().split('T')[0];
+              return emissionDateOverride > hoyLima ? (
+                <div className="flex items-start gap-1.5 bg-orange-50 border border-orange-300 rounded px-2 py-1.5 text-xs text-orange-800 max-w-xs">
+                  <AlertTriangle className="h-3.5 w-3.5 text-orange-500 flex-shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Fecha futura.</strong> Estás a punto de emitir boletas con fecha <strong>{emissionDateOverride}</strong>, que es posterior a hoy ({hoyLima}). SUNAT puede rechazar documentos post-datados. Verifica antes de continuar.
+                  </span>
+                </div>
+              ) : null;
+            })()}
           </div>
           {isAdmin && schools.length > 0 && (
             <div className="flex items-center gap-2">

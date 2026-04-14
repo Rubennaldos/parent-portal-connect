@@ -388,6 +388,17 @@ serve(async (req) => {
       nubefactData.errors             ? "rejected" :
       effectiveDemoMode               ? "pending"  : "processing";
 
+    // Ticket de consulta asíncrona — Nubefact lo devuelve cuando SUNAT no confirma
+    // en tiempo real (sunat_status = 'processing'). Lo guardamos para el futuro poller.
+    // Campos documentados por Nubefact: ticket, numero_ticket, ticket_id (varía por versión).
+    const nubefact_ticket: string | null =
+      sunat_status === "processing"
+        ? (nubefactData.ticket        ||
+           nubefactData.numero_ticket ||
+           nubefactData.ticket_id     ||
+           null)
+        : null;
+
     // 13. Guardar en tabla `invoices` (nueva, principal)
     let savedInvoice: any = null;
     try {
@@ -444,6 +455,9 @@ serve(async (req) => {
         is_demo:                effectiveDemoMode,
         sent_to_sunat_at:       !effectiveDemoMode ? new Date().toISOString() : null,
         notes:                  effectiveDemoMode ? "MODO DEMO — no enviado a SUNAT" : null,
+        // Ticket de consulta asíncrona: solo presente cuando SUNAT no confirmó en tiempo real.
+        // El poller (futuro) usará este campo para recuperar la respuesta final.
+        nubefact_ticket,
       };
 
       const { data: inv, error: invErr } = await supabase
@@ -483,7 +497,7 @@ serve(async (req) => {
         await supabase.from("invoicing_logs").insert({
           invoice_id:   inv.id,
           event_type:   "created",
-          event_message: `Comprobante ${serie}-${String(numero).padStart(8,"0")} generado. Estado SUNAT: ${sunat_status}`,
+          event_message: `Comprobante ${serie}-${String(numero).padStart(8,"0")} generado. Estado SUNAT: ${sunat_status}${nubefact_ticket ? ` | Ticket polling: ${nubefact_ticket}` : ""}`,
           request_payload:  payload,
           response_payload: nubefactData,
         });
