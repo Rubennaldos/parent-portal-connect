@@ -721,7 +721,20 @@ export function RechargeModal({
         return;
       }
 
-      // 2. Error del upload de foto (mensaje ya viene accionable)
+      // 2. Tickets ya incluidos en otro pago pendiente (candado anti-duplicados)
+      if (rawMsg.includes('DUPLICATE_PAYMENT')) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Pago duplicado detectado',
+          description:
+            'Algunos de los ítems que seleccionaste ya están incluidos en otro pago que todavía está en revisión. ' +
+            'Recarga la página para ver el estado actualizado. Si ese pago fue rechazado, aparecerá disponible nuevamente.',
+          duration: 12000,
+        });
+        return;
+      }
+
+      // 3. Error del upload de foto (mensaje ya viene accionable)
       const isUploadError =
         rawMsg.toLowerCase().includes('foto') ||
         rawMsg.toLowerCase().includes('subir') ||
