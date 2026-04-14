@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/auto-invoice",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/check-invoice-status",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [
