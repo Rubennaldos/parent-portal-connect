@@ -1242,6 +1242,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               setInvoiceType(null);
               setInvoiceClientData(null);
             }}
+            onSuccess={fetchDebts}
             studentName={selectedDebt.student_name}
             studentId={selectedDebt.student_id}
             currentBalance={selectedDebt.student_balance}
@@ -1294,6 +1295,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               setInvoiceType(null);
               setInvoiceClientData(null);
             }}
+            onSuccess={fetchDebts}
             studentName={combined.combinedNames}
             studentId={debts[0]?.student_id || ''}
             currentBalance={0}

@@ -72,6 +72,9 @@ interface RechargeModalProps {
   /** Monto de billetera interna a descontar (S/ a favor del alumno).
    *  Si > 0, el padre solo sube voucher por (suggestedAmount - walletAmountToUse). */
   walletAmountToUse?: number;
+  /** Callback que se ejecuta en cuanto el pago se envía exitosamente
+   *  (antes de que el padre cierre el modal). Útil para refrescar listas. */
+  onSuccess?: () => void;
 }
 
 interface PaymentConfig {
@@ -112,6 +115,7 @@ export function RechargeModal({
   invoiceType,
   invoiceClientData,
   walletAmountToUse = 0,
+  onSuccess,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
 
@@ -133,6 +137,7 @@ export function RechargeModal({
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const submittingRef = useRef(false);
+  const onSuccessCalledRef = useRef(false);
   // 0-100 mientras se sube, null cuando no hay subida activa
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadPhaseLabel, setUploadPhaseLabel] = useState('');
@@ -166,8 +171,18 @@ export function RechargeModal({
         setAmount('');
       }
       setStep('combined');
+      onSuccessCalledRef.current = false; // Reset al abrir el modal
     }
   }, [isOpen, studentId]);
+
+  // Auto-refresh: notifica al padre en cuanto el pago se envía exitosamente,
+  // sin esperar a que el usuario cierre el modal manualmente.
+  useEffect(() => {
+    if (step === 'success' && !onSuccessCalledRef.current) {
+      onSuccessCalledRef.current = true;
+      onSuccess?.();
+    }
+  }, [step, onSuccess]);
 
   const fetchPaymentConfig = async () => {
     setLoadingConfig(true);
