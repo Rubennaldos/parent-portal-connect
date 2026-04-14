@@ -49,6 +49,12 @@ export interface PosConsumptionModalProps {
   studentName: string;
   /** Callback cuando el padre presiona "Pagar deuda" (monto = suma RPC en pantalla) */
   onPay?: (total: number) => void;
+  /**
+   * true → modo historial: muestra TODAS las compras kiosco (paid + pending)
+   * Usar cuando la deuda es saldo_negativo (Cuenta Libre).
+   * false (default) → solo pending/partial.
+   */
+  showHistory?: boolean;
 }
 
 const Skeleton = ({ className }: { className?: string }) => (
@@ -73,6 +79,7 @@ export function PosConsumptionModal({
   studentId,
   studentName,
   onPay,
+  showHistory = false,
 }: PosConsumptionModalProps) {
   const [consumos, setConsumos]   = useState<Consumo[]>([]);
   const [loading, setLoading]     = useState(false);
@@ -96,16 +103,22 @@ export function PosConsumptionModal({
     setLoading(true);
     setError(null);
     try {
-      // Solo compras kiosco PENDIENTES (misma lógica que get_kiosk_pending_debt_total)
+      // showHistory=true → todas las compras kiosco (incluyendo paid) para saldo_negativo
+      // showHistory=false → solo pending/partial (deuda explícita en transactions)
+      const statusFilter = showHistory
+        ? ['paid', 'pending', 'partial']
+        : ['pending', 'partial'];
+
       const { data: txData, error: txErr } = await supabase
         .from('transactions')
         .select('id, created_at, amount, description, ticket_code, payment_method, payment_status, metadata')
         .eq('student_id', studentId)
         .eq('type', 'purchase')
-        .in('payment_status', ['pending', 'partial'])
+        .in('payment_status', statusFilter)
         .eq('is_deleted', false)
         .is('metadata->>lunch_order_id', null)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(showHistory ? 50 : 200);
 
       if (txErr) throw txErr;
 
@@ -128,8 +141,13 @@ export function PosConsumptionModal({
       }));
       setConsumos(enriched);
 
-      // Total = suma de los mismos registros (no hace falta otra llamada al RPC)
-      const total = enriched.reduce((sum, c) => sum + Math.abs(c.amount), 0);
+      // En showHistory solo contamos pending/partial para el total pagable.
+      // Las filas "paid" se muestran como historial informativo pero NO se suman
+      // al total porque ya fueron procesadas (el saldo negativo viene del balance
+      // acumulado, no de la suma de todas las compras históricas).
+      const total = enriched
+        .filter(c => c.payment_status === 'pending' || c.payment_status === 'partial')
+        .reduce((sum, c) => sum + Math.abs(c.amount), 0);
       setKioskPendingTotal(total);
 
     } catch {
@@ -180,16 +198,21 @@ export function PosConsumptionModal({
           ) : consumos.length === 0 ? (
             <div className="text-center py-8">
               <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
-              <p className="text-sm font-semibold text-slate-600">Todo pagado</p>
-              <p className="text-xs text-slate-400 mt-1">{firstName} no tiene consumos pendientes en cafetería</p>
+              <p className="text-sm font-semibold text-slate-600">Sin consumos registrados</p>
+              <p className="text-xs text-slate-400 mt-1">{firstName} no tiene compras en cafetería</p>
             </div>
 
           ) : (
             <div className="space-y-1.5">
               <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider px-1 flex items-center gap-1">
                 <ArrowDownLeft className="w-3 h-3" />
-                Consumos por pagar
+                {showHistory ? 'Historial de consumos en cafetería' : 'Consumos por pagar'}
               </p>
+              {showHistory && (
+                <p className="text-[10px] text-slate-400 px-1">
+                  Estas compras fueron realizadas con Cuenta Libre (crédito). El saldo negativo es el acumulado pendiente de pago.
+                </p>
+              )}
               {consumos.map((c) => {
                 const products = c.sale_items ?? [];
                 return (
@@ -243,15 +266,27 @@ export function PosConsumptionModal({
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                    Deuda pendiente
+                    {showHistory ? 'Saldo negativo acumulado' : 'Deuda pendiente'}
                   </p>
                   <p className="text-[9px] text-slate-400 mt-0.5">
-                    Suma de consumos de cafetería pendientes de pago
+                    {showHistory
+                      ? 'Total de compras en crédito (Cuenta Libre) sin pagar'
+                      : 'Suma de consumos de cafetería pendientes de pago'}
                   </p>
                 </div>
                 <p className="text-2xl font-black text-rose-500">
                   S/ {kioskPendingTotal.toFixed(2)}
                 </p>
+              </div>
+            ) : showHistory ? (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold text-amber-700">Deuda por saldo negativo acumulado</p>
+                  <p className="text-[9px] text-amber-600 mt-0.5">
+                    Estas compras se procesaron en crédito (Cuenta Libre). Para pagar, usa el botón <strong>Pagar</strong> en la pantalla de Pagos.
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">

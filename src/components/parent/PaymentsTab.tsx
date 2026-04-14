@@ -110,7 +110,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
   const [infoHubOpen, setInfoHubOpen] = useState(false);
 
   // ── Modal de detalle de consumos POS ──
-  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; readonly?: boolean } | null>(null);
+  const [posDetailStudent, setPosDetailStudent] = useState<{ id: string; name: string; readonly?: boolean; showHistory?: boolean } | null>(null);
 
   // ── Selección individual de transacciones por estudiante ──
   // Mapa: student_id → Set de transaction IDs seleccionados
@@ -425,7 +425,11 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       for (const tx of debt.pending_transactions) {
         // Excluir transacciones cubiertas por voucher pendiente (en revisión)
         if (voucherStatuses.get(tx.id)?.status === 'pending') continue;
-        allTransactionIds.push(tx.id);
+        // IDs sintéticos no son UUIDs reales — no van a paid_transaction_ids
+        const isSyntheticId = tx.id.startsWith('kiosk_balance_') || tx.id.startsWith('lunch_');
+        if (!isSyntheticId) {
+          allTransactionIds.push(tx.id);
+        }
         if (tx.metadata?.lunch_order_id) {
           allLunchOrderIds.push(tx.metadata.lunch_order_id);
         }
@@ -540,8 +544,10 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     const transactionIds: string[] = [];
 
     selectedTxList.forEach(tx => {
-      // Los IDs sintéticos de kiosco no van a la BD (no son UUIDs reales)
-      if (!tx.id.startsWith('__kiosk_balance__')) {
+      // IDs sintéticos (kiosk_balance_UUID, lunch_UUID) NO son UUIDs reales
+      // y no pueden guardarse en paid_transaction_ids uuid[]. Se excluyen aquí.
+      const isSyntheticId = tx.id.startsWith('kiosk_balance_') || tx.id.startsWith('lunch_');
+      if (!isSyntheticId) {
         transactionIds.push(tx.id);
       }
       if (tx.metadata?.lunch_order_id) {
@@ -1031,7 +1037,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                       key={transaction.id}
                       onClick={() => {
                         if (isKioskBalance) {
-                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name });
+                          setPosDetailStudent({ id: debt.student_id, name: debt.student_name, showHistory: true });
                         } else if (isPos && !isCoveredByPending) {
                           // Abre detalle en modo solo lectura (sin botón de pago)
                           setPosDetailStudent({ id: debt.student_id, name: debt.student_name, readonly: true });
@@ -1264,7 +1270,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           onClose={() => setPosDetailStudent(null)}
           studentId={posDetailStudent.id}
           studentName={posDetailStudent.name}
-          onPay={posDetailStudent.readonly ? undefined : (total) => handlePosPayment(posDetailStudent.id, total)}
+          showHistory={posDetailStudent.showHistory}
+          onPay={posDetailStudent.readonly || posDetailStudent.showHistory ? undefined : (total) => handlePosPayment(posDetailStudent.id, total)}
         />
       )}
 
