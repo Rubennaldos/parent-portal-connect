@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { useBillingSync } from '@/stores/billingSync';
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ import {
   Trash2,
   Lock,
   Info,
+  TriangleAlert,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -81,16 +83,21 @@ const getPeruNow = (): Date => {
 
 export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
   const { toast } = useToast();
-  
+  const emitSync = useBillingSync((s) => s.emit);
+
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<LunchOrder[]>([]);
   const [filter, setFilter] = useState<'all' | 'upcoming' | 'past'>('all');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [config, setConfig] = useState<LunchConfig | null>(null);
 
-  // Cancel state
+  // Cancel state — anulación normal (sin voucher pendiente)
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [confirmCancelOrder, setConfirmCancelOrder] = useState<LunchOrder | null>(null);
+
+  // Void-with-voucher state — anulación de pedido + comprobante pendiente
+  const [voidWithVoucherOrder, setVoidWithVoucherOrder] = useState<LunchOrder | null>(null);
+  const [voidingWithVoucherId, setVoidingWithVoucherId] = useState<string | null>(null);
 
   useEffect(() => {
     if (parentId) {
@@ -301,6 +308,81 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
     }
   };
 
+  /** Anula atómicamente el pedido + el comprobante pendiente (RPC void_pending_lunch_order_v2) */
+  const handleVoidWithVoucher = async (order: LunchOrder) => {
+    setVoidingWithVoucherId(order.id);
+    setVoidWithVoucherOrder(null);
+    try {
+      const { data: result, error: rpcError } = await supabase
+        .rpc('void_pending_lunch_order_v2', {
+          p_order_id:  order.id,
+          p_parent_id: parentId,
+        });
+
+      if (rpcError) throw rpcError;
+      if (!result?.success) throw new Error(result?.error || 'No se pudo anular el pedido.');
+
+      toast({
+        title: '✅ Pedido y comprobante anulados',
+        description: 'El pedido fue anulado y tu comprobante invalidado. Ya puedes subir uno nuevo con el mismo número de operación.',
+        duration: 7000,
+      });
+
+      // Refrescar pedidos en este componente Y notificar al carrito/badge de PaymentsTab
+      // a través del billingSync store (evita necesidad de F5).
+      await fetchOrders();
+      emitSync(['vouchers', 'debtors']);
+    } catch (error: any) {
+      const msg: string = error.message || '';
+      const code: string = (error as any).code || '';
+
+      if (msg.includes('MULTI_ORDER_VOUCHER')) {
+        toast({
+          variant: 'destructive',
+          title: 'Comprobante con múltiples pedidos',
+          description: 'Tu comprobante cubre más de un pedido a la vez. Comunícate con la administración del colegio para anularlo manualmente.',
+          duration: 8000,
+        });
+      } else if (msg.includes('NO_PENDING_VOUCHER')) {
+        toast({
+          variant: 'destructive',
+          title: 'Sin comprobante pendiente',
+          description: 'No se encontró un comprobante enviado para este pedido. Usa el botón de anulación normal.',
+        });
+      } else if (msg.includes('ORDER_ALREADY_CANCELLED')) {
+        toast({
+          variant: 'destructive',
+          title: 'Pedido ya anulado',
+          description: 'Este pedido ya fue anulado anteriormente. Recarga la página para ver el estado actualizado.',
+        });
+        await fetchOrders();
+      } else if (msg.includes('ORDER_DELIVERED')) {
+        toast({
+          variant: 'destructive',
+          title: 'Pedido ya entregado',
+          description: 'Este pedido ya fue entregado al alumno. No se puede anular. Comunícate con la administración si hay un error.',
+        });
+        await fetchOrders();
+      } else if (code === '40P01') {
+        // Deadlock de PostgreSQL: dos operaciones colisionaron (ej. admin aprobó al mismo tiempo)
+        toast({
+          variant: 'destructive',
+          title: 'Operación en conflicto',
+          description: 'Hubo un conflicto con otra operación simultánea. Por favor, recarga la página e intenta nuevamente.',
+        });
+        await fetchOrders();
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error al anular',
+          description: 'No se pudo completar la anulación. Por favor intenta nuevamente o comunícate con la administración.',
+        });
+      }
+    } finally {
+      setVoidingWithVoucherId(null);
+    }
+  };
+
   /** Decide qué botón/mensaje mostrar para cada pedido */
   const renderCancelAction = (order: LunchOrder) => {
     // Solo pedidos activos (no cancelados ni entregados)
@@ -322,13 +404,30 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
       );
     }
 
-    // Pago en revisión → bloquear para evitar el bug de pedidos cancelados con voucher pendiente
+    // Pago en revisión → permitir anular JUNTO con el comprobante si está dentro del plazo
     if (isInReview) {
+      if (!withinDeadline) {
+        return (
+          <div className="mt-2 flex items-start gap-1.5 text-[10px] sm:text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1.5 text-gray-500">
+            <Lock className="h-3 w-3 flex-shrink-0 mt-0.5" />
+            <span>Ya venció el plazo de anulación y hay un pago en revisión. Comunícate con la administración si necesitas cancelarlo.</span>
+          </div>
+        );
+      }
       return (
-        <div className="mt-2 flex items-start gap-1.5 text-[10px] sm:text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1.5 text-blue-700">
-          <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
-          <span><strong>Pago en revisión.</strong> No se puede anular mientras el comprobante está siendo procesado.</span>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-2 h-7 text-[10px] sm:text-xs text-orange-700 border-orange-300 hover:bg-orange-50 gap-1"
+          onClick={() => setVoidWithVoucherOrder(order)}
+          disabled={voidingWithVoucherId === order.id}
+        >
+          {voidingWithVoucherId === order.id ? (
+            <><Loader2 className="h-3 w-3 animate-spin" />Anulando...</>
+          ) : (
+            <><TriangleAlert className="h-3 w-3" />Anular pedido y comprobante</>
+          )}
+        </Button>
       );
     }
 
@@ -642,7 +741,7 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
         </CardContent>
       </Card>
 
-      {/* DIÁLOGO DE CONFIRMACIÓN DE ANULACIÓN */}
+      {/* DIÁLOGO DE CONFIRMACIÓN DE ANULACIÓN NORMAL */}
       {confirmCancelOrder && (
         <Dialog open={!!confirmCancelOrder} onOpenChange={() => setConfirmCancelOrder(null)}>
           <DialogContent className="max-w-sm">
@@ -684,6 +783,64 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
                   <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Anulando...</>
                 ) : (
                   <><Trash2 className="h-4 w-4 mr-1" />Sí, anular</>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* DIÁLOGO DE CONFIRMACIÓN — ANULAR PEDIDO + COMPROBANTE PENDIENTE */}
+      {voidWithVoucherOrder && (
+        <Dialog open={!!voidWithVoucherOrder} onOpenChange={() => setVoidWithVoucherOrder(null)}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <TriangleAlert className="h-5 w-5 text-orange-500" />
+                Anular pedido y comprobante
+              </DialogTitle>
+              <DialogDescription className="text-sm">
+                Pedido del{' '}
+                <strong>
+                  {format(new Date(voidWithVoucherOrder.order_date + 'T00:00:00'), "EEEE d 'de' MMMM", { locale: es })}
+                </strong>{' '}
+                — {voidWithVoucherOrder.student.full_name}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-start gap-2 mt-2">
+              <TriangleAlert className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-orange-800">
+                <strong>Atención:</strong> Al anular este pedido, tu comprobante enviado también será
+                invalidado. Deberás subirlo nuevamente si deseas realizar un nuevo pedido.
+              </p>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-800">
+                Podrás usar el <strong>mismo número de operación</strong> para subir un nuevo comprobante
+                en cualquier momento.
+              </p>
+            </div>
+
+            <DialogFooter className="gap-2 mt-2">
+              <Button
+                variant="outline"
+                onClick={() => setVoidWithVoucherOrder(null)}
+                disabled={voidingWithVoucherId === voidWithVoucherOrder.id}
+              >
+                No, mantener
+              </Button>
+              <Button
+                onClick={() => handleVoidWithVoucher(voidWithVoucherOrder)}
+                disabled={voidingWithVoucherId === voidWithVoucherOrder.id}
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                {voidingWithVoucherId === voidWithVoucherOrder.id ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Anulando...</>
+                ) : (
+                  <><Trash2 className="h-4 w-4 mr-1" />Sí, anular todo</>
                 )}
               </Button>
             </DialogFooter>
