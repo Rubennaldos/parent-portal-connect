@@ -307,7 +307,9 @@ export const CierreMensual = () => {
     const existingLock = getUiLock(schoolId);
     setUiLockActive(existingLock);
 
-    // FIX 1: Detectar zombies (processing > 30 min) para mostrar alerta
+    // FIX 1: Detectar zombies (processing > 30 min) para mostrar alerta.
+    // NOTA: billing_processing_at puede no existir en instancias sin migración 20260415 →
+    // usar .catch() para que el error 400 no contamine la consola ni bloquee la carga.
     const ttlCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     supabase
       .from('transactions')
@@ -315,7 +317,8 @@ export const CierreMensual = () => {
       .eq('school_id', schoolId)
       .eq('billing_status', 'processing')
       .lt('billing_processing_at', ttlCutoff)
-      .then(({ count }) => setZombieCount(count ?? 0));
+      .then(({ count, error }) => { if (!error) setZombieCount(count ?? 0); })
+      .catch(() => { /* billing_processing_at aún no existe — migración 20260415 pendiente */ });
 
     // Conteo rápido de 'failed' en el mes seleccionado → avisa al admin antes de que escanee
     const { start: fStart, end: fEnd } = (() => {
@@ -335,7 +338,8 @@ export const CierreMensual = () => {
       .neq('amount', 0)
       .gte('created_at', fStart)
       .lt('created_at', fEnd)
-      .then(({ count }) => setFailedCountInMonth(count ?? 0));
+      .then(({ count, error }) => { if (!error) setFailedCountInMonth(count ?? 0); })
+      .catch(() => { /* columna faltante — no bloquear la carga */ });
 
     // Las transacciones de kiosco se guardan con amount negativo (débitos),
     // por eso se usa Math.abs() al mostrar. La alerta de "negativos" no aplica aquí.

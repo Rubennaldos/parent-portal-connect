@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/auto-invoice",
-      "schedule": "0 * * * *"
+      "schedule": "50 4 * * *"
     },
     {
       "path": "/api/cron/check-invoice-status",

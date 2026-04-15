@@ -399,7 +399,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             // ── UPDATE ATÓMICO: billing_status + invoice_id ─────────────────
+            // Si Nubefact responde 'processing' (boleta asíncrona), igualmente
+            // marcamos como 'sent' + guardamos invoice_id. El poller
+            // (check-invoice-status) actualizará sunat_status cuando SUNAT confirme.
+            // NUNCA hacer rollback cuando Nubefact aceptó el envío.
             const invoiceId: string | null = result.documento?.id ?? null;
+            const isSunatProcessing = result.sunat_status === 'processing' ||
+                                      (result.documento as any)?.sunat_status === 'processing';
             for (const batch of chunks(subIds, 500)) {
               await supabase
                 .from('transactions')
@@ -413,12 +419,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             diasEmitidos++;
             montoTotal = round2(montoTotal + totalFinal);
+            if (isSunatProcessing) {
+              console.log(`[auto-invoice] ${descripcion} → en cola SUNAT (ticket: ${result.nubefact?.ticket ?? '?'})`);
+            }
 
           } catch (partErr: unknown) {
             const msg = partErr instanceof Error ? partErr.message : String(partErr);
             errores.push(`${group.day} parte ${partIdx + 1}: ${msg}`);
 
-            // Rollback: solo si la boleta no llegó a SUNAT (invoice_id nulo)
+            // Rollback SOLO si la boleta NO llegó a SUNAT (invoice_id aún nulo).
+            // Filtramos por 'processing' para no tocar transacciones que ya se marcaron 'sent'.
             try {
               for (const batch of chunks(subIds, 500)) {
                 await supabase
