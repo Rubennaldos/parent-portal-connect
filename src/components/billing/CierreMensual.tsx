@@ -1193,14 +1193,46 @@ export const CierreMensual = () => {
             {/* Aviso si la fecha de emisión es posterior a hoy (Lima) */}
             {(() => {
               const hoyLima = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().split('T')[0];
-              return emissionDateOverride > hoyLima ? (
-                <div className="flex items-start gap-1.5 bg-orange-50 border border-orange-300 rounded px-2 py-1.5 text-xs text-orange-800 max-w-xs">
-                  <AlertTriangle className="h-3.5 w-3.5 text-orange-500 flex-shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Fecha futura.</strong> Estás a punto de emitir boletas con fecha <strong>{emissionDateOverride}</strong>, que es posterior a hoy ({hoyLima}). SUNAT puede rechazar documentos post-datados. Verifica antes de continuar.
-                  </span>
-                </div>
-              ) : null;
+              if (emissionDateOverride > hoyLima) {
+                return (
+                  <div className="flex items-start gap-1.5 bg-orange-50 border border-orange-300 rounded px-2 py-1.5 text-xs text-orange-800 max-w-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 text-orange-500 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Fecha futura.</strong> Estás a punto de emitir boletas con fecha <strong>{emissionDateOverride}</strong>, que es posterior a hoy ({hoyLima}). SUNAT rechazará estos documentos. Cambia la fecha.
+                    </span>
+                  </div>
+                );
+              }
+              // PFC-04: SUNAT solo acepta retroactividad de hasta 7 días
+              // Art. 3° numeral 5 RS 097-2012/SUNAT — tolerancia máxima 7 días calendario
+              const diffMs   = new Date(hoyLima).getTime() - new Date(emissionDateOverride).getTime();
+              const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+              if (diffDays > 7) {
+                return (
+                  <div className="flex items-start gap-1.5 bg-red-50 border border-red-400 rounded px-2 py-1.5 text-xs text-red-900 max-w-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Retroactividad excedida ({diffDays} días).</strong>{' '}
+                      SUNAT solo acepta hasta 7 días de gracia (RS 097-2012). La fecha{' '}
+                      <strong>{emissionDateOverride}</strong> puede generar rechazo o multa.
+                      Consulta con tu contador antes de emitir.
+                    </span>
+                  </div>
+                );
+              }
+              if (diffDays >= 4) {
+                return (
+                  <div className="flex items-start gap-1.5 bg-yellow-50 border border-yellow-400 rounded px-2 py-1.5 text-xs text-yellow-900 max-w-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Retroactividad: {diffDays} días.</strong>{' '}
+                      Estás dentro del límite de 7 días de SUNAT, pero cercano al borde.
+                      Emite hoy para evitar problemas.
+                    </span>
+                  </div>
+                );
+              }
+              return null;
             })()}
           </div>
           {isAdmin && schools.length > 0 && (

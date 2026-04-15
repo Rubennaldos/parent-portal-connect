@@ -212,6 +212,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
+      // ── PFC-03: Recuperar zombies antes de emitir ──────────────────────────
+      // Transacciones en billing_status='processing' con más de 30 min y sin invoice_id
+      // son procesos fallidos de ejecuciones anteriores. Las devolvemos a 'pending'
+      // para que este cron las retome. Sin este paso quedan atascadas para siempre.
+      const ttlCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const { data: zombieRows } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('billing_status', 'processing')
+        .lt('billing_processing_at', ttlCutoff)
+        .is('invoice_id', null);
+
+      if (zombieRows && zombieRows.length > 0) {
+        const zombieIds = zombieRows.map((r: { id: string }) => r.id);
+        let zombiesRecovered = 0;
+        for (const batch of chunks(zombieIds, 500)) {
+          const { data: recovered } = await supabase
+            .from('transactions')
+            .update({ billing_status: 'pending', billing_processing_at: null })
+            .in('id', batch)
+            .eq('billing_status', 'processing')
+            .is('invoice_id', null)
+            .select('id');
+          zombiesRecovered += (recovered ?? []).length;
+        }
+        console.log(`[auto-invoice] ${schoolName}: ${zombiesRecovered} zombies recuperados a 'pending'.`);
+      }
+
       // ── Obtener % IGV de la sede ───────────────────────────────────────────
       const { data: billingCfg } = await supabase
         .from('billing_config')
@@ -398,16 +427,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               throw new Error('Nubefact respondió OK pero sin datos del comprobante.');
             }
 
-            // ── UPDATE ATÓMICO: billing_status + invoice_id ─────────────────
+            // ── PFC-02: UPDATE ATÓMICO con verificación de error ──────────────
             // Si Nubefact responde 'processing' (boleta asíncrona), igualmente
-            // marcamos como 'sent' + guardamos invoice_id. El poller
-            // (check-invoice-status) actualizará sunat_status cuando SUNAT confirme.
-            // NUNCA hacer rollback cuando Nubefact aceptó el envío.
+            // marcamos como 'sent' + guardamos invoice_id. El poller actualiza después.
+            // CRÍTICO: verificar el error del UPDATE. Si falla silenciosamente,
+            // las transacciones quedan en 'processing' → zombie → duplicate en SUNAT.
             const invoiceId: string | null = result.documento?.id ?? null;
             const isSunatProcessing = result.sunat_status === 'processing' ||
                                       (result.documento as any)?.sunat_status === 'processing';
+            let updateBillingError: string | null = null;
+
             for (const batch of chunks(subIds, 500)) {
-              await supabase
+              const { error: updErr } = await supabase
                 .from('transactions')
                 .update({
                   billing_status:        'sent',
@@ -415,6 +446,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   invoice_id:            invoiceId,
                 })
                 .in('id', batch);
+              if (updErr) {
+                updateBillingError = updErr.message;
+                break;
+              }
+            }
+
+            if (updateBillingError) {
+              // BOLETA YA EXISTE EN SUNAT. No hacer rollback — dejar en 'processing'.
+              // El zombie-recovery de la próxima ejecución intentará re-vincular.
+              // Es CRÍTICO NO crear una segunda boleta con otro número correlativo.
+              const critMsg = `CRÍTICO [${schoolName}] Boleta ${result.documento?.serie}-${result.documento?.numero} enviada a SUNAT (invoice_id: ${invoiceId}) pero BD no se actualizó. Error: ${updateBillingError}. Verificar manualmente.`;
+              console.error(`[auto-invoice] ${critMsg}`);
+              errores.push(critMsg);
+              // No incrementar diasEmitidos — necesita verificación manual
+              continue;
             }
 
             diasEmitidos++;
@@ -427,16 +473,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const msg = partErr instanceof Error ? partErr.message : String(partErr);
             errores.push(`${group.day} parte ${partIdx + 1}: ${msg}`);
 
-            // Rollback SOLO si la boleta NO llegó a SUNAT (invoice_id aún nulo).
-            // Filtramos por 'processing' para no tocar transacciones que ya se marcaron 'sent'.
+            // PFC-07: Rollback SOLO si la boleta NO llegó a SUNAT (invoice_id nulo).
+            // Nunca revertir si invoice_id ya fue asignado (boleta existe en SUNAT).
+            // Filtramos por 'processing' + IS NULL invoice_id para seguridad doble.
             try {
+              let rolledBack = 0;
               for (const batch of chunks(subIds, 500)) {
-                await supabase
+                const { data: reverted } = await supabase
                   .from('transactions')
                   .update({ billing_status: 'pending', billing_processing_at: null })
                   .in('id', batch)
                   .eq('billing_status', 'processing')
-                  .is('invoice_id', null);
+                  .is('invoice_id', null)
+                  .select('id');
+                rolledBack += (reverted ?? []).length;
+              }
+              if (rolledBack > 0) {
+                console.warn(`[auto-invoice] Rollback: ${rolledBack} txns devueltas a 'pending' tras error en ${group.day} parte ${partIdx + 1}. Error: ${msg}`);
               }
             } catch { /* best-effort */ }
           }
