@@ -530,12 +530,22 @@ serve(async (req) => {
       // No crítico si electronic_documents no existe
     }
 
-    // Si Nubefact devolvió errores → success: false para que el frontend haga rollback
-    // sin marcar las transacciones como 'sent'.
+    // Determina si Nubefact/SUNAT aceptó el comprobante.
+    //
+    // CASOS:
+    //  - Factura (01): SUNAT responde síncrono → aceptada_por_sunat=true o enlace_del_pdf presente.
+    //  - Boleta (03):  SUNAT procesa asíncrono → Nubefact devuelve ticket y ni aceptada_por_sunat
+    //                  ni enlace_del_pdf están presentes todavía. Esto NO es un error.
+    //                  El comprobante ya fue enviado a SUNAT; el poller confirmará el estado.
+    //
+    // REGLA: si hay nubefact_ticket y sunat_status='processing' → Nubefact recibió el envío
+    //        → tratamos como éxito parcial para NO hacer rollback de las transacciones.
     const nubefactOk = !nubefactData.errors && (
       nubefactData.aceptada_por_sunat === true ||
       !!nubefactData.enlace_del_pdf   ||
-      effectiveDemoMode               // en demo no hay enlace_del_pdf pero tampoco error real
+      effectiveDemoMode               ||
+      // Boleta asíncrona: Nubefact aceptó, SUNAT confirmará luego — NO es fallo.
+      (sunat_status === "processing" && !!nubefact_ticket)
     );
 
     if (!nubefactOk) {
@@ -567,8 +577,9 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        success:   true,
-        documento: savedInvoice ?? { id: null, serie, numero, enlace_pdf: nubefactData.enlace_del_pdf, enlace_xml: nubefactData.enlace_del_xml, estado: sunat_status },
+        success:      true,
+        sunat_status,  // 'accepted' | 'processing' | 'pending' (demo) — útil para el frontend
+        documento: savedInvoice ?? { id: null, serie, numero, sunat_status, enlace_pdf: nubefactData.enlace_del_pdf, enlace_xml: nubefactData.enlace_del_xml },
         nubefact:  nubefactData,
       }),
       { headers: { ...cors, "Content-Type": "application/json" } }

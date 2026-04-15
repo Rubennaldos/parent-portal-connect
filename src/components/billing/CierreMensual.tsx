@@ -211,6 +211,10 @@ export const CierreMensual = () => {
   // FIX 4: Alertas de transacciones negativas
   const [negativeAlerts, setNegativeAlerts] = useState<{ count: number; total: number } | null>(null);
 
+  // Comprobantes en estado 'processing' con ticket de Nubefact (esperando confirmación SUNAT)
+  const [processingInvoicesCount, setProcessingInvoicesCount] = useState(0);
+  const [syncingWithSunat, setSyncingWithSunat]               = useState(false);
+
   // Panel de rescate (huérfanas sent/processing sin invoice_id)
   const [showRescue, setShowRescue]   = useState(false);
   const [rescuing, setRescuing]       = useState(false);
@@ -262,11 +266,26 @@ export const CierreMensual = () => {
     init();
   }, [user, isAdmin]);
 
-  // Auto-actualizar fecha de emisión cuando cambia el mes → último día del mes
+  // Auto-actualizar fecha de emisión cuando cambia el mes.
+  // Regla SUNAT: no se pueden emitir comprobantes con fecha futura.
+  // → Mes actual: sugiere HOY (Lima UTC-5), nunca fecha futura.
+  // → Mes pasado: sugiere el último día del mes (la contadora puede retrofechar hasta 7 días).
   useEffect(() => {
-    const [y, m] = selectedMonth.split('-').map(Number);
-    const lastDay = new Date(y, m, 0).getDate();
-    setEmissionDateOverride(`${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`);
+    const hoyLima   = new Date(Date.now() - 5 * 60 * 60 * 1000);
+    const hoyStr    = `${hoyLima.getUTCFullYear()}-${String(hoyLima.getUTCMonth() + 1).padStart(2, '0')}-${String(hoyLima.getUTCDate()).padStart(2, '0')}`;
+    const mesActual = hoyStr.slice(0, 7); // 'YYYY-MM'
+
+    if (selectedMonth >= mesActual) {
+      // Mes actual o futuro: usar hoy — NUNCA fecha futura
+      setEmissionDateOverride(hoyStr);
+    } else {
+      // Mes pasado: último día del mes (retroactivo permitido)
+      const [y, m] = selectedMonth.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      setEmissionDateOverride(`${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`);
+    }
+    // Limpiar la fecha manual guardada en localStorage al cambiar de mes
+    localStorage.removeItem('cierre_emission_date');
   }, [selectedMonth]);
 
   // ── Cargar IGV + detectar zombies y locks al cambiar de sede ────────────────
@@ -449,6 +468,19 @@ export const CierreMensual = () => {
     if (schoolId) fetchGroups();
   }, [fetchGroups, schoolId]);
 
+  // Contar comprobantes con nubefact_ticket en estado 'processing' (en cola de SUNAT).
+  // Se re-evalúa al cambiar de sede o al recargar los grupos (post-boletear).
+  useEffect(() => {
+    if (!schoolId) return;
+    supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', schoolId)
+      .eq('sunat_status', 'processing')
+      .not('nubefact_ticket', 'is', null)
+      .then(({ count }) => setProcessingInvoicesCount(count ?? 0));
+  }, [schoolId, groups]);
+
   // ── FIX 1: Reset manual de zombies (TTL) ─────────────────────────────────────
   const handleResetZombies = async () => {
     if (!schoolId || resettingZombies) return;
@@ -483,6 +515,40 @@ export const CierreMensual = () => {
       toast({ variant: 'destructive', title: 'Error', description: String(err) });
     } finally {
       setResettingZombies(false);
+    }
+  };
+
+  // ── Sincronizar estado de boletas con SUNAT (anti-duplicado) ─────────────────
+  // Invoca la Edge Function check-invoice-status para que el poller consulte
+  // los tickets pendientes de Nubefact y actualice sunat_status a 'accepted' o 'rejected'.
+  // Esto previene crear comprobantes duplicados si ya hay boletas en cola de SUNAT.
+  const handleSyncWithSunat = async () => {
+    if (syncingWithSunat || !schoolId) return;
+    setSyncingWithSunat(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('check-invoice-status', { body: {} });
+      if (error) throw error;
+      const updated = (data as any)?.updated ?? 0;
+      toast({
+        title:       updated > 0 ? `✅ ${updated} comprobante(s) confirmados` : 'Sin cambios de SUNAT aún',
+        description: updated > 0
+          ? 'SUNAT confirmó el estado. Actualizando tabla...'
+          : 'Los comprobantes siguen en cola de SUNAT. Intenta en unos minutos.',
+      });
+      // Recargar grupos y recontar comprobantes en proceso
+      await fetchGroups();
+      const { count } = await supabase
+        .from('invoices')
+        .select('id', { count: 'exact', head: true })
+        .eq('school_id', schoolId)
+        .eq('sunat_status', 'processing')
+        .not('nubefact_ticket', 'is', null);
+      setProcessingInvoicesCount(count ?? 0);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ variant: 'destructive', title: 'Error al sincronizar con SUNAT', description: msg });
+    } finally {
+      setSyncingWithSunat(false);
     }
   };
 
@@ -629,11 +695,21 @@ export const CierreMensual = () => {
             continue;
           }
 
-          const serie = `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`;
-          toast({
-            title: `✅ ${totalParts > 1 ? `(${partIdx + 1}/${totalParts}) ` : ''}Boleta emitida`,
-            description: `${descripcion} → ${serie} | S/ ${totalFinal.toFixed(2)}`,
-          });
+          const serieNum       = `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`;
+          const isProcessing   = result.sunat_status === 'processing' ||
+                                 (result.documento as any)?.sunat_status === 'processing';
+          const partPrefix     = totalParts > 1 ? `(${partIdx + 1}/${totalParts}) ` : '';
+          if (isProcessing) {
+            toast({
+              title:       `⏳ ${partPrefix}Boleta enviada – en cola de SUNAT`,
+              description: `${descripcion} → ${serieNum} | S/ ${totalFinal.toFixed(2)} | El estado se actualizará automáticamente.`,
+            });
+          } else {
+            toast({
+              title:       `✅ ${partPrefix}Boleta emitida`,
+              description: `${descripcion} → ${serieNum} | S/ ${totalFinal.toFixed(2)}`,
+            });
+          }
 
         } catch (partErr: unknown) {
           const msg = partErr instanceof Error ? partErr.message : String(partErr);
@@ -1235,6 +1311,33 @@ export const CierreMensual = () => {
               disabled={resettingZombies} onClick={handleResetZombies}>
               {resettingZombies ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               <span className="ml-1.5 text-xs">Recuperar</span>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Banner: boletas en cola de SUNAT (anti-duplicado) */}
+      {processingInvoicesCount > 0 && (
+        <Card className="border-indigo-300 bg-indigo-50">
+          <CardContent className="p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-indigo-600 shrink-0" />
+              <p className="text-xs text-indigo-800">
+                <strong>{processingInvoicesCount} boleta(s) esperando confirmación de SUNAT.</strong>{' '}
+                Sincroniza el estado antes de emitir nuevas boletas para evitar duplicados.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-indigo-400 text-indigo-700 hover:bg-indigo-100 font-semibold"
+              disabled={syncingWithSunat}
+              onClick={handleSyncWithSunat}
+            >
+              {syncingWithSunat
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <RefreshCw className="h-3.5 w-3.5" />}
+              <span className="ml-1.5 text-xs">Sincronizar con SUNAT</span>
             </Button>
           </CardContent>
         </Card>
