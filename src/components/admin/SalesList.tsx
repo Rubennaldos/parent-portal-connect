@@ -994,7 +994,9 @@ export const SalesList = () => {
       setShowAnnul(false);
       setRefundMethod('');
       fetchTransactions();
-      emitSync(['debtors', 'balances', 'dashboard']);
+      // 'balances' refresca el selectedStudent en el POS (incluye current_period_spent).
+      // Sin esto, el cajero tendría que buscar al alumno de nuevo para ver el tope liberado.
+      emitSync(['debtors', 'balances', 'spending_limits', 'dashboard']);
     } catch (error: any) {
       console.error('Error annulling sale:', error);
       toast({
