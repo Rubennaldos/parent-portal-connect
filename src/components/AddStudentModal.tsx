@@ -226,8 +226,8 @@ export function AddStudentModal({ isOpen, onClose, onSuccess }: AddStudentModalP
           classroom_id: formData.classroom_id,
           grade: selectedLevel?.name || '', // Campo legacy por compatibilidad
           section: selectedClassroom?.name || '', // Campo legacy por compatibilidad
-          balance: 0,
           daily_limit: 0,
+          // parent_id siempre se deriva del usuario autenticado actual.
           parent_id: user.id,
           school_id: formData.school_id,
           is_active: true,

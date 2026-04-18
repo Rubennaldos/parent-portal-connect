@@ -63,6 +63,7 @@ import { HeroActions } from '@/components/parent/HeroActions';
 import { ServicesGrid } from '@/components/parent/ServicesGrid';
 import { ChildCarouselHeader } from '@/components/parent/ChildCarouselHeader';
 import { BalanceSaldoModal } from '@/components/parent/BalanceSaldoModal';
+import { SupportModal } from '@/components/parent/SupportModal';
 
 interface Student {
   id: string;
@@ -80,6 +81,7 @@ interface Student {
   level_id?: string | null;
   classroom_id?: string | null;
   free_account?: boolean;
+  recharge_enabled?: boolean;
   kiosk_disabled?: boolean;
   school?: { id: string; name: string } | null;
 }
@@ -97,12 +99,13 @@ interface Transaction {
 
 const Index = () => {
   const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
+  // Piloto IziPay: solo este correo puede ver el botón de recargas habilitado
+  const isIzipayPilot = (user?.email ?? '').toLowerCase() === 'padremc1@gmail.com';
   const { toast } = useToast();
   const { isChecking } = useOnboardingCheck();
   const balanceSyncTs = useDebouncedSync('balances', 800);
   
   const [students, setStudents] = useState<Student[]>([]);
-  const [studentDebts, setStudentDebts] = useState<Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }>>({}); // 💰 Deudas por estudiante
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
   const [pendingRechargesMap, setPendingRechargesMap] = useState<Record<string, number>>({}); // ⏳ Recargas pendientes por estudiante
   const [loading, setLoading] = useState(true);
@@ -132,13 +135,9 @@ const Index = () => {
     return sessionStorage.getItem('parentPortalTab') || 'alumnos';
   });
 
-  // Guardar la pestaña activa cuando cambia + refrescar datos
+  // Guardar la pestaña activa cuando cambia
   useEffect(() => {
     sessionStorage.setItem('parentPortalTab', activeTab);
-    // Refrescar deudas y contador al cambiar de pestaña
-    if (students.length > 0) {
-      calculateStudentDebts(students);
-    }
   }, [activeTab]);
 
   // Sub-navegación del módulo de almuerzos: 'comprar' | 'pedidos'
@@ -153,6 +152,7 @@ const Index = () => {
   const [showMenuModal, setShowMenuModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCalendarModal, setShowCalendarModal] = useState(false); // Nuevo
+  const [showSupportModal, setShowSupportModal] = useState(false);
   const [showUploadPhoto, setShowUploadPhoto] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showNotifSheet, setShowNotifSheet] = useState(false);
@@ -182,22 +182,12 @@ const Index = () => {
     fetchStudents();
     fetchParentProfile();
     checkOnboardingStatus();
-    // calculateStudentDebts se llama dentro de fetchStudents al completar
   }, [user]);
 
-  useEffect(() => {
-    if (!user) return;
-    // Refrescar deudas cada 30s usando la fuente única (view_student_debts vía RPC)
-    const interval = setInterval(() => {
-      if (students.length > 0) calculateStudentDebts(students);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [user, students]);
-
-  // Auto-refresh saldos y deudas cuando admin aprueba recarga/voucher (Realtime)
+  // Auto-refresh saldos cuando admin aprueba recarga/voucher (Realtime)
   useEffect(() => {
     if (balanceSyncTs > 0 && user) {
-      fetchStudents(); // calculateStudentDebts se llama dentro de fetchStudents
+      fetchStudents();
       toast({ title: '🔄 Datos actualizados', description: 'El saldo de tus hijos se actualizó.', duration: 4000 });
     }
   }, [balanceSyncTs]);
@@ -487,6 +477,7 @@ const Index = () => {
       if (error) throw error;
       
       setStudents(data || []);
+      setPendingPaymentsCount((data || []).filter((s) => Number(s.balance ?? 0) > 0).length);
 
       // Inicializar el hijo activo del carrusel:
       // Si hay un ID guardado en localStorage y sigue siendo válido → usarlo.
@@ -501,9 +492,7 @@ const Index = () => {
         });
       }
       
-      // ✅ Calcular deudas con delay para cada estudiante
       if (data && data.length > 0) {
-        await calculateStudentDebts(data);
         fetchPendingRecharges(data); // ⏳ Cargar recargas pendientes en paralelo
       }
     } catch (error: any) {
@@ -515,64 +504,6 @@ const Index = () => {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Fuente única: get_parent_debts → view_student_debts
-  // Incluye transacciones reales + almuerzos virtuales + saldo negativo.
-  // También actualiza pendingPaymentsCount con el mismo resultado.
-  const calculateStudentDebts = async (studentsData: Student[]) => {
-    const debtsMap: Record<string, { lunchDebt: number; kioskDebt: number; totalDebt: number }> = {};
-
-    for (const student of studentsData) {
-      debtsMap[student.id] = { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
-    }
-
-    if (!user || studentsData.length === 0) {
-      setStudentDebts(debtsMap);
-      return;
-    }
-
-    try {
-      const billableIds = studentsData.map(s => s.id);
-
-      // 2 queries en paralelo: deudas reales + vouchers en revisión
-      const [debtsResult, vouchersResult] = await Promise.all([
-        supabase.rpc('get_parent_debts', { p_parent_id: user.id }),
-        supabase
-          .from('recharge_requests')
-          .select('paid_transaction_ids')
-          .in('student_id', billableIds)
-          .eq('status', 'pending')
-          .in('request_type', ['debt_payment', 'lunch_payment']),
-      ]);
-
-      const inReviewTxIds = new Set<string>();
-      for (const v of vouchersResult.data ?? []) {
-        if (Array.isArray(v.paid_transaction_ids)) {
-          v.paid_transaction_ids.forEach((id: string) => inReviewTxIds.add(id));
-        }
-      }
-
-      let totalPayableItems = 0;
-      for (const row of debtsResult.data ?? []) {
-        if (!row.student_id || !debtsMap[row.student_id]) continue;
-        if (inReviewTxIds.has(row.deuda_id)) continue;
-        const amt = Number(row.monto);
-        if (row.es_almuerzo) {
-          debtsMap[row.student_id].lunchDebt += amt;
-        } else {
-          debtsMap[row.student_id].kioskDebt += amt;
-        }
-        debtsMap[row.student_id].totalDebt += amt;
-        totalPayableItems++;
-      }
-
-      setStudentDebts(debtsMap);
-      setPendingPaymentsCount(totalPayableItems);
-    } catch (error) {
-      console.error('Error calculating student debts:', error);
-      setStudentDebts(debtsMap);
     }
   };
 
@@ -597,9 +528,6 @@ const Index = () => {
       // silently ignore
     }
   };
-
-  // fetchPendingPaymentsCount eliminado: el conteo lo calcula calculateStudentDebts
-  // usando get_parent_debts → view_student_debts (fuente única de verdad).
 
   const handleRecharge = async (_amount: number, _method: string) => {
     toast({
@@ -725,32 +653,21 @@ const Index = () => {
   // handleConfirmLunchOrder eliminado
 
   const handleToggleFreeAccount = async (student: Student, newValue: boolean) => {
-    // VALIDACIÓN: Si intenta pasar a Prepago (newValue = false) y TIENE DEUDA (balance < 0)
-    if (newValue === false && student.balance < 0) {
-      toast({
-        variant: "destructive",
-        title: "🚫 Acción Bloqueada",
-        description: `Para pasar al modo Prepago, primero debes cancelar la deuda actual de S/ ${Math.abs(student.balance).toFixed(2)}.`,
-      });
-      return;
-    }
+    const targetMode = newValue ? 'free' : 'recharge';
 
     try {
-      const { error } = await supabase
-        .from('students')
-        .update({ free_account: newValue })
-        .eq('id', student.id);
+      const { error } = await supabase.rpc('set_student_payment_mode', {
+        p_student_id: student.id,
+        p_target_mode: targetMode,
+      });
 
       if (error) throw error;
 
-      // Si pasa de Prepago a Cuenta Libre y tiene saldo a favor
-      const saldoAFavor = !newValue && student.balance > 0;
-
       toast({
-        title: newValue ? '✅ Cuenta Libre Activada' : '🔒 Cuenta Libre Desactivada',
-        description: newValue 
-          ? `${student.full_name} ahora puede consumir y pagar después. ${student.balance > 0 ? 'Tu saldo a favor se descontará automáticamente.' : ''}` 
-          : `${student.full_name} ahora está en modo Prepago (Recargas).`,
+        title: newValue ? '✅ Cuenta Libre Activada' : '✅ Recargas Activadas',
+        description: newValue
+          ? `${student.full_name} volvió a Cuenta Libre.`
+          : 'Se apagó Cuenta Libre, se apagaron los topes y ya puedes usar Recargas.',
       });
 
       await fetchStudents();
@@ -759,7 +676,7 @@ const Index = () => {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudo cambiar el modo de cuenta',
+        description: error?.message || 'No se pudo cambiar el modo de cuenta',
       });
     }
   };
@@ -888,36 +805,10 @@ const Index = () => {
                 {(() => {
                   const active = students.find(s => s.id === activeStudentId) ?? students[0];
 
-                  // ── Deuda del hijo ACTIVO únicamente ──────────────────────────
-                  // Mismo criterio que PaymentsTab: transacciones pendientes reales
-                  // (cafetería + almuerzos) excluidas las que ya tienen voucher en revisión.
-                  // NO se mezcla con datos de otros hijos.
-                  const activeDebt  = active ? (studentDebts[active.id] ?? { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 }) : { lunchDebt: 0, kioskDebt: 0, totalDebt: 0 };
-                  const activeLunchDebt = activeDebt.lunchDebt;
-                  const activeCafeFromTx      = activeDebt.kioskDebt;
-                  const activeCafeFromBalance = (active?.balance ?? 0) < 0 ? Math.abs(active?.balance ?? 0) : 0;
-                  const activeKioskDebt = activeCafeFromTx > 0 ? activeCafeFromTx : activeCafeFromBalance;
-
-                  // ── Deuda FAMILIAR (todos los hijos) ──────────────────────────
-                  const familyLunchDebt = Object.values(studentDebts).reduce((acc, d) => acc + d.lunchDebt, 0);
-                  const familyKioskDebt = students.reduce((acc, s) => {
-                    const fromTx  = studentDebts[s.id]?.kioskDebt ?? 0;
-                    const fromBal = s.balance < 0 ? Math.abs(s.balance) : 0;
-                    return acc + (fromTx > 0 ? fromTx : fromBal);
-                  }, 0);
-
                   return (
                     <>
                       <BalanceHero
                         studentId={active?.id ?? null}
-                        studentName={active?.full_name ?? ''}
-                        photoUrl={active?.photo_url ?? null}
-                        balance={active?.balance ?? 0}
-                        lunchDebt={activeLunchDebt}
-                        kioskBalanceDebt={activeKioskDebt}
-                        familyLunchDebt={familyLunchDebt}
-                        familyKioskDebt={familyKioskDebt}
-                        multipleChildren={students.length > 1}
                         isLoading={loading}
                       />
                       {/* Botones gigantes estilo Yape — re-renderizan con activeStudentId */}
@@ -940,6 +831,12 @@ const Index = () => {
                           }
                         }}
                         onMessages={() => setShowNotifSheet(true)}
+                        onSupport={() => {
+                          if (!isTransitioning && active) {
+                            setSelectedStudent(active);
+                            setShowSupportModal(true);
+                          }
+                        }}
                         unreadNotifCount={unreadNotifCount}
                         onAddStudent={() => setShowAddStudent(true)}
                         onBalance={() => {
@@ -949,6 +846,9 @@ const Index = () => {
                           }
                         }}
                         studentBalance={active && active.balance > 0 ? active.balance : 0}
+                        isPrepaidStudent={active?.free_account === false}
+                        isIzipayPilot={isIzipayPilot}
+                        onRecharge={() => { if (!isTransitioning && active) openRechargeModal(active); }}
                       />
                     </>
                   );
@@ -979,9 +879,9 @@ const Index = () => {
                     >
                       <StudentCard
                         student={student}
-                        totalDebt={studentDebts[student.id]?.totalDebt || 0}
-                        lunchDebt={studentDebts[student.id]?.lunchDebt || 0}
-                        kioskDebt={studentDebts[student.id]?.kioskDebt || 0}
+                        totalDebt={Number(student.balance ?? 0) > 0 ? Number(student.balance ?? 0) : 0}
+                        lunchDebt={0}
+                        kioskDebt={Number(student.balance ?? 0) > 0 ? Number(student.balance ?? 0) : 0}
                         pendingRechargeAmount={pendingRechargesMap[student.id] || 0}
                         onRecharge={() => { if (!isTransitioning) openRechargeModal(student); }}
                         onViewHistory={() => { if (!isTransitioning) openHistoryModal(student); }}
@@ -1145,6 +1045,15 @@ const Index = () => {
         isOpen={showAddStudent}
         onClose={() => setShowAddStudent(false)}
         onSuccess={fetchStudents}
+      />
+
+      <SupportModal
+        isOpen={showSupportModal}
+        onClose={() => setShowSupportModal(false)}
+        parentId={user?.id || ''}
+        parentName={parentName || 'Padre de familia'}
+        studentId={selectedStudent?.id ?? null}
+        studentName={selectedStudent?.full_name ?? null}
       />
 
       {/* Modal: Detalle de Saldo del hijo activo */}

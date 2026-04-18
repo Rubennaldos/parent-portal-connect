@@ -64,6 +64,7 @@ interface LunchOrder {
   category_name?: string | null;
   _ticket_code?: string;
   _transaction_payment_status?: string | null;
+  _has_pending_voucher?: boolean;
 }
 
 interface LunchConfig {
@@ -256,6 +257,29 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
             order._transaction_payment_status = paymentMap.get(order.id) ?? null;
           });
         }
+
+        // Determinar qué pedidos tienen un comprobante pendiente de aprobación.
+        // Solo cuando hay un recharge_request con status='pending' y el order_id
+        // está en lunch_order_ids se mostrará "Pago en revisión" al padre.
+        const { data: rrData } = await supabase
+          .from('recharge_requests')
+          .select('lunch_order_ids')
+          .eq('parent_id', parentId)
+          .in('request_type', ['lunch_payment', 'debt_payment'])
+          .eq('status', 'pending')
+          .not('lunch_order_ids', 'is', null);
+
+        if (rrData) {
+          const pendingVoucherOrderIds = new Set<string>();
+          rrData.forEach((rr: any) => {
+            if (Array.isArray(rr.lunch_order_ids)) {
+              rr.lunch_order_ids.forEach((id: string) => pendingVoucherOrderIds.add(id));
+            }
+          });
+          ordersWithMenus.forEach((order) => {
+            order._has_pending_voucher = pendingVoucherOrderIds.has(order.id);
+          });
+        }
       }
 
       setOrders(ordersWithMenus);
@@ -275,13 +299,12 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
     setCancellingOrderId(order.id);
     setConfirmCancelOrder(null);
     try {
-      // RPC atómico: cancela pedido + transacción en una sola operación de BD.
-      // Si la transacción ya está boleteada en SUNAT (billing_status='sent'),
-      // el RPC cancela solo el pedido y avisa que se requiere nota de crédito.
+      // RPC exclusivo para padres: verifica propiedad del pedido + hora de corte.
+      // cancel_lunch_order (sin sufijo) es solo para admins desde v2.
       const { data: result, error: rpcError } = await supabase
-        .rpc('cancel_lunch_order', {
-          p_order_id:     order.id,
-          p_cancelled_by: parentId,
+        .rpc('cancel_lunch_order_as_parent', {
+          p_order_id:  order.id,
+          p_parent_id: parentId,
         });
 
       if (rpcError) throw rpcError;
@@ -391,7 +414,9 @@ export function ParentLunchOrders({ parentId }: ParentLunchOrdersProps) {
 
     const txStatus = order._transaction_payment_status;
     const isPaid = txStatus === 'paid';
-    const isInReview = txStatus === 'pending';
+    // "En revisión" = solo cuando el padre envió un comprobante Y está esperando aprobación.
+    // txStatus==='pending' solo indica deuda activa, NO significa que haya voucher enviado.
+    const isInReview = order._has_pending_voucher === true;
     const withinDeadline = canCancelForDate(order.order_date);
 
     // Ya pagado → solo admin puede revertir

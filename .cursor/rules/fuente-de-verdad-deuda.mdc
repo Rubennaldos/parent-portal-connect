@@ -1,64 +1,53 @@
 ---
-description: Regla de arquitectura: toda deuda debe venir de view_student_debts
+description: Regla de arquitectura financiera alineada a alumnos.saldo_actual
 alwaysApply: true
 ---
 
-# REGLA DE ARQUITECTURA — Fuente Única de Verdad para Deudas
+# REGLA DE ARQUITECTURA — Fuente Única de Verdad Financiera
 
 ## LA REGLA
 
-**TODA lectura de deuda pendiente DEBE pasar por `view_student_debts`.**
+**La verdad financiera del sistema es `alumnos.saldo_actual`.**
 
-Está **PROHIBIDO** calcular deuda directamente desde `transactions` o `lunch_orders` en TypeScript o en RPCs nuevos.
+Está **PROHIBIDO** calcular deuda/saldo en React o con columnas no existentes para saldo.
+La lógica financiera debe ejecutarse en Supabase y/o capa de servicios.
 
 ## CANALES PERMITIDOS
 
 | Contexto | Qué usar |
 |----------|----------|
-| Portal de Padres (frontend) | `supabase.rpc('get_parent_debts', { p_parent_id })` |
-| Admin Cobranzas (frontend) | `supabase.rpc('get_billing_consolidated_debtors', {...})` |
-| Consulta puntual admin (modal) | `supabase.from('view_student_debts').select(...)` |
-| Nuevo RPC de negocio | `SELECT ... FROM view_student_debts WHERE ...` |
+| Frontend (`.tsx`) | consumir servicios, sin SQL embebido |
+| Servicios (`/services`) | centralizar acceso a Supabase |
+| Operaciones financieras | transacción SQL atómica sobre `auditoria_vouchers` + `alumnos` |
+| Auditoría | `audit_logs` o `audit_billing_logs` |
 
 ## PATRÓN PROHIBIDO
 
 ```typescript
 // ❌ MAL — query directa que duplica lógica
-const { data } = await supabase
-  .from('transactions')
-  .select('id, amount')
-  .in('payment_status', ['pending', 'partial'])
-  .eq('type', 'purchase')
-  .eq('is_deleted', false);
-
-const total = data.reduce((s, t) => s + Math.abs(t.amount), 0);
+const totalDebt = items.reduce((acc, i) => acc + i.monto, 0); // React calculando deuda
 ```
 
 ## PATRÓN CORRECTO
 
 ```typescript
-// ✅ BIEN — fuente única
-const { data } = await supabase.rpc('get_parent_debts', { p_parent_id: userId });
-const total = (data ?? []).reduce((s, r) => s + Number(r.monto), 0);
+// ✅ BIEN — frontend muestra saldo persistido
+const saldo = alumno.saldo_actual;
 ```
 
 ## POR QUÉ
 
-- `view_student_debts` incluye los 3 tramos: transacciones reales + almuerzos virtuales + saldo negativo.
-- Las queries directas a `transactions` **no incluyen almuerzos virtuales** → montos distintos entre Admin y Padre.
-- Si la lógica de deuda cambia algún día, se cambia **solo en la vista**. Sin tocar TypeScript.
+- Evita divergencias entre UI y base de datos.
+- Evita usar tablas/columnas no presentes en el esquema real.
+- Reduce duplicación de lógica y errores de consistencia.
 
-## COLUMNAS DE LA VISTA
+## CAMPOS CLAVE DEL ESQUEMA REAL
 
 ```
-deuda_id    → ID único (tx real: UUID | almuerzo virtual: 'lunch_XXX' | kiosco: 'kiosk_balance_XXX')
-student_id  → UUID del alumno
-school_id   → UUID de la sede
-monto       → Importe positivo en soles (ABS ya aplicado)
-descripcion → Texto legible
-fecha       → TIMESTAMPTZ
-fuente      → 'transaccion' | 'almuerzo_virtual' | 'saldo_negativo'
-es_almuerzo → boolean
-metadata    → JSONB con lunch_order_id, etc.
-ticket_code → código de ticket (solo transacciones reales)
+alumnos.id
+alumnos.padre_id
+alumnos.saldo_actual
+auditoria_vouchers.nro_operacion
+auditoria_vouchers.monto_detectado
+audit_logs.id / audit_billing_logs.id
 ```

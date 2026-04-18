@@ -86,7 +86,7 @@ serve(async (req) => {
   // ── 4. Leer configuración de Izipay desde payment_gateway_config ──────────
   const { data: gwConfig, error: gwError } = await supabase
     .from("payment_gateway_config")
-    .select("merchant_id, api_key, api_url, is_production, is_active, min_amount, max_amount")
+    .select("merchant_id, api_key, api_url, is_production, is_active, min_amount, max_amount, settings")
     .eq("gateway_name", "izipay")
     .single();
 
@@ -113,22 +113,72 @@ serve(async (req) => {
     return json({ success: false, error: `El monto máximo permitido es S/ ${gwConfig.max_amount}` }, 400);
   }
 
+  // ── 5a. Obtener email del padre (IziPay lo requiere en customer) ─────────
+  let callerEmail = "cliente@test.pe"; // fallback si no se encuentra
+  try {
+    const { data: authUser } = await supabase.auth.admin.getUserById(callerUserId);
+    if (authUser?.user?.email) {
+      callerEmail = authUser.user.email;
+    }
+  } catch { /* usa el fallback */ }
+
   // ── 5. Construir payload de la orden para Izipay ──────────────────────────
   // Izipay trabaja con centavos (enteros) — multiplicar por 100 y redondear
   const amountInCents = Math.round(amount * 100);
-  const shopId      = gwConfig.merchant_id;
-  const password    = gwConfig.api_key;
-  const baseUrl     = gwConfig.api_url || (gwConfig.is_production ? IZIPAY_PROD_URL : IZIPAY_TEST_URL);
+  // El panel suele guardar "97547567:testpublickey_..." en merchant_id: el Basic Auth
+  // solo usa shopId + contraseña (Usuario + Contraseña de test del Back Office).
+  const rawMerchant    = String(gwConfig.merchant_id ?? "").trim();
+  const rawApiKey      = String(gwConfig.api_key      ?? "").trim();
+  const rawApiSecret   = String(gwConfig.api_secret   ?? "").trim();
+
+  // IziPay Basic Auth → usuario = shopId (parte numérica), contraseña = testpassword_...
+  const shopId = rawMerchant.includes(":") ? rawMerchant.split(":")[0].trim() : rawMerchant;
+
+  // La contraseña de test de IziPay empieza con "testpassword_".
+  // Buscamos ese valor en api_key primero; si no, en api_secret como fallback.
+  const password =
+    rawApiKey.startsWith("testpassword_") || rawApiKey.startsWith("password_")
+      ? rawApiKey
+      : rawApiSecret.startsWith("testpassword_") || rawApiSecret.startsWith("password_")
+        ? rawApiSecret
+        : rawApiKey; // último recurso: usar api_key tal cual
+
+  const publicKeyForKr =
+    rawMerchant.includes(":")
+      ? rawMerchant
+      : (gwConfig.settings as { public_key?: string } | null)?.public_key?.trim() || rawMerchant;
+  const baseUrl = gwConfig.api_url || (gwConfig.is_production ? IZIPAY_PROD_URL : IZIPAY_TEST_URL);
+
+  // Debug info — se devuelve en el body de error para que el admin lo vea en Network tab
+  const _credDebug = {
+    shopId,
+    apiKey_prefix:    rawApiKey.substring(0, 15)    + (rawApiKey.length > 15    ? "..." : ""),
+    apiSecret_prefix: rawApiSecret.substring(0, 15) + (rawApiSecret.length > 15 ? "..." : ""),
+    password_used:    password.substring(0, 15)     + (password.length > 15     ? "..." : ""),
+    password_source:  rawApiKey.startsWith("testpassword_") || rawApiKey.startsWith("password_")
+                        ? "api_key" : "api_secret",
+    baseUrl,
+  };
+  console.log("[izipay] credenciales:", JSON.stringify(_credDebug));
+
+  if (!shopId || !password) {
+    return json({
+      success: false,
+      error: "Credenciales incompletas: Merchant ID y contraseña son obligatorios.",
+      _debug: _credDebug,
+    }, 200);
+  }
 
   // Basic Auth: base64(shopId:password)
   const basicAuth = btoa(`${shopId}:${password}`);
 
   const orderPayload = {
     amount: amountInCents,
-    currency: currency === "PEN" ? "604" : "840", // ISO 4217: PEN=604, USD=840
+    currency: currency || "PEN", // IziPay Perú usa código alfabético (PEN, USD), no numérico
     orderId: orderId,                               // ID único de nuestra transacción
     customer: {
       reference: callerUserId,                      // ID del padre (Supabase auth.uid)
+      email:     callerEmail,                       // IziPay requiere email obligatorio
     },
     // formAction: "PAYMENT" es el modo estándar de cobro
     // Izipay devolverá el formToken que el frontend usa con su SDK JS
@@ -153,22 +203,27 @@ serve(async (req) => {
   const izipayData = await izipayResponse.json().catch(() => null);
 
   if (!izipayResponse.ok || !izipayData) {
-    console.error("[izipay-create-order] Respuesta inesperada de Izipay:", izipayResponse.status, izipayData);
+    const rawText = izipayData ? JSON.stringify(izipayData) : "(sin body)";
+    console.error("[izipay-create-order] HTTP error de Izipay:", izipayResponse.status, rawText);
+    // Devolvemos 200 para que el frontend pueda leer el body con el error real
     return json({
       success: false,
-      error:   "Izipay devolvió un error al crear la orden",
-      details: izipayData,
-    }, 502);
+      error:   `Izipay HTTP ${izipayResponse.status}: ${rawText}`,
+    }, 200);
   }
 
   // Izipay devuelve status "SUCCESS" en el body (HTTP puede ser 200 aunque haya error lógico)
   if (izipayData.status !== "SUCCESS") {
-    console.error("[izipay-create-order] Izipay rechazó la orden:", izipayData);
+    const errMsg  = izipayData.answer?.errorMessage ?? "Izipay rechazó la creación de la orden";
+    const errCode = izipayData.answer?.errorCode    ?? "SIN_CODIGO";
+    console.error("[izipay-create-order] Izipay rechazó:", errCode, errMsg);
     return json({
-      success:    false,
-      error:      izipayData.answer?.errorMessage ?? "Izipay rechazó la creación de la orden",
-      errorCode:  izipayData.answer?.errorCode,
-    }, 422);
+      success:   false,
+      error:     `[${errCode}] ${errMsg}`,
+      errorCode: errCode,
+      izipayRaw: izipayData,
+      _debug:    _credDebug,   // ← qué shopId y contraseña se usaron
+    }, 200);
   }
 
   const formToken = izipayData.answer?.formToken;
@@ -194,9 +249,10 @@ serve(async (req) => {
   // ── 8. Devolver formToken al frontend ─────────────────────────────────────
   // El frontend inyecta este token en el SDK JS de Izipay: KRGlue.loadLibrary(...)
   return json({
-    success:   true,
-    formToken: formToken,
-    orderId:   orderId,
+    success:    true,
+    formToken:  formToken,
+    orderId:    orderId,
+    publicKey:  publicKeyForKr,
   });
 });
 

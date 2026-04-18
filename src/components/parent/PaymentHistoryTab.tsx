@@ -321,14 +321,13 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         if (txWithInvoice && txWithInvoice.length > 0) {
           const invoiceIds = [...new Set(txWithInvoice.map((t: any) => t.invoice_id as string))];
 
-          // Solo boletas individuales (con datos del cliente real).
-          // Las boletas de "Resumen Ventas Diarias" del admin tienen client_name = 'Consumidor Final'
-          // y NO corresponden al padre — se excluyen explícitamente.
+          // Cargar TODOS los comprobantes cuyo ID proviene de las transacciones del padre.
+          // Ya están filtrados por invoice_id desde las transacciones propias del padre,
+          // por lo que incluimos boletas "Consumidor Final" (padre pagó sin DNI → su boleta igual).
           const { data: invoicesData } = await supabase
             .from('invoices')
             .select('id, pdf_url, full_number, invoice_type, client_name, client_document_number')
-            .in('id', invoiceIds)
-            .neq('client_name', 'Consumidor Final');
+            .in('id', invoiceIds);
 
           if (invoicesData) {
             // Mapas para lookup rápido

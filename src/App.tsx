@@ -43,6 +43,7 @@ import CashRegisterPage from "./pages/CashRegister";
 import CashRegisterV2Page from "./pages/CashRegisterV2";
 import Facturacion from "./pages/Facturacion";
 import Auditoria from "./pages/Auditoria";
+import IziPayTest from "./pages/IziPayTest";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -308,6 +309,16 @@ const App = () => (
             <Route
               path="/reclamaciones"
               element={<Navigate to="/access-control" replace />}
+            />
+
+            {/* Sandbox IziPay — Solo para admin_general y superadmin (Beto) */}
+            <Route
+              path="/admin/test-izipay"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general', 'superadmin']}>
+                  <IziPayTest />
+                </ProtectedRoute>
+              }
             />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

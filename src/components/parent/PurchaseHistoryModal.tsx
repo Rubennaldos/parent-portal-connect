@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ShoppingBag, AlertCircle, Clock, UtensilsCrossed, ChevronDown } from 'lucide-react';
+import { ShoppingBag, Clock, UtensilsCrossed, ChevronDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -8,22 +8,15 @@ import { es } from 'date-fns/locale';
 
 const PAGE_SIZE = 20;
 
-interface PurchaseItem {
-  product_name: string;
-  quantity: number;
-  unit_price: number;
-  subtotal: number;
-}
-
 interface Purchase {
   id: string;
+  type: string;
   amount: number;
   description: string;
   created_at: string;
   ticket_code: string | null;
   payment_status: string;
   metadata: any;
-  items: PurchaseItem[];
 }
 
 interface PurchaseHistoryModalProps {
@@ -56,42 +49,11 @@ const PurchaseCardSkeleton = () => (
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function isLunchPurchase(tx: Purchase): boolean {
-  return !!(tx.metadata?.lunch_order_id || tx.description?.toLowerCase().includes('almuerzo'));
-}
-
-function getLunchDisplayTitle(tx: Purchase): string {
-  // Prioridad 1: metadata.lunch_date (ISO date string)
-  if (tx.metadata?.lunch_date) {
-    try {
-      const d = new Date(tx.metadata.lunch_date);
-      const dayName = format(d, 'EEEE', { locale: es });
-      const dateStr = format(d, "d 'de' MMMM", { locale: es });
-      return `Almuerzo: ${dayName.charAt(0).toUpperCase() + dayName.slice(1)} ${dateStr}`;
-    } catch { /* fallthrough */ }
-  }
-  // Prioridad 2: extraer fecha de la descripción "Almuerzo - Menú del día - 30 de marzo"
-  const match = tx.description?.match(/menú del día\s*[-–·]\s*(.+)/i);
-  if (match) return `Almuerzo: ${match[1].trim()}`;
-  // Fallback: usar created_at
-  try {
-    return `Almuerzo: ${format(new Date(tx.created_at), "EEEE d 'de' MMMM", { locale: es })}`;
-  } catch {
-    return 'Almuerzo escolar';
-  }
-}
-
 // ─── Purchase Card ────────────────────────────────────────────────────────────
 function PurchaseCard({ purchase }: { purchase: Purchase }) {
-  const isLunch = isLunchPurchase(purchase);
-
-  const mainTitle = isLunch
-    ? getLunchDisplayTitle(purchase)
-    : purchase.items.length === 1
-      ? purchase.items[0].product_name
-      : purchase.items.length > 1
-        ? `${purchase.items[0].product_name} y ${purchase.items.length - 1} más`
-        : (purchase.description || 'Compra en kiosco');
+  const isLunch = Boolean(purchase.metadata?.lunch_order_id);
+  const consumptionType = isLunch ? 'almuerzo' : 'kiosco';
+  const title = purchase.description || (isLunch ? 'Consumo de almuerzo' : 'Compra en kiosco');
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4 hover:shadow-sm transition-shadow">
@@ -107,20 +69,19 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
         </div>
 
         <div className="flex-1 min-w-0">
-          {/* Título principal — legible para el padre */}
-          <p className="font-bold text-sm text-slate-800 leading-snug">{mainTitle}</p>
+          <p className="font-bold text-sm text-slate-800 leading-snug">{title}</p>
 
-          {/* Fecha con día de la semana */}
           <p className="text-[11px] text-slate-400 mt-0.5 capitalize">
             {format(new Date(purchase.created_at), "EEEE d 'de' MMMM · HH:mm", { locale: es })}
           </p>
+          <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wide">
+            Tipo: {consumptionType} · DB: {purchase.type}
+          </p>
 
-          {/* Código de ticket — secundario, gris claro */}
           {purchase.ticket_code && (
             <p className="text-[10px] text-slate-300 mt-0.5 font-mono">{purchase.ticket_code}</p>
           )}
 
-          {/* Badge pendiente */}
           {purchase.payment_status === 'pending' && (
             <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
               <Clock className="w-2.5 h-2.5" />
@@ -131,32 +92,9 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
 
         <div className="text-right shrink-0">
           <p className="text-[10px] text-slate-400 font-medium">Total</p>
-          <p className="text-lg font-black text-[#8B4513]">S/ {purchase.amount.toFixed(2)}</p>
+          <p className="text-lg font-black text-[#8B4513]">S/ {Number(purchase.amount).toFixed(2)}</p>
         </div>
       </div>
-
-      {/* Lista de productos (solo kiosco con items) */}
-      {!isLunch && purchase.items.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
-          {purchase.items.map((item, idx) => (
-            <div key={idx} className="flex items-center justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-medium text-slate-700 block truncate">{item.product_name}</span>
-                <span className="text-[10px] text-slate-400">{item.quantity} × S/ {item.unit_price.toFixed(2)}</span>
-              </div>
-              <span className="text-xs font-bold text-orange-600 shrink-0">S/ {item.subtotal.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Sin items y no es almuerzo — mostrar descripción */}
-      {!isLunch && purchase.items.length === 0 && purchase.description && (
-        <div className="mt-2 flex items-start gap-1.5 bg-slate-50 rounded-xl px-3 py-2">
-          <AlertCircle className="w-3 h-3 text-slate-400 mt-0.5 shrink-0" />
-          <span className="text-[11px] text-slate-500">{purchase.description}</span>
-        </div>
-      )}
 
       {/* Chip almuerzo escolar */}
       {isLunch && (
@@ -196,8 +134,7 @@ export const PurchaseHistoryModal = ({
       const { data, error } = await supabase
         .from('transactions')
         .select(`
-          id, amount, description, created_at, ticket_code, payment_status, metadata,
-          transaction_items (product_name, quantity, unit_price, subtotal)
+          id, type, amount, description, created_at, ticket_code, payment_status, metadata
         `)
         .eq('student_id', studentId)
         .eq('type', 'purchase')
@@ -209,13 +146,13 @@ export const PurchaseHistoryModal = ({
 
       const newPurchases: Purchase[] = (data ?? []).map((tx: any) => ({
         id: tx.id,
-        amount: Math.abs(Number(tx.amount)),
+        type: tx.type,
+        amount: Number(tx.amount ?? 0),
         description: tx.description || '',
         created_at: tx.created_at,
         ticket_code: tx.ticket_code ?? null,
         payment_status: tx.payment_status || 'paid',
         metadata: tx.metadata ?? {},
-        items: tx.transaction_items ?? [],
       }));
 
       if (isReset) {

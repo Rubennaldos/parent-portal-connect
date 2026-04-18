@@ -16,7 +16,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
-import { format } from 'date-fns';
+import { format, isToday, isYesterday } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
   TrendingUp,
@@ -30,6 +30,10 @@ import {
   CheckCircle2,
   AlertTriangle,
   UtensilsCrossed,
+  Clock,
+  Banknote,
+  CreditCard,
+  Smartphone,
 } from 'lucide-react';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
@@ -74,6 +78,32 @@ function fmtDate(iso: string) {
   try { return format(new Date(iso), "d MMM", { locale: es }); }
   catch { return '—'; }
 }
+
+function fmtDateLabel(iso: string) {
+  try {
+    const d = new Date(iso);
+    if (isToday(d))     return 'Hoy';
+    if (isYesterday(d)) return 'Ayer';
+    return format(d, "EEEE d 'de' MMMM", { locale: es });
+  } catch { return '—'; }
+}
+
+function fmtDateKey(iso: string) {
+  try { return format(new Date(iso), 'yyyy-MM-dd'); }
+  catch { return iso.slice(0, 10); }
+}
+
+const METHOD_CHIP: Record<string, { label: string; color: string }> = {
+  saldo:                { label: 'Saldo',        color: 'bg-emerald-50 text-emerald-600' },
+  balance:              { label: 'Saldo',        color: 'bg-emerald-50 text-emerald-600' },
+  transferencia:        { label: 'Transferencia', color: 'bg-blue-50 text-blue-600' },
+  bank_transfer:        { label: 'Transferencia', color: 'bg-blue-50 text-blue-600' },
+  yape:                 { label: 'Yape',          color: 'bg-violet-50 text-violet-600' },
+  plin:                 { label: 'Plin',          color: 'bg-teal-50 text-teal-600' },
+  efectivo:             { label: 'Efectivo',      color: 'bg-amber-50 text-amber-700' },
+  cash:                 { label: 'Efectivo',      color: 'bg-amber-50 text-amber-700' },
+  tarjeta:              { label: 'Tarjeta',       color: 'bg-slate-100 text-slate-600' },
+};
 
 function safeNum(v: number | null | undefined): number {
   const n = Number(v ?? 0);
@@ -287,75 +317,139 @@ export function BalanceSaldoModal({
     const amountDisplay  = Math.abs(amountNum).toFixed(2);
     const sign           = isCredit ? '+' : '-';
 
-    // Etiqueta descriptiva
-    let label = m.description || (
+    // Etiqueta descriptiva — limpiar el prefijo técnico para el padre
+    let rawLabel = m.description || (
       isRecharge     ? 'Recarga de saldo' :
       isAdjustment   ? (amountNum >= 0 ? 'Ajuste (abono)' : 'Ajuste (descuento)') :
       isLunchPayment ? 'Consumo almuerzo' :
                        'Compra kiosco'
     );
-    if (label.length > 42) label = label.slice(0, 42) + '…';
+    // Simplificar descripciones técnicas del POS
+    rawLabel = rawLabel
+      .replace(/^Compra POS \(Saldo\) - S\/ [\d.]+/, 'Compra en kiosco')
+      .replace(/^Compra POS \(Cuenta Libre - Deuda\) - S\/ [\d.]+/, 'Compra en kiosco')
+      .replace(/^Compra POS - Total: S\/ [\d.]+/, 'Compra en kiosco');
+    const label = rawLabel.length > 38 ? rawLabel.slice(0, 38) + '…' : rawLabel;
 
-    // Colores
-    const iconBg = isCancelled      ? 'bg-slate-100'
-      : isCredit                    ? 'bg-emerald-50'
-      : isAdjustment                ? 'bg-amber-50'
-      : isLunchPayment              ? 'bg-violet-50'
-      :                               'bg-rose-50';
+    // Colores del ícono
+    const iconBg = isCancelled  ? 'bg-slate-100'
+      : isCredit                ? 'bg-emerald-50'
+      : isPending               ? 'bg-amber-50'
+      : isAdjustment            ? 'bg-amber-50'
+      : isLunchPayment          ? 'bg-violet-50'
+      :                           'bg-rose-50';
 
     const amountClass = isCancelled                   ? 'text-slate-300 line-through'
       : isCredit                                      ? 'text-emerald-600'
       : isAdjustment && amountNum >= 0                ? 'text-emerald-600'
       : isAdjustment                                  ? 'text-amber-600'
       : isLunchPayment                                ? 'text-violet-600'
+      : isPending                                     ? 'text-amber-500'
       :                                                 'text-rose-500';
+
+    // Borde izquierdo para pendientes
+    const rowBorder = isPending && !isCancelled ? 'border-l-2 border-amber-300 pl-3' : 'pl-4';
+
+    // Chip de método de pago
+    const chipKey = (m.payment_method || '').toLowerCase();
+    const chip = METHOD_CHIP[chipKey];
 
     return (
       <div
         key={m.id}
-        className={`flex items-center gap-3 px-4 py-3 border-b border-slate-50 last:border-0 ${
+        className={`flex items-center gap-3 pr-4 py-3 border-b border-slate-50 last:border-0 ${rowBorder} ${
           isCancelled ? 'opacity-40' : ''
         }`}
       >
         {/* Ícono */}
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
           {isRecharge ? (
-            <ArrowUpCircle className={`w-4.5 h-4.5 ${isCancelled ? 'text-slate-400' : 'text-emerald-500'}`} />
+            <ArrowUpCircle className={`w-[18px] h-[18px] ${isCancelled ? 'text-slate-400' : 'text-emerald-500'}`} />
           ) : isAdjustment ? (
             <SlidersHorizontal className={`w-4 h-4 ${isCancelled ? 'text-slate-400' : 'text-amber-500'}`} />
           ) : isLunchPayment ? (
             <UtensilsCrossed className={`w-4 h-4 ${isCancelled ? 'text-slate-400' : 'text-violet-500'}`} />
+          ) : isPending ? (
+            <Clock className="w-4 h-4 text-amber-400" />
           ) : (
             <ShoppingBag className={`w-4 h-4 ${isCancelled ? 'text-slate-400' : 'text-rose-400'}`} />
           )}
         </div>
 
-        {/* Descripción + fecha */}
+        {/* Descripción + metadatos */}
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-semibold text-slate-700 leading-tight truncate">{label}</p>
-          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <span className="text-[10px] text-slate-400">{fmtDate(m.created_at)}</span>
+          <p className="text-[12.5px] font-semibold text-slate-700 leading-tight truncate">{label}</p>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
             {m.ticket_code && (
-              <span className="text-[9px] text-slate-300 font-mono">{m.ticket_code}</span>
+              <span className="text-[10px] text-slate-400 font-mono bg-slate-50 px-1.5 py-0.5 rounded">
+                {m.ticket_code}
+              </span>
             )}
             {isCancelled && (
-              <span className="text-[9px] font-semibold text-red-400 bg-red-50 px-1.5 py-0.5 rounded-full">Anulado</span>
+              <span className="text-[9px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full uppercase tracking-wide">Anulado</span>
             )}
             {isPending && !isCancelled && (
-              <span className="text-[9px] font-semibold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">Pendiente</span>
+              <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full uppercase tracking-wide flex items-center gap-0.5">
+                <Clock className="w-2.5 h-2.5" /> Pendiente
+              </span>
             )}
-            {!isRecharge && !isAdjustment && !isLunchPayment && m.payment_method && m.payment_method !== 'saldo' && (
-              <span className="text-[9px] text-slate-300 capitalize">({m.payment_method})</span>
+            {/* Chip de método de pago — solo para no-recargas con método explícito */}
+            {!isRecharge && !isCancelled && chip && chipKey !== 'saldo' && chipKey !== 'balance' && (
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chip.color}`}>
+                {chipKey === 'transferencia' || chipKey === 'bank_transfer' ? (
+                  <span className="flex items-center gap-0.5"><Banknote className="w-2.5 h-2.5" /> {chip.label}</span>
+                ) : chipKey === 'yape' || chipKey === 'plin' ? (
+                  <span className="flex items-center gap-0.5"><Smartphone className="w-2.5 h-2.5" /> {chip.label}</span>
+                ) : chipKey === 'tarjeta' ? (
+                  <span className="flex items-center gap-0.5"><CreditCard className="w-2.5 h-2.5" /> {chip.label}</span>
+                ) : (
+                  chip.label
+                )}
+              </span>
             )}
           </div>
         </div>
 
         {/* Monto */}
-        <span className={`text-sm font-bold shrink-0 ${amountClass}`}>
-          {sign}S/ {amountDisplay}
-        </span>
+        <div className="text-right shrink-0">
+          <span className={`text-[14px] font-bold ${amountClass}`}>
+            {sign}S/ {amountDisplay}
+          </span>
+        </div>
       </div>
     );
+  };
+
+  // ── Render de separador de fecha ────────────────────────────────────────────
+  const renderDateSeparator = (iso: string) => (
+    <div className="flex items-center gap-2 px-4 pt-3 pb-1.5">
+      <div className="flex-1 h-px bg-slate-100" />
+      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap capitalize">
+        {fmtDateLabel(iso)}
+      </span>
+      <div className="flex-1 h-px bg-slate-100" />
+    </div>
+  );
+
+  // ── Render de la lista agrupada por fecha ───────────────────────────────────
+  const renderMovements = () => {
+    if (movements.length === 0) return null;
+    const groups: { key: string; iso: string; rows: LedgerRow[] }[] = [];
+    for (const m of movements) {
+      const key = fmtDateKey(m.created_at);
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) {
+        last.rows.push(m);
+      } else {
+        groups.push({ key, iso: m.created_at, rows: [m] });
+      }
+    }
+    return groups.map(g => (
+      <div key={g.key}>
+        {renderDateSeparator(g.iso)}
+        {g.rows.map(renderRow)}
+      </div>
+    ));
   };
 
   // ── Footer del libro mayor (reconciliación contable) ──────────────────────
@@ -413,57 +507,65 @@ export function BalanceSaldoModal({
   // ── JSX ────────────────────────────────────────────────────────────────────
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-sm w-full p-0 gap-0 overflow-hidden rounded-3xl">
+      <DialogContent className="max-w-sm w-full p-0 gap-0 overflow-hidden rounded-3xl shadow-2xl">
 
         {/* ── Header verde ─────────────────────────────────────────────── */}
-        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 px-6 pt-8 pb-6 text-center relative">
+        <div className="relative bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700 px-6 pt-8 pb-7 text-center overflow-hidden">
+          {/* Círculos decorativos de fondo */}
+          <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full bg-white/5 pointer-events-none" />
+          <div className="absolute -bottom-8 -left-4 w-20 h-20 rounded-full bg-white/5 pointer-events-none" />
+
           <DialogHeader className="mb-0">
             <DialogTitle className="sr-only">Saldo</DialogTitle>
           </DialogHeader>
 
           <div className="flex justify-center mb-3">
-            <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+            <div className="w-13 h-13 bg-white/20 rounded-2xl flex items-center justify-center ring-1 ring-white/30">
               <Wallet className="w-6 h-6 text-white" />
             </div>
           </div>
 
-          <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
+          <p className="text-white/60 text-[10px] font-bold uppercase tracking-[0.2em] mb-2">
             Saldo disponible
           </p>
-          <p className="text-white font-light text-[3.2rem] leading-none tracking-tight">
-            <span className="text-2xl font-normal text-white/70 mr-1">S/</span>
-            <span className="font-semibold">{Math.max(0, liveBalance).toFixed(2)}</span>
+          <p className="text-white leading-none tracking-tight">
+            <span className="text-xl font-light text-white/70 mr-1 align-middle">S/</span>
+            <span className="text-[3rem] font-bold align-middle">{Math.max(0, liveBalance).toFixed(2)}</span>
           </p>
-          <p className="text-white/60 text-[11px] mt-1.5">{studentName}</p>
+          <p className="text-white/50 text-[11px] mt-2 font-medium">{studentName}</p>
         </div>
 
         {/* ── Resumen recargado / gastado ──────────────────────────────── */}
         <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 bg-white">
-          <div className="flex flex-col items-center gap-1 py-4">
+          <div className="flex flex-col items-center gap-0.5 py-4 px-3">
             {totalsLoading ? (
               <div className="h-5 w-20 bg-slate-100 rounded-full animate-pulse" />
             ) : (
               <>
-                <div className="flex items-center gap-1 text-emerald-500">
+                <div className="flex items-center gap-1 text-emerald-500 mb-0.5">
                   <TrendingUp className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-semibold uppercase tracking-wider">Recargado</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Recargado</span>
                 </div>
-                <span className="text-lg font-bold text-emerald-600">S/ {totalRecharged.toFixed(2)}</span>
-                <span className="text-[9px] text-slate-400">total histórico</span>
+                <span className="text-[18px] font-bold text-emerald-600 leading-tight">
+                  S/ {totalRecharged.toFixed(2)}
+                </span>
+                <span className="text-[9px] text-slate-400 mt-0.5">total histórico</span>
               </>
             )}
           </div>
-          <div className="flex flex-col items-center gap-1 py-4">
+          <div className="flex flex-col items-center gap-0.5 py-4 px-3">
             {totalsLoading ? (
               <div className="h-5 w-20 bg-slate-100 rounded-full animate-pulse" />
             ) : (
               <>
-                <div className="flex items-center gap-1 text-rose-400">
+                <div className="flex items-center gap-1 text-rose-400 mb-0.5">
                   <TrendingDown className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-semibold uppercase tracking-wider">Gastado</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Gastado</span>
                 </div>
-                <span className="text-lg font-bold text-rose-500">S/ {totalDebited.toFixed(2)}</span>
-                <span className="text-[9px] text-slate-400">consumido del saldo</span>
+                <span className="text-[18px] font-bold text-rose-500 leading-tight">
+                  S/ {totalDebited.toFixed(2)}
+                </span>
+                <span className="text-[9px] text-slate-400 mt-0.5">consumido del saldo</span>
               </>
             )}
           </div>
@@ -471,31 +573,36 @@ export function BalanceSaldoModal({
 
         {/* ── Lista de movimientos ─────────────────────────────────────── */}
         <div className="bg-white">
-          <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-            <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-              Movimientos
-            </span>
+          <div className="flex items-center justify-between px-4 pt-4 pb-1">
+            <div className="flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Movimientos
+              </span>
+            </div>
+            {movements.length > 0 && (
+              <span className="text-[10px] text-slate-400">{movements.length} registro{movements.length !== 1 ? 's' : ''}</span>
+            )}
           </div>
 
-          <div className="max-h-[40vh] overflow-y-auto">
+          <div className="max-h-[42vh] overflow-y-auto">
             {loading && movements.length === 0 ? (
-              <div className="space-y-0">
+              <div className="space-y-0 py-1">
                 {[1, 2, 3, 4, 5].map((i) => <MovementSkeleton key={i} />)}
               </div>
             ) : movements.length === 0 ? (
-              <div className="text-center py-10 text-slate-400">
-                <Wallet className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Sin movimientos registrados</p>
+              <div className="text-center py-12 text-slate-400">
+                <Wallet className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                <p className="text-sm font-medium">Sin movimientos registrados</p>
               </div>
             ) : (
               <>
-                {movements.map(renderRow)}
+                {renderMovements()}
                 {hasMore && (
                   <button
                     onClick={loadMore}
                     disabled={loading}
-                    className="w-full flex items-center justify-center gap-2 py-3 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-50 transition-colors"
+                    className="w-full flex items-center justify-center gap-2 py-3.5 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors border-t border-slate-50"
                   >
                     {loading ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />

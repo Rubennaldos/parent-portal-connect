@@ -139,20 +139,18 @@ export const InvoiceClientModal = ({
       setDocNumber('');
       setRazonSocial(defaultName);
       setDireccion('');
-      setEmail('');
       setSunatResult(null);
       setSunatError('');
       setManualMode(false);
       setWantSaveProfile(false);
-      // Para boleta sin doc por defecto
       setDocType(tipo === 'factura' ? 'ruc' : 'sin_documento');
-      // Pre-rellenar con datos guardados si es factura y hay datos del perfil
       if (tipo === 'factura' && savedProfileData) {
-        if (savedProfileData.ruc)         setDocNumber(savedProfileData.ruc);
-        if (savedProfileData.razon_social) setRazonSocial(savedProfileData.razon_social);
-        if (savedProfileData.direccion)    setDireccion(savedProfileData.direccion);
-        if (savedProfileData.email)        setEmail(savedProfileData.email);
+        if (savedProfileData.ruc)          setDocNumber(savedProfileData.ruc);
+        if (savedProfileData.razon_social)  setRazonSocial(savedProfileData.razon_social);
+        if (savedProfileData.direccion)     setDireccion(savedProfileData.direccion);
       }
+      // Pre-cargar email guardado para CUALQUIER tipo de comprobante
+      setEmail(savedProfileData?.email ?? '');
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open, defaultType, defaultName]);
@@ -161,12 +159,11 @@ export const InvoiceClientModal = ({
   useEffect(() => {
     if (invoiceType === 'factura') {
       setDocType('ruc');
-      // Pre-rellenar desde el perfil del padre si hay datos guardados
       if (parentId && savedProfileData) {
         if (savedProfileData.ruc)          setDocNumber(savedProfileData.ruc);
         if (savedProfileData.razon_social)  setRazonSocial(savedProfileData.razon_social);
         if (savedProfileData.direccion)     setDireccion(savedProfileData.direccion);
-        if (savedProfileData.email)         setEmail(savedProfileData.email);
+        // email ya está pre-cargado desde el useEffect de apertura, no pisarlo
       } else {
         setRazonSocial('');
         setDireccion('');
@@ -190,7 +187,6 @@ export const InvoiceClientModal = ({
     }
   }, [docNumber, docType]);
 
-  /** Consulta DNI/RUC directamente a apis.net.pe (sin Edge Function) */
   const buscarEnSUNAT = async () => {
     const numero = docNumber.replace(/\D/g, '');
     if (!numero) return;
@@ -200,7 +196,12 @@ export const InvoiceClientModal = ({
     try {
       const result = await consultarDNIRUCPublico(docType as 'dni' | 'ruc', numero);
       if (!result.success) {
-        setSunatError(result.error || 'No encontrado. Puedes ingresar los datos manualmente.');
+        // Mensaje claro: el padre PUEDE seguir escribiendo su nombre manualmente
+        setSunatError(
+          result.error ||
+          `No se encontró el ${docType === 'ruc' ? 'RUC' : 'DNI'} en los registros oficiales. ` +
+          `Escribe tu nombre completo manualmente en el campo de abajo y continúa.`
+        );
         setManualMode(true);
         return;
       }
@@ -208,8 +209,11 @@ export const InvoiceClientModal = ({
       setRazonSocial(result.razon_social || '');
       setDireccion(result.direccion || '');
       setManualMode(false);
-    } catch (err: any) {
-      setSunatError('Error de conexión con SUNAT/RENIEC. Puedes ingresar los datos manualmente.');
+    } catch {
+      setSunatError(
+        `No se pudo conectar con ${docType === 'ruc' ? 'SUNAT' : 'RENIEC'} en este momento. ` +
+        `Escribe tu nombre completo manualmente en el campo de abajo y continúa.`
+      );
       setManualMode(true);
     } finally {
       setSearching(false);
@@ -219,10 +223,19 @@ export const InvoiceClientModal = ({
   const handleConfirm = async () => {
     const cleanDoc = docNumber.replace(/\D/g, '');
 
-    // ── Validación estricta de documento ──
+    // ── Validación de documento ──
     if (docType === 'dni') {
       if (cleanDoc.length !== 8) {
         toast({ title: 'DNI inválido', description: 'El DNI debe tener exactamente 8 dígitos.', variant: 'destructive' });
+        return;
+      }
+      // Si RENIEC falló y el nombre está vacío, SUNAT rechazará la boleta con DNI sin nombre
+      if (!razonSocial.trim()) {
+        toast({
+          title: 'Nombre requerido',
+          description: 'Escribe tu nombre completo. SUNAT rechaza boletas con DNI pero sin nombre del titular.',
+          variant: 'destructive',
+        });
         return;
       }
     }
@@ -231,7 +244,6 @@ export const InvoiceClientModal = ({
         toast({ title: 'RUC inválido', description: 'El RUC debe tener exactamente 11 dígitos.', variant: 'destructive' });
         return;
       }
-      // RUC válido en Perú empieza con 10 (persona natural con RUC) o 20 (empresa)
       if (!cleanDoc.startsWith('10') && !cleanDoc.startsWith('20')) {
         toast({ title: 'RUC inválido', description: 'El RUC debe comenzar con 10 (persona natural) o 20 (empresa).', variant: 'destructive' });
         return;
@@ -253,6 +265,21 @@ export const InvoiceClientModal = ({
       return;
     }
 
+    // ── Validar formato de email (si fue ingresado) ──
+    // Un email mal formado hace que Nubefact rechace el envío del PDF automático.
+    const emailTrimmed = email.trim();
+    if (emailTrimmed) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      if (!emailRegex.test(emailTrimmed)) {
+        toast({
+          title: 'Correo electrónico inválido',
+          description: 'Verifica el formato del correo (ej: nombre@gmail.com). Si no quieres recibirlo por email, deja el campo vacío.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     // ── Validaciones adicionales por tipo de comprobante ──
     if (invoiceType === 'factura') {
       if (!cleanDoc || cleanDoc.length !== 11) {
@@ -269,24 +296,33 @@ export const InvoiceClientModal = ({
       }
     }
 
-    // Guardar datos fiscales en el perfil del padre (si lo pidió)
-    if (wantSaveProfile && parentId && invoiceType === 'factura') {
+    // Guardar datos en perfil del padre (si lo pidió)
+    if (wantSaveProfile && parentId) {
       setSavingProfile(true);
+      const updatePayload: Record<string, string | null> = {
+        saved_email_fiscal:     email.trim() || null,
+        preferred_invoice_type: invoiceType,
+      };
+      // Para factura, guardar también el RUC, razón social y dirección
+      if (invoiceType === 'factura') {
+        updatePayload.saved_ruc              = cleanDoc || null;
+        updatePayload.saved_razon_social     = razonSocial.trim() || null;
+        updatePayload.saved_direccion_fiscal = direccion.trim() || null;
+      }
       const { error: saveErr } = await supabase
         .from('profiles')
-        .update({
-          saved_ruc: docNumber.replace(/\D/g, '') || null,
-          saved_razon_social: razonSocial.trim() || null,
-          saved_direccion_fiscal: direccion.trim() || null,
-          saved_email_fiscal: email.trim() || null,
-          preferred_invoice_type: 'factura',
-        })
+        .update(updatePayload)
         .eq('id', parentId);
       setSavingProfile(false);
       if (saveErr) {
         console.warn('⚠️ No se pudieron guardar los datos fiscales:', saveErr.message);
       } else {
-        toast({ title: '✅ Datos guardados', description: 'Tus datos de facturación se guardaron para la próxima vez.' });
+        toast({
+          title: '✅ Datos guardados',
+          description: invoiceType === 'factura'
+            ? 'Tus datos de facturación se guardaron para la próxima vez.'
+            : 'Tu correo se guardó para próximas boletas.',
+        });
       }
     }
 
@@ -491,18 +527,18 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* Error SUNAT */}
+          {/* Error SUNAT / RENIEC */}
           {sunatError && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
-              <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-amber-800">{sunatError}</p>
-                <button
-                  onClick={() => setManualMode(true)}
-                  className="text-xs text-amber-700 underline mt-1"
-                >
-                  Ingresar datos manualmente
-                </button>
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-amber-900">
+                  {docType === 'ruc' ? 'SUNAT no disponible' : 'RENIEC no disponible'}
+                </p>
+                <p className="text-xs text-amber-800">{sunatError}</p>
+                <p className="text-xs text-amber-700 font-medium">
+                  ✏️ Escribe tu nombre en el campo de abajo y continúa normalmente.
+                </p>
               </div>
             </div>
           )}
@@ -599,8 +635,8 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* Opción de guardar datos fiscales en el perfil (solo para padres en modo factura) */}
-          {parentId && isFactura && (
+          {/* Guardar datos en perfil: para factura guarda todo; para boleta solo el email */}
+          {parentId && email.trim() && (
             <div className="flex items-center gap-2.5 py-2 px-3 bg-gray-50 rounded-lg border border-gray-200">
               <Checkbox
                 id="save-profile"
@@ -608,7 +644,10 @@ export const InvoiceClientModal = ({
                 onCheckedChange={(v) => setWantSaveProfile(!!v)}
               />
               <label htmlFor="save-profile" className="text-xs text-gray-600 cursor-pointer select-none">
-                <span className="font-semibold">Guardar mis datos de facturación</span> para la próxima vez
+                {isFactura
+                  ? <><span className="font-semibold">Guardar mis datos de facturación</span> para la próxima vez</>
+                  : <><span className="font-semibold">Guardar mi correo</span> para próximas boletas</>
+                }
               </label>
               <Save className="h-3.5 w-3.5 text-gray-400 ml-auto shrink-0" />
             </div>

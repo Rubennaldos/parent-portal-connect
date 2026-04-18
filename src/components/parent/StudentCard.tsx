@@ -43,6 +43,7 @@ interface Student {
   section: string;
   is_active: boolean;
   free_account?: boolean;
+  recharge_enabled?: boolean;
   kiosk_disabled?: boolean;
   school?: { id: string; name: string } | null;
 }
@@ -81,6 +82,9 @@ export function StudentCard({
 
   const isFreeAccount = student.free_account !== false;
   const isPrepaid = !isFreeAccount;
+  const rechargeEnabled = student.recharge_enabled === true;
+  const hasPositivePrepaidBalance = isPrepaid && student.balance > 0;
+  const isSaldoAFavorMode = isPrepaid && !rechargeEnabled && hasPositivePrepaidBalance;
   const [showMaintenanceInfo, setShowMaintenanceInfo] = useState(false);
   const [showDebtDetail, setShowDebtDetail] = useState(false);
   const [showAccountConfig, setShowAccountConfig] = useState(false);
@@ -93,10 +97,11 @@ export function StudentCard({
   const handleSaveAccountConfig = async () => {
     setIsSaving(true);
     try {
-      const { error } = await supabase
-        .from('students')
-        .update({ free_account: selectedAccountType === 'free' })
-        .eq('id', student.id);
+      const targetMode = selectedAccountType === 'free' ? 'free' : 'recharge';
+      const { error } = await supabase.rpc('set_student_payment_mode', {
+        p_student_id: student.id,
+        p_target_mode: targetMode,
+      });
 
       if (error) throw error;
 
@@ -227,8 +232,10 @@ export function StudentCard({
                       : hasLunchDebt
                       ? 'Deuda Almuerzos'
                       : 'Deuda Kiosco'
+                    : isSaldoAFavorMode
+                    ? 'Mi saldo a favor'
                     : isActivePrepaid
-                    ? 'Saldo Kiosco'
+                    ? 'Recargas activas'
                     : 'Estado'}
                 </p>
                 <p className={`text-2xl font-bold mt-0.5 ${
@@ -249,7 +256,10 @@ export function StudentCard({
                     Ver desglose
                   </button>
                 )}
-                {isActivePrepaid && !hasKioskDebt && (
+                {isSaldoAFavorMode && !hasKioskDebt && (
+                  <p className="text-[9px] text-blue-400 mt-0.5">Se sigue descontando hasta agotarse</p>
+                )}
+                {isActivePrepaid && !isSaldoAFavorMode && !hasKioskDebt && (
                   <p className="text-[9px] text-blue-400 mt-0.5">Solo para snacks y recreo</p>
                 )}
               </div>
@@ -351,7 +361,7 @@ export function StudentCard({
         <div className="flex items-center gap-1.5 flex-wrap">
           {isPrepaid ? (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-300 text-gray-600 bg-gray-50">
-              Modo: Recargas
+              {isSaldoAFavorMode ? 'Mi saldo a favor' : 'Modo: Recargas'}
             </Badge>
           ) : (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-200 text-gray-500 bg-gray-50">
@@ -374,7 +384,7 @@ export function StudentCard({
           <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
-                Monto recargado
+                {isSaldoAFavorMode ? 'Mi saldo a favor' : 'Monto recargado'}
               </span>
               <CreditCard className="h-3.5 w-3.5 text-gray-400" />
             </div>
@@ -382,7 +392,9 @@ export function StudentCard({
               S/ {Math.max(0, student.balance ?? 0).toFixed(2)}
             </p>
             <p className="text-[9px] text-gray-400 mt-0.5">
-              Solo para compras en el kiosco (snacks y recreo)
+              {isSaldoAFavorMode
+                ? 'Te queda este saldo para seguir comprando en kiosco'
+                : 'Solo para compras en el kiosco (snacks y recreo)'}
             </p>
           </div>
         )}
@@ -403,10 +415,16 @@ export function StudentCard({
               <Wrench className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] text-amber-800 font-semibold leading-snug">
-                  El módulo de Recargas y Topes está en mantenimiento para mejorarlo.
+                  {isSaldoAFavorMode
+                    ? 'Tus recargas están apagadas, pero tu saldo a favor sigue activo.'
+                    : 'El módulo de Recargas y Topes está en mantenimiento para mejorarlo.'}
                 </p>
                 <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">
-                  Su saldo actual (<strong>S/ {displayBalance.toFixed(2)}</strong>) sigue activo y se descuenta normalmente en el kiosco.
+                  {isSaldoAFavorMode ? (
+                    <>Tu saldo a favor (<strong>S/ {displayBalance.toFixed(2)}</strong>) se sigue descontando normalmente en el kiosco.</>
+                  ) : (
+                    <>Su saldo actual (<strong>S/ {displayBalance.toFixed(2)}</strong>) sigue activo y se descuenta normalmente en el kiosco.</>
+                  )}
                 </p>
                 <button
                   onClick={() => setShowMaintenanceInfo(true)}
@@ -423,7 +441,7 @@ export function StudentCard({
         {/* Action buttons */}
         <div className="space-y-2 pt-1">
           {/* Recharge button — HIDDEN during maintenance */}
-          {!RECHARGES_MAINTENANCE && isPrepaid && !student.kiosk_disabled && (
+          {!RECHARGES_MAINTENANCE && isPrepaid && rechargeEnabled && !student.kiosk_disabled && (
             <Button
               onClick={onRecharge}
               variant="outline"
@@ -455,13 +473,13 @@ export function StudentCard({
               Historial
             </Button>
             <Button
-              onClick={onOpenSettings}
+              onClick={isSaldoAFavorMode ? () => setShowAccountConfig(true) : onOpenSettings}
               variant="ghost"
               size="sm"
               className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
             >
               <Settings2 className="h-3.5 w-3.5 mr-1" />
-              Topes
+              {isSaldoAFavorMode ? 'Activar Cuenta Libre' : 'Topes'}
             </Button>
           </div>
         </div>

@@ -4,28 +4,43 @@
  * Fila 1: Historial de Compras · Mensajes (destacado) · Topes
  * Fila 2: Soporte · Agregar Hijo
  */
-import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus, Wallet } from 'lucide-react';
+import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus, Wallet, Zap, RefreshCw } from 'lucide-react';
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FLAG DE PAUSA — Cambiar a false para volver a activar el botón de saldo
+// ──────────────────────────────────────────────────────────────────────────────
+const BALANCE_PAUSED = true;
 
 interface ServicesGridProps {
   onViewHistory:   () => void;
   onTopes?:        () => void;
   onMessages?:     () => void;
+  onSupport?:      () => void;
   onAddStudent?:   () => void;
   onBalance?:      () => void;
   studentBalance?: number;
   unreadNotifCount?: number;
   supportPhone?:   string;
+  /** Botón Recargas visible para alumnos prepago */
+  onRecharge?:     () => void;
+  isPrepaidStudent?: boolean;
+  /** Piloto IziPay: solo padremc1@gmail.com recibe true */
+  isIzipayPilot?:  boolean;
 }
 
 export function ServicesGrid({
   onViewHistory,
   onTopes,
   onMessages,
+  onSupport,
   onAddStudent,
   onBalance,
   studentBalance = 0,
   unreadNotifCount = 0,
   supportPhone = '51991236870',
+  onRecharge,
+  isPrepaidStudent = false,
+  isIzipayPilot = false,
 }: ServicesGridProps) {
   return (
     <div className="bg-white/80 backdrop-blur-sm rounded-[1.75rem] shadow-lg shadow-slate-200/40 border border-white p-5">
@@ -85,29 +100,25 @@ export function ServicesGrid({
 
         {/* SALDO */}
         <button
-          onClick={onBalance ?? (() => {})}
-          className="flex flex-col items-center gap-2 p-2 rounded-2xl hover:bg-slate-50/80 active:scale-95 transition-all duration-200"
-        >
-          <div className={`relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm
-            ${studentBalance > 0
-              ? 'bg-gradient-to-br from-emerald-400 to-teal-500 ring-2 ring-emerald-200/60'
-              : 'bg-gradient-to-br from-slate-100 to-slate-200 ring-2 ring-slate-200/50'
+          onClick={BALANCE_PAUSED ? undefined : (onBalance ?? (() => {}))}
+          disabled={BALANCE_PAUSED}
+          title={BALANCE_PAUSED ? 'Saldos temporalmente pausados' : undefined}
+          className={`flex flex-col items-center gap-2 p-2 rounded-2xl transition-all duration-200
+            ${BALANCE_PAUSED
+              ? 'opacity-40 cursor-not-allowed'
+              : 'hover:bg-slate-50/80 active:scale-95 cursor-pointer'
             }`}
-          >
-            <Wallet className={`w-5 h-5 ${studentBalance > 0 ? 'text-white' : 'text-slate-400'}`} />
-            {studentBalance > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[18px] flex items-center justify-center bg-gradient-to-br from-emerald-400 to-emerald-600 border-2 border-white rounded-full shadow-sm text-white text-[8px] font-black px-1">
-                ✓
-              </span>
-            )}
+        >
+          <div className="relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm bg-gradient-to-br from-slate-100 to-slate-200 ring-2 ring-slate-200/50">
+            <Wallet className="w-5 h-5 text-slate-400" />
           </div>
           <div className="flex flex-col items-center gap-0">
-            <span className={`text-[10px] font-semibold leading-tight text-center ${studentBalance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+            <span className="text-[10px] font-semibold leading-tight text-center text-slate-400">
               Mi Saldo
             </span>
-            {studentBalance > 0 && (
-              <span className="text-[9px] font-bold text-emerald-500 leading-none">
-                S/ {studentBalance.toFixed(2)}
+            {BALANCE_PAUSED && (
+              <span className="text-[8px] font-medium text-slate-400 leading-none">
+                pausado
               </span>
             )}
           </div>
@@ -120,12 +131,12 @@ export function ServicesGrid({
           iconBg="bg-gradient-to-br from-violet-100 to-purple-100"
           iconColor="text-violet-500"
           ring="ring-violet-200/50"
-          onClick={() =>
+          onClick={onSupport ?? (() =>
             window.open(
               `https://wa.me/${supportPhone}?text=Hola%2C%20necesito%20soporte%20con%20el%20portal%20de%20padres.`,
               '_blank',
             )
-          }
+          )}
         />
 
         {/* AGREGAR HIJO */}
@@ -139,6 +150,44 @@ export function ServicesGrid({
         />
 
       </div>
+
+      {/* ── Fila 3: Recargas (prepago) + RCR.C (solo piloto IziPay) ── */}
+      {(isPrepaidStudent || isIzipayPilot) && (
+        <div className="grid grid-cols-3 gap-2 mt-2">
+
+          {/* RECARGAS — visible para alumnos en modo prepago */}
+          {isPrepaidStudent && (
+            <button
+              onClick={onRecharge ?? (() => {})}
+              className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-emerald-50/80 cursor-pointer transition-all duration-200"
+            >
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-emerald-400 to-teal-500 ring-emerald-200/60 shadow-emerald-100">
+                <RefreshCw className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-[10px] font-semibold leading-tight text-center text-emerald-600">
+                Recargas
+              </span>
+            </button>
+          )}
+
+          {/* RCR.C — solo piloto IziPay */}
+          {isIzipayPilot && (
+            <button
+              onClick={onRecharge ?? (() => {})}
+              className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-blue-50/80 cursor-pointer transition-all duration-200"
+            >
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-blue-500 to-indigo-600 ring-blue-200/60 shadow-blue-200">
+                <Zap className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-[10px] font-semibold leading-tight text-center text-blue-600">
+                RCR.C
+              </span>
+            </button>
+          )}
+
+        </div>
+      )}
+
     </div>
   );
 }

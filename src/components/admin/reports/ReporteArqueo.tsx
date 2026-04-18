@@ -4,7 +4,7 @@
  * No depende del estado del SalesListGrid.
  */
 import { useState } from 'react';
-import { getPaymentMethodLabel, getPaymentMethodLabelWithIcon, normalizePaymentMethodKey } from '@/lib/paymentMethodLabels';
+import { normalizePaymentMethodKey } from '@/lib/paymentMethodLabels';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -33,6 +33,8 @@ interface TxRow {
   id: string;
   amount: number;
   created_at: string;
+  created_by: string | null;
+  payment_status: string | null;
   payment_method: string | null;
   ticket_code: string | null;
   description: string | null;
@@ -49,6 +51,189 @@ interface TxRow {
 function isLunch(t: TxRow): boolean {
   const m = t.metadata as any;
   return !!(m?.lunch_order_id);
+}
+
+function toMetadataRecord(metadata: TxRow['metadata']): Record<string, unknown> {
+  if (!metadata || typeof metadata !== 'object') return {};
+  return metadata;
+}
+
+function getReportPaymentMethodKey(method: string | null | undefined): string {
+  const normalized = normalizePaymentMethodKey(method);
+  if (normalized === 'yape' || normalized === 'plin') return 'yape_plin';
+  return normalized;
+}
+
+function getReportPaymentMethodLabel(method: string | null | undefined): string {
+  const key = getReportPaymentMethodKey(method);
+  if (key === 'efectivo') return 'Efectivo';
+  if (key === 'tarjeta') return 'Tarjeta';
+  if (key === 'yape_plin') return 'Yape/Plin';
+  if (key === 'transferencia') return 'Transferencia';
+  if (key === 'mixto') return 'Mixto';
+  if (key === 'saldo') return 'Saldo';
+  if (key === 'pagar_luego') return 'Pagar después';
+  if (key === 'teacher') return 'Profesor';
+  if (key === 'credito') return 'Crédito';
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Efectivo';
+}
+
+type SummaryMethodKey = 'efectivo' | 'yape_plin' | 'transferencia' | 'tarjeta';
+
+function toSummaryMethodKey(method: string | null | undefined): SummaryMethodKey | null {
+  const key = getReportPaymentMethodKey(method);
+  if (key === 'efectivo') return 'efectivo';
+  if (key === 'yape_plin') return 'yape_plin';
+  if (key === 'transferencia') return 'transferencia';
+  if (key === 'tarjeta') return 'tarjeta';
+  return null;
+}
+
+function getSummaryMethodLabel(method: SummaryMethodKey): string {
+  if (method === 'efectivo') return 'Efectivo';
+  if (method === 'yape_plin') return 'Yape/Plin';
+  if (method === 'transferencia') return 'Transferencia';
+  return 'Tarjeta';
+}
+
+function extractSummaryContributions(tx: TxRow): Array<{ method: SummaryMethodKey; amount: number }> {
+  const amount = Math.abs(tx.amount || 0);
+  if (amount <= 0) return [];
+
+  const metadata = toMetadataRecord(tx.metadata);
+
+  // Si es pago mixto y tiene desglose, repartimos por split.
+  if (normalizePaymentMethodKey(tx.payment_method) === 'mixto') {
+    const rawSplits = metadata['payment_splits'];
+    if (Array.isArray(rawSplits) && rawSplits.length > 0) {
+      const result: Array<{ method: SummaryMethodKey; amount: number }> = [];
+      for (const split of rawSplits) {
+        if (!split || typeof split !== 'object') continue;
+        const splitObj = split as Record<string, unknown>;
+        const splitMethodRaw = typeof splitObj['method'] === 'string' ? splitObj['method'] : null;
+        const splitAmountRaw = Number(splitObj['amount']);
+        if (!Number.isFinite(splitAmountRaw) || splitAmountRaw <= 0) continue;
+        const method = toSummaryMethodKey(splitMethodRaw);
+        if (!method) continue;
+        result.push({ method, amount: splitAmountRaw });
+      }
+      if (result.length > 0) return result;
+    }
+  }
+
+  // No mixto (o mixto sin splits): clasifica por método principal.
+  const directMethod = toSummaryMethodKey(tx.payment_method);
+  if (directMethod) return [{ method: directMethod, amount }];
+
+  // Fallback usando metadata.payment_method_detail cuando exista.
+  const detailMethodRaw = typeof metadata['payment_method_detail'] === 'string'
+    ? metadata['payment_method_detail']
+    : null;
+  const detailMethod = toSummaryMethodKey(detailMethodRaw);
+  if (detailMethod) return [{ method: detailMethod, amount }];
+
+  return [];
+}
+
+function getReportPaymentMethodLabelWithIcon(method: string | null | undefined): string {
+  const key = getReportPaymentMethodKey(method);
+  if (key === 'efectivo') return '💵 Efectivo';
+  if (key === 'tarjeta') return '💳 Tarjeta';
+  if (key === 'yape_plin') return '📱 Yape/Plin';
+  if (key === 'transferencia') return '🏦 Transferencia';
+  if (key === 'mixto') return '🔀 Mixto';
+  if (key === 'saldo') return '💰 Saldo';
+  return getReportPaymentMethodLabel(method);
+}
+
+function getPaymentStatusLabel(status: string | null | undefined): string {
+  const normalized = (status || '').trim().toLowerCase();
+  if (normalized === 'paid') return 'Pagado';
+  if (normalized === 'pending') return 'Pendiente';
+  if (normalized === 'partial') return 'Parcial';
+  if (normalized === 'cancelled') return 'Cancelado';
+  return status ? status : 'Sin estado';
+}
+
+function resolvePaymentDateTime(tx: TxRow): Date | null {
+  const metadata = toMetadataRecord(tx.metadata);
+  const candidates = [
+    metadata['paid_at'],
+    metadata['approved_at'],
+    metadata['payment_date'],
+    metadata['fecha_pago'],
+    metadata['date_paid'],
+  ];
+
+  for (const value of candidates) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  // Si no existe timestamp específico, para transacciones pagadas usamos created_at.
+  if ((tx.payment_status || '').toLowerCase() === 'paid') {
+    const createdAt = new Date(tx.created_at);
+    if (!Number.isNaN(createdAt.getTime())) return createdAt;
+  }
+
+  return null;
+}
+
+function resolveCashierName(t: TxRow): string {
+  const profileName = t.profiles?.full_name?.trim();
+  if (profileName) return profileName;
+
+  const profileEmail = t.profiles?.email?.trim();
+  if (profileEmail) return profileEmail;
+
+  const metadata = toMetadataRecord(t.metadata);
+  const metadataCandidates = [
+    metadata['cashier_name'],
+    metadata['cajero'],
+    metadata['cashier_email'],
+    metadata['cashier'],
+    metadata['created_by_name'],
+  ];
+  for (const candidate of metadataCandidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  if (t.created_by) return `Usuario ${t.created_by.slice(0, 8)}`;
+  return 'Sistema';
+}
+
+function getWeekCycleAnchor(year: number): Date {
+  const jan1 = new Date(year, 0, 1);
+  const anchor = new Date(year, 0, 1);
+  anchor.setDate(jan1.getDate() - jan1.getDay());
+  anchor.setHours(0, 0, 0, 0);
+  return anchor;
+}
+
+function getWeekNumberForDate(dateInput: Date): number {
+  const date = new Date(dateInput.getFullYear(), dateInput.getMonth(), dateInput.getDate());
+  date.setHours(0, 0, 0, 0);
+
+  const currentYear = date.getFullYear();
+  const currentAnchor = getWeekCycleAnchor(currentYear);
+  const nextAnchor = getWeekCycleAnchor(currentYear + 1);
+  const prevAnchor = getWeekCycleAnchor(currentYear - 1);
+
+  let cycleAnchor = currentAnchor;
+  if (date >= nextAnchor) cycleAnchor = nextAnchor;
+  else if (date < currentAnchor) cycleAnchor = prevAnchor;
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysDiff = Math.floor((date.getTime() - cycleAnchor.getTime()) / msPerDay);
+  return Math.floor(daysDiff / 7) + 1;
+}
+
+function formatWeekLabel(date: Date): string {
+  const weekNumber = getWeekNumberForDate(date);
+  return `Semana ${String(weekNumber).padStart(2, '0')}`;
 }
 
 interface ReporteArqueoProps {
@@ -191,7 +376,7 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
           i === 0 ? g.name : '',
           format(new Date(t.created_at), 'dd/MM HH:mm'),
           t.ticket_code || '—',
-          t.payment_method ? getPaymentMethodLabel(t.payment_method) : '—',
+          t.payment_method ? getReportPaymentMethodLabel(t.payment_method) : '—',
           isLunch(t) ? 'Almuerzo' : (t.description || 'Cafetería'),
           `S/ ${Math.abs(t.amount || 0).toFixed(2)}`,
         ]);
@@ -266,32 +451,36 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
       return;
     }
 
-    const label        = rangeLabel();
     const totalVentas  = data.reduce((s, t) => s + Math.abs(t.amount || 0), 0);
     const cantidadTx   = data.length;
-    const promedio     = cantidadTx > 0 ? totalVentas / cantidadTx : 0;
 
     const wb = XLSX.utils.book_new();
 
-    // ── Sheet 1: Transactions (filterable) ────────────────────────────────
+    // ── Hoja 1: Transacciones (filtrable) ─────────────────────────────────
     const txHeaders = [
-      'Ticket ID', 'Client', 'School', 'Date', 'Time', 'Hour',
-      'Category', 'Cashier', 'Payment Method', 'Amount (S/)',
+      'ID Ticket', 'Cliente', 'Sede', 'Semana', 'Fecha', 'Hora', 'Hora (0-23)',
+      'Categoría', 'Cajero', 'Método de pago', 'Monto (S/)',
     ];
-    const txRows: (string | number)[][] = [txHeaders];
+    const txRows: (string | number)[][] = [
+      ['USO: Esta pestaña sirve para revisar cada venta individual del período seleccionado.'],
+      ['DATOS RELEVANTES: Fecha, semana, cajero, método de pago y monto por ticket.'],
+      [],
+      txHeaders,
+    ];
     data.forEach(t => {
       const dt         = new Date(t.created_at);
-      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'General Sale';
-      const category   = isLunch(t) ? 'Lunch' : 'Cafeteria/Kiosk';
-      const cashier    = (t as any).profiles?.full_name || (t as any).profiles?.email || 'System';
-      const method     = getPaymentMethodLabel(t.payment_method);
+      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'Venta general';
+      const category   = isLunch(t) ? 'Almuerzo' : 'Cafetería/Kiosco';
+      const cashier    = resolveCashierName(t);
+      const method     = getReportPaymentMethodLabel(t.payment_method);
       txRows.push([
         t.ticket_code || '',
         clientName,
         t.school?.name ?? '',
-        format(dt, 'yyyy-MM-dd'),         // Date separado — filtreable
-        format(dt, 'HH:mm:ss'),           // Time separado — filtreable
-        dt.getHours(),                    // Hour (número) — filtreable
+        formatWeekLabel(dt),
+        format(dt, 'yyyy-MM-dd'),         // Fecha separado — filtrable
+        format(dt, 'HH:mm:ss'),           // Hora separado — filtrable
+        dt.getHours(),                    // Hora (número) — filtrable
         category,
         cashier,
         method,
@@ -299,45 +488,130 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
       ]);
     });
     // Fila de total
-    txRows.push(['TOTAL', '', '', '', '', '', '', '', '', totalVentas]);
+    txRows.push(['TOTAL', '', '', '', '', '', '', '', '', '', totalVentas]);
 
     const wsTx = XLSX.utils.aoa_to_sheet(txRows);
     wsTx['!cols'] = [
-      { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 6 },
-      { wch: 16 }, { wch: 24 }, { wch: 16 }, { wch: 12 },
+      { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
+      { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 12 },
     ];
     // AutoFilter en todas las columnas de datos
-    wsTx['!autofilter'] = { ref: `A1:J${txRows.length}` };
-    XLSX.utils.book_append_sheet(wb, wsTx, 'Transactions');
+    wsTx['!autofilter'] = { ref: `A4:K${txRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsTx, 'Transacciones');
 
-    // ── Sheet 2: Summary by Payment Method ────────────────────────────────
-    const byMethod: Record<string, { total: number; count: number }> = {};
+    // ── Hoja 2: Resumen por método de pago ────────────────────────────────
+    const byMethod: Record<SummaryMethodKey, { total: number; count: number }> = {
+      efectivo: { total: 0, count: 0 },
+      yape_plin: { total: 0, count: 0 },
+      transferencia: { total: 0, count: 0 },
+      tarjeta: { total: 0, count: 0 },
+    };
     data.forEach(t => {
-      const m = normalizePaymentMethodKey(t.payment_method);
-      if (!byMethod[m]) byMethod[m] = { total: 0, count: 0 };
-      byMethod[m].total += Math.abs(t.amount || 0);
-      byMethod[m].count += 1;
+      const contributions = extractSummaryContributions(t);
+      contributions.forEach(c => {
+        byMethod[c.method].total += c.amount;
+      });
+      if (contributions.length > 0) {
+        const uniqueMethods = new Set(contributions.map(c => c.method));
+        uniqueMethods.forEach((method) => {
+          byMethod[method].count += 1;
+        });
+      }
     });
+    const summaryTotal = Object.values(byMethod).reduce((sum, v) => sum + v.total, 0);
+    const orderedMethods: SummaryMethodKey[] = ['efectivo', 'yape_plin', 'transferencia', 'tarjeta'];
     const summaryRows: (string | number)[][] = [
-      ['Método de Pago', 'Total (S/)', 'Transacciones', '% del Total'],
-      ...Object.entries(byMethod)
-        .sort((a, b) => b[1].total - a[1].total)
-        .map(([m, v]) => [
-          getPaymentMethodLabel(m),
-          v.total,
-          v.count,
-          totalVentas > 0 ? Math.round((v.total / totalVentas) * 10000) / 100 : 0,
-        ]),
-      ['TOTAL', totalVentas, cantidadTx, 100],
+      ['USO: Esta pestaña resume cuánto ingresó por cada método de pago.'],
+      ['DATOS RELEVANTES: Total por método, número de transacciones y porcentaje sobre el total del período filtrado.'],
+      [`PERÍODO APLICADO: ${rangeLabel()} | Hora: ${timeFrom} - ${timeTo}`],
+      [],
+      ['Método de pago', 'Total (S/)', 'Transacciones', '% del período'],
+      ...orderedMethods.map((m) => [
+        getSummaryMethodLabel(m),
+        byMethod[m].total,
+        byMethod[m].count,
+        summaryTotal > 0 ? Math.round((byMethod[m].total / summaryTotal) * 10000) / 100 : 0,
+      ]),
+      ['TOTAL', summaryTotal, cantidadTx, 100],
     ];
     const wsSum = XLSX.utils.aoa_to_sheet(summaryRows);
     wsSum['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 14 }];
-    wsSum['!autofilter'] = { ref: `A1:D${summaryRows.length}` };
-    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary by Method');
+    wsSum['!autofilter'] = { ref: `A4:D${summaryRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsSum, 'Resumen Métodos');
+
+    // ── Hoja 3: Plantilla R.G.G ─────────────────────────────────────────────
+    const rggHeaders = [
+      'Ticket',
+      'Nombre del cliente',
+      'Sede (abreviación)',
+      'Día',
+      'Mes',
+      'Hora',
+      'Semana',
+      'Categoría del producto',
+      'Método de pago',
+      'Monto total',
+      'Estado del pago actual',
+      'Fecha de pago',
+      'Hora de pago',
+    ];
+
+    const rggRows: (string | number)[][] = [
+      ['PLANTILLA R.G.G: Reporte operativo en formato solicitado por dirección.'],
+      ['DATOS RELEVANTES: estado de pago al momento del reporte + fecha/hora asociada al pago.'],
+      [`PERÍODO APLICADO: ${rangeLabel()} | Hora: ${timeFrom} - ${timeTo}`],
+      [],
+      rggHeaders,
+    ];
+
+    data.forEach((t) => {
+      const txDate = new Date(t.created_at);
+      const paymentDate = resolvePaymentDateTime(t);
+      const clientName = t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'Venta general';
+      const schoolAbbr = (t.school?.code || '').trim() || (t.school?.name || '').trim();
+      const category = isLunch(t) ? 'Almuerzo' : (t.description?.trim() || 'Cafetería/Kiosco');
+      const method = getReportPaymentMethodLabel(t.payment_method);
+      const paymentStatus = getPaymentStatusLabel(t.payment_status);
+
+      rggRows.push([
+        t.ticket_code || '',
+        clientName,
+        schoolAbbr,
+        format(txDate, 'dd'),
+        format(txDate, 'MMMM', { locale: es }),
+        format(txDate, 'HH:mm:ss'),
+        formatWeekLabel(txDate),
+        category,
+        method,
+        Math.abs(t.amount || 0),
+        paymentStatus,
+        paymentDate ? format(paymentDate, 'yyyy-MM-dd') : '',
+        paymentDate ? format(paymentDate, 'HH:mm:ss') : '',
+      ]);
+    });
+
+    const wsRgg = XLSX.utils.aoa_to_sheet(rggRows);
+    wsRgg['!cols'] = [
+      { wch: 16 }, // Ticket
+      { wch: 28 }, // Nombre del cliente
+      { wch: 16 }, // Sede abreviación
+      { wch: 8 },  // Día
+      { wch: 14 }, // Mes
+      { wch: 10 }, // Hora
+      { wch: 12 }, // Semana
+      { wch: 24 }, // Categoría del producto
+      { wch: 18 }, // Método de pago
+      { wch: 12 }, // Monto total
+      { wch: 20 }, // Estado del pago actual
+      { wch: 14 }, // Fecha de pago
+      { wch: 10 }, // Hora de pago
+    ];
+    wsRgg['!autofilter'] = { ref: `A5:M${rggRows.length}` };
+    XLSX.utils.book_append_sheet(wb, wsRgg, 'R.G.G');
 
     const timeRange = timeFrom === '00:00' && timeTo === '23:59' ? '' : `_${timeFrom.replace(':', '')}h-${timeTo.replace(':', '')}h`;
-    XLSX.writeFile(wb, `cash_register_${dateFrom}_${dateTo}${timeRange}_${format(new Date(), 'HHmm')}.xlsx`);
-    toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas. Hoja "Transactions" tiene AutoFilter activado.` });
+    XLSX.writeFile(wb, `arqueo_caja_${dateFrom}_${dateTo}${timeRange}_${format(new Date(), 'HHmm')}.xlsx`);
+    toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas. Hojas: "Transacciones", "Resumen Métodos" y "R.G.G".` });
   };
 
   // ── Resumen por método de pago (previa al export) ──────────────────────────
@@ -359,21 +633,33 @@ export function ReporteArqueo({ schoolId }: ReporteArqueoProps) {
       setPreview({ total: 0, count: 0, byMethod: [] });
       return;
     }
-    const byMethod: Record<string, { method: string; total: number; count: number }> = {};
+    const byMethod: Record<SummaryMethodKey, { method: SummaryMethodKey; total: number; count: number }> = {
+      efectivo: { method: 'efectivo', total: 0, count: 0 },
+      yape_plin: { method: 'yape_plin', total: 0, count: 0 },
+      transferencia: { method: 'transferencia', total: 0, count: 0 },
+      tarjeta: { method: 'tarjeta', total: 0, count: 0 },
+    };
     data.forEach(t => {
-      const m = normalizePaymentMethodKey(t.payment_method);
-      if (!byMethod[m]) byMethod[m] = { method: m, total: 0, count: 0 };
-      byMethod[m].total += Math.abs(t.amount || 0);
-      byMethod[m].count += 1;
+      const contributions = extractSummaryContributions(t);
+      contributions.forEach(c => {
+        byMethod[c.method].total += c.amount;
+      });
+      if (contributions.length > 0) {
+        const uniqueMethods = new Set(contributions.map(c => c.method));
+        uniqueMethods.forEach((method) => {
+          byMethod[method].count += 1;
+        });
+      }
     });
+    const previewTotal = Object.values(byMethod).reduce((sum, v) => sum + v.total, 0);
     setPreview({
-      total: data.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
+      total: previewTotal,
       count: data.length,
       byMethod: Object.values(byMethod).sort((a, b) => b.total - a.total),
     });
   };
 
-  const methodLabel = (m: string) => getPaymentMethodLabelWithIcon(m);
+  const methodLabel = (m: string) => getReportPaymentMethodLabelWithIcon(m);
 
   return (
     <div className="space-y-6">

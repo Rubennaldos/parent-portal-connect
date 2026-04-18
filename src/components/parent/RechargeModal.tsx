@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRechargeSubmit } from '@/hooks/useRechargeSubmit';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +11,8 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
+import { GatewayPaymentWaiting } from './GatewayPaymentWaiting';
+import { IziPayEmbeddedForm } from './IziPayEmbeddedForm';
 import {
   CreditCard,
   Building2,
@@ -26,6 +29,7 @@ import {
   Check,
   PlusCircle,
   Hash,
+  Zap,
 } from 'lucide-react';
 
 interface ExtraVoucher {
@@ -75,6 +79,12 @@ interface RechargeModalProps {
   /** Callback que se ejecuta en cuanto el pago se envía exitosamente
    *  (antes de que el padre cierre el modal). Útil para refrescar listas. */
   onSuccess?: () => void;
+  /**
+   * SOLO PARA USO DEL ADMIN EN /admin/test-izipay.
+   * Si true: habilita IziPay aunque RECHARGES_MAINTENANCE=true y salta la
+   * pantalla de mantenimiento. Ningún padre real tiene acceso a esta prop.
+   */
+  izipayTestMode?: boolean;
 }
 
 interface PaymentConfig {
@@ -93,8 +103,13 @@ interface PaymentConfig {
   show_payment_info: boolean;
 }
 
-type PaymentMethod = 'yape' | 'plin' | 'transferencia';
+type PaymentMethod = 'yape' | 'plin' | 'transferencia' | 'izipay';
 type PaymentMethodOrNull = PaymentMethod | null;
+
+interface IziPayGatewayConfig {
+  public_key: string | null;
+  kr_js_url: string | null;
+}
 
 export function RechargeModal({
   isOpen,
@@ -116,6 +131,7 @@ export function RechargeModal({
   invoiceClientData,
   walletAmountToUse = 0,
   onSuccess,
+  izipayTestMode = false,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = true; // Cambiar a false cuando se reactive
 
@@ -123,6 +139,9 @@ export function RechargeModal({
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Pilot controlado: solo este correo puede ver/probar IziPay mientras dura la prueba.
+  const IZIPAY_PILOT_EMAIL = 'padremc1@gmail.com';
+  const isIzipayPilotUser = (user?.email ?? '').toLowerCase() === IZIPAY_PILOT_EMAIL;
 
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
@@ -135,12 +154,15 @@ export function RechargeModal({
   const [voucherFile, setVoucherFile] = useState<File | null>(null);
   const [voucherPreview, setVoucherPreview] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-  const submittingRef = useRef(false);
   const onSuccessCalledRef = useRef(false);
-  // 0-100 mientras se sube, null cuando no hay subida activa
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [uploadPhaseLabel, setUploadPhaseLabel] = useState('');
+
+  // ── IziPay: estado del flujo de pago en línea ──
+  const [izipaySessionId, setIzipaySessionId] = useState<string | null>(null);
+  const [izipayFormToken, setIzipayFormToken] = useState<string | null>(null);
+  const [izipayPublicKey, setIzipayPublicKey] = useState<string | null>(null);
+  const [izipayKrJsUrl, setIzipayKrJsUrl] = useState<string | null>(null);
+  const [izipayStep, setIzipayStep] = useState<'idle' | 'form' | 'waiting' | 'done'>('idle');
+  const [izipayLoading, setIzipayLoading] = useState(false);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -149,6 +171,49 @@ export function RechargeModal({
   const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const quickAmounts = [10, 20, 50, 100, 150, 200];
+
+  // Constante derivada usada en el render: si el saldo cubre toda la deuda
+  // no se muestra el formulario de voucher sino la vista simplificada.
+  const isFullWalletPayment =
+    requestType === 'debt_payment' &&
+    walletAmountToUse > 0 &&
+    walletAmountToUse >= (suggestedAmount ?? 0);
+
+  // ── Hook de envío: orquesta upload + validaciones + BD ─────────────────
+  const {
+    handleSubmit: doSubmit,
+    loading,
+    submittingRef,
+    uploadProgress,
+    uploadPhaseLabel,
+  } = useRechargeSubmit({
+    studentId,
+    studentName,
+    requestType,
+    requestDescription,
+    lunchOrderIds,
+    paidTransactionIds,
+    invoiceType,
+    invoiceClientData,
+    walletAmountToUse,
+    suggestedAmount,
+    isCombinedPayment,
+    onStepSuccess: () => setStep('success'),
+  });
+
+  // Wrapper que empaqueta el form state actual al llamar al hook
+  const handleSubmit = useCallback(() => {
+    if (!user) return;
+    doSubmit({
+      userId: user.id,
+      amount,
+      referenceCode,
+      voucherFile,
+      extraVouchers,
+      notes,
+      selectedMethod,
+    });
+  }, [user, doSubmit, amount, referenceCode, voucherFile, extraVouchers, notes, selectedMethod]);
 
   useEffect(() => {
     if (isOpen && studentId) {
@@ -222,6 +287,92 @@ export function RechargeModal({
     }
   };
 
+  // ── IziPay: iniciar pago en línea ─────────────────────────────────────────
+  const handleInitIziPay = async () => {
+    if (!user) return;
+    if (izipayLoading) return;
+
+    const numAmount = parseFloat(amount);
+    if (!numAmount || numAmount <= 0) {
+      toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
+      return;
+    }
+
+    setIzipayLoading(true);
+    try {
+      // Generar un orderId único para esta sesión
+      const orderId = crypto.randomUUID();
+
+      // Llamar al Edge Function que crea la orden en IziPay y devuelve el formToken
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('izipay-create-order', {
+        body: {
+          amount:    numAmount,
+          studentId: studentId,
+          orderId:   orderId,
+          currency:  'PEN',
+        },
+      });
+
+      if (fnError || !fnData?.formToken) {
+        // fnData?.error contiene el mensaje exacto de IziPay cuando success=false
+        throw new Error(fnData?.error || fnError?.message || 'No se pudo crear la orden de pago. Intenta nuevamente.');
+      }
+
+      // Obtener school_id del alumno
+      const { data: studentData } = await supabase
+        .from('students')
+        .select('school_id')
+        .eq('id', studentId)
+        .single();
+
+      // Crear payment_session en la BD (como fuente de verdad para polling)
+      const { data: session, error: sessionError } = await supabase
+        .from('payment_sessions')
+        .insert({
+          parent_id:         user.id,
+          student_id:        studentId,
+          school_id:         studentData?.school_id,
+          gateway_amount:    numAmount,
+          total_debt_amount: numAmount,   // monto total de esta recarga
+          wallet_amount:     0,
+          gateway_name:      'izipay',
+          gateway_reference: orderId,
+          status:            'initiated',
+          gateway_status:    'pending',
+          expires_at:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        })
+        .select('id')
+        .single();
+
+      if (sessionError) throw sessionError;
+
+      // Clave pública para KR.js: la devuelve la Edge Function (parsea shopId:publickey del panel)
+      const { data: gwConfig } = await supabase
+        .from('payment_gateway_config')
+        .select('settings')
+        .eq('gateway_name', 'izipay')
+        .eq('is_active', true)
+        .single();
+
+      const settingsPk = (gwConfig?.settings as { public_key?: string; kr_js_url?: string } | null)?.public_key;
+      setIzipaySessionId(session.id);
+      setIzipayFormToken(fnData.formToken);
+      setIzipayPublicKey(
+        (fnData as { publicKey?: string }).publicKey ?? settingsPk ?? ''
+      );
+      setIzipayKrJsUrl((gwConfig?.settings as { kr_js_url?: string } | null)?.kr_js_url ?? null);
+      setIzipayStep('form');
+    } catch (err: any) {
+      toast({
+        title: 'Error al iniciar el pago',
+        description: err.message || 'Intenta nuevamente en unos segundos.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIzipayLoading(false);
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -237,567 +388,6 @@ export function RechargeModal({
     reader.readAsDataURL(file);
   };
 
-  // ── Helper: comprimir imagen antes de subir ──
-  // Convierte CUALQUIER formato (HEIC, HEIF, PNG, WebP, etc.) a JPEG comprimido.
-  // Máximo 800px, calidad 60% → resultado siempre menor a 200 KB.
-  // Si el navegador no puede decodificar el formato (ej. HEIC en Android),
-  // intenta de todas formas y si falla convierte el archivo crudo a Blob seguro.
-  const compressImage = async (file: File): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const MAX_PX  = 800;
-      const QUALITY = 0.60;
-
-      const convertViaCanvas = (src: string) => {
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(src);
-          let { width, height } = img;
-          if (width > MAX_PX || height > MAX_PX) {
-            const ratio = Math.min(MAX_PX / width, MAX_PX / height);
-            width  = Math.round(width  * ratio);
-            height = Math.round(height * ratio);
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width  = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d')!;
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-          canvas.toBlob(
-            (blob) => resolve(blob ?? new Blob([file], { type: 'image/jpeg' })),
-            'image/jpeg',
-            QUALITY
-          );
-        };
-        img.onerror = () => {
-          URL.revokeObjectURL(src);
-          // Si el browser no puede decodificar (ej. HEIC en Android),
-          // intentar con FileReader como fallback antes de rendirnos
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const img2 = new Image();
-            img2.onload = () => {
-              let { width, height } = img2;
-              if (width > MAX_PX || height > MAX_PX) {
-                const ratio = Math.min(MAX_PX / width, MAX_PX / height);
-                width  = Math.round(width  * ratio);
-                height = Math.round(height * ratio);
-              }
-              const canvas2 = document.createElement('canvas');
-              canvas2.width  = width;
-              canvas2.height = height;
-              const ctx2 = canvas2.getContext('2d')!;
-              ctx2.fillStyle = '#ffffff';
-              ctx2.fillRect(0, 0, width, height);
-              ctx2.drawImage(img2, 0, 0, width, height);
-              canvas2.toBlob(
-                (blob) => resolve(blob ?? new Blob([file], { type: 'image/jpeg' })),
-                'image/jpeg',
-                QUALITY
-              );
-            };
-            img2.onerror = () => {
-              // Ãšltimo recurso: subir el archivo original como blob binario
-              // (el admin al menos verá que llegó algo, aunque no se visualice)
-              resolve(new Blob([file], { type: file.type || 'image/jpeg' }));
-            };
-            img2.src = e.target?.result as string;
-          };
-          reader.onerror = () => resolve(new Blob([file], { type: file.type || 'image/jpeg' }));
-          reader.readAsDataURL(file);
-        };
-        img.src = src;
-      };
-
-      convertViaCanvas(URL.createObjectURL(file));
-    });
-  };
-
-  // ── Helper: subir imagen a storage ──
-  // ⚠️ LANZA error si falla â€” así el insert no se hace sin foto
-  const uploadVoucherImage = async (
-    file: File,
-    userId: string,
-    onProgress?: (pct: number) => void
-  ): Promise<string> => {
-    const compressed = await compressImage(file);
-    let lastError: Error | null = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const retryName = `${userId}/voucher_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-        // onUploadProgress disponible en @supabase/storage-js >= 2.5; se ignora en versiones anteriores
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const uploadOptions: any = { upsert: false, contentType: 'image/jpeg' };
-        if (onProgress) {
-          uploadOptions.onUploadProgress = (ev: { loaded: number; total: number }) => {
-            if (ev?.total > 0) onProgress(Math.round((ev.loaded / ev.total) * 100));
-          };
-        }
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('vouchers')
-          .upload(retryName, compressed, uploadOptions);
-
-        if (uploadError) {
-          console.error(`[Voucher] Intento ${attempt}/3:`, uploadError.message, (uploadError as any)?.statusCode);
-          lastError = Object.assign(new Error(uploadError.message), {
-            statusCode: (uploadError as any)?.statusCode,
-          });
-          if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
-          continue;
-        }
-
-        const { data: { publicUrl } } = supabase.storage.from('vouchers').getPublicUrl(uploadData.path);
-        return publicUrl;
-      } catch (networkErr: unknown) {
-        console.error(`[Voucher] Error de red intento ${attempt}/3:`, networkErr);
-        lastError = networkErr instanceof Error ? networkErr : new Error('Error de red');
-        if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
-      }
-    }
-
-    // Clasificar el error para dar un mensaje accionable según la causa real
-    const msg  = lastError?.message?.toLowerCase() ?? '';
-    const code = String((lastError as any)?.statusCode ?? '');
-    let userMsg: string;
-    if (code === '413' || msg.includes('413') || msg.includes('payload too large') || msg.includes('too large')) {
-      userMsg = 'La imagen es demasiado pesada. Toma una captura de pantalla del comprobante en lugar de adjuntar la foto original (la captura pesa mucho menos).';
-    } else if (code === '403' || msg.includes('403') || msg.includes('not allowed') || msg.includes('permission')) {
-      userMsg = 'El servidor rechazó la imagen por restricciones de seguridad. Usa una imagen JPG o PNG estándar y vuelve a intentar.';
-    } else if (lastError?.name === 'AbortError' || msg.includes('timeout') || msg.includes('timed out')) {
-      userMsg = 'La subida está tardando demasiado. Intenta conectarte a WiFi en lugar de datos móviles.';
-    } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('failed to fetch') || msg.includes('load failed')) {
-      userMsg = 'No se pudo conectar con el servidor. Verifica que tienes internet activo. Si usas datos móviles, prueba cambiando a WiFi.';
-    } else {
-      userMsg = `No se pudo subir la foto del comprobante. ${lastError?.message || 'Intenta de nuevo en unos minutos.'}`;
-    }
-    throw new Error(userMsg);
-  };
-
-  // ── Helper: verificar duplicado de código de operación ──
-  // Devuelve { isDuplicate: false } si el único registro existente está en 'rejected'
-  // (los rechazados se pueden reutilizar). Solo bloquea 'pending' y 'approved'.
-  // Si el código ya existe Y es del mismo padre → isOwnRequest = true (no es un error,
-  // significa que su solicitud YA está registrada y puede ir directo a éxito).
-  const checkDuplicate = async (
-    code: string,
-    parentId: string
-  ): Promise<{ isDuplicate: boolean; isOwnRequest: boolean; existingStatus?: string }> => {
-    const { data } = await supabase
-      .from('recharge_requests')
-      .select('id, status, parent_id')
-      .eq('reference_code', code.trim())
-      .neq('status', 'rejected')   // rechazados NO bloquean el reintento
-      .limit(1);
-    if (data && data.length > 0) {
-      return {
-        isDuplicate: true,
-        isOwnRequest: data[0].parent_id === parentId,
-        existingStatus: data[0].status,
-      };
-    }
-    return { isDuplicate: false, isOwnRequest: false };
-  };
-
-  // ── Pago 100% con billetera: no requiere voucher bancario ───────────────────
-  const isFullWalletPayment =
-    requestType === 'debt_payment' &&
-    walletAmountToUse > 0 &&
-    walletAmountToUse >= (suggestedAmount ?? 0);
-
-  const handleSubmit = async () => {
-    if (!user) return;
-    if (loading) return;
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-
-    // ── CAMINO A: Pago 100% con billetera interna ─────────────────────────────
-    // No se pide voucher ni código de operación. El RPC valida y ejecuta en BD.
-    if (isFullWalletPayment) {
-      setLoading(true);
-      try {
-        const { data: rpcResult, error: rpcErr } = await supabase.rpc(
-          'pay_debt_with_wallet_only',
-          {
-            p_student_id:      studentId,
-            p_debt_tx_ids:     (paidTransactionIds || []) as any,
-            p_lunch_order_ids: (lunchOrderIds || []) as any,
-          }
-        );
-        if (rpcErr) {
-          const msg = rpcErr.message || '';
-          if (msg.includes('INSUFFICIENT_WALLET')) {
-            toast({
-              title: '⚠️ Saldo insuficiente',
-              description: 'Tu saldo ya no alcanza. Recarga la página e intenta de nuevo.',
-              variant: 'destructive',
-            });
-          } else if (msg.includes('CONFLICT')) {
-            toast({
-              title: '⚠️ Deuda ya cobrada',
-              description: 'Este pago fue procesado por otro canal. Recarga la página.',
-              variant: 'destructive',
-            });
-          } else {
-            toast({
-              title: 'Error al procesar el pago',
-              description: msg || 'Intenta de nuevo en unos segundos.',
-              variant: 'destructive',
-            });
-          }
-          return;
-        }
-        setStep('success');
-      } catch (err: any) {
-        toast({
-          title: 'Error inesperado',
-          description: err.message || 'Contacta al administrador.',
-          variant: 'destructive',
-        });
-      } finally {
-        setLoading(false);
-        setUploadProgress(null);
-        submittingRef.current = false;
-      }
-      return;
-    }
-
-    const numAmount = parseFloat(amount);
-    if (!numAmount || numAmount <= 0) {
-      toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
-      submittingRef.current = false;
-      return;
-    }
-    // Helper local: salida limpia antes del try (resetea ambos guards)
-    const earlyExit = (title: string, description: string) => {
-      submittingRef.current = false;
-      toast({ title, description, variant: 'destructive' });
-    };
-
-    if (requestType === 'recharge' && numAmount > 2000) {
-      earlyExit('Monto muy alto', 'El monto máximo de recarga es S/ 2,000. Para montos mayores, contacta al administrador.');
-      return;
-    }
-
-    // ── Validar código principal obligatorio ──
-    if (!referenceCode.trim()) {
-      earlyExit('🚫 Número de operación obligatorio', 'Debes ingresar el número de operación o código de transacción para continuar.');
-      return;
-    }
-
-    // ── Validar foto del comprobante principal obligatoria ──
-    if (!voucherFile) {
-      earlyExit('🚫 Foto del comprobante obligatoria', 'Debes adjuntar la captura o foto del comprobante de pago para continuar.');
-      return;
-    }
-
-    // ── Validar comprobantes adicionales ──
-    for (const ev of extraVouchers) {
-      if (!ev.referenceCode.trim()) {
-        earlyExit('🚫 Código obligatorio en comprobante adicional', 'Cada comprobante adicional debe tener su número de operación.');
-        return;
-      }
-      if (!ev.voucherFile) {
-        earlyExit('🚫 Foto obligatoria en comprobante adicional', 'Cada comprobante adicional debe tener su foto adjuntada.');
-        return;
-      }
-      const evAmount = parseFloat(ev.amount);
-      if (!evAmount || evAmount <= 0) {
-        earlyExit('Monto inválido en comprobante adicional', 'Ingresa el monto pagado en cada comprobante adicional.');
-        return;
-      }
-    }
-
-    // ── Verificar que no haya códigos repetidos entre sí ──
-    const allCodes = [referenceCode.trim(), ...extraVouchers.map(ev => ev.referenceCode.trim())];
-    const uniqueCodes = new Set(allCodes);
-    if (uniqueCodes.size !== allCodes.length) {
-      earlyExit('🚫 Códigos repetidos', 'Cada comprobante debe tener un código de operación diferente.');
-      return;
-    }
-
-    setLoading(true);
-    // Flag para saber en qué fase ocurrió el error (determina el mensaje genérico correcto)
-    let uploadStarted = false;
-    try {
-      // ── Verificar duplicados en BD para TODOS los códigos ──
-      for (const code of allCodes) {
-        const { isDuplicate, isOwnRequest, existingStatus } = await checkDuplicate(code, user.id);
-        if (isDuplicate) {
-          // Si el código ya existe Y es solicitud PROPIA en pending/approved → ya está registrado.
-          // No es un error: mostrar pantalla de éxito directamente.
-          if (isOwnRequest && (existingStatus === 'pending' || existingStatus === 'approved')) {
-            setStep('success');
-            setLoading(false);
-            submittingRef.current = false;
-            return;
-          }
-          // Código de otro padre o estado inesperado → pedir número diferente
-          const statusLabel =
-            existingStatus === 'approved' ? 'ya fue APROBADO' :
-            existingStatus === 'pending'  ? 'está PENDIENTE de revisión' :
-                                            'ya está en proceso';
-          toast({
-            variant: 'destructive',
-            title: '🚫 Código ya registrado',
-            description:
-              `El código "${code}" ${statusLabel} en el sistema. ` +
-              `Si tu comprobante anterior fue RECHAZADO, puedes usar el mismo código sin problema. ` +
-              `Si está pendiente o aprobado, usa un número de operación diferente.`,
-            duration: 10000,
-          });
-          return;
-        }
-      }
-
-      // ── Prevenir doble envío de voucher para los mismos pedidos ──
-      if ((requestType === 'lunch_payment' || requestType === 'debt_payment') && lunchOrderIds && lunchOrderIds.length > 0) {
-        const { data: existingReq } = await supabase
-          .from('recharge_requests')
-          .select('id, status')
-          .eq('parent_id', user.id)
-          .in('request_type', ['lunch_payment', 'debt_payment'])
-          .eq('status', 'pending')
-          .contains('lunch_order_ids', lunchOrderIds);
-
-        if (existingReq && existingReq.length > 0) {
-          toast({
-            variant: 'destructive',
-            title: '⚠️ Comprobante ya enviado',
-            description: 'Ya enviaste un comprobante para estos pedidos. Espera la revisión del administrador.',
-          });
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Nota: debt_payment permite múltiples envíos (pagos en partes / diferencias)
-      // No se bloquea aquí â€” el admin verá todos los comprobantes y los conciliará
-
-      const { data: student } = await supabase
-        .from('students')
-        .select('school_id')
-        .eq('id', studentId)
-        .single();
-
-      // ── PASO 1: Subir TODAS las imágenes primero (si falla alguna, no insertamos nada) ──
-      const totalImages = 1 + extraVouchers.length;
-
-      // Calcula el rango de progreso que corresponde a esta imagen dentro del total.
-      // Ej: 2 imágenes → imagen 0 va de 0% a 47%, imagen 1 va de 47% a 94%.
-      const imageSlice = Math.floor(94 / totalImages);
-
-      setUploadPhaseLabel('Subiendo foto...');
-      setUploadProgress(0);
-      uploadStarted = true;
-
-      const voucherUrl = await uploadVoucherImage(voucherFile, user.id, (pct) => {
-        setUploadProgress(Math.round((pct * imageSlice) / 100));
-      });
-
-      const extraUrls: string[] = [];
-      for (let i = 0; i < extraVouchers.length; i++) {
-        const ev = extraVouchers[i];
-        const baseOffset = imageSlice * (i + 1);
-        setUploadPhaseLabel(
-          extraVouchers.length > 1 ? `Subiendo foto ${i + 2} de ${totalImages}...` : 'Subiendo foto adicional...'
-        );
-        const evUrl = await uploadVoucherImage(ev.voucherFile!, user.id, (pct) => {
-          setUploadProgress(baseOffset + Math.round((pct * imageSlice) / 100));
-        });
-        extraUrls.push(evUrl);
-      }
-
-      setUploadPhaseLabel('Guardando registro...');
-      setUploadProgress(96);
-
-      const baseDescription = requestDescription || (
-        requestType === 'lunch_payment' ? 'Pago de almuerzo' :
-        requestType === 'debt_payment' ? (isCombinedPayment ? `Pago combinado: ${studentName}` : 'Pago de deuda pendiente') :
-        'Recarga de saldo'
-      );
-
-      const totalParts = 1 + extraVouchers.length;
-
-      const effectiveNotes = isCombinedPayment
-        ? `${notes.trim() ? notes.trim() + ' | ' : ''}Pago combinado: ${studentName}`
-        : (notes.trim() || null);
-
-      // ── PASO 2: Registrar el pago ─────────────────────────────────────────────
-      // CAMINO B: Pago dividido (billetera + voucher) → RPC con validación server-side
-      // CAMINO C: Pago sin billetera → INSERT directo (flujo existente)
-      if (walletAmountToUse > 0) {
-        // CAMINO B: usar RPC para que el backend valide que wallet_amount ≤ wallet_balance real.
-        // Esto cierra la vulnerabilidad de payload tampering (Escenario 2 de QA).
-        const { error: rpcError } = await supabase.rpc('submit_voucher_with_split', {
-          p_student_id:          studentId,
-          p_debt_tx_ids:         (paidTransactionIds || []) as any,
-          p_lunch_order_ids:     (lunchOrderIds || []) as any,
-          p_wallet_amount:       walletAmountToUse,
-          p_voucher_amount:      numAmount,
-          p_voucher_url:         voucherUrl,
-          p_reference_code:      referenceCode.trim(),
-          p_invoice_type:        invoiceType || null,
-          p_invoice_client_data: (invoiceClientData as any) || null,
-        });
-        if (rpcError) {
-          const msg = rpcError.message || '';
-          if (msg.includes('INSUFFICIENT_WALLET')) {
-            throw new Error(
-              'Tu saldo a favor bajó entre que abriste la pantalla y enviaste el pago. ' +
-              'Recarga la página e intenta de nuevo.'
-            );
-          }
-          throw rpcError;
-        }
-      } else {
-        // CAMINO C: pago sin billetera → INSERT directo (sin cambios al flujo existente)
-        const { error: insertError } = await supabase.from('recharge_requests').insert({
-          student_id: studentId,
-          parent_id: user.id,
-          school_id: student?.school_id || null,
-          amount: numAmount,
-          wallet_amount: 0,
-          payment_method: selectedMethod,
-          reference_code: referenceCode.trim(),
-          voucher_url: voucherUrl,
-          notes: effectiveNotes,
-          status: 'pending',
-          request_type: requestType,
-          description: totalParts > 1 ? `${baseDescription} (Pago 1 de ${totalParts})` : baseDescription,
-          lunch_order_ids: lunchOrderIds || null,
-          paid_transaction_ids: paidTransactionIds || null,
-          invoice_type: invoiceType || null,
-          invoice_client_data: invoiceClientData || null,
-        });
-        if (insertError) throw insertError;
-      }
-
-      for (let i = 0; i < extraVouchers.length; i++) {
-        const ev = extraVouchers[i];
-        const { error: evError } = await supabase.from('recharge_requests').insert({
-          student_id: studentId,
-          parent_id: user.id,
-          school_id: student?.school_id || null,
-          amount: parseFloat(ev.amount),
-          payment_method: selectedMethod,
-          reference_code: ev.referenceCode.trim(),
-          voucher_url: extraUrls[i],
-          notes: effectiveNotes,
-          status: 'pending',
-          request_type: requestType,
-          description: `${baseDescription} (Pago ${i + 2} de ${totalParts})`,
-          lunch_order_ids: lunchOrderIds || null,
-          paid_transaction_ids: paidTransactionIds || null,
-        });
-        if (evError) throw evError;
-      }
-
-      setUploadProgress(100);
-      setUploadPhaseLabel('');
-      setStep('success');
-    } catch (err: any) {
-      const rawMsg: string = err?.message || err?.details || String(err) || '';
-      console.error('[RechargeModal] Error al enviar solicitud:', rawMsg, err);
-
-      // ── Clasificar el error y dar mensaje humano ──────────────────────────
-
-      // 1. Código de operación duplicado (constraint BD — race condition entre tabs / doble tap)
-      if (
-        rawMsg.includes('idx_recharge_unique_ref_code') ||
-        (rawMsg.toLowerCase().includes('duplicate key') && rawMsg.toLowerCase().includes('reference'))
-      ) {
-        // Verificar si el registro que chocó ES del mismo padre.
-        // Si es propio y está pending/approved → el insert anterior llegó bien → mostrar éxito.
-        try {
-          const { data: myReq } = await supabase
-            .from('recharge_requests')
-            .select('id, status')
-            .eq('reference_code', referenceCode.trim())
-            .eq('parent_id', user.id)
-            .neq('status', 'rejected')
-            .limit(1);
-          if (myReq && myReq.length > 0) {
-            setStep('success');
-            return;
-          }
-        } catch {
-          // si falla la consulta de recuperación, caer en el toast de error
-        }
-        toast({
-          variant: 'destructive',
-          title: '⚠️ Código ya registrado',
-          description:
-            `Ese número de operación ya tiene un pago en el sistema. ` +
-            `Si ya enviaste este comprobante, recarga la página para verlo. ` +
-            `Si tu pago anterior fue RECHAZADO, actualiza la página e intenta de nuevo.`,
-          duration: 12000,
-        });
-        return;
-      }
-
-      // 2. Tickets ya incluidos en otro pago pendiente (candado anti-duplicados)
-      if (rawMsg.includes('DUPLICATE_PAYMENT')) {
-        toast({
-          variant: 'destructive',
-          title: '⚠️ Pago duplicado detectado',
-          description:
-            'Algunos de los ítems que seleccionaste ya están incluidos en otro pago que todavía está en revisión. ' +
-            'Recarga la página para ver el estado actualizado. Si ese pago fue rechazado, aparecerá disponible nuevamente.',
-          duration: 12000,
-        });
-        return;
-      }
-
-      // 3. Error del upload de foto (mensaje ya viene accionable)
-      const isUploadError =
-        rawMsg.toLowerCase().includes('foto') ||
-        rawMsg.toLowerCase().includes('subir') ||
-        rawMsg.toLowerCase().includes('imagen') ||
-        rawMsg.toLowerCase().includes('servidor') ||
-        rawMsg.toLowerCase().includes('internet') ||
-        rawMsg.toLowerCase().includes('wifi') ||
-        rawMsg.toLowerCase().includes('tardando');
-
-      if (isUploadError) {
-        toast({
-          title: 'Error al subir la foto',
-          description: rawMsg,
-          variant: 'destructive',
-          duration: 10000,
-        });
-        return;
-      }
-
-      // 3. Error genérico: distinguir si ocurrió antes o después del upload
-      if (!uploadStarted) {
-        // El error fue antes de intentar subir la foto (BD caída, red cortada, etc.)
-        toast({
-          title: 'No se pudo verificar tu solicitud',
-          description:
-            'Hubo un problema de conexión antes de enviar el comprobante. ' +
-            'Tu foto NO fue subida. Verifica tu conexión e intenta de nuevo.',
-          variant: 'destructive',
-          duration: 10000,
-        });
-      } else {
-        // El error fue después del upload: foto en storage pero registro no guardado
-        toast({
-          title: 'Error al guardar tu solicitud',
-          description:
-            'La foto se subió correctamente, pero no se pudo registrar el comprobante. ' +
-            'Espera un momento y vuelve a intentarlo. Si el error persiste, contacta al administrador.',
-          variant: 'destructive',
-          duration: 10000,
-        });
-      }
-    } finally {
-      setLoading(false);
-      setUploadProgress(null);
-      setUploadPhaseLabel('');
-      submittingRef.current = false;
-    }
-  };
 
   // ── Copiar al portapapeles con feedback visual ──
   const handleCopy = (text: string, fieldKey: string) => {
@@ -822,6 +412,7 @@ export function RechargeModal({
     holder: string | null;
     hint: string;
     enabled: boolean;
+    isGateway?: boolean;
     bankName?: string | null;
     accountNumber?: string | null;
     cci?: string | null;
@@ -849,13 +440,23 @@ export function RechargeModal({
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
       enabled: paymentConfig?.transferencia_enabled ?? true,
-      // number se usa para saber si está disponible
       number: (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info) ? 'available' : null,
       holder: paymentConfig?.bank_account_holder || null,
       hint: 'Realiza una transferencia bancaria con los datos indicados.',
       bankName: paymentConfig?.bank_name || null,
       accountNumber: paymentConfig?.bank_account_number || null,
       cci: paymentConfig?.bank_cci || null,
+    },
+    // IziPay solo para piloto controlado (correo allowlist) o sandbox admin.
+    izipay: {
+      label: 'Tarjeta / Yape QR',
+      icon: <Zap className="h-7 w-7 text-blue-600" />,
+      color: 'blue',
+      enabled: requestType === 'recharge' && (izipayTestMode || isIzipayPilotUser),
+      number: 'available',
+      holder: null,
+      hint: 'Paga al instante con tarjeta Visa/Mastercard o Yape QR.',
+      isGateway: true,
     },
   };
 
@@ -1563,14 +1164,19 @@ export function RechargeModal({
       (paymentConfig?.transferencia_enabled !== false && (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info))
     );
 
-    const canSubmit = !!(
-      (skipAmountStep || (amount && parseFloat(amount) > 0)) &&
-      selectedMethod &&
-      currentMethodInfo?.number &&
-      referenceCode.trim() &&
-      voucherFile &&
-      !extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount || !ev.voucherFile)
-    );
+    const isIziPayMethod = selectedMethod === 'izipay';
+    const canSubmit = isIziPayMethod
+      // Para IziPay: solo necesita monto y el método seleccionado
+      ? !!(selectedMethod && currentMethodInfo?.enabled && (skipAmountStep || (amount && parseFloat(amount) > 0)))
+      // Para métodos manuales: requiere código + foto
+      : !!(
+          (skipAmountStep || (amount && parseFloat(amount) > 0)) &&
+          selectedMethod &&
+          currentMethodInfo?.number &&
+          referenceCode.trim() &&
+          voucherFile &&
+          !extraVouchers.some(ev => !ev.referenceCode.trim() || !ev.amount || !ev.voucherFile)
+        );
 
     return (
       <div className="space-y-3">
@@ -1681,8 +1287,8 @@ export function RechargeModal({
               </div>
             </div>
 
-            {/* Payment details card */}
-            {currentMethodInfo?.number && (
+            {/* Payment details card (solo para métodos manuales — no IziPay) */}
+            {currentMethodInfo?.number && selectedMethod !== 'izipay' && (
               <div className="bg-white border-2 border-blue-200 rounded-xl overflow-hidden">
                 <div className="bg-blue-50 px-3 py-1.5 border-b border-blue-200">
                   <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">
@@ -1768,7 +1374,8 @@ export function RechargeModal({
               </div>
             )}
 
-            {/* Reference code + Voucher â€” inline */}
+            {selectedMethod !== 'izipay' && (<>
+            {/* Reference code + Voucher (solo métodos manuales) â€” inline */}
             <div className={cn(
               "rounded-xl p-3 border-2 space-y-1.5",
               referenceCode.trim() ? "border-green-300 bg-green-50/50" : "border-amber-300 bg-amber-50/30"
@@ -1825,9 +1432,10 @@ export function RechargeModal({
               onChange={(e) => setNotes(e.target.value)}
               className="text-xs h-9"
             />
+            </>)}
 
             {/* Extra vouchers â€” COLLAPSIBLE */}
-            {extraVouchers.map((ev, idx) => {
+            {selectedMethod !== 'izipay' && extraVouchers.map((ev, idx) => {
               const isCollapsed = collapsedExtras.has(ev.id);
               const isComplete = !!(ev.referenceCode.trim() && ev.voucherFile && ev.amount && parseFloat(ev.amount) > 0);
 
@@ -1920,10 +1528,10 @@ export function RechargeModal({
               );
             })}
 
-            {/* Add extra voucher */}
+            {/* Add extra voucher — solo métodos manuales */}
+            {selectedMethod !== 'izipay' && (
             <button
               onClick={() => {
-                // Collapse all complete previous vouchers
                 const newCollapsed = new Set(collapsedExtras);
                 extraVouchers.forEach(ev => {
                   if (ev.referenceCode.trim() && ev.voucherFile && ev.amount && parseFloat(ev.amount) > 0) {
@@ -1938,9 +1546,75 @@ export function RechargeModal({
               <PlusCircle className="h-3.5 w-3.5" />
               Otro comprobante (pago en partes)
             </button>
+            )}
 
-            {/* Submit + barra de progreso */}
-            {uploadProgress !== null && (
+            {/* ── BLOQUE IziPay: pago en línea (reemplaza el formulario manual) ── */}
+            {selectedMethod === 'izipay' && (
+              <div className="space-y-3">
+                {/* Sala de espera — cuando el formulario fue enviado */}
+                {izipayStep === 'waiting' && izipaySessionId && (
+                  <GatewayPaymentWaiting
+                    sessionId={izipaySessionId}
+                    amount={parseFloat(amount || '0')}
+                    studentName={studentName}
+                    onSuccess={() => { setIzipayStep('done'); setStep('success'); }}
+                    onFailure={() => { setIzipayStep('idle'); }}
+                    onRetry={() => { setIzipayStep('idle'); setIzipaySessionId(null); setIzipayFormToken(null); }}
+                    onClose={() => { setIzipayStep('idle'); setIzipaySessionId(null); }}
+                  />
+                )}
+                {/* Formulario embebido IziPay */}
+                {izipayStep === 'form' && izipayFormToken && izipayPublicKey && (
+                  <div className="space-y-3">
+                    <IziPayEmbeddedForm
+                      formToken={izipayFormToken}
+                      publicKey={izipayPublicKey}
+                      amount={parseFloat(amount || '0')}
+                      krJsUrl={izipayKrJsUrl ?? undefined}
+                      onFormSubmit={() => setIzipayStep('waiting')}
+                      onFormError={(msg) => {
+                        // Solo mostrar el error como toast — NO cerrar el formulario
+                        // Los errores de validación (campos vacíos) los maneja IziPay internamente
+                        // Solo cerramos si es un error técnico grave (falla de carga)
+                        if (msg.includes('cargar')) {
+                          toast({ title: 'Error técnico', description: msg, variant: 'destructive' });
+                          setIzipayStep('idle');
+                        }
+                        // Si es error de validación, IziPay ya lo muestra dentro del form
+                      }}
+                      onCancel={() => { setIzipayStep('idle'); setIzipayFormToken(null); }}
+                    />
+                  </div>  
+                )}
+                {/* Botón para iniciar pago en línea */}
+                {(izipayStep === 'idle' || izipayStep === 'done') && (
+                  <div className="space-y-2">
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
+                      <p className="font-bold flex items-center gap-1.5">
+                        <Zap className="h-4 w-4" /> Pago instantáneo en línea
+                      </p>
+                      <p className="text-xs text-blue-600 mt-1">
+                        Tarjeta Visa/Mastercard o Yape QR.
+                        Tu saldo se acredita <strong>inmediatamente</strong>.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={handleInitIziPay}
+                      disabled={izipayLoading || !amount || parseFloat(amount) <= 0}
+                      className="w-full h-12 bg-blue-600 hover:bg-blue-700 font-bold text-base gap-2 shadow-lg shadow-blue-200"
+                    >
+                      {izipayLoading
+                        ? <><Loader2 className="h-4 w-4 animate-spin" /> Preparando pago...</>
+                        : <><Zap className="h-4 w-4" /> Pagar S/ {parseFloat(amount || '0').toFixed(2)} en línea</>
+                      }
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Submit + barra de progreso (solo para métodos manuales) */}
+            {selectedMethod !== 'izipay' && uploadProgress !== null && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
                   <span>{uploadPhaseLabel || 'Procesando...'}</span>
@@ -1957,6 +1631,7 @@ export function RechargeModal({
                 </p>
               </div>
             )}
+            {selectedMethod !== 'izipay' && (
             <Button
               onClick={handleSubmit}
               disabled={loading || !canSubmit}
@@ -1976,6 +1651,7 @@ export function RechargeModal({
                 <><Send className="h-4 w-4 mr-2" />Enviar comprobante</>
               )}
             </Button>
+            )}
 
             {onCancel && (
               <button type="button" onClick={onCancel} className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 underline py-0.5">
@@ -2050,7 +1726,7 @@ export function RechargeModal({
     </div>
   );
 
-  if (RECHARGES_MAINTENANCE && requestType === 'recharge') {
+  if (RECHARGES_MAINTENANCE && requestType === 'recharge' && !izipayTestMode && !isIzipayPilotUser) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="max-w-sm" aria-describedby={undefined}>

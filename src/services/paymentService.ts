@@ -144,31 +144,57 @@ async function generateNiubizCheckout(
 }
 
 /**
- * Genera URL de checkout de Izipay (Yape, Plin, Tarjetas)
+ * Inicia un pago con IziPay llamando al Edge Function izipay-create-order.
+ * Devuelve { formToken, publicKey } para renderizar el formulario embebido.
+ */
+export async function initiateIzipayPayment(
+  orderId: string,
+  amount: number,
+  studentId: string,
+  currency = 'PEN'
+): Promise<{ formToken: string; publicKey: string; orderId: string }> {
+  const { data, error } = await supabase.functions.invoke('izipay-create-order', {
+    body: { orderId, amount, studentId, currency },
+  });
+
+  if (error) throw new Error(error.message || 'Error al crear la orden en IziPay');
+  if (!data?.formToken) throw new Error('IziPay no devolvió un formToken válido');
+
+  return {
+    formToken:  data.formToken,
+    publicKey:  data.publicKey ?? '',
+    orderId,
+  };
+}
+
+/**
+ * Consulta el estado de una payment_session (usada por GatewayPaymentWaiting).
+ * Devuelve el gateway_status y el gateway_reference del registro.
+ */
+export async function getPaymentSessionStatus(sessionId: string) {
+  const { data, error } = await supabase
+    .from('payment_sessions')
+    .select('id, gateway_status, gateway_reference, status, completed_at')
+    .eq('id', sessionId)
+    .single();
+
+  if (error) return null;
+  return data;
+}
+
+/**
+ * @deprecated Usar initiateIzipayPayment en su lugar.
+ * Se mantiene para retrocompatibilidad con código legado.
  */
 async function generateIzipayCheckout(
   transactionId: string,
   amount: number,
-  paymentMethod: string,
-  config: any
+  _paymentMethod: string,
+  _config: any
 ): Promise<string> {
   try {
-    // En producción, esto llamaría a una Edge Function que genera el formToken
-    const baseUrl = config.is_production
-      ? 'https://api.micuentaweb.pe'
-      : 'https://api.micuentaweb.pe'; // Izipay usa el mismo dominio
-
-    // TODO: Implementar llamada real a Edge Function
-    // const response = await fetch('/api/izipay/order', {
-    //   method: 'POST',
-    //   body: JSON.stringify({ transactionId, amount, paymentMethod, shopId: config.merchant_id })
-    // });
-
-    // Por ahora, URL de simulación
-    const checkoutUrl = `${baseUrl}/checkout?orderId=${transactionId}&amount=${amount * 100}&method=${paymentMethod}`;
-    
-    console.log('🔗 Izipay Checkout URL:', checkoutUrl);
-    return checkoutUrl;
+    const { formToken } = await initiateIzipayPayment(transactionId, amount, '');
+    return `izipay-form-token:${formToken}`;
   } catch (error) {
     console.error('Error generando checkout Izipay:', error);
     throw error;
@@ -231,5 +257,133 @@ export async function getAvailableGateways(): Promise<any[]> {
     console.error('Error al obtener pasarelas:', error);
     return [];
   }
+}
+
+// ── Detección de pagos duplicados (extraído de RechargeModal) ────────────────
+
+export interface DuplicateCodeResult {
+  isDuplicate: boolean;
+  isOwnRequest: boolean;
+  existingStatus?: string;
+}
+
+/**
+ * Verifica si un código de operación ya existe en recharge_requests.
+ *
+ * Reglas:
+ *  - Rechazados (rejected) NO bloquean → el padre puede reutilizar el código.
+ *  - Si el código existe y es del mismo padre → isOwnRequest = true.
+ *    El caller puede decidir mostrar éxito en lugar de bloquear.
+ */
+export async function checkReferenceCodeDuplicate(
+  code: string,
+  parentId: string,
+): Promise<DuplicateCodeResult> {
+  const { data } = await supabase
+    .from('recharge_requests')
+    .select('id, status, parent_id')
+    .eq('reference_code', code.trim())
+    .neq('status', 'rejected')
+    .limit(1);
+
+  if (data && data.length > 0) {
+    return {
+      isDuplicate:   true,
+      isOwnRequest:  data[0].parent_id === parentId,
+      existingStatus: data[0].status,
+    };
+  }
+  return { isDuplicate: false, isOwnRequest: false };
+}
+
+export interface LunchOrderDuplicateResult {
+  /** true → bloquear el envío (ya existe una solicitud pendiente con foto) */
+  blocked: boolean;
+  /** true → redirigir a success (primer envío funcionó, padre no lo vio) */
+  redirectToSuccess: boolean;
+}
+
+/**
+ * Verifica si ya existe una solicitud pending con los mismos lunchOrderIds.
+ * Si la solicitud ya tiene voucher_url → el pago se registró correctamente.
+ * Redirigir al padre a la pantalla de éxito en lugar de mostrar error.
+ */
+export async function checkLunchOrderDuplicate(
+  lunchOrderIds: string[],
+  parentId: string,
+  requestType: string,
+): Promise<LunchOrderDuplicateResult> {
+  if (
+    (requestType !== 'lunch_payment' && requestType !== 'debt_payment') ||
+    lunchOrderIds.length === 0
+  ) {
+    return { blocked: false, redirectToSuccess: false };
+  }
+
+  const { data: existingReq } = await supabase
+    .from('recharge_requests')
+    .select('id, status, voucher_url')
+    .eq('parent_id', parentId)
+    .in('request_type', ['lunch_payment', 'debt_payment'])
+    .eq('status', 'pending')
+    .contains('lunch_order_ids', lunchOrderIds);
+
+  if (!existingReq || existingReq.length === 0) {
+    return { blocked: false, redirectToSuccess: false };
+  }
+
+  const req = existingReq[0];
+  if (req.voucher_url) {
+    // El comprobante ya llegó al sistema → el padre solo no vio la pantalla de éxito.
+    return { blocked: true, redirectToSuccess: true };
+  }
+
+  // Registro huérfano (sin foto): no bloquear — el nuevo intento lo sobreescribirá
+  // o el trigger DUPLICATE_PAYMENT de la BD lo manejará.
+  return { blocked: false, redirectToSuccess: false };
+}
+
+export interface DuplicatePaymentRecoveryResult {
+  /** true → la solicitud conflictiva ES del mismo padre y tiene foto → mostrar éxito */
+  redirectToSuccess: boolean;
+}
+
+/**
+ * Intenta recuperarse del error DUPLICATE_PAYMENT del trigger de BD.
+ *
+ * El mensaje del trigger incluye el UUID de la solicitud conflictiva:
+ *   "DUPLICATE_PAYMENT: ... (solicitud xxxxxxxx-xxxx-...) ..."
+ *
+ * Si ese UUID pertenece al mismo padre y tiene voucher_url → el primer envío
+ * funcionó y el padre no lo vio. Redirigir a éxito es seguro porque:
+ *   - La solicitud real ya existe en BD con los datos correctos.
+ *   - La aprobación sigue siendo exclusiva de admins (RLS + trigger).
+ *   - El padre no puede manipular este flujo para auto-aprobarse.
+ */
+export async function recoverFromDuplicatePayment(
+  rawMsg: string,
+  userId: string,
+): Promise<DuplicatePaymentRecoveryResult> {
+  const uuidMatch = rawMsg.match(
+    /\(solicitud ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/i,
+  );
+  const conflictingId = uuidMatch?.[1];
+  if (!conflictingId) return { redirectToSuccess: false };
+
+  try {
+    const { data: conflictReq } = await supabase
+      .from('recharge_requests')
+      .select('id, status, parent_id, voucher_url')
+      .eq('id', conflictingId)
+      .single();
+
+    if (conflictReq?.parent_id === userId && conflictReq?.voucher_url) {
+      return { redirectToSuccess: true };
+    }
+  } catch {
+    // Fallo silencioso → el caller mostrará el toast de error estándar.
+  }
+
+  return { redirectToSuccess: false };
 }
 

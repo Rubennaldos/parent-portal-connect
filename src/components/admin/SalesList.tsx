@@ -4,6 +4,8 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { getPaymentMethodLabel } from '@/lib/paymentMethodLabels';
+import { isLunchTransaction } from '@/lib/lunchUtils';
+import { buildInlineLabel } from '@/lib/transactionUtils';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseConfig } from '@/config/supabase.config';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1068,37 +1070,22 @@ export const SalesList = () => {
     setShowPrintOptions(false);
   };
 
-  // 🔍 Determinar si una transacción es de almuerzo
-  const isLunchTransaction = (t: Transaction): boolean => {
-    // Verificar por metadata (más confiable)
-    if (t.metadata?.lunch_order_id) return true;
-    if (t.metadata?.source && (
-      t.metadata.source.includes('lunch') || 
-      t.metadata.source === 'lunch_orders_confirm' ||
-      t.metadata.source === 'lunch_order' ||
-      t.metadata.source === 'lunch_fast'
-    )) return true;
-    // Verificar por descripción (fallback para transacciones antiguas)
-    if (t.description?.startsWith('Almuerzo')) return true;
-    if (t.description?.startsWith('Almuerzo -')) return true;
-    return false;
-  };
+  // isLunchTransaction importado desde @/lib/lunchUtils (fuente única de verdad).
 
-  // Búsqueda inteligente — si hay resultados globales los usa, si no usa los del día
+  // buildInlineLabel importado desde @/lib/transactionUtils (función pura, fuera del componente).
+
+  // Búsqueda inteligente — si hay resultados globales los usa, si no usa los del día.
+  // useMemo: evita re-filtrar 394+ items en cada render no relacionado.
   const baseTransactions = globalSearchResults !== null ? globalSearchResults : transactions;
-  const filteredTransactions = baseTransactions.filter(t => {
-    // Filtro tipo de venta (Cafetería / Almuerzo)
+  const filteredTransactions = useMemo(() => baseTransactions.filter(t => {
     if (salesFilter === 'pos'   && isLunchTransaction(t))  return false;
     if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false;
 
-    // Filtro tipo de persona (Alumno / Profesor / Todos)
     if (personFilter === 'alumno'   && !t.student_id)  return false;
     if (personFilter === 'profesor' && !t.teacher_id)  return false;
 
-    // En búsqueda global ya vienen filtrados por nombre desde Supabase
     if (globalSearchResults !== null) return true;
 
-    // Filtro de búsqueda local
     if (!searchTerm.trim()) return true;
 
     const search = searchTerm.toLowerCase();
@@ -1110,7 +1097,7 @@ export const SalesList = () => {
       t.description?.toLowerCase().includes(search) ||
       Math.abs(t.amount).toString().includes(search)
     );
-  });
+  }), [baseTransactions, salesFilter, personFilter, globalSearchResults, searchTerm]);
 
   const getTotalSales = () => {
     return filteredTransactions
@@ -1440,6 +1427,232 @@ export const SalesList = () => {
     toast({ title: '✅ Excel generado', description: `${cantidadTx} ventas exportadas desde la base de datos.` });
   };
 
+  // ── Exportar PDF de Detalle de Consumo (respeta todos los filtros activos) ──
+  const downloadConsumptionPDF = async () => {
+    setIsExporting(true);
+    let allData: Transaction[];
+    try {
+      allData = await fetchAllForExport();
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error al exportar', description: err.message });
+      setIsExporting(false);
+      return;
+    }
+
+    // Aplicar los mismos filtros del front-end
+    const filtered = allData.filter(t => {
+      if (salesFilter === 'pos'   && isLunchTransaction(t))  return false;
+      if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false;
+      if (personFilter === 'alumno'   && !t.student_id)  return false;
+      if (personFilter === 'profesor' && !t.teacher_id)  return false;
+      if (selectedPaymentMethod !== 'all' && t.payment_method !== selectedPaymentMethod) return false;
+      if (searchTerm.trim()) {
+        const search = searchTerm.toLowerCase();
+        return (
+          t.ticket_code?.toLowerCase().includes(search) ||
+          t.student?.full_name?.toLowerCase().includes(search) ||
+          t.teacher?.full_name?.toLowerCase().includes(search) ||
+          t.invoice_client_name?.toLowerCase().includes(search) ||
+          t.description?.toLowerCase().includes(search) ||
+          Math.abs(t.amount).toString().includes(search)
+        );
+      }
+      return true;
+    });
+
+    setIsExporting(false);
+
+    if (filtered.length === 0) {
+      toast({ variant: 'destructive', title: 'Sin datos', description: 'No hay ventas con los filtros actuales para exportar.' });
+      return;
+    }
+
+    // Batch-fetch de todos los items de las transacciones filtradas
+    const txIds = filtered.map(t => t.id);
+    const itemsMap: Record<string, TransactionItem[]> = {};
+    try {
+      const BATCH = 200;
+      for (let i = 0; i < txIds.length; i += BATCH) {
+        const batchIds = txIds.slice(i, i + BATCH);
+        const { data: items } = await supabase
+          .from('transaction_items')
+          .select('id, transaction_id, product_name, quantity, unit_price, subtotal')
+          .in('transaction_id', batchIds);
+        (items || []).forEach((item: any) => {
+          if (!itemsMap[item.transaction_id]) itemsMap[item.transaction_id] = [];
+          itemsMap[item.transaction_id].push(item);
+        });
+      }
+    } catch { /* sin items no bloqueamos la exportación */ }
+
+    // Agrupar por persona
+    const groups: Record<string, { key: string; name: string; txs: Transaction[]; total: number }> = {};
+    filtered.forEach(t => {
+      const name = t.student?.full_name || t.teacher?.full_name || t.invoice_client_name || 'Venta General';
+      const key  = t.student_id || t.teacher_id || t.invoice_client_name || 'generic';
+      if (!groups[key]) groups[key] = { key, name, txs: [], total: 0 };
+      groups[key].txs.push(t);
+      groups[key].total += Math.abs(t.amount || 0);
+    });
+    const groupList = Object.values(groups).sort((a, b) => b.total - a.total);
+    const grandTotal = filtered.reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const rangeLabel = dateFrom.toDateString() === dateTo.toDateString()
+      ? format(dateFrom, "dd/MM/yyyy")
+      : `${format(dateFrom, "dd/MM/yyyy")} — ${format(dateTo, "dd/MM/yyyy")}`;
+
+    const sedeLabel = !canViewAllSchools && userSchoolId
+      ? (schools.find(s => s.id === userSchoolId)?.name ?? 'Mi Sede')
+      : selectedSchool === 'all' ? 'Todas las Sedes'
+      : (schools.find(s => s.id === selectedSchool)?.name ?? selectedSchool);
+
+    // ── Encabezado ──
+    doc.setFillColor(139, 69, 19);
+    doc.rect(0, 0, 210, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('LIMA CAFE', 14, 12);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Reporte de Detalle de Consumo', 14, 19);
+    doc.text(rangeLabel, 196, 12, { align: 'right' });
+    doc.text(`Sede: ${sedeLabel}`, 196, 19, { align: 'right' });
+
+    // ── Filtros aplicados ──
+    doc.setTextColor(50, 50, 50);
+    doc.setFontSize(8);
+    let yInfo = 37;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Filtros aplicados:', 14, yInfo);
+    doc.setFont('helvetica', 'normal');
+    yInfo += 5;
+    const filterParts: string[] = [];
+    filterParts.push(`Período: ${rangeLabel}`);
+    if (selectedPaymentMethod !== 'all') filterParts.push(`Medio de pago: ${getPaymentMethodLabel(selectedPaymentMethod)}`);
+    if (salesFilter !== 'all') filterParts.push(`Tipo: ${salesFilter === 'pos' ? 'Cafetería' : 'Almuerzos'}`);
+    if (personFilter !== 'all') filterParts.push(`Persona: ${personFilter === 'alumno' ? 'Alumno' : 'Profesor'}`);
+    if (searchTerm.trim()) filterParts.push(`Búsqueda: "${searchTerm}"`);
+    doc.text(filterParts.join('   |   '), 14, yInfo);
+    yInfo += 5;
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Total transacciones: ${filtered.length}   |   Total ventas: S/ ${grandTotal.toFixed(2)}`, 14, yInfo);
+    yInfo += 4;
+
+    // ── Tablas por alumno ──
+    groupList.forEach((group, gIdx) => {
+      // Nombre del alumno como encabezado de sección
+      const sectionY = (doc as any).lastAutoTable?.finalY
+        ? (doc as any).lastAutoTable.finalY + (gIdx === 0 ? 4 : 8)
+        : yInfo + 4;
+
+      doc.setFillColor(245, 230, 210);
+      doc.rect(14, sectionY - 1, 182, 7, 'F');
+      doc.setTextColor(100, 40, 5);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${group.name}  —  ${group.txs.length} transacciones  —  Total: S/ ${group.total.toFixed(2)}`, 16, sectionY + 4);
+      doc.setTextColor(50, 50, 50);
+
+      // Filas de detalle
+      const rows: (string | { content: string; styles?: Record<string, unknown> })[][] = [];
+      group.txs.forEach(t => {
+        const isPending = t.payment_status === 'pending';
+        const items = itemsMap[t.id] || [];
+        const payLabel = getPaymentMethodLabel(t.payment_method);
+        const statusLabel = isPending ? ' ⚠ CRÉDITO' : '';
+
+        if (items.length > 0) {
+          items.forEach((item, iIdx) => {
+            rows.push([
+              iIdx === 0 ? format(new Date(t.created_at), 'dd/MM HH:mm') : '',
+              iIdx === 0 ? (t.ticket_code || '—') : '',
+              iIdx === 0 ? `${payLabel}${statusLabel}` : '',
+              item.product_name,
+              item.quantity.toString(),
+              `S/ ${Number(item.unit_price).toFixed(2)}`,
+              `S/ ${Number(item.subtotal).toFixed(2)}`,
+            ]);
+          });
+          rows.push([
+            { content: '', styles: { fillColor: [245, 245, 245] } },
+            { content: '', styles: { fillColor: [245, 245, 245] } },
+            { content: '', styles: { fillColor: [245, 245, 245] } },
+            { content: '', styles: { fillColor: [245, 245, 245] } },
+            { content: '', styles: { fillColor: [245, 245, 245] } },
+            { content: 'Total:', styles: { fontStyle: 'bold', halign: 'right', fillColor: [245, 245, 245] } },
+            { content: `S/ ${Math.abs(t.amount || 0).toFixed(2)}`, styles: { fontStyle: 'bold', halign: 'right', fillColor: [245, 245, 245] } },
+          ]);
+        } else {
+          rows.push([
+            format(new Date(t.created_at), 'dd/MM HH:mm'),
+            t.ticket_code || '—',
+            `${payLabel}${statusLabel}`,
+            t.description || '—',
+            '1',
+            `S/ ${Math.abs(t.amount || 0).toFixed(2)}`,
+            `S/ ${Math.abs(t.amount || 0).toFixed(2)}`,
+          ]);
+        }
+      });
+
+      autoTable(doc, {
+        startY: sectionY + 8,
+        head: [['Fecha/Hora', 'Ticket', 'Pago', 'Producto', 'Cant.', 'P. Unit.', 'Subtotal']],
+        body: rows,
+        theme: 'striped',
+        headStyles: { fillColor: [180, 100, 30], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+        bodyStyles: { fontSize: 7.5 },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 20 },
+          2: { cellWidth: 28 },
+          3: { cellWidth: 'auto' },
+          4: { cellWidth: 12, halign: 'center' },
+          5: { cellWidth: 18, halign: 'right' },
+          6: { cellWidth: 20, halign: 'right' },
+        },
+        didDrawCell: (data) => {
+          // Resaltar en amarillo las filas con crédito/pendiente
+          if (data.section === 'body' && data.column.index === 2) {
+            const cellText = typeof data.cell.raw === 'string' ? data.cell.raw : '';
+            if (cellText.includes('CRÉDITO')) {
+              doc.setFillColor(255, 243, 205);
+              doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F');
+              doc.setTextColor(180, 100, 0);
+              doc.setFontSize(7);
+              doc.text(cellText, data.cell.x + 1, data.cell.y + data.cell.height / 2 + 1);
+            }
+          }
+        },
+      });
+    });
+
+    // ── Total general ──
+    const finalY = (doc as any).lastAutoTable?.finalY || 260;
+    doc.setFillColor(139, 69, 19);
+    doc.rect(14, finalY + 4, 182, 10, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('TOTAL GENERAL', 16, finalY + 11);
+    doc.text(`S/ ${grandTotal.toFixed(2)}`, 193, finalY + 11, { align: 'right' });
+
+    // ── Pie de página ──
+    doc.setDrawColor(200, 150, 100);
+    doc.setLineWidth(0.4);
+    doc.line(14, finalY + 18, 196, finalY + 18);
+    doc.setFontSize(7.5);
+    doc.setTextColor(130);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Generado: ${format(new Date(), 'dd/MM/yyyy HH:mm')} — Este documento es un comprobante interno. No tiene validez tributaria.`, 105, finalY + 23, { align: 'center' });
+
+    const studentSuffix = searchTerm.trim() ? `_${searchTerm.replace(/\s+/g, '_').toLowerCase()}` : '';
+    doc.save(`detalle_consumo${studentSuffix}_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
+    toast({ title: '✅ PDF generado', description: `Detalle de consumo con ${filtered.length} transacciones exportado correctamente.` });
+  };
+
   return (
     <div className="space-y-4">
       <Card className="border shadow-sm">
@@ -1579,6 +1792,20 @@ export const SalesList = () => {
                 <ArrowUpDown className="h-4 w-4 mr-2" />
                 Actualizar
               </Button>
+
+              {permissions.canExport && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={downloadConsumptionPDF}
+                  disabled={isExporting}
+                  className="gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50 hover:border-rose-500"
+                  title="Exportar PDF con detalle de productos, respeta todos los filtros activos"
+                >
+                  <FileDown className="h-4 w-4" />
+                  {isExporting ? 'Generando...' : 'Exportar PDF Detalle'}
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -1970,9 +2197,8 @@ export const SalesList = () => {
                                     {t.school.name}
                                   </Badge>
                                 )}
-                                <span className="text-slate-500 text-xs truncate flex-1">
-                                  {getPaymentMethodLabel(t.payment_method)}
-                                  {t.description ? ` · ${t.description}` : ''}
+                                <span className="text-slate-500 text-xs truncate flex-1" title={t.description || ''}>
+                                  {buildInlineLabel(t)}
                                 </span>
                                 <span className="font-bold text-emerald-700 shrink-0">
                                   S/ {Math.abs(t.amount || 0).toFixed(2)}
@@ -2000,8 +2226,8 @@ export const SalesList = () => {
                                     <CreditCard className="h-3 w-3" />
                                   </Button>
                                 )}
-                                {/* Anular desde vista agrupada */}
-                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && (
+                                {/* Anular desde vista agrupada — solo kiosco/venta directa, NO almuerzos */}
+                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && !isLunchTransaction(t) && (
                                   <Button
                                     size="sm" variant="ghost"
                                     className="h-6 w-6 p-0 text-red-400 hover:text-red-700 hover:bg-red-50 shrink-0"
@@ -2186,16 +2412,18 @@ export const SalesList = () => {
                                       </Button>
                                     </>
                                   )}
-                                  {/* Tachito: siempre visible */}
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    className="h-8 w-8 p-0 hover:bg-red-50"
-                                    onClick={() => handleOpenAnnul(t)}
-                                    title="Anular venta"
-                                  >
-                                    <Trash2 className="h-4 w-4 text-red-600" />
-                                  </Button>
+                                  {/* Anular: oculto para transacciones de almuerzo */}
+                                  {!isLunchTransaction(t) && (
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      className="h-8 w-8 p-0 hover:bg-red-50"
+                                      onClick={() => handleOpenAnnul(t)}
+                                      title="Anular venta"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-red-600" />
+                                    </Button>
+                                  )}
                                 </>
                               )}
                             </div>

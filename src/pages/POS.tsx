@@ -2305,7 +2305,11 @@ const POS = () => {
         clientType:     clientMode,
         items:          cart,
         total:          serverTotal,      // ← total del servidor, no del navegador
-        paymentMethod:  clientMode === 'generic' ? paymentMethod : 'credito',
+        paymentMethod:  clientMode === 'generic'
+          ? paymentMethod
+          : clientMode === 'student'
+            ? (paidFromBalance ? 'saldo' : 'deuda')
+            : 'credito',
         documentType:   billingData?.document_type || 'ticket',
         timestamp:      new Date(),
         cashierEmail:   user?.email || 'No disponible',
@@ -2362,10 +2366,23 @@ const POS = () => {
          ==================================================================== */
 
       // Notificación y sincronización (el stock ya se descontó dentro del RPC)
+      const successToast =
+        clientMode !== 'student'
+          ? { title: '✅ Venta Realizada', description: `Ticket: ${ticketCode}` }
+          : paidFromBalance
+            ? {
+                title: '✅ Venta pagada con saldo',
+                description: `Ticket: ${ticketCode} · Saldo actualizado automáticamente.`,
+              }
+            : {
+                title: '✅ Venta registrada como deuda',
+                description: `Ticket: ${ticketCode} · Saldo no descontado (pago pendiente).`,
+              };
+
       toast({
-        title: '✅ Venta Realizada',
-        description: `Ticket: ${ticketCode}`,
-        duration: 2000,
+        title: successToast.title,
+        description: successToast.description,
+        duration: 2600,
       });
       emitSync(['transactions', 'balances', 'dashboard', 'debtors']);
 

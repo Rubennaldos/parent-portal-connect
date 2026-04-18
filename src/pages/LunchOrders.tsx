@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { supabase } from '@/lib/supabase';
 import { calcBillingFlags, BILLING_EXCLUDED } from '@/lib/billingUtils';
+import { isLunchTransaction } from '@/lib/lunchUtils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -245,7 +246,7 @@ export default function LunchOrders() {
           console.error('Error cargando configuración:', configError);
         }
 
-        // Guardar configuración para usar en canModifyOrder
+        // Guardar configuración para usar en canModifyOrder / canPerformDeadlineLimitedActions
         if (config) {
           setLunchConfig({
             cancellation_deadline_time: config.cancellation_deadline_time,
@@ -761,6 +762,12 @@ export default function LunchOrders() {
     // Verificar si ya pasó la hora límite
     return currentTime < deadlineTime;
   };
+
+  /** Admin general puede anular/postergar aunque haya pasado el corte; admin_sede y superadmin siguen el horario. */
+  const canBypassDeadlineAsGeneralAdmin = role === 'admin_general';
+
+  const canPerformDeadlineLimitedActions = () =>
+    canModifyOrder() || canBypassDeadlineAsGeneralAdmin;
 
   const getDeadlineTime = () => {
     if (!lunchConfig || !lunchConfig.cancellation_deadline_time) {
@@ -1360,187 +1367,97 @@ export default function LunchOrders() {
     }
   };
   
+  /**
+   * handleConfirmCancel — usa el RPC atómico cancel_lunch_order (v2).
+   *
+   * El RPC garantiza:
+   *  - Verificación de rol en el servidor (no solo en el frontend).
+   *  - Verificación de hora de corte en el servidor.
+   *  - SELECT … FOR UPDATE → previene race condition si dos admins
+   *    presionan simultáneamente: el segundo recibirá ALREADY_CANCELLED.
+   *  - Toda la operación ocurre en una sola transacción SQL.
+   */
   const handleConfirmCancel = async () => {
     if (!cancelReason.trim()) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Debes ingresar un motivo de anulación',
-      });
+      toast({ variant: 'destructive', title: 'Error', description: 'Debes ingresar un motivo de anulación' });
       return;
     }
-    
-    if (!pendingCancelOrder) return;
-    
+    if (!pendingCancelOrder || !user?.id) return;
+
     try {
       setCancelling(true);
-      
-      console.log('🚫 [ANULAR] Iniciando anulación...');
-      console.log('📋 [ANULAR] Pedido completo:', pendingCancelOrder);
-      console.log('🆔 [ANULAR] ID del pedido:', pendingCancelOrder.id);
-      console.log('👤 [ANULAR] Usuario actual:', user?.id);
-      console.log('📝 [ANULAR] Motivo:', cancelReason.trim());
-      
-      // Anular el pedido
-      const { error: updateError } = await supabase
-        .from('lunch_orders')
-        .update({
-          is_cancelled: true,
-          cancellation_reason: cancelReason.trim(),
-          cancelled_by: user?.id,
-          cancelled_at: new Date().toISOString(),
-        })
-        .eq('id', pendingCancelOrder.id);
-      
-      if (updateError) {
-        console.error('❌ [ANULAR] Error al actualizar:', updateError);
-        throw updateError;
-      }
-      
-      console.log('✅ [ANULAR] Pedido actualizado en BD');
-      
-      // 💰 Buscar transacción asociada para CUALQUIER tipo de pedido
-      // (crédito, fiado, pago inmediato - estudiante, profesor O manual)
-      console.log('💰 Buscando transacción asociada al pedido...');
-      console.log('📋 Datos del pedido:', {
-        id: pendingCancelOrder.id,
-        student_id: pendingCancelOrder.student_id,
-        teacher_id: pendingCancelOrder.teacher_id,
-        manual_name: pendingCancelOrder.manual_name,
-        order_date: pendingCancelOrder.order_date
+
+      const { data: result, error: rpcError } = await supabase.rpc('cancel_lunch_order', {
+        p_order_id:     pendingCancelOrder.id,
+        p_cancelled_by: user.id,
+        p_reason:       cancelReason.trim(),
       });
-      
-      let cancelledTransactionWasPaid = false;
-      let cancelledTransactionAmount = 0;
-      let cancelledTransactionMethod: string | null = null;
-      
-      // 🔍 NIVEL 1: Buscar por metadata.lunch_order_id (más confiable)
-      let { data: transactions, error: transError } = await supabase
-        .from('transactions')
-        .select('id, amount, student_id, teacher_id, manual_client_name, description, created_at, metadata, payment_status, payment_method')
-        .eq('metadata->>lunch_order_id', pendingCancelOrder.id)
-        .in('payment_status', ['pending', 'paid', 'partial']);
-      
-      // 🔍 NIVEL 2: Si no se encuentra por metadata, buscar por descripción (legacy)
-      if (!transactions || transactions.length === 0) {
-        console.log('⚠️ No se encontró por lunch_order_id, buscando por descripción...');
-        let query = supabase
-          .from('transactions')
-          .select('id, amount, student_id, teacher_id, manual_client_name, description, created_at, metadata, payment_status, payment_method')
-          .eq('type', 'purchase')
-          .in('payment_status', ['pending', 'paid', 'partial']);
-        
-        // Filtrar por student_id, teacher_id o manual_client_name según corresponda
-        if (pendingCancelOrder.student_id) {
-          query = query.eq('student_id', pendingCancelOrder.student_id);
-        } else if (pendingCancelOrder.teacher_id) {
-          query = query.eq('teacher_id', pendingCancelOrder.teacher_id);
-        } else if (pendingCancelOrder.manual_name) {
-          query = query.ilike('manual_client_name', `%${pendingCancelOrder.manual_name}%`);
-        }
-        
-        // Filtrar por fecha del pedido en la descripción
-        const orderDateFormatted = format(new Date(pendingCancelOrder.order_date + 'T12:00:00'), "d 'de' MMMM", { locale: es });
-        query = query.ilike('description', `%${orderDateFormatted}%`);
-        
-        const result = await query;
-        transactions = result.data;
-        transError = result.error;
-      }
-      
-      console.log('🔍 Transacciones encontradas:', transactions?.length || 0);
-      
-      if (transError) {
-        console.error('❌ Error buscando transacción:', transError);
-      } else if (transactions && transactions.length > 0) {
-        const transaction = transactions[0];
-        console.log('✅ Transacción encontrada:', transaction.id, 'estado:', transaction.payment_status);
-        
-        // Guardar info del pago para el mensaje final
-        cancelledTransactionWasPaid = transaction.payment_status === 'paid';
-        cancelledTransactionAmount = Math.abs(transaction.amount);
-        cancelledTransactionMethod = transaction.payment_method;
-        
-        // Anular la transacción (cambiar a 'cancelled') y excluir de facturación
-        const { error: cancelTransError } = await supabase
-          .from('transactions')
-          .update({ 
-            payment_status: 'cancelled',
-            is_taxable: false,
-            billing_status: 'excluded',
-            metadata: {
-              ...transaction.metadata,
-              cancellation_reason: cancelReason.trim(),
-              cancelled_by: user?.id,
-              cancelled_at: new Date().toISOString(),
-              original_payment_status: transaction.payment_status,
-              original_payment_method: transaction.payment_method,
-              requires_refund: cancelledTransactionWasPaid,
-              refund_amount: cancelledTransactionWasPaid ? cancelledTransactionAmount : 0,
-            }
-          })
-          .eq('id', transaction.id);
-        
-        if (cancelTransError) {
-          console.error('❌ Error anulando transacción:', cancelTransError);
+
+      if (rpcError) throw rpcError;
+
+      const res = result as {
+        success: boolean;
+        error?: string;
+        error_code?: string;
+        order_cancelled?: boolean;
+        tx_cancelled?: boolean;
+        already_billed?: boolean;
+        tx_id?: string | null;
+      };
+
+      // El servidor rechazó la operación con un error de negocio
+      if (!res.success) {
+        const code = res.error_code;
+        if (code === 'ALREADY_CANCELLED') {
+          toast({ title: 'Pedido ya anulado', description: 'Otro administrador ya lo anuló. Recarga la lista.', variant: 'destructive' });
+        } else if (code === 'AFTER_CUTOFF') {
+          toast({ title: 'Fuera de horario', description: res.error ?? 'No se puede anular después de la hora de corte.', variant: 'destructive' });
+        } else if (code === 'FORBIDDEN_ROLE') {
+          toast({ title: 'Sin permiso', description: 'Tu rol no permite anular pedidos de almuerzo.', variant: 'destructive' });
         } else {
-          console.log('✅ Transacción cancelada. Era pagada:', cancelledTransactionWasPaid);
+          toast({ title: 'Error', description: res.error ?? 'No se pudo anular el pedido.', variant: 'destructive' });
+        }
+        return;
+      }
+
+      // Operación exitosa — construir mensaje informativo
+      const clientName =
+        pendingCancelOrder.student?.full_name ||
+        pendingCancelOrder.teacher?.full_name ||
+        pendingCancelOrder.manual_name || 'Cliente';
+
+      if (res.already_billed) {
+        toast({
+          title: '⚠️ Pedido anulado — requiere nota de crédito',
+          description: `El pedido de ${clientName} fue anulado, pero la transacción ya está en SUNAT. Emite una nota de crédito.`,
+          variant: 'destructive',
+          duration: 15000,
+        });
+      } else if (res.tx_cancelled) {
+        // Si la info de pago indica que ya estaba pagado, mostrar aviso de reembolso
+        if (cancelOrderPaymentInfo?.isPaid) {
+          toast({
+            title: '⚠️ Pedido anulado — REQUIERE REEMBOLSO',
+            description: `Debes devolver S/ ${cancelOrderPaymentInfo.amount.toFixed(2)} a ${clientName}.`,
+            variant: 'destructive',
+            duration: 15000,
+          });
+        } else {
+          toast({ title: '✅ Pedido anulado', description: `La deuda pendiente de ${clientName} fue eliminada.` });
         }
       } else {
-        console.log('⚠️ No se encontró transacción asociada al pedido');
+        toast({ title: '✅ Pedido anulado', description: `El pedido de ${clientName} fue anulado correctamente.` });
       }
-      
-      // 📢 Mostrar mensaje según el tipo de anulación
-      const clientName = pendingCancelOrder.student?.full_name || 
-                         pendingCancelOrder.teacher?.full_name || 
-                         pendingCancelOrder.manual_name || 'Cliente';
-      
-      if (cancelledTransactionWasPaid) {
-        // ⚠️ El pedido ya estaba PAGADO → necesita reembolso manual
-        const methodLabel = cancelledTransactionMethod === 'efectivo' ? 'Efectivo' 
-          : cancelledTransactionMethod === 'tarjeta' ? 'Tarjeta' 
-          : cancelledTransactionMethod === 'yape' ? 'Yape' 
-          : cancelledTransactionMethod === 'transferencia' ? 'Transferencia'
-          : cancelledTransactionMethod || 'No especificado';
-        
-        toast({
-          title: '⚠️ Pedido anulado - REQUIERE REEMBOLSO',
-          description: `Debes devolver S/ ${cancelledTransactionAmount.toFixed(2)} a ${clientName}. Método original: ${methodLabel}`,
-          variant: 'destructive',
-          duration: 15000, // 15 segundos para que lo lean
-        });
-      } else if (transactions && transactions.length > 0) {
-        // Tenía deuda pendiente → la deuda se elimina automáticamente
-        toast({
-          title: '✅ Pedido anulado',
-          description: `El pedido de ${clientName} ha sido anulado y la deuda pendiente eliminada.`,
-        });
-      } else {
-        // No tenía transacción → solo se anuló el pedido
-        toast({
-          title: '✅ Pedido anulado',
-          description: `El pedido de ${clientName} ha sido anulado correctamente.`,
-        });
-      }
-      
-      // Cerrar modales y limpiar estados
+
       setShowCancelModal(false);
       setCancelReason('');
       setPendingCancelOrder(null);
       setCancelOrderPaymentInfo(null);
-      
-      console.log('🔄 [ANULAR] Recargando pedidos...');
-      // Recargar pedidos
       await fetchOrders();
-      console.log('✅ [ANULAR] Pedidos recargados');
-      
+
     } catch (error: any) {
-      console.error('💥 [ANULAR] Error fatal:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo anular el pedido',
-      });
+      console.error('[ANULAR] Error fatal:', error);
+      toast({ variant: 'destructive', title: 'Error', description: 'No se pudo anular el pedido' });
     } finally {
       setCancelling(false);
     }
@@ -2054,10 +1971,16 @@ export default function LunchOrders() {
                 {filteredOrders.length} pedido{filteredOrders.length !== 1 ? 's' : ''} encontrado{filteredOrders.length !== 1 ? 's' : ''}
               </CardDescription>
             </div>
-            {!canModifyOrder() && (
+            {!canModifyOrder() && !canBypassDeadlineAsGeneralAdmin && (
               <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">
                 <AlertCircle className="h-3 w-3 mr-1" />
                 Después de las {getDeadlineTime()} - Solo lectura
+              </Badge>
+            )}
+            {!canModifyOrder() && canBypassDeadlineAsGeneralAdmin && (
+              <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300">
+                <AlertCircle className="h-3 w-3 mr-1" />
+                Admin general: puedes anular o postergar fuera del horario
               </Badge>
             )}
           </div>
@@ -2264,24 +2187,38 @@ export default function LunchOrders() {
                       </Button>
                     )}
 
-                    {/* Botón Anular — bloqueado si el pago está en revisión o ya fue pagado */}
+                    {/* Pago en revisión: bloquear para todos */}
                     {!order.is_cancelled && (order as any)._tx_payment_status === 'pending' && (
                       <div className="flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-700">
                         <Clock className="h-3 w-3 flex-shrink-0" />
                         <span>Pago en revisión</span>
                       </div>
                     )}
-                    {!order.is_cancelled && (order as any)._tx_payment_status !== 'pending' && (
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleOpenCancel(order)}
-                        className="gap-1"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Anular
-                      </Button>
-                    )}
+
+                    {/* Botón Anular — solo admin_sede / admin_general / superadmin; admin_general puede tras el corte */}
+                    {!order.is_cancelled && (order as any)._tx_payment_status !== 'pending' && (() => {
+                      const canAdminCancel = ['admin_sede', 'admin_general', 'superadmin'].includes(role || '');
+                      if (!canAdminCancel) return null;
+                      if (!canPerformDeadlineLimitedActions()) {
+                        return (
+                          <div className="flex items-center gap-1 text-xs bg-amber-50 border border-amber-200 rounded px-2 py-1 text-amber-700">
+                            <Clock className="h-3 w-3 flex-shrink-0" />
+                            <span>Bloqueado · {getDeadlineTime()}</span>
+                          </div>
+                        );
+                      }
+                      return (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => handleOpenCancel(order)}
+                          className="gap-1"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Anular
+                        </Button>
+                      );
+                    })()}
                     
                     {/* Badge de "Anulado" si está cancelado */}
                     {order.is_cancelled && (
@@ -2304,7 +2241,7 @@ export default function LunchOrders() {
           onClose={() => setShowActionsModal(false)}
           order={selectedOrderForAction}
           onSuccess={handleActionComplete}
-          canModify={canModifyOrder()}
+          canModify={canPerformDeadlineLimitedActions()}
         />
       )}
 

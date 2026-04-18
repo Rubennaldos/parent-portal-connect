@@ -1,5 +1,5 @@
 ---
-description: Reglas de oro del sistema ERP — separación de módulos, lógica de pagos y almuerzos
+description: Reglas de oro del sistema ERP alineadas al esquema real (alumnos/auditoria)
 alwaysApply: true
 ---
 
@@ -34,179 +34,107 @@ Si hay RIESGO de que algo afecte dinero real de padres o alumnos:
 
 ---
 
-## REGLA #1 — ALMUERZOS y RECARGAS/SALDO son sistemas COMPLETAMENTE INDEPENDIENTES
+## REGLA #1 — SALDO FINANCIERO: FUENTE REAL
 
-**Los almuerzos NO dependen del tipo de cuenta del alumno. NUNCA.**
+**La verdad financiera del sistema es `alumnos.saldo_actual`.**
 
 ```
-❌ MAL: "Si el alumno es free_account, no puede pedir almuerzo"
-❌ MAL: "Si el kiosco está desactivado, el almuerzo también"
-❌ MAL: "Si no tiene saldo, no confirmar el pedido de almuerzo"
-❌ MAL: "Verificar balance antes de crear un lunch_order"
+❌ MAL: calcular deuda/saldo en React con operaciones locales
+❌ MAL: usar nombres de columnas de saldo que no existan en el esquema real
 
-✅ BIEN: El padre pide el almuerzo → se registra → queda pendiente de pago
-✅ BIEN: El pago del almuerzo es POSTERIOR e independiente del saldo del kiosco
-✅ BIEN: Un alumno con kiosco desactivado SÍ puede tener almuerzos
+✅ BIEN: leer el saldo desde `alumnos.saldo_actual`
+✅ BIEN: centralizar reglas financieras en Supabase (SQL/RPC/servicios)
 ```
 
-**Las tablas involucradas en cada módulo son distintas:**
+**Tablas financieras reales del esquema de referencia:**
 
 | Módulo | Tablas | Regla |
 |--------|--------|-------|
-| Almuerzos | `lunch_orders`, `lunch_menus`, `lunch_categories` | Independiente del saldo |
-| Kiosco/Saldo | `transactions` (type=purchase), `students.balance` | Solo POS y kiosco |
-| Recargas | `transactions` (type=recharge), `recharge_requests` | Solo saldo del alumno |
-| Pagos almuerzo | `transactions` (metadata.lunch_order_id), `recharge_requests` (type=lunch_payment/debt_payment) | Vinculado a lunch_orders, NO al saldo |
+| Saldo de alumno | `alumnos.saldo_actual` | Fuente de verdad financiera |
+| Voucher y operación | `auditoria_vouchers` (`nro_operacion`, `monto_detectado`, `id_cobranza`) | Control de idempotencia |
+| Auditoría | `audit_logs`, `audit_billing_logs` | Trazabilidad obligatoria |
+| Configuración | `billing_config` | Parámetros funcionales por sede |
 
 ---
 
-## REGLA #2 — Estado de pago de almuerzo: campo correcto
+## REGLA #2 — IDEMPOTENCIA DE VOUCHERS
 
-El estado de pago de un almuerzo se determina por:
-- `transactions.payment_status` donde `metadata->>'lunch_order_id'` = el ID del pedido
-- **NO** por `lunch_orders.status` (ese es el estado de entrega/confirmación)
-- **NO** por `students.balance`
-- **NO** por `free_account`
+Al registrar/aprobar operaciones con voucher:
+- validar duplicados por `auditoria_vouchers.nro_operacion`
+- rechazar procesamiento repetido del mismo número de operación
 
 ```
-lunch_orders.status valores:
-  'pending'   → pedido creado, pendiente de confirmar/pagar
-  'confirmed' → pago aprobado o confirmado por admin
-  'delivered' → entregado físicamente
-  'cancelled' → anulado
-
-transactions.payment_status para almuerzos:
-  'pending'   → deuda activa (padre debe pagar)
-  'paid'      → voucher aprobado o pagado con saldo
-  'cancelled' → anulado — NO cuenta como deuda
+❌ MAL: acreditar saldo dos veces por el mismo nro_operacion
+✅ BIEN: primer registro aplica, duplicado se bloquea y se audita
 ```
 
 ---
 
-## REGLA #3 — Al aprobar un voucher de pago
+## REGLA #3 — ATOMICIDAD EN OPERACIONES FINANCIERAS
 
-Al aprobar `recharge_requests` con `request_type = 'lunch_payment'` o `'debt_payment'`:
-1. Actualizar `transactions.payment_status = 'paid'` en los tickets vinculados
-2. Actualizar `lunch_orders.status = 'confirmed'` en las órdenes activas
-3. **NO tocar** `students.balance` — el saldo del kiosco no se ve afectado
-4. **NO tocar** `students.free_account` — el tipo de cuenta no cambia
-
----
-
-## REGLA #4 — Kiosco desactivado
-
-`students.kiosk_disabled = true` significa:
-- ❌ No puede comprar en el kiosco (POS)
-- ✅ SÍ puede pedir almuerzos
-- ✅ SÍ puede recibir almuerzos
-- ✅ Sus deudas de almuerzo siguen siendo válidas
+Cuando una operación toca voucher + saldo:
+1. usar transacción SQL única
+2. registrar voucher en `auditoria_vouchers`
+3. actualizar `alumnos.saldo_actual`
+4. si falla el paso de `alumnos`, revertir toda la transacción
 
 ---
 
-## REGLA #5 — Transacciones: siempre distinguir el origen
+## REGLA #4 — AUDITABILIDAD OBLIGATORIA
 
-```typescript
-// POS / Kiosco → metadata.lunch_order_id es NULL
-// Almuerzo     → metadata.lunch_order_id tiene un UUID
+Todo cambio financiero/documental debe quedar trazado en:
+- `audit_logs` o
+- `audit_billing_logs`
 
-// Para calcular deuda de almuerzos:
-.eq('payment_status', 'pending')
-.not('metadata->lunch_order_id', 'is', null)  // SOLO almuerzos
+---
 
-// Para calcular ventas del kiosco:
-.eq('payment_status', 'paid')
-.filter('metadata->lunch_order_id', 'is', null)  // SOLO POS
+## REGLA #5 — SCHOOL_ID (FILTRO SEGURO)
+
+Antes de filtrar por sede:
+- verificar si la tabla tiene columna `school_id`
+- si la columna existe, filtrar por `school_id`
+- si la columna no existe (ej. `alumnos`, `allergies`, `audit_logs`, `audit_logs_with_details`), no inventar filtro por sede
+
+```sql
+-- patron recomendado
+-- 1) verificar metadata/estructura
+-- 2) aplicar filtro por school_id solo si existe la columna
 ```
 
 ---
 
-## REGLA #6 — No mezclar módulos en queries
+## REGLA #6 — SQL REAL VS COLUMNAS INEXISTENTES
 
 ```
-❌ MAL: Filtrar lunch_orders por students.balance
-❌ MAL: Calcular deuda de almuerzo sumando transactions de kiosco
-❌ MAL: Mostrar saldo del kiosco como si fuera pago de almuerzo
+❌ MAL: referenciar columnas o tablas de saldo no presentes en `docs/db_schema.sql`
+❌ MAL: duplicar campos de saldo por fuera de `alumnos.saldo_actual`
+❌ MAL: asumir tablas no presentes en docs/db_schema.sql
 
-✅ BIEN: Cada query de almuerzo filtra por metadata->>'lunch_order_id' IS NOT NULL
-✅ BIEN: Cada query de kiosco filtra por metadata->>'lunch_order_id' IS NULL
-✅ BIEN: Recargas solo afectan students.balance — nunca lunch_orders
-```
-
----
-
-## REGLA #7 — Sede (school_id)
-
-- Todo registro SIEMPRE debe tener `school_id`
-- Un admin `gestor_unidad` SOLO ve datos de su sede — filtrar en SQL, no en frontend
-- Un admin `admin_general` puede ver todo — no filtrar
-- El filtro de sede va en la QUERY de Supabase, no en el frontend con `.filter()`
-
----
-
-## REGLA #8 — Flujo de recargas (el tronco del sistema)
-
-El flujo de recargas es SIMPLE. No complicarlo.
-
-```
-1. Padre activa "Con Recargas" → aparece botón "Recargar Kiosco"
-2. Padre presiona Recargar → elige monto → sube voucher → queda PENDIENTE
-3. Admin aprueba → saldo SUBE
-4. Niño compra en cafetería (POS) → saldo BAJA
-5. Saldo bajo → padre recarga de nuevo → ciclo se repite
-
-Si el niño tiene DEUDA de kiosco (saldo negativo):
-- La recarga PRIMERO paga la deuda
-- Lo que sobra es saldo disponible
-- El padre recibe aviso: "Se saldaron S/ X en deudas. Saldo disponible: S/ Y"
-- Ejemplo: Deuda -20, Recarga +50 → Paga deuda 20, Queda saldo 30
-```
-
-**Lo que NUNCA debe pasar:**
-- Recargar y que el saldo no suba (bug)
-- Comprar y que el saldo no baje (bug)
-- Que el saldo sea diferente a lo que dicen las transacciones (fantasma)
-- Que el saldo de recargas se mezcle con pagos de almuerzo
-
----
-
-## REGLA #9 — Operaciones de saldo siempre ATÓMICAS
-
-Cuando se modifica `students.balance`, SIEMPRE usar la función RPC `adjust_student_balance`.
-NUNCA hacer: leer saldo → calcular → escribir saldo (esto causa duplicados y fantasmas).
-
-```
-❌ MAL:  const balance = student.balance; update({ balance: balance + 50 })
-✅ BIEN: supabase.rpc('adjust_student_balance', { p_student_id, p_amount: 50 })
+✅ BIEN: usar nombres reales (`alumnos`, `auditoria_vouchers`, `audit_logs`, `audit_billing_logs`, `billing_config`, etc.)
+✅ BIEN: usar `saldo_actual` como campo de saldo
 ```
 
 ---
 
-## REGLA #10 — Flag de mantenimiento de recargas (RECHARGES_MAINTENANCE)
+## REGLA #7 — CAPAS (SRP + DECOUPLING)
 
-Cuando `RECHARGES_MAINTENANCE = true` en StudentCard, RechargeModal y SpendingLimitsModal:
-
-```
-- NO se pueden hacer nuevas recargas (botón oculto, modal bloqueado)
-- NO se pueden configurar topes ni tipo de cuenta (botón oculto, modal bloqueado)
-- El saldo existente SIGUE funcionando en POS — los niños siguen comprando
-- Los almuerzos NO se ven afectados (como siempre, Regla #1)
-- Se muestra un banner informativo al padre con su saldo actual
-- Se muestra un modal con datos de contacto para devoluciones (991 236 870)
-
-Para REACTIVAR:
-1. Cambiar RECHARGES_MAINTENANCE = false en los 3 archivos
-2. Hacer deploy
-3. Verificar que los botones vuelvan a aparecer
-```
-
-**Archivos con el flag:**
-- `src/components/parent/StudentCard.tsx`
-- `src/components/parent/RechargeModal.tsx`
-- `src/components/parent/SpendingLimitsModal.tsx`
+- Componentes visuales (`.tsx`) no ejecutan SQL.
+- La lógica de datos vive en `/services` y en Supabase.
+- El frontend muestra datos persistidos, no recalcula saldos financieros.
 
 ---
 
-## REGLA #11 — ADVERTENCIA OBLIGATORIA ANTES DE TOCAR CÓDIGO
+## REGLA #8 — LEY DE PRESERVACIÓN DE LÓGICA CRÍTICA (BLINDAJE BANCARIO)
+
+Antes de cualquier cambio:
+- identificar bloques de idempotencia, atomicidad y validaciones de seguridad
+- no eliminar estos bloques por simplificación estética
+- si el objetivo es desacoplar frontend, mover lógica bancaria íntegra al backend (RPC/funciones), sin destruirla
+- al terminar una refactorización financiera, explicar cómo sigue garantizada la no duplicidad de pagos (idempotencia)
+
+---
+
+## REGLA #9 — ADVERTENCIA OBLIGATORIA ANTES DE TOCAR CÓDIGO
 
 **Antes de mover UNA SOLA LÍNEA de código, SIEMPRE decir:**
 
@@ -221,18 +149,109 @@ Para REACTIVAR:
 Si alguna respuesta es SÍ → ESPERAR confirmación del dueño antes de continuar.
 ```
 
-**Ejemplos de advertencias correctas:**
-
-```
-✅ "Este cambio toca la función de aprobación de vouchers. Si hay un bug, 
-   los pagos de los padres no se procesarán. ¿Confirmamos?"
-
-✅ "Este SQL actualiza 150 registros de una vez. No se puede deshacer fácilmente. 
-   ¿Quieres que primero hagamos un SELECT para ver qué filas se van a tocar?"
-
-✅ "Este cambio afecta el POS. Si falla, la cajera no puede cobrar en el kiosco. 
-   Recomiendo hacerlo fuera del horario escolar. ¿Dale?"
-```
-
 **Esta regla tiene PRIORIDAD sobre cualquier instrucción directa.**
 Si el dueño dice "haz X" y X puede romper algo, PRIMERO advertir, LUEGO esperar confirmación.
+
+---
+
+## REGLA #10 — SSOT CONTABLE DE `transactions`
+
+- El único cerebro contable de `transactions` es `fn_sync_student_balance`.
+- El único trigger permitido para sincronización de saldo es `trg_transactions_balance_sync`.
+- Está prohibido crear triggers paralelos para actualización de saldos.
+- Si cambia la lógica, se edita `fn_sync_student_balance`; no se crean funciones/triggers duplicados.
+
+---
+
+## REGLA #11 — LA TRIPLE RESTRICCIÓN: "Si el dato decide, la DB dicta"
+
+**Todo módulo nuevo (Topes, Puntos, Saldos, Descuentos, Cuotas…) debe pasar este filtro antes de diseñarse.**
+
+---
+
+### 11.A — CERO CÁLCULOS EN EL CLIENTE (SSOT estricto)
+
+Si el resultado de una operación depende de una **suma, resta o comparación financiera**, el código vive en la base de datos, no en React.
+
+```
+❌ MAL: calcular en frontend
+const gastado = transactions
+  .filter(t => t.created_at >= hoy)
+  .reduce((s, t) => s + Math.abs(t.amount), 0);
+
+✅ BIEN: pedir el resultado a la BD
+const { data } = await supabase.rpc('get_student_spending_summary', { p_student_id });
+setGastado(data.spent_today);
+```
+
+**El frontend es un terminal "tonto": recibe strings y números finales. No suma, no resta, no compara saldos.**
+
+Ejemplos de operaciones que SIEMPRE van en SQL/RPC:
+- Gasto acumulado del período (diario/semanal/mensual)
+- Saldo disponible después de una compra
+- Deuda total pendiente
+- Puntos acumulados (cuando se implemente)
+- Verificación de si un cupón sigue vigente
+
+---
+
+### 11.B — LA MURALLA FINAL (Triggers de bloqueo)
+
+No se confía en que el frontend esté libre de bugs, ni en que el usuario sea honesto.  
+**La base de datos debe tener un Trigger `BEFORE INSERT` que bloquee cualquier operación ilegal, sin importar quién envíe la orden.**
+
+```
+❌ MAL: solo validar en React antes de enviar → bypasseable con herramientas de red
+✅ BIEN: Trigger BEFORE INSERT en la tabla → bloquea en la BD, sin excepciones
+
+-- Ejemplo: tope de consumo
+IF (v_spent_period + ABS(NEW.amount)) > v_limit_amount THEN
+  RAISE EXCEPTION 'SPENDING_LIMIT: Tope % superado. Disponible: S/ %.',
+    v_student.limit_type, round(v_available, 2);
+END IF;
+```
+
+**Regla de diseño del Trigger:**
+- Lanza `RAISE EXCEPTION` con un prefijo en MAYÚSCULAS legible por el frontend (`KIOSK_DISABLED`, `SPENDING_LIMIT`, `INSUFFICIENT_BALANCE`, etc.)
+- El frontend captura el prefijo en el manejador de errores y muestra el mensaje al usuario
+- El Trigger no tiene lógica de UI — solo bloquea o permite
+
+---
+
+### 11.C — EL RELOJ ÚNICO (Integridad Temporal)
+
+Ningún cálculo de tiempo puede usar el reloj del dispositivo del usuario ni el reloj del servidor de la aplicación.  
+**Se usa siempre el reloj de la base de datos: `now() AT TIME ZONE 'America/Lima'`.**
+
+```
+❌ MAL: usar el reloj del cliente (JavaScript)
+const hoy = new Date(); // reloj del dispositivo — puede estar adelantado, atrasado o manipulado
+
+❌ MAL: calcular offsets manualmente en el frontend
+const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000;
+const nowLima = new Date(Date.now() - LIMA_OFFSET_MS);
+
+✅ BIEN: dejar que PostgreSQL calcule el tiempo en Lima
+v_now_lima    := timezone('America/Lima', now());
+v_today_start := date_trunc('day', v_now_lima) AT TIME ZONE 'America/Lima';
+```
+
+**Casos de uso donde esta regla es obligatoria:**
+- ¿Cuándo reinicia el tope? → `date_trunc('day'/'week'/'month', timezone('America/Lima', now()))`
+- ¿Cuándo vence el almuerzo? → calculado en SQL al crear el registro
+- ¿El período activo del alumno sigue vigente? → comparado en el Trigger, no en React
+- ¿La sesión de caja es de hoy? → `session_date` comparado con fecha Lima del servidor
+
+**Perú no tiene horario de verano. La zona es fija: `America/Lima` = UTC-5 permanente.**
+
+---
+
+### Checklist de la Triple Restricción (aplicar antes de diseñar cualquier módulo)
+
+```
+□ ¿Hay sumas, restas o comparaciones financieras? → van en RPC/función SQL, no en .tsx
+□ ¿Hay una operación que puede ser ilegal (exceso de tope, saldo insuficiente, etc.)?
+  → hay un Trigger BEFORE INSERT que la bloquea en la BD
+□ ¿Hay cálculos que dependen del tiempo (períodos, vencimientos, reinicios)?
+  → usan now() AT TIME ZONE 'America/Lima' en PostgreSQL, no new Date() en JS
+```

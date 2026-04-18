@@ -1,0 +1,65 @@
+## Estatutos Universales (alineados a docs/db_schema.sql)
+
+1) IDEMPOTENCIA
+- Verificar `auditoria_vouchers.nro_operacion` para evitar duplicados.
+
+2) ATOMICIDAD
+- Usar transacciones SQL.
+- Si falla el registro/actualizacion en `alumnos`, se revierte el voucher.
+
+3) AUDITABILIDAD
+- Todo cambio debe registrarse en `audit_logs` o `audit_billing_logs`.
+
+4) SSOT
+- La verdad financiera es `alumnos.saldo_actual`.
+- Prohibido calcular deudas en React.
+
+5) DRY
+- No repetir logica que ya este en funciones de Supabase.
+
+6) SRP
+- Componentes visuales (`.tsx`) no manejan SQL.
+- La logica de datos vive en `/services`.
+
+7) DECOUPLING
+- El frontend solo muestra lo que dicta la base de datos.
+
+8) SCHOOL_ID
+- Antes de filtrar por `school_id`, verificar que la tabla tenga esa columna.
+
+9) LEY DE PRESERVACION DE LOGICA CRITICA (BLINDAJE BANCARIO)
+- IDENTIFICACION: antes de modificar cualquier archivo, identificar bloques de:
+  - idempotencia (tokens/referencias operativas, `auditoria_vouchers.nro_operacion`)
+  - atomicidad (transacciones SQL)
+  - validaciones de seguridad
+- PROHIBICION DE ELIMINACION: no simplificar eliminando estos bloques.
+- RELOCALIZACION, NO DESTRUCCION: si se limpia frontend, la logica bancaria se mueve integra al backend (RPC/funciones Supabase), no se borra.
+- TEST DE INTEGRIDAD: al terminar cualquier refactorizacion financiera, explicar explicitamente como se evita duplicar pagos (idempotencia).
+
+10) SSOT CONTABLE DE TRANSACTIONS (UNICO CEREBRO)
+- `fn_sync_student_balance` es la UNICA funcion autorizada para sincronizar saldos desde `transactions`.
+- `trg_transactions_balance_sync` es el UNICO trigger autorizado para disparar esa sincronizacion.
+- PROHIBIDO crear triggers adicionales para actualizar saldos.
+- Cualquier cambio de logica de saldo en `transactions` debe hacerse EDITANDO `fn_sync_student_balance` (no duplicando funciones/triggers).
+
+11) LA TRIPLE RESTRICCION — "Si el dato decide, la DB dicta"
+Todo modulo nuevo (Topes, Puntos, Saldos, Descuentos, Cuotas) pasa este filtro ANTES de diseñarse:
+
+  11.A — CERO CALCULOS EN EL CLIENTE (SSOT estricto)
+  - Si el resultado depende de una suma, resta o comparacion financiera → SQL/RPC, no React.
+  - PROHIBIDO: .reduce(), .filter() sobre montos en componentes .tsx
+  - El frontend es un terminal "tonto": recibe numeros finales, no los calcula.
+  - Ejemplos obligatoriamente en SQL: gasto acumulado, saldo disponible, deuda total, puntos, vigencia de cupon.
+
+  11.B — LA MURALLA FINAL (Triggers de bloqueo)
+  - Toda operacion potencialmente ilegal tiene un Trigger BEFORE INSERT en la BD.
+  - El trigger lanza RAISE EXCEPTION con prefijo en MAYUSCULAS legible por el frontend.
+  - PROHIBIDO confiar solo en la validacion del frontend (bypasseable por red).
+  - Prefijos estandar: KIOSK_DISABLED, SPENDING_LIMIT, INSUFFICIENT_BALANCE, PRODUCT_NOT_FOUND.
+
+  11.C — EL RELOJ UNICO (Integridad Temporal)
+  - PROHIBIDO: new Date() para calculos de periodos financieros en el frontend.
+  - PROHIBIDO: offsets manuales en JavaScript (LIMA_OFFSET_MS = 5 * 60 * 60 * 1000).
+  - OBLIGATORIO: now() AT TIME ZONE 'America/Lima' en PostgreSQL para todo calculo temporal.
+  - Peru no tiene horario de verano. America/Lima = UTC-5 permanente.
+  - Aplica a: reinicios de tope, vencimientos de almuerzo, periodos de sesion de caja.

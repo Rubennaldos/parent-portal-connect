@@ -2,6 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { logErrorAsync } from '@/lib/logError';
+import {
+  buildClientePayload,
+  buildAutoEmisionBody,
+  logEmisionFallida,
+  type RawInvoiceClientData,
+} from '@/lib/invoicingHelpers';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
@@ -1049,15 +1055,12 @@ export const VoucherApproval = () => {
         });
 
         // ── Emisión automática de Boleta/Factura si el padre lo solicitó ──
-        const rInvType   = (rpcData?.invoice_type   ?? (req as any).invoice_type)   as string | null;
-        const rInvClient = (rpcData?.invoice_client_data ?? (req as any).invoice_client_data) as Record<string, string> | null;
+        const rInvType    = (rpcData?.invoice_type        ?? (req as any).invoice_type)        as string | null;
+        const rInvClient  = (rpcData?.invoice_client_data ?? (req as any).invoice_client_data) as RawInvoiceClientData;
         const schoolIdForEmit = rpcData?.school_id ?? req.school_id;
 
         if (rInvType && (rInvType === 'boleta' || rInvType === 'factura') && updatedTxIds.length > 0) {
           try {
-            const round2 = (n: number) => Math.round(n * 100) / 100;
-            const totalForInvoice = round2(approvedAmount);
-
             let igvPct = 18;
             try {
               const { data: cfg } = await supabase
@@ -1068,45 +1071,23 @@ export const VoucherApproval = () => {
               if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
             } catch { /* usa 18% de fallback */ }
 
-            const totalCents  = Math.round(totalForInvoice * 100);
-            const divisorX100 = 100 + igvPct;
-            const baseCents   = Math.floor(totalCents * 100 / divisorX100);
-            const igvCents    = totalCents - baseCents;
-            const base        = baseCents / 100;
-            const igv         = igvCents  / 100;
-
-            const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
-              body: {
-                school_id:      schoolIdForEmit || req.school_id,
-                // Pasar la primera transacción actualizada para que invoices.transaction_id
-                // quede registrado. Esto permite que get_payment_history y void_payment
-                // encuentren la boleta desde cualquier dirección del JOIN.
-                transaction_id: updatedTxIds[0] ?? null,
-                tipo: rInvType === 'factura' ? 1 : 2,
-                cliente: {
-                  doc_type:     rInvClient?.doc_type     || '-',
-                  doc_number:   rInvClient?.doc_number   || '-',
-                  razon_social: rInvClient?.razon_social || req.students?.full_name || 'Consumidor Final',
-                  direccion:    rInvClient?.direccion    || '-',
-                },
-                items: [{
-                  unidad_de_medida: 'NIU',
-                  codigo:           'PAGO',
-                  descripcion:      `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
-                  cantidad:         1,
-                  valor_unitario:   base,
-                  precio_unitario:  totalForInvoice,
-                  descuento:        '',
-                  subtotal:         base,
-                  tipo_de_igv:      1,
-                  igv,
-                  total:            totalForInvoice,
-                  anticipo_regularizacion: false,
-                }],
-                monto_total:    totalForInvoice,
-                payment_method: req.payment_method,
-              },
+            // buildAutoEmisionBody centraliza la aritmética IGV y siempre incluye email.
+            const emisionBody = buildAutoEmisionBody({
+              schoolId:          schoolIdForEmit || req.school_id,
+              txId:              updatedTxIds[0] ?? null,
+              invoiceType:       rInvType,
+              invoiceClientData: rInvClient,
+              fallbackName:      req.students?.full_name || 'Alumno',
+              amount:            approvedAmount,
+              igvPct,
+              descriptionLine:   `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
+              paymentMethod:     req.payment_method,
             });
+
+            const { data: emitResult, error: emitErr } = await supabase.functions.invoke(
+              'generate-document',
+              { body: emisionBody },
+            );
 
             if (!emitErr && emitResult?.success && emitResult.documento?.id) {
               await supabase
@@ -1115,7 +1096,8 @@ export const VoucherApproval = () => {
                 .in('id', updatedTxIds);
               toast({
                 title: '✅ Comprobante emitido',
-                description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} generada automáticamente con IGV ${igvPct}%.`,
+                description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} generada automáticamente con IGV ${igvPct}%.` +
+                  (buildClientePayload(rInvClient).email ? ' PDF enviado al correo del cliente.' : ''),
               });
             } else {
               const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
@@ -1124,6 +1106,14 @@ export const VoucherApproval = () => {
                 .update({ billing_status: 'failed' })
                 .in('id', updatedTxIds)
                 .eq('billing_status', 'pending');
+              logEmisionFallida(nubefactError, {
+                schoolId: schoolIdForEmit || req.school_id,
+                txIds:    updatedTxIds,
+                amount:   approvedAmount,
+                invoiceType: rInvType,
+                parentName:  req.profiles?.full_name || req.profiles?.email || '',
+                reqId:    req.id,
+              });
               toast({
                 variant: 'destructive',
                 title: '⚠️ Pago aprobado — Error SUNAT',
@@ -1135,9 +1125,13 @@ export const VoucherApproval = () => {
               });
             }
           } catch (invoiceErr: any) {
-            logErrorAsync('nubefact', `Emisión automática falló con excepción: ${invoiceErr?.message ?? 'Desconocido'}`, {
-              schoolId: req.school_id,
-              context: { req_id: req.id, amount: approvedAmount, tx_ids: updatedTxIds, error: invoiceErr?.message },
+            logEmisionFallida(invoiceErr, {
+              schoolId:    schoolIdForEmit || req.school_id,
+              txIds:       updatedTxIds,
+              amount:      approvedAmount,
+              invoiceType: rInvType,
+              parentName:  req.profiles?.full_name || req.profiles?.email || '',
+              reqId:       req.id,
             });
             await supabase
               .from('transactions')
@@ -1246,16 +1240,13 @@ export const VoucherApproval = () => {
         });
 
         // ── Generar boleta por el monto REAL del voucher (si lo hay) ─────────────
-        // El generate-document necesita el payload COMPLETO, no solo transaction_id.
-        // Reutilizamos la misma lógica de construcción del flujo normal (líneas ~1200-1258).
         if (shouldInvoice && fiscalTxId) {
           try {
             const splitInvType   = (req as any).invoice_type as string | null;
-            const splitInvClient = (req as any).invoice_client_data as Record<string, string> | null;
+            const splitInvClient = (req as any).invoice_client_data as RawInvoiceClientData;
 
             // Solo emitir si el padre eligió boleta/factura con datos completos
             if (splitInvType && (splitInvType === 'boleta' || splitInvType === 'factura')) {
-              // ── IGV dinámico (igual que en el flujo normal) ───────────────────
               let igvPct = 18;
               try {
                 const { data: cfg } = await supabase
@@ -1266,69 +1257,49 @@ export const VoucherApproval = () => {
                 if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
               } catch { /* usa 18% de fallback */ }
 
-              // ── Matemática de centavos sin ruido IEEE 754 ─────────────────────
-              const totalCents  = Math.round(fiscalAmount * 100);
-              const divisorX100 = 100 + igvPct;
-              const baseCents   = Math.floor(totalCents * 100 / divisorX100);
-              const igvCents    = totalCents - baseCents;
-              const base        = baseCents / 100;
-              const igv         = igvCents  / 100;
+              // buildAutoEmisionBody centraliza aritmética IGV y siempre incluye email.
+              const emisionBody = buildAutoEmisionBody({
+                schoolId:          req.school_id,
+                txId:              fiscalTxId,
+                invoiceType:       splitInvType,
+                invoiceClientData: splitInvClient,
+                fallbackName:      req.students?.full_name || 'Alumno',
+                amount:            fiscalAmount,
+                igvPct,
+                descriptionLine:   `Pago deuda (billetera+voucher) — ${req.students?.full_name || 'Alumno'}`,
+                paymentMethod:     req.payment_method,
+              });
 
               const { data: emitResult, error: emitErr } = await supabase.functions.invoke(
                 'generate-document',
-                {
-                  body: {
-                    school_id:      req.school_id,
-                    transaction_id: fiscalTxId,
-                    tipo: splitInvType === 'factura' ? 1 : 2,
-                    cliente: {
-                      doc_type:     splitInvClient?.doc_type || '-',
-                      doc_number:   splitInvClient?.doc_number || '-',
-                      razon_social: splitInvClient?.razon_social || req.students?.full_name || 'Consumidor Final',
-                      direccion:    splitInvClient?.direccion || '-',
-                    },
-                    items: [{
-                      unidad_de_medida: 'NIU',
-                      codigo:           'PAGO',
-                      descripcion:      `Pago deuda (billetera+voucher) — ${req.students?.full_name || 'Alumno'}`,
-                      cantidad:         1,
-                      valor_unitario:   base,
-                      precio_unitario:  fiscalAmount,
-                      descuento:        '',
-                      subtotal:         base,
-                      tipo_de_igv:      1,
-                      igv,
-                      total:            fiscalAmount,
-                      anticipo_regularizacion: false,
-                    }],
-                    monto_total:    fiscalAmount,
-                    payment_method: req.payment_method,
-                  },
-                }
+                { body: emisionBody },
               );
 
               if (!emitErr && emitResult?.success && emitResult.documento?.id) {
-                // Marcar la transacción fiscal como enviada a SUNAT
                 await supabase
                   .from('transactions')
                   .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
                   .eq('id', fiscalTxId);
                 toast({
                   title: '✅ Boleta emitida',
-                  description: `${splitInvType === 'factura' ? 'Factura' : 'Boleta'} de S/ ${fiscalAmount.toFixed(2)} generada con IGV ${igvPct}%.`,
+                  description: `${splitInvType === 'factura' ? 'Factura' : 'Boleta'} de S/ ${fiscalAmount.toFixed(2)} generada con IGV ${igvPct}%.` +
+                    (buildClientePayload(splitInvClient).email ? ' PDF enviado al correo del cliente.' : ''),
                 });
               } else {
-                // Nubefact falló: marcar la transacción fiscal como 'failed' para
-                // que el CierreMensual la detecte y el admin pueda reintentarla.
                 const nubefactError = emitResult?.error || emitErr?.message || 'Error desconocido';
-                console.warn('[split] Nubefact falló:', nubefactError);
-                if (fiscalTxId) {
-                  await supabase
-                    .from('transactions')
-                    .update({ billing_status: 'failed' })
-                    .eq('id', fiscalTxId)
-                    .eq('billing_status', 'pending');
-                }
+                logEmisionFallida(nubefactError, {
+                  schoolId:    req.school_id,
+                  txIds:       fiscalTxId ? [fiscalTxId] : [],
+                  amount:      fiscalAmount,
+                  invoiceType: splitInvType,
+                  parentName:  req.profiles?.full_name || req.profiles?.email || '',
+                  reqId:       req.id,
+                });
+                await supabase
+                  .from('transactions')
+                  .update({ billing_status: 'failed' })
+                  .eq('id', fiscalTxId)
+                  .eq('billing_status', 'pending');
                 toast({
                   variant: 'destructive',
                   title: '⚠️ Cobro exitoso — Error SUNAT',
@@ -1340,8 +1311,6 @@ export const VoucherApproval = () => {
                 });
               }
             } else {
-              // Sin tipo de comprobante elegido: el pago quedó registrado sin boleta
-              // La transacción fiscal queda en 'pending' para emisión manual posterior
               toast({
                 title: '✅ Pago aprobado',
                 description:
@@ -1350,14 +1319,19 @@ export const VoucherApproval = () => {
               });
             }
           } catch (invEx: any) {
-            console.warn('Error al generar boleta split:', invEx.message);
-            if (fiscalTxId) {
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'failed' })
-                .eq('id', fiscalTxId)
-                .eq('billing_status', 'pending');
-            }
+            logEmisionFallida(invEx, {
+              schoolId:    req.school_id,
+              txIds:       fiscalTxId ? [fiscalTxId] : [],
+              amount:      fiscalAmount,
+              invoiceType: (req as any).invoice_type || 'boleta',
+              parentName:  req.profiles?.full_name || req.profiles?.email || '',
+              reqId:       req.id,
+            });
+            await supabase
+              .from('transactions')
+              .update({ billing_status: 'failed' })
+              .eq('id', fiscalTxId)
+              .eq('billing_status', 'pending');
             toast({
               variant: 'destructive',
               title: '⚠️ Cobro exitoso — Error SUNAT (excepción)',
@@ -1424,11 +1398,11 @@ export const VoucherApproval = () => {
           throw txErr;
         }
 
-        // Activar modo "Con Recargas"
-        await supabase
-          .from('students')
-          .update({ free_account: false })
-          .eq('id', req.student_id);
+        // Activar modo "Con Recargas" usando la misma ruta auditada del portal
+        await supabase.rpc('set_student_payment_mode', {
+          p_student_id: req.student_id,
+          p_target_mode: 'recharge',
+        });
 
         // ══════════════════════════════════════════════════════════
         // 💳 AUTO-SALDAR deudas pendientes del kiosco con el nuevo saldo

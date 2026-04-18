@@ -1,45 +1,43 @@
 ---
-description: Hoja de ruta para reconstruir recargas, topes y carrito centralizado
+description: Hoja de ruta documental alineada al esquema real de alumnos y vouchers
 alwaysApply: true
 ---
 
-# HOJA DE RUTA — Reconstrucción de Recargas, Topes y Carrito
+# HOJA DE RUTA — Operación de saldo con esquema real
 
 ## ESTADO ACTUAL
-- Recargas y topes PAUSADOS con `RECHARGES_MAINTENANCE = true`
-- Banner informativo visible para todos los padres
-- Saldos existentes siguen funcionando en el kiosco (POS)
-- Almuerzos funcionan normal (independientes)
+- Tabla de saldo operativo: `alumnos` con columna `saldo_actual`
+- Tabla de vouchers: `auditoria_vouchers` (`nro_operacion`, `monto_detectado`, `id_cobranza`)
+- Tablas de trazabilidad: `audit_logs`, `audit_billing_logs`
+- La documentación debe reflejar exclusivamente `docs/db_schema.sql`
 
 ## FASES DEL PLAN
 
 ### FASE 0: Limpieza de datos
-- SQL de auditoría para verificar saldos
-- Resetear topes a 'none' para todos
-- NO tocar free_account ni balance
+- Auditar referencias a nombres obsoletos de tablas/columnas de saldo
+- Estandarizar nomenclatura documental a `alumnos.saldo_actual`
+- Verificar tablas con y sin `school_id`
 
 ### FASE 1: Recargas (flujo limpio)
-- Padre recarga → admin aprueba → saldo sube. Punto.
-- Validaciones: monto máximo, código duplicado, doble envío
-- RPC atómico `adjust_student_balance` para todo cambio de saldo
-- Guard contra doble aprobación en VoucherApproval
+- Registrar voucher en `auditoria_vouchers`
+- Validar idempotencia por `nro_operacion`
+- Aplicar actualización de `alumnos.saldo_actual` solo en transacción SQL atómica
+- Auditar cada cambio en `audit_logs` o `audit_billing_logs`
 
 ### FASE 2: Topes + Cuenta Libre
-- Topes (diario/semanal/mensual) funcionan con cuenta libre
-- RPC `check_student_spending_limit` verifica antes de cada venta
-- Kiosco desactivado = solo almuerzos
+- Toda regla de tope/saldo debe usar columnas reales del esquema
+- Prohibido documentar columnas no presentes en `docs/db_schema.sql`
+- El frontend consume resultados, no calcula deuda financiera
 
 ### FASE 3: Topes + Recargas
-- Recargas + tope: primero verifica tope, luego descuenta saldo
-- Recargas sin tope: descuenta hasta acabarse
-- Sin saldo = NO puede comprar (no crea deuda)
+- Consolidar reglas financieras bajo SSOT: `alumnos.saldo_actual`
+- Prohibido cálculos de deuda en React
+- Evitar duplicación de lógica ya existente en Supabase
 
 ### FASE 4: Carrito Centralizado
-- UN solo lugar para pagar TODO (recargas, almuerzos, deudas)
-- Componente PaymentCart agrupa todo lo pendiente
-- Pestaña "Pagos" → "Carrito" con icono y contador
-- Eliminar flujos de pago duplicados
-- Todo pago pasa por el carrito
+- Cualquier interfaz consume datos servidos por servicios
+- Componentes `.tsx` no ejecutan SQL (SRP)
+- Persistencia y reglas de negocio quedan desacopladas del frontend
 
 ### FASE 5: Pruebas de estrés
 - Concurrencia, errores humanos, datos sucios, UI/UX, rendimiento
@@ -47,18 +45,14 @@ alwaysApply: true
 ## REGLAS DURANTE LA RECONSTRUCCIÓN
 
 ```
-1. NUNCA modificar students.balance directamente → usar adjust_student_balance RPC
-2. NUNCA mezclar almuerzos con recargas (Regla #1 de oro)
-3. Cada fase tiene su QA ANTES de pasar a la siguiente
-4. El flag RECHARGES_MAINTENANCE se quita SOLO al final de Fase 3
-5. El carrito (Fase 4) se puede hacer con el sistema ya reactivado
+1. NUNCA usar nombres de saldo distintos a `alumnos.saldo_actual` en documentación funcional.
+2. SIEMPRE usar `alumnos.saldo_actual` como saldo real.
+3. Verificar `school_id` antes de filtrar por sede.
+4. Toda operación con voucher debe validar `auditoria_vouchers.nro_operacion`.
+5. Todo cambio financiero debe quedar auditado.
 ```
 
 ## ARCHIVOS CLAVE
-- Recargas padre: `src/components/parent/RechargeModal.tsx`
-- Aprobación admin: `src/components/billing/VoucherApproval.tsx`
-- POS kiosco: `src/pages/POS.tsx`
-- Tarjeta hijo: `src/components/parent/StudentCard.tsx`
-- Config topes: `src/components/parent/SpendingLimitsModal.tsx`
-- Pagos/deudas: `src/components/parent/PaymentsTab.tsx`
-- Portal padre: `src/pages/Index.tsx`
+- Esquema base: `docs/db_schema.sql`
+- Reglas: `.cursor/rules/reglas-de-oro.mdc`
+- SSOT deuda/saldo: `.cursor/rules/fuente-de-verdad-deuda.mdc`
