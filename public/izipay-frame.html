@@ -9,9 +9,10 @@
     href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.css">
 
   <!--
-    NO hay <script> estático de KR.js aquí.
-    Se inyecta dinámicamente con kr-public-key ya configurado.
-    Esto elimina CLIENT_501 (llave vacía) y CLIENT_725 (auto-render prematuro).
+    ESTRATEGIA DEFINITIVA:
+    1. NO hay <script> estático → evita CLIENT_501 (llave vacía al cargar)
+    2. NO hay <div class="kr-embedded"> en el HTML → evita CLIENT_725 (auto-render)
+    3. El div se crea por código DESPUÉS de setFormToken → render solo una vez
   -->
 
   <style>
@@ -40,7 +41,7 @@
       display: flex; align-items: center; justify-content: center;
     }
     .header-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
-    .header-sub { font-size: 11px; color: rgba(191,219,254,1); margin-top: 2px; }
+    .header-sub   { font-size: 11px; color: rgba(191,219,254,1); margin-top: 2px; }
     .brands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
     .brand-pill {
       font-size: 9px; font-weight: 700; color: rgba(255,255,255,.9);
@@ -81,9 +82,7 @@
       padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
     }
 
-    .kr-embedded { width: 100%; }
-
-    /* ── KR.js button ── */
+    /* ── KR.js button cosmético ── */
     .kr-payment-button {
       width: 100% !important;
       background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
@@ -100,7 +99,7 @@
     .kr-payment-button:hover  { opacity: .92 !important; }
     .kr-payment-button:active { opacity: .80 !important; }
 
-    /* ── Footer seals ── */
+    /* ── Sellos ── */
     .seals {
       display: flex; align-items: center; justify-content: center;
       gap: 10px; margin-top: 14px; flex-wrap: wrap;
@@ -113,7 +112,7 @@
       color: #64748b; letter-spacing: .05em; text-transform: uppercase;
     }
 
-    /* ── Success screen ── */
+    /* ── Pantalla de éxito ── */
     #success-screen {
       display: none;
       text-align: center; padding: 40px 20px;
@@ -125,7 +124,7 @@
       margin: 0 auto 16px;
     }
     .success-title { font-size: 20px; font-weight: 800; color: #166534; margin-bottom: 8px; }
-    .success-sub { font-size: 13px; color: #15803d; line-height: 1.5; }
+    .success-sub   { font-size: 13px; color: #15803d; line-height: 1.5; }
     .close-btn {
       margin-top: 24px;
       background: #16a34a; color: white;
@@ -167,13 +166,16 @@
   <!-- Body -->
   <div class="body">
 
+    <!-- Spinner: visible mientras carga -->
     <div id="loader">
       <div class="spinner"></div>
       <span>Cargando formulario seguro…</span>
     </div>
 
+    <!-- Error técnico -->
     <div id="error-msg"></div>
 
+    <!-- Pantalla de éxito (post-pago) -->
     <div id="success-screen">
       <div class="success-icon">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
@@ -186,11 +188,16 @@
       <button class="close-btn" onclick="window.close()">Cerrar ventana</button>
     </div>
 
-    <div class="form-card" id="form-card">
-      <div class="kr-embedded"></div>
+    <!--
+      #form-container: VACÍO en el HTML.
+      El <div class="kr-embedded"> se creará por código,
+      DESPUÉS de setFormToken → el SDK no tiene nada que auto-renderizar.
+    -->
+    <div class="form-card" id="form-card" style="display:none;">
+      <div id="form-container"></div>
     </div>
 
-    <div class="seals" id="seals">
+    <div class="seals" id="seals" style="display:none;">
       <div class="seal">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
           stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -207,11 +214,7 @@
   </div>
 
   <script>
-    // ── 1. Leer parámetros PRIMERO, antes de tocar KR ──────────────────────
-    var params    = new URLSearchParams(window.location.search);
-    var formToken = params.get('token') || '';
-    var publicKey = params.get('key')   || '';
-
+    // ── Utilidades de comunicación ──────────────────────────────────────────
     function send(msg) {
       try {
         if (window.opener && !window.opener.closed) {
@@ -239,12 +242,19 @@
       document.body.style.background = '#f0fdf4';
     }
 
-    if (!formToken || !publicKey) {
-      showError('Error: parámetros de pago no recibidos. Cierra esta ventana e intenta de nuevo.');
-    } else {
-      // ── 2. Inyectar KR.js DINÁMICAMENTE con kr-public-key ya en el atributo ──
-      //    Así el SDK nace con su "DNI" puesto → adiós CLIENT_501
-      //    No hay script estático → adiós auto-render prematuro → adiós CLIENT_725
+    // ── Main ─────────────────────────────────────────────────────────────────
+    var params    = new URLSearchParams(window.location.search);
+    var formToken = params.get('token') || '';
+    var publicKey = params.get('key')   || '';
+
+    async function initIzipay() {
+      if (!formToken || !publicKey) {
+        showError('Error: parámetros de pago no recibidos. Cierra esta ventana e intenta de nuevo.');
+        return;
+      }
+
+      // ── PASO 1: Cargar KR.js dinámicamente con la llave ya en el atributo ──
+      // El div .kr-embedded NO existe todavía → KR.js no puede auto-renderizar
       var script = document.createElement('script');
       script.src = 'https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js';
       script.setAttribute('kr-public-key',                   publicKey);
@@ -253,33 +263,51 @@
       script.setAttribute('kr-hide-installment-number',      'true');
       script.setAttribute('kr-hide-first-installment-delay', 'true');
 
+      script.onerror = function() {
+        showError('No se pudo cargar el SDK de IziPay. Verifica tu conexión e intenta de nuevo.');
+      };
+
       script.onload = async function() {
         try {
-          // ── 3. Secuencia await estricta (SDK es 100% async) ──────────────
+          // ── PASO 2: Configurar idioma y opciones ──────────────────────────
           await KR.setFormConfig({
             'kr-language':                     'es-PE',
             'kr-hide-installment-number':      'true',
             'kr-hide-first-installment-delay': 'true',
           });
 
-          await KR.setFormToken(formToken);     // Handshake criptográfico con IziPay
-          await KR.renderElements('.kr-embedded'); // Dibuja los iframes reales
+          // ── PASO 3: Negociar token con IziPay ────────────────────────────
+          await KR.setFormToken(formToken);
 
-          // ── 4. Registrar callbacks ──────────────────────────────────────
-          KR.onSubmit(function(response) {
+          // ── PASO 4: CREAR el div .kr-embedded AHORA (Táctica Caballo de Troya)
+          // Solo en este momento el SDK tiene algo que renderizar.
+          // No hubo auto-render → CLIENT_725 es imposible.
+          var container = document.getElementById('form-container');
+          container.innerHTML = ''; // seguridad ante F5
+          var krDiv = document.createElement('div');
+          krDiv.className = 'kr-embedded';
+          container.appendChild(krDiv);
+
+          // ── PASO 5: Renderizar el formulario ─────────────────────────────
+          var result = await KR.renderElements('.kr-embedded');
+          var krInst = (result && result.KR) ? result.KR : KR;
+
+          // ── PASO 6: Registrar callbacks ───────────────────────────────────
+          krInst.onSubmit(function(response) {
             showSuccess();
             send({ type: 'IZIPAY_SUCCESS', response: response });
-            return false; // evitar redirect por defecto
+            return false;
           });
 
-          KR.onError(function(err) {
+          krInst.onError(function(err) {
             var msg = (err && (err.clientMessage || err.errorMessage)) || 'Error en el formulario';
             send({ type: 'IZIPAY_ERROR', message: msg });
-            // No cerramos: el usuario puede corregir y reintentar
           });
 
-          // ── 5. Listo ────────────────────────────────────────────────────
-          document.getElementById('loader').style.display = 'none';
+          // ── PASO 7: Mostrar formulario y ocultar spinner ──────────────────
+          document.getElementById('loader').style.display    = 'none';
+          document.getElementById('form-card').style.display = 'block';
+          document.getElementById('seals').style.display     = 'flex';
           send({ type: 'IZIPAY_READY' });
 
         } catch(err) {
@@ -287,12 +315,10 @@
         }
       };
 
-      script.onerror = function() {
-        showError('No se pudo cargar el SDK de IziPay. Verifica tu conexión e intenta de nuevo.');
-      };
-
       document.head.appendChild(script);
     }
+
+    initIzipay();
   </script>
 </body>
 </html>
