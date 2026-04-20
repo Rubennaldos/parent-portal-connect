@@ -74,6 +74,7 @@ interface GatewayPaymentRecord {
   invoice_pdf_url: string | null;
   invoice_number: string | null;
   invoice_type: string | null;
+  queue_status: string | null;
 }
 
 // Cobro directo realizado por admin vía CXC (sin voucher del padre)
@@ -287,6 +288,8 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
       // Cargar datos de las boletas (invoice_id → invoices.pdf_url)
       const invoiceIds = [...new Set(txData.filter((t: any) => t.invoice_id).map((t: any) => t.invoice_id as string))];
       const invoiceMap = new Map<string, { pdf_url: string | null; full_number: string | null; invoice_type: string | null }>();
+      const txIds = [...new Set(txData.map((t: any) => t.id as string))];
+      const queueMap = new Map<string, { status: string | null; pdf_url: string | null; nubefact_ticket: string | null }>();
 
       if (invoiceIds.length > 0) {
         const { data: invData } = await supabase
@@ -299,8 +302,34 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
         }
       }
 
+      // Fallback de resiliencia: si invoices todavía no está enlazada, usar billing_queue emitida
+      // para mostrar al menos el número BXXX-00000NNN y evitar "Comprobante en proceso..." eterno.
+      if (txIds.length > 0) {
+        const { data: queueData } = await supabase
+          .from('billing_queue')
+          .select('transaction_id, status, pdf_url, nubefact_ticket, created_at')
+          .in('transaction_id', txIds)
+          .order('created_at', { ascending: false });
+
+        if (queueData) {
+          for (const row of queueData as any[]) {
+            const txId = row.transaction_id as string | null;
+            if (!txId) continue;
+            if (!queueMap.has(txId)) {
+              queueMap.set(txId, {
+                status: row.status ?? null,
+                pdf_url: row.pdf_url ?? null,
+                nubefact_ticket: row.nubefact_ticket ?? null,
+              });
+            }
+          }
+        }
+      }
+
       const mapped: GatewayPaymentRecord[] = txData.map((tx: any) => {
         const inv = tx.invoice_id ? invoiceMap.get(tx.invoice_id) : null;
+        const q   = queueMap.get(tx.id);
+        const hasQueueEmission = q?.status === 'emitted';
         return {
           id:              tx.id,
           student_name:    nameMap.get(tx.student_id) ?? 'Alumno',
@@ -308,9 +337,10 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           created_at:      tx.created_at,
           gateway_ref:     tx.metadata?.gateway_ref_id ?? null,
           invoice_id:      tx.invoice_id ?? null,
-          invoice_pdf_url: inv?.pdf_url ?? null,
-          invoice_number:  inv?.full_number ?? null,
-          invoice_type:    inv?.invoice_type ?? null,
+          invoice_pdf_url: inv?.pdf_url ?? q?.pdf_url ?? null,
+          invoice_number:  inv?.full_number ?? (hasQueueEmission ? (q?.nubefact_ticket ?? null) : null),
+          invoice_type:    inv?.invoice_type ?? (hasQueueEmission ? 'boleta' : null),
+          queue_status:    q?.status ?? null,
         };
       });
 
@@ -937,7 +967,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-                          {gp.invoice_id ? (
+                          {(gp.invoice_id || gp.invoice_number || gp.queue_status === 'emitted') ? (
                             <p className="text-[11px] text-indigo-700 font-semibold truncate">
                               {boletaLabel}{gp.invoice_number && ` ${gp.invoice_number}`}
                             </p>
@@ -957,7 +987,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                             <Download className="h-3 w-3" />
                             PDF
                           </a>
-                        ) : gp.invoice_id ? (
+                        ) : (gp.invoice_id || gp.invoice_number || gp.queue_status === 'emitted') ? (
                           <span className="text-[10px] text-slate-400 italic">PDF en proceso</span>
                         ) : null}
                       </div>
