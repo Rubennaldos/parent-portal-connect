@@ -9,16 +9,10 @@
     href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.css">
 
   <!--
-    KR.js cargado en este window aislado.
-    SIN kr-form-token → evita auto-render (CLIENT_725).
+    NO hay <script> estático de KR.js aquí.
+    Se inyecta dinámicamente con kr-public-key ya configurado.
+    Esto elimina CLIENT_501 (llave vacía) y CLIENT_725 (auto-render prematuro).
   -->
-  <script
-    src="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js"
-    kr-post-url="javascript:void(0);"
-    kr-language="es-PE"
-    kr-hide-installment-number="true"
-    kr-hide-first-installment-delay="true"
-  ></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,9 +41,6 @@
     }
     .header-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
     .header-sub { font-size: 11px; color: rgba(191,219,254,1); margin-top: 2px; }
-    .header-amount { text-align: right; }
-    .header-amount-label { font-size: 10px; color: rgba(191,219,254,1); text-transform: uppercase; letter-spacing: .08em; }
-    .header-amount-value { font-size: 26px; font-weight: 800; line-height: 1.1; }
     .brands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
     .brand-pill {
       font-size: 9px; font-weight: 700; color: rgba(255,255,255,.9);
@@ -90,27 +81,24 @@
       padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
     }
 
-    /* ── KR.js cosmetic styles ── */
+    .kr-embedded { width: 100%; }
+
+    /* ── KR.js button ── */
     .kr-payment-button {
       width: 100% !important;
       background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
       color: #fff !important;
       font-size: 15px !important;
       font-weight: 700 !important;
-      letter-spacing: .04em !important;
       border: none !important;
       border-radius: 12px !important;
       padding: 14px 0 !important;
       margin-top: 10px !important;
       cursor: pointer !important;
       box-shadow: 0 4px 14px rgba(37,99,235,.28) !important;
-      transition: opacity .15s !important;
     }
     .kr-payment-button:hover  { opacity: .92 !important; }
     .kr-payment-button:active { opacity: .80 !important; }
-    .kr-form-error, .kr-field-error {
-      color: #ef4444 !important; font-size: 12px !important;
-    }
 
     /* ── Footer seals ── */
     .seals {
@@ -137,13 +125,13 @@
       margin: 0 auto 16px;
     }
     .success-title { font-size: 20px; font-weight: 800; color: #166534; margin-bottom: 8px; }
-    .success-sub { font-size: 13px; color: #4ade80; line-height: 1.5; }
+    .success-sub { font-size: 13px; color: #15803d; line-height: 1.5; }
     .close-btn {
       margin-top: 24px;
       background: #16a34a; color: white;
       border: none; border-radius: 12px;
       padding: 14px 32px; font-size: 15px; font-weight: 700;
-      cursor: pointer; transition: opacity .15s;
+      cursor: pointer;
     }
     .close-btn:hover { opacity: .88; }
   </style>
@@ -165,10 +153,6 @@
           <div class="header-title">Pago seguro</div>
           <div class="header-sub">Cifrado TLS · Powered by IziPay</div>
         </div>
-      </div>
-      <div class="header-amount">
-        <div class="header-amount-label">Total</div>
-        <div class="header-amount-value" id="amount-display">S/ —</div>
       </div>
     </div>
     <div class="brands">
@@ -198,16 +182,10 @@
         </svg>
       </div>
       <div class="success-title">¡Pago enviado!</div>
-      <div class="success-sub">
-        Tu pago fue procesado.<br>Puedes cerrar esta ventana.
-      </div>
+      <div class="success-sub">Tu pago fue procesado.<br>Puedes cerrar esta ventana.</div>
       <button class="close-btn" onclick="window.close()">Cerrar ventana</button>
     </div>
 
-    <!--
-      .kr-embedded: SIEMPRE en el DOM con dimensiones reales.
-      SIN data-kr-form-token → evita auto-render (CLIENT_725).
-    -->
     <div class="form-card" id="form-card">
       <div class="kr-embedded"></div>
     </div>
@@ -229,33 +207,19 @@
   </div>
 
   <script>
+    // ── 1. Leer parámetros PRIMERO, antes de tocar KR ──────────────────────
     var params    = new URLSearchParams(window.location.search);
     var formToken = params.get('token') || '';
     var publicKey = params.get('key')   || '';
 
-    // Mostrar monto aproximado en header (se actualiza desde el servidor)
-    // El monto real lo calcula el servidor, aquí solo decorativo
-    var amountEl = document.getElementById('amount-display');
-
-    /**
-     * Enviar mensaje al padre.
-     * - Si estamos en popup: window.opener.postMessage (misma origin)
-     * - Si estamos en iframe: window.parent.postMessage
-     * - Si somos el top: ignorar (no hay padre)
-     */
     function send(msg) {
       try {
         if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(msg, window.location.origin);
+          window.opener.postMessage(msg, '*');
         } else if (window.parent !== window) {
           window.parent.postMessage(msg, '*');
         }
-      } catch(e) {
-        // Si el acceso a opener está bloqueado, intentar parent
-        try {
-          if (window.parent !== window) window.parent.postMessage(msg, '*');
-        } catch(_) {}
-      }
+      } catch(e) {}
     }
 
     function showError(msg) {
@@ -263,8 +227,8 @@
       document.getElementById('form-card').style.display = 'none';
       document.getElementById('seals').style.display     = 'none';
       var el = document.getElementById('error-msg');
-      el.style.display  = 'block';
-      el.textContent    = msg;
+      el.style.display = 'block';
+      el.textContent   = msg;
       send({ type: 'IZIPAY_LOAD_ERROR', message: msg });
     }
 
@@ -275,70 +239,59 @@
       document.body.style.background = '#f0fdf4';
     }
 
-    function waitForKR(maxAttempts) {
-      return new Promise(function(resolve, reject) {
-        var n = 0;
-        function tick() {
-          if (window.KR) return resolve(window.KR);
-          if (++n > (maxAttempts || 60)) return reject(new Error('KR_TIMEOUT'));
-          setTimeout(tick, 150);
-        }
-        tick();
-      });
-    }
-
-    async function initKR() {
-      try {
-        if (!formToken || !publicKey) throw new Error('Parámetros de pago inválidos. Cierra esta ventana e intenta de nuevo.');
-
-        var KR = await waitForKR(60);
-
-        await KR.setFormConfig({
-          'kr-public-key':                   publicKey,
-          'kr-language':                     'es-PE',
-          'kr-hide-installment-number':      'true',
-          'kr-hide-first-installment-delay': 'true',
-        });
-
-        // Limpieza defensiva
-        var container = document.querySelector('.kr-embedded');
-        if (container) container.innerHTML = '';
-        await KR.removeForms();
-
-        // Negociar token
-        await KR.setFormToken(formToken);
-
-        // Renderizar
-        var result    = await KR.renderElements('.kr-embedded');
-        var krInst    = (result && result.KR) ? result.KR : KR;
-
-        krInst.onSubmit(function() {
-          showSuccess();
-          send({ type: 'IZIPAY_SUCCESS' });
-          return false;
-        });
-
-        krInst.onError(function(err) {
-          var msg = (err && (err.clientMessage || err.errorMessage)) || 'Error en el formulario';
-          send({ type: 'IZIPAY_ERROR', message: msg });
-          // No cerramos — el usuario puede corregir y reintentar
-        });
-
-        document.getElementById('loader').style.display = 'none';
-        send({ type: 'IZIPAY_READY' });
-
-      } catch(err) {
-        var msg = err.message === 'KR_TIMEOUT'
-          ? 'El formulario tardó demasiado. Cierra esta ventana e intenta de nuevo.'
-          : (err.message || 'Error al cargar el formulario de pago.');
-        showError(msg);
-      }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initKR);
+    if (!formToken || !publicKey) {
+      showError('Error: parámetros de pago no recibidos. Cierra esta ventana e intenta de nuevo.');
     } else {
-      initKR();
+      // ── 2. Inyectar KR.js DINÁMICAMENTE con kr-public-key ya en el atributo ──
+      //    Así el SDK nace con su "DNI" puesto → adiós CLIENT_501
+      //    No hay script estático → adiós auto-render prematuro → adiós CLIENT_725
+      var script = document.createElement('script');
+      script.src = 'https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js';
+      script.setAttribute('kr-public-key',                   publicKey);
+      script.setAttribute('kr-post-url',                     'javascript:void(0);');
+      script.setAttribute('kr-language',                     'es-PE');
+      script.setAttribute('kr-hide-installment-number',      'true');
+      script.setAttribute('kr-hide-first-installment-delay', 'true');
+
+      script.onload = async function() {
+        try {
+          // ── 3. Secuencia await estricta (SDK es 100% async) ──────────────
+          await KR.setFormConfig({
+            'kr-language':                     'es-PE',
+            'kr-hide-installment-number':      'true',
+            'kr-hide-first-installment-delay': 'true',
+          });
+
+          await KR.setFormToken(formToken);     // Handshake criptográfico con IziPay
+          await KR.renderElements('.kr-embedded'); // Dibuja los iframes reales
+
+          // ── 4. Registrar callbacks ──────────────────────────────────────
+          KR.onSubmit(function(response) {
+            showSuccess();
+            send({ type: 'IZIPAY_SUCCESS', response: response });
+            return false; // evitar redirect por defecto
+          });
+
+          KR.onError(function(err) {
+            var msg = (err && (err.clientMessage || err.errorMessage)) || 'Error en el formulario';
+            send({ type: 'IZIPAY_ERROR', message: msg });
+            // No cerramos: el usuario puede corregir y reintentar
+          });
+
+          // ── 5. Listo ────────────────────────────────────────────────────
+          document.getElementById('loader').style.display = 'none';
+          send({ type: 'IZIPAY_READY' });
+
+        } catch(err) {
+          showError(err.message || 'Error al inicializar el formulario de pago.');
+        }
+      };
+
+      script.onerror = function() {
+        showError('No se pudo cargar el SDK de IziPay. Verifica tu conexión e intenta de nuevo.');
+      };
+
+      document.head.appendChild(script);
     }
   </script>
 </body>
