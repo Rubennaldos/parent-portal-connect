@@ -20,6 +20,23 @@ serve(async (req) => {
 
   const TAG = "[izipay-create-order]";
 
+  // ── GUARDIA GLOBAL: cualquier excepción no capturada devuelve CORS headers ─
+  // Sin esto, un crash inesperado hace que el navegador vea "CORS error"
+  // en vez del error real (porque no hay respuesta → no hay headers).
+  try {
+    return await handleRequest(req, TAG);
+  } catch (unexpectedErr) {
+    console.error(`${TAG} CRASH no capturado:`, unexpectedErr);
+    return json({
+      success: false,
+      error:   "Error interno inesperado en el servidor",
+      detail:  String(unexpectedErr),
+    }, 500);
+  }
+});
+
+async function handleRequest(req: Request, TAG: string): Promise<Response> {
+
   // ── 1. Secretos Vault ─────────────────────────────────────────────────────
   const supabaseUrl   = Deno.env.get("SUPABASE_URL")!;
   const serviceKey    = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -344,7 +361,7 @@ serve(async (req) => {
     recharge_amount: sanitizedRecharge,
     tx_found:        txFoundCount,
   });
-});
+} // fin handleRequest
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
