@@ -100,53 +100,64 @@ serve(async (req) => {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // PASO 3 — Parsear JSON y extraer kr-hash del CUERPO (no de headers)
+  // PASO 3 — Parsear body: soporta JSON y application/x-www-form-urlencoded
   //
-  // FIX CRÍTICO: IziPay V4 REST IPN envía kr-hash DENTRO del body JSON,
-  // no como header HTTP. El error "IPN sin firma kr-hash" ocurría porque
-  // se buscaba en req.headers en lugar del body.
+  // IziPay V4 REST puede enviar el IPN en cualquiera de los dos formatos:
+  //   - application/json        → { "kr-hash":"...", "kr-answer":"{...}" }
+  //   - application/x-www-form-urlencoded → kr-hash=...&kr-answer=%7B...%7D
   //
-  // Formato del IPN REST de IziPay V4:
-  //   { "kr-hash": "...", "kr-answer": "{...}", "kr-answer-type": "..." }
-  //
-  // El HMAC se calcula sobre el STRING de "kr-answer" (no el rawBody entero).
+  // En ambos casos, el HMAC se calcula sobre el STRING de "kr-answer".
   // ══════════════════════════════════════════════════════════════════════
+  const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
   let ipnData: Record<string, unknown>;
-  try {
-    ipnData = JSON.parse(rawBody);
-  } catch {
-    console.error("[izipay-webhook] Body no es JSON válido. Raw:", rawBody.slice(0, 200));
-    return json({ error: "Body JSON inválido" }, 400);
+  let krAnswerRaw: string;
+  let receivedSig: string;
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    // ── Formato URL-encoded (el que usa IziPay en producción) ─────────
+    const params = new URLSearchParams(rawBody);
+    receivedSig  = (params.get("kr-hash") ?? "").trim().toLowerCase();
+    krAnswerRaw  = params.get("kr-answer") ?? "";
+
+    // Construir ipnData para logs y compatibilidad con el resto del código
+    ipnData = {};
+    for (const [k, v] of params.entries()) ipnData[k] = v;
+
+    console.log(
+      "[izipay-webhook] IPN formato form-urlencoded. Claves:",
+      [...params.keys()].join(", "),
+    );
+  } else {
+    // ── Formato JSON (fallback / pruebas locales) ─────────────────────
+    try {
+      ipnData = JSON.parse(rawBody);
+    } catch {
+      console.error("[izipay-webhook] Body no es JSON ni form-urlencoded. Raw:", rawBody.slice(0, 300));
+      return json({ error: "Formato de body no soportado" }, 400);
+    }
+    receivedSig = ((ipnData["kr-hash"] as string | undefined) ?? "").trim().toLowerCase();
+    krAnswerRaw = (ipnData["kr-answer"] as string | undefined) ?? "";
+
+    console.log(
+      "[izipay-webhook] IPN formato JSON. Claves:",
+      Object.keys(ipnData).join(", "),
+    );
   }
 
-  // DEBUG temporal: mostrar claves recibidas para diagnóstico
-  console.log("[izipay-webhook] Claves del IPN recibido:", Object.keys(ipnData).join(", "));
-
-  // ── Extraer kr-hash del CUERPO (estándar V4 REST) ────────────────────
-  const receivedSig = (
-    (ipnData["kr-hash"] as string | undefined) ?? ""
-  ).trim().toLowerCase();
-
+  // ── Validar que los campos obligatorios estén presentes ───────────────
   if (!receivedSig) {
-    // Log con contexto para diagnosticar formato inesperado
-    console.warn(
-      "[izipay-webhook] IPN sin campo kr-hash en el body. Rechazado.",
-      "Claves presentes:", Object.keys(ipnData).join(", "),
-    );
+    console.warn("[izipay-webhook] kr-hash ausente. Claves recibidas:", Object.keys(ipnData).join(", "));
     return json({ error: "Firma IPN ausente" }, 400);
   }
 
-  // ── Extraer kr-answer STRING (sobre este string se calcula el HMAC) ──
-  const krAnswerRaw = (ipnData["kr-answer"] as string | undefined) ?? "";
-
   if (!krAnswerRaw) {
-    console.error("[izipay-webhook] kr-answer ausente en el body del IPN.");
+    console.error("[izipay-webhook] kr-answer ausente en el IPN.");
     return json({ error: "kr-answer ausente en IPN" }, 400);
   }
 
-  // ── Calcular HMAC-SHA256 sobre kr-answer (no sobre rawBody) ──────────
-  // La clave es IZIPAY_HMAC_SHA256 (= "Clave HMAC SHA-256" del back office)
-  // Fallback a IZIPAY_WEBHOOK_SECRET por compatibilidad de nombres.
+  // ── Calcular y verificar HMAC-SHA256 sobre kr-answer ─────────────────
+  // Usa IZIPAY_HMAC_SHA256 (= "Clave HMAC SHA-256" del Back Office Lyra).
+  // Fallback a IZIPAY_WEBHOOK_SECRET por compatibilidad.
   const hmacKey = (
     (Deno.env.get("IZIPAY_HMAC_SHA256") ?? "").trim() || webhookSecret
   );
@@ -164,12 +175,12 @@ serve(async (req) => {
       "[izipay-webhook] Firma HMAC INVÁLIDA.",
       `Recibido: ${receivedSig.slice(0, 12)}...`,
       `Calculado: ${expectedSig.slice(0, 12)}...`,
-      "Verifica que IZIPAY_HMAC_SHA256 sea la 'Clave HMAC SHA-256' del Back Office.",
+      "Verifica que IZIPAY_HMAC_SHA256 coincida con la 'Clave HMAC SHA-256' del Back Office.",
     );
     return json({ error: "Firma de seguridad inválida" }, 401);
   }
 
-  console.log("[izipay-webhook] Firma HMAC verificada correctamente.");
+  console.log("[izipay-webhook] ✅ Firma HMAC verificada. Procesando pago...");
 
   // ══════════════════════════════════════════════════════════════════════
   // PASO 5 — Crear cliente Supabase (PRIMER contacto con la DB)
