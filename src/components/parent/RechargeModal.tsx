@@ -437,11 +437,11 @@ export function RechargeModal({
       switch (event.data.type) {
         case 'IZIPAY_SUCCESS':
           popupRef.current?.close();
-          // Guardar orderId para mostrarlo en el recibo
+          // Guardar orderId para mostrarlo en el recibo cuando DB confirme
           if (event.data.orderId) setIzipayOrderId(event.data.orderId);
-          // Ir directo a éxito — el webhook actualiza la BD en segundo plano
-          setIzipayStep('done');
-          setStep('success');
+          // REGLA: NO ir directo a éxito. GatewayPaymentWaiting sondea la BD
+          // y solo transiciona cuando el webhook haya actualizado payment_sessions.
+          setIzipayStep('waiting');
           break;
         case 'IZIPAY_ERROR':
           toast({
