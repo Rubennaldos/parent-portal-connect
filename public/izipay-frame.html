@@ -3,59 +3,84 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pago seguro · IziPay</title>
-
+  <title>Pago Seguro · Lima Café 28</title>
   <link rel="stylesheet"
     href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.css">
-
   <style>
+    :root { --primary: #2563eb; --bg: #f1f5f9; }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #f1f5f9;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      align-items: center;
+      padding: 0 0 24px;
     }
 
     /* ── Header azul ── */
-    .header {
+    .site-header {
+      width: 100%;
       background: linear-gradient(135deg, #1e3a8a, #2563eb);
-      padding: 16px 20px;
+      padding: 14px 20px 12px;
       color: white;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .brand-row { display: flex; align-items: center; gap: 10px; }
+    .shield {
+      background: rgba(255,255,255,.18);
+      border-radius: 50%; width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
-    .header-brand { display: flex; align-items: center; gap: 10px; }
-    .header-shield {
-      background: rgba(255,255,255,.18);
-      border-radius: 50%;
-      width: 36px; height: 36px;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .header-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
-    .header-sub   { font-size: 11px; color: rgba(191,219,254,1); margin-top: 2px; }
-    .brands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-    .brand-pill {
+    .brand-title { font-weight: 700; font-size: 13px; line-height: 1.2; }
+    .brand-sub   { font-size: 10px; color: rgba(191,219,254,1); margin-top: 1px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 5px; }
+    .badge {
       font-size: 9px; font-weight: 700; color: rgba(255,255,255,.9);
       background: rgba(255,255,255,.15);
-      padding: 2px 8px; border-radius: 6px;
+      padding: 2px 7px; border-radius: 5px;
     }
 
-    /* ── Cuerpo ── */
-    .body { flex: 1; padding: 20px 16px; }
+    /* ── Tarjeta de pago ── */
+    .payment-card {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,.07);
+      border: 1px solid #e2e8f0;
+      width: calc(100% - 32px);
+      max-width: 380px;
+      margin-top: 20px;
+      padding: 24px 20px;
+    }
+
+    .card-heading {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .card-heading-title {
+      font-weight: 700; font-size: 16px; color: #1e293b;
+    }
+    .card-heading-sub {
+      font-size: 12px; color: #64748b; margin-top: 3px;
+    }
 
     /* ── Spinner ── */
     #loader {
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      padding: 40px 16px; gap: 14px;
+      padding: 30px 0; gap: 12px;
       color: #94a3b8; font-size: 13px;
     }
     .spinner {
-      width: 36px; height: 36px;
+      width: 32px; height: 32px;
       border: 3px solid #e2e8f0;
-      border-top-color: #3b82f6;
+      border-top-color: var(--primary);
       border-radius: 50%;
       animation: spin .7s linear infinite;
     }
@@ -65,154 +90,150 @@
     #error-msg {
       display: none;
       background: #fef2f2; border: 1px solid #fecaca;
-      border-radius: 12px; padding: 16px; margin-bottom: 12px;
-      color: #dc2626; font-size: 13px; text-align: center; line-height: 1.5;
+      border-radius: 10px; padding: 14px;
+      color: #dc2626; font-size: 13px;
+      text-align: center; line-height: 1.5;
     }
 
-    /* ── Tarjeta del formulario ── */
-    .form-card {
-      background: white; border-radius: 16px;
-      padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    /* ── Campos KR.js ── */
+    .kr-embedded .kr-field-wrapper { margin-bottom: 16px !important; }
+    .kr-embedded .kr-label {
+      font-weight: 600 !important; color: #374151 !important;
+      margin-bottom: 6px !important; font-size: 13px !important;
     }
 
-    /* ── Ocultar campos de cuotas (solo decorativos, no son campos de pago) ── */
+    /* Ocultar cuotas y pagos diferidos */
     .kr-installment-number-field,
-    .kr-first-installment-delay-field {
-      display: none !important;
-    }
+    .kr-first-installment-delay-field { display: none !important; }
 
-    /* ── Botón de pago de KR.js ── */
+    /* Botón de pago */
     .kr-payment-button {
       width: 100% !important;
-      background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
+      background: linear-gradient(135deg, #1d4ed8, var(--primary)) !important;
       color: #fff !important;
       font-size: 15px !important;
       font-weight: 700 !important;
       border: none !important;
-      border-radius: 12px !important;
-      padding: 14px 0 !important;
-      margin-top: 12px !important;
+      border-radius: 10px !important;
+      height: 50px !important;
+      margin-top: 8px !important;
       cursor: pointer !important;
-      box-shadow: 0 4px 14px rgba(37,99,235,.28) !important;
+      letter-spacing: .5px !important;
+      box-shadow: 0 4px 12px rgba(37,99,235,.3) !important;
+      transition: opacity .15s !important;
     }
     .kr-payment-button:hover  { opacity: .92 !important; }
     .kr-payment-button:active { opacity: .80 !important; }
 
-    /* ── Sellos ── */
+    /* ── Sellos de confianza ── */
     .seals {
       display: flex; align-items: center; justify-content: center;
-      gap: 10px; margin-top: 14px; flex-wrap: wrap;
+      gap: 8px; margin-top: 16px; flex-wrap: wrap;
     }
     .seal {
-      display: flex; align-items: center; gap: 4px;
+      display: flex; align-items: center; gap: 3px;
       background: #f8fafc; border: 1px solid #e2e8f0;
-      border-radius: 6px; padding: 4px 8px;
+      border-radius: 5px; padding: 3px 7px;
       font-size: 9px; font-weight: 700;
       color: #64748b; text-transform: uppercase;
     }
 
     /* ── Pantalla de éxito ── */
-    #success-screen {
-      display: none;
-      text-align: center; padding: 40px 20px;
-    }
+    #success-screen { display: none; text-align: center; padding: 20px 0; }
     .success-icon {
-      width: 72px; height: 72px;
+      width: 64px; height: 64px;
       background: #dcfce7; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 16px;
+      margin: 0 auto 14px;
     }
-    .success-title { font-size: 20px; font-weight: 800; color: #166534; margin-bottom: 8px; }
-    .success-sub   { font-size: 13px; color: #15803d; line-height: 1.5; }
-    .close-btn {
-      margin-top: 24px;
-      background: #16a34a; color: white;
-      border: none; border-radius: 12px;
-      padding: 14px 32px; font-size: 15px; font-weight: 700;
-      cursor: pointer;
-    }
-    .close-btn:hover { opacity: .88; }
+    .success-title { font-size: 18px; font-weight: 800; color: #166534; }
+    .success-sub   { font-size: 12px; color: #15803d; margin-top: 6px; line-height: 1.5; }
   </style>
 </head>
 <body>
 
   <!-- Header -->
-  <div class="header">
-    <div class="header-brand">
-      <div class="header-shield">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <div class="site-header">
+    <div class="brand-row">
+      <div class="shield">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+          stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           <path d="m9 12 2 2 4-4"/>
         </svg>
       </div>
       <div>
-        <div class="header-title">Pago seguro</div>
-        <div class="header-sub">Cifrado TLS · Powered by IziPay</div>
+        <div class="brand-title">Lima Café 28 · Pago seguro</div>
+        <div class="brand-sub">Cifrado TLS · Powered by IziPay</div>
       </div>
     </div>
-    <div class="brands">
-      <span class="brand-pill">VISA</span>
-      <span class="brand-pill">Mastercard</span>
-      <span class="brand-pill">AMEX</span>
-      <span class="brand-pill">Diners</span>
-      <span class="brand-pill">Yape QR</span>
+    <div class="badges">
+      <span class="badge">VISA</span>
+      <span class="badge">Mastercard</span>
+      <span class="badge">AMEX</span>
+      <span class="badge">Diners</span>
+      <span class="badge">Yape QR</span>
     </div>
   </div>
 
-  <!-- Cuerpo -->
-  <div class="body">
+  <!-- Tarjeta principal -->
+  <div class="payment-card">
+
+    <div class="card-heading">
+      <div class="card-heading-title">Finalizar Pago</div>
+      <div class="card-heading-sub">Transacción segura vía IziPay</div>
+    </div>
+
+    <!-- Spinner mientras carga -->
     <div id="loader">
       <div class="spinner"></div>
       <span>Cargando formulario seguro…</span>
     </div>
 
+    <!-- Error técnico -->
     <div id="error-msg"></div>
 
+    <!-- Pantalla de éxito post-pago -->
     <div id="success-screen">
       <div class="success-icon">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
           stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       </div>
       <div class="success-title">¡Pago enviado!</div>
-      <div class="success-sub">Tu pago fue procesado.<br>Puedes cerrar esta ventana.</div>
-      <button class="close-btn" onclick="window.close()">Cerrar ventana</button>
+      <div class="success-sub">Tu pago fue procesado.<br>Esta ventana se cerrará en 2 segundos.</div>
     </div>
 
     <!--
-      #form-container está VACÍO intencionalmente.
-      El .kr-embedded se crea por JS DESPUÉS de setFormToken
-      → el SDK no tiene nada que auto-renderizar → adiós CLIENT_725.
+      #form-container: VACÍO en el HTML a propósito.
+      .kr-embedded se crea por JS después de setFormToken → CLIENT_725 imposible.
     -->
-    <div class="form-card" id="form-card" style="display:none;">
-      <div id="form-container"></div>
-    </div>
+    <div id="form-container"></div>
 
-    <div class="seals" id="seals" style="display:none;">
-      <div class="seal">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-          stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          <path d="m9 12 2 2 4-4"/>
-        </svg>
-        SSL
-      </div>
-      <div class="seal">VISA</div>
-      <div class="seal">Mastercard</div>
-      <div class="seal">PCI DSS</div>
+  </div>
+
+  <!-- Sellos debajo de la tarjeta -->
+  <div class="seals" id="seals" style="display:none;">
+    <div class="seal">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+        stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        <path d="m9 12 2 2 4-4"/>
+      </svg>
+      SSL
     </div>
+    <div class="seal">VISA</div>
+    <div class="seal">Mastercard</div>
+    <div class="seal">PCI DSS</div>
   </div>
 
   <script>
-    // ── FIX #1: Desregistrar el Service Worker de la app principal ──────────
-    // El SW de la PWA intenta hacer claim() sobre esta ventana popup y falla
-    // con "Only the active worker can claim clients" — lo prevenimos aquí.
+    // Desregistrar el Service Worker de la app principal
+    // (evita que intercepte esta ventana popup)
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function(regs) {
-        regs.forEach(function(r) { r.unregister(); });
-      });
+      navigator.serviceWorker.getRegistrations()
+        .then(function(regs) { regs.forEach(function(r) { r.unregister(); }); });
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -227,36 +248,35 @@
     }
 
     function showError(msg) {
-      document.getElementById('loader').style.display    = 'none';
-      document.getElementById('form-card').style.display = 'none';
-      document.getElementById('seals').style.display     = 'none';
+      document.getElementById('loader').style.display = 'none';
       var el = document.getElementById('error-msg');
       el.style.display = 'block';
       el.textContent   = msg;
       send({ type: 'IZIPAY_LOAD_ERROR', message: msg });
     }
 
-    function showSuccess() {
-      document.getElementById('form-card').style.display    = 'none';
-      document.getElementById('seals').style.display        = 'none';
+    function showSuccess(orderId) {
+      document.getElementById('form-container').style.display = 'none';
+      document.getElementById('seals').style.display          = 'none';
       document.getElementById('success-screen').style.display = 'block';
       document.body.style.background = '#f0fdf4';
+      send({ type: 'IZIPAY_SUCCESS', orderId: orderId });
+      setTimeout(function() { window.close(); }, 2000);
     }
 
-    // ── Parámetros ─────────────────────────────────────────────────────────
+    // ── Parámetros de URL ──────────────────────────────────────────────────
     var params    = new URLSearchParams(window.location.search);
     var formToken = params.get('token') || '';
     var publicKey = params.get('key')   || '';
 
-    async function startIzipay() {
+    async function init() {
       if (!formToken || !publicKey) {
-        showError('Error: parámetros de pago no recibidos. Cierra e intenta de nuevo.');
+        showError('Error: parámetros no recibidos. Cierra esta ventana e intenta de nuevo.');
         return;
       }
 
-      // ── FIX #2: Script dinámico con la llave ya en el atributo ─────────
-      // Evita CLIENT_501 (llave vacía).
-      // NO hay .kr-embedded en el HTML → evita auto-render.
+      // ── PASO 1: Inyectar KR.js dinámicamente con la llave ya en el atributo ──
+      // Sin .kr-embedded en el HTML → el SDK no puede auto-renderizar → CLIENT_725 imposible
       var script = document.createElement('script');
       script.src = 'https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js';
       script.setAttribute('kr-public-key',                   publicKey);
@@ -271,49 +291,35 @@
 
       script.onload = async function() {
         try {
-          // Paso 1: configurar opciones
+          // PASO 2: configurar opciones (await estricto)
           await KR.setFormConfig({
             'kr-language':                     'es-PE',
             'kr-hide-installment-number':      'true',
             'kr-hide-first-installment-delay': 'true',
           });
 
-          // Paso 2: handshake con IziPay (negocia el token)
+          // PASO 3: handshake criptográfico
           await KR.setFormToken(formToken);
 
-          // ── FIX #3: CREAR .kr-embedded AHORA (Caballo de Troya) ─────────
-          // Solo en este momento insertamos el div en el DOM.
-          // El SDK no lo vio antes → no auto-renderizó → CLIENT_725 imposible.
+          // PASO 4: Crear .kr-embedded AHORA (Táctica Caballo de Troya)
+          // El SDK no lo vio antes → no auto-renderizó → CLIENT_725 imposible
           var container = document.getElementById('form-container');
           container.innerHTML = '';
           var krDiv = document.createElement('div');
           krDiv.className = 'kr-embedded';
           container.appendChild(krDiv);
 
-          // Paso 3: renderizar (único render)
+          // PASO 5: renderizar (único render garantizado)
           var result = await KR.renderElements('.kr-embedded');
           var krInst = (result && result.KR) ? result.KR : KR;
 
-          // Paso 4: registrar callbacks
+          // PASO 6: callbacks
           krInst.onSubmit(function(response) {
-            // Extraer orderId de la respuesta de IziPay
             var orderId = (response
               && response.clientAnswer
               && response.clientAnswer.orderDetails
-              && response.clientAnswer.orderDetails.orderId)
-              || '';
-            var txUuid = (response
-              && response.clientAnswer
-              && response.clientAnswer.transactions
-              && response.clientAnswer.transactions[0]
-              && response.clientAnswer.transactions[0].uuid)
-              || '';
-
-            showSuccess();
-            send({ type: 'IZIPAY_SUCCESS', orderId: orderId, txUuid: txUuid });
-
-            // Auto-cerrar la ventana después de 2 segundos
-            setTimeout(function() { window.close(); }, 2000);
+              && response.clientAnswer.orderDetails.orderId) || '';
+            showSuccess(orderId);
             return false;
           });
 
@@ -322,10 +328,9 @@
             send({ type: 'IZIPAY_ERROR', message: msg });
           });
 
-          // Paso 5: mostrar formulario
-          document.getElementById('loader').style.display    = 'none';
-          document.getElementById('form-card').style.display = 'block';
-          document.getElementById('seals').style.display     = 'flex';
+          // PASO 7: mostrar formulario
+          document.getElementById('loader').style.display = 'none';
+          document.getElementById('seals').style.display  = 'flex';
           send({ type: 'IZIPAY_READY' });
 
         } catch(err) {
@@ -336,7 +341,7 @@
       document.head.appendChild(script);
     }
 
-    startIzipay();
+    init();
   </script>
 </body>
 </html>
