@@ -263,6 +263,29 @@ serve(async (req) => {
           : null;
         const pdfUrl = doc.pdf_url ?? doc.enlace_del_pdf ?? doc.enlace_pdf ?? null;
 
+        // Fallback robusto: algunos escenarios de generate-document pueden devolver
+        // success=true pero documento.id nulo (p.ej. inserción no retornada).
+        // En ese caso, resolver invoice_id por (school_id, serie, numero).
+        let resolvedInvoiceId = doc.id ?? null;
+        if (!resolvedInvoiceId && doc.serie && doc.numero) {
+          const { data: invFallback, error: invFallbackErr } = await supabase
+            .from("invoices")
+            .select("id")
+            .eq("school_id", payload.school_id)
+            .eq("serie", doc.serie)
+            .eq("numero", doc.numero)
+            .maybeSingle();
+
+          if (invFallbackErr) {
+            console.warn(
+              `[process-billing-queue] No se pudo resolver invoice_id fallback ${doc.serie}-${doc.numero}:`,
+              invFallbackErr.message,
+            );
+          } else {
+            resolvedInvoiceId = invFallback?.id ?? null;
+          }
+        }
+
         await supabase
           .from("billing_queue")
           .update({
@@ -278,7 +301,7 @@ serve(async (req) => {
 
         // ── PASO 3F: Marcar transacciones vinculadas como billing_status='sent' ─
         // IDs provenientes del RPC (ya validados con school_id guard en la BD)
-        const invoiceId = doc.id ?? null;
+        const invoiceId = resolvedInvoiceId;
         await markTransactionsSent(
           supabase,
           payload.paid_transaction_ids  ?? [],
