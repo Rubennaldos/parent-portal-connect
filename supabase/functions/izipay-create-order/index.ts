@@ -124,7 +124,8 @@ async function handleRequest(req: Request, TAG: string): Promise<Response> {
   // Prevención del ataque "doble pestaña": si ya existe una sesión IziPay
   // activa (pending/processing) para este alumno, rechazamos la solicitud.
   // Primero expiramos sesiones fantasma para liberar el candado.
-  await supabase.rpc("expire_stale_gateway_sessions").catch(() => {});
+  // .catch() no funciona en PostgrestFilterBuilder — usar try/catch estándar
+  try { await supabase.rpc("expire_stale_gateway_sessions"); } catch (_) { /* no crítico */ }
 
   const { data: activeSession } = await supabase
     .rpc("check_active_gateway_session", {
