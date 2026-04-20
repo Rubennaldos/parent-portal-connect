@@ -352,21 +352,27 @@ serve(async (req) => {
   // PASO 12 — Si pago APROBADO → apply_gateway_credit (Caja Fuerte)
   // ══════════════════════════════════════════════════════════════════════
   if (isApproved) {
-    const { data: txRecord } = await supabase
+    console.log(`[izipay-webhook] PASO-12 START orderId="${orderId}" (tipo: ${typeof orderId}, len: ${orderId.length})`);
+
+    // ── Buscar payment_transaction por orderId ────────────────────────
+    const { data: txRecord, error: txLookupError } = await supabase
       .from("payment_transactions")
       .select("user_id, student_id, amount, currency")
       .eq("id", orderId)
       .single();
 
+    console.log(`[izipay-webhook] PASO-12 txRecord:`, JSON.stringify(txRecord ?? null));
+    if (txLookupError) console.error(`[izipay-webhook] PASO-12 txLookupError:`, txLookupError.message, "code:", txLookupError.code);
+
     if (!txRecord) {
-      const errMsg = `payment_transaction no encontrada para orderId=${orderId}`;
+      const errMsg = `payment_transaction no encontrada para orderId=${orderId} (DB error: ${txLookupError?.message ?? "sin fila"})`;
       console.error("[izipay-webhook]", errMsg);
       await failLog(supabase, orderId, webhookEventId, errMsg);
       // 200 para evitar reintento infinito (el problema es de datos, no de red)
       return json({ success: false, error: errMsg, orderId });
     }
 
-    const { data: session } = await supabase
+    const { data: session, error: sessionLookupError } = await supabase
       .from("payment_sessions")
       .select("id, invoice_type, invoice_client_data")
       .eq("gateway_reference", orderId)
@@ -376,18 +382,29 @@ serve(async (req) => {
     const sessionInvoiceType   = (session as any)?.invoice_type   as string | null ?? null;
     const sessionInvoiceClient = (session as any)?.invoice_client_data as Record<string, unknown> | null ?? null;
 
+    console.log(
+      `[izipay-webhook] PASO-12 session: id=${sessionId ?? "NULL"} | student_id=${txRecord.student_id} amount=${txRecord.amount}`,
+      sessionLookupError ? `| sessionError: ${sessionLookupError.message}` : "",
+    );
+
+    const rpcParams = {
+      p_student_id:     txRecord.student_id,
+      p_amount:         txRecord.amount,
+      p_session_id:     sessionId,
+      p_gateway_ref_id: orderId,
+      p_gateway_tx_id:  transactionUuid ?? null,
+      p_payment_method: paymentMethod,
+      p_description:    `Recarga online — IziPay (${paymentMethod}) ref:${orderId}`,
+    };
+    console.log(`[izipay-webhook] PASO-12 llamando apply_gateway_credit con:`, JSON.stringify(rpcParams));
+
     const { data: creditResult, error: creditError } = await supabase.rpc(
       "apply_gateway_credit",
-      {
-        p_student_id:     txRecord.student_id,
-        p_amount:         txRecord.amount,
-        p_session_id:     sessionId,
-        p_gateway_ref_id: orderId,
-        p_gateway_tx_id:  transactionUuid ?? null,
-        p_payment_method: paymentMethod,
-        p_description:    `Recarga online — IziPay (${paymentMethod}) ref:${orderId}`,
-      },
+      rpcParams,
     );
+
+    console.log(`[izipay-webhook] PASO-12 creditResult:`, JSON.stringify(creditResult ?? null));
+    if (creditError) console.error(`[izipay-webhook] PASO-12 creditError:`, creditError.message, "| code:", creditError.code, "| details:", creditError.details);
 
     if (creditError) {
       console.error("[izipay-webhook] apply_gateway_credit FALLÓ:", creditError);
