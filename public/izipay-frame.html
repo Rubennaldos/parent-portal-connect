@@ -282,6 +282,10 @@
     var formToken = params.get('token') || '';
     var publicKey = params.get('key')   || '';
 
+    async function resolveAsync(maybePromise) {
+      return await Promise.resolve(maybePromise);
+    }
+
     async function init() {
       if (!formToken || !publicKey) {
         showError('Error: parámetros no recibidos. Cierra esta ventana e intenta de nuevo.');
@@ -305,14 +309,14 @@
       script.onload = async function() {
         try {
           // PASO 2: configurar opciones (await estricto)
-          await KR.setFormConfig({
+          await resolveAsync(KR.setFormConfig({
             'kr-language':                     'es-PE',
             'kr-hide-installment-number':      'true',
             'kr-hide-first-installment-delay': 'true',
-          });
+          }));
 
           // PASO 3: handshake criptográfico
-          await KR.setFormToken(formToken);
+          await resolveAsync(KR.setFormToken(formToken));
 
           // PASO 4: Crear .kr-embedded AHORA (Táctica Caballo de Troya)
           // El SDK no lo vio antes → no auto-renderizó → CLIENT_725 imposible
@@ -323,7 +327,7 @@
           container.appendChild(krDiv);
 
           // PASO 5: renderizar (único render garantizado)
-          var result = await KR.renderElements('.kr-embedded');
+          var result = await resolveAsync(KR.renderElements('.kr-embedded'));
           var krInst = (result && result.KR) ? result.KR : KR;
 
           // PASO 6: callbacks
