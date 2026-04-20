@@ -130,20 +130,21 @@ serve(async (req) => {
   }
 
   // ── 5c. Limpiar sesiones pendientes antiguas del mismo alumno ──────────────
-  // CRÍTICO: Aunque el guard de 90s pasó, la constraint UNIQUE idx_ps_student_one_active_izipay
-  // puede bloquear el INSERT del frontend si existe una sesión pending/processing
-  // más antigua que 90s pero no expirada aún (expire_stale_gateway_sessions usa 20min).
-  // Solucion: expirarlas explícitamente AQUÍ, en el servidor, antes de devolver el token.
-  await supabase
-    .from("payment_sessions")
-    .update({ gateway_status: "expired", status: "expired" })
-    .eq("student_id", studentId)
-    .eq("gateway_name", "izipay")
-    .in("gateway_status", ["pending", "processing"])
-    .lt("created_at", new Date(Date.now() - 90_000).toISOString())
-    .catch((e: unknown) =>
-      console.warn(`${TAG} No se pudieron limpiar sesiones antiguas (no crítico):`, (e as Error).message)
-    );
+  // La constraint UNIQUE idx_ps_student_one_active_izipay bloquea el INSERT
+  // del frontend si existe una sesión pending/processing de más de 90s.
+  // La limpiamos aquí ANTES de devolver el token al cliente.
+  // Usamos status (TEXT) para evitar problemas de tipo con gateway_status (ENUM).
+  try {
+    await supabase
+      .from("payment_sessions")
+      .update({ gateway_status: "expired", status: "expired" })
+      .eq("student_id", studentId)
+      .eq("gateway_name", "izipay")
+      .not("status", "in", "(completed,failed,expired)")
+      .lt("created_at", new Date(Date.now() - 90_000).toISOString());
+  } catch (e) {
+    console.warn(`${TAG} No se pudieron limpiar sesiones antiguas (no crítico):`, (e as Error)?.message ?? e);
+  }
 
   // ── 6. Config operativa ───────────────────────────────────────────────────
   const { data: gwConfig, error: gwError } = await supabase
