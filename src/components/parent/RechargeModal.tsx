@@ -142,7 +142,9 @@ export function RechargeModal({
   izipayTestMode = false,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = false; // Pasarela activa en producción
-  const IZIPAY_ENABLED = true;
+  // EMERGENCIA 2026-04-19: IziPay desactivado mientras se resuelve fallo de webhook.
+  // Reactiva cambiando a true cuando el HMAC esté validado.
+  const IZIPAY_ENABLED = false;
 
   const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
   const { user } = useAuth();
