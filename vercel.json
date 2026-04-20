@@ -15,7 +15,11 @@
       "destination": "/api/$1"
     },
     {
-      "source": "/((?!api).*)",
+      "source": "/izipay-frame.html",
+      "destination": "/izipay-frame.html"
+    },
+    {
+      "source": "/((?!api|izipay-frame\\.html).*)",
       "destination": "/index.html"
     }
   ],
