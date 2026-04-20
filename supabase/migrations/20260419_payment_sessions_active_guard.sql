@@ -30,6 +30,53 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- PASO 0: LIMPIEZA PREVIA — Resolver duplicados existentes antes del índice
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Situación: el fallo del webhook de IziPay dejó múltiples sesiones
+-- pending/processing para el mismo alumno (doble pestaña real).
+-- El índice único NO puede crearse mientras existan esos duplicados.
+--
+-- Estrategia:
+--   Por cada alumno con sesiones duplicadas, conservamos la MÁS RECIENTE
+--   (la última que intentó pagar) y marcamos las anteriores como 'expired'.
+--   Esto es seguro porque:
+--   a) IziPay ya desactivado → ninguna de esas sesiones puede cobrar más.
+--   b) El pago real (si ocurrió) se conciliará manualmente con manual_gateway_credit.
+--   c) Las sesiones expired liberan el candado único sin perder la auditoría.
+
+DO $$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  -- Marcar como 'expired' todas las sesiones IziPay pending/processing
+  -- EXCEPTO la más reciente por alumno (que conservamos por si hay auditoría).
+  UPDATE public.payment_sessions ps
+  SET
+    gateway_status = 'expired'::public.gateway_payment_status,
+    status         = 'expired'
+  WHERE ps.gateway_name = 'izipay'
+    AND ps.gateway_status IN (
+          'pending'::public.gateway_payment_status,
+          'processing'::public.gateway_payment_status
+        )
+    AND ps.id NOT IN (
+      -- La sesión MÁS RECIENTE por alumno (la conservamos)
+      SELECT DISTINCT ON (student_id) id
+      FROM public.payment_sessions
+      WHERE gateway_name    = 'izipay'
+        AND gateway_status IN (
+              'pending'::public.gateway_payment_status,
+              'processing'::public.gateway_payment_status
+            )
+      ORDER BY student_id, created_at DESC
+    );
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RAISE NOTICE 'PASO 0: % sesión(es) duplicadas marcadas como expired (conservando la más reciente por alumno).', v_count;
+END
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 1. ÍNDICE ÚNICO PARCIAL: un solo gateway activo por alumno a la vez
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Aplica SOLO cuando hay una sesión IziPay en estado pendiente o procesando.
