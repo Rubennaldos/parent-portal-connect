@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useViewAsStore } from '@/stores/viewAsStore';
 import { useRechargeSubmit } from '@/hooks/useRechargeSubmit';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -146,6 +147,7 @@ export function RechargeModal({
   const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
   const { user } = useAuth();
   const { toast } = useToast();
+  const { isViewAsMode } = useViewAsStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Pilot controlado: solo este correo puede ver/probar IziPay mientras dura la prueba.
   const IZIPAY_PILOT_EMAIL = 'padremc1@gmail.com';
@@ -303,6 +305,17 @@ export function RechargeModal({
     if (!user) return;
     if (izipayLoading) return;
 
+    // SEGURIDAD: un administrador en modo "Ver como padre" NO puede iniciar
+    // pagos reales. Solo el padre autenticado puede tocar su dinero.
+    if (isViewAsMode) {
+      toast({
+        title: 'Acción no permitida',
+        description: 'Estás en modo "Ver como". No puedes iniciar pagos en nombre de un padre. Sal del modo de vista primero.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       toast({ title: 'Monto inválido', description: 'Ingresa un monto mayor a S/ 0', variant: 'destructive' });
@@ -434,6 +447,27 @@ export function RechargeModal({
       setIzipayLoading(false);
     }
   };
+
+  // ── Detector de cierre inesperado del popup (Escenario "Pánico de Red") ──
+  // Si la ventana del padre se cae, el popup cierra sin enviar postMessage.
+  // Este efecto lo detecta y mueve automáticamente a 'waiting' para que
+  // GatewayPaymentWaiting pueda verificar el estado real en la BD.
+  useEffect(() => {
+    if (izipayStep !== 'popup') return;
+
+    const CHECK_MS = 1_500;
+    const timer = setInterval(() => {
+      if (popupRef.current?.closed) {
+        clearInterval(timer);
+        // El popup se cerró sin enviarnos IZIPAY_SUCCESS/ERROR.
+        // Podría ser porque el padre pagó y la red falló, o porque cerró manualmente.
+        // Pasamos a 'waiting' para que la BD sea el árbitro.
+        setIzipayStep('waiting');
+      }
+    }, CHECK_MS);
+
+    return () => clearInterval(timer);
+  }, [izipayStep]);
 
   // ── Escuchar mensajes del popup IziPay ───────────────────────────────────
   useEffect(() => {
@@ -1709,6 +1743,25 @@ export function RechargeModal({
                     >
                       ¿No ves la ventana? Haz clic aquí para abrirla
                     </button>
+
+                    {/* BOTÓN "Ya pagué" — Escenario Pánico de Red
+                        Si el internet del padre se cayó justo después del pago,
+                        el popup no pudo enviar el postMessage. Este botón pasa
+                        directamente a GatewayPaymentWaiting para que verifique
+                        el estado real en la BD (el webhook ya debió actualizar). */}
+                    {izipaySessionId && (
+                      <button
+                        onClick={() => {
+                          popupRef.current?.close();
+                          setIzipayStep('waiting');
+                        }}
+                        className="flex items-center justify-center gap-1.5 w-full text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2 px-3 hover:bg-emerald-100 transition-colors"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        Ya pagué pero no aparece aquí — Verificar pago
+                      </button>
+                    )}
+
                     <button
                       onClick={() => { popupRef.current?.close(); setIzipayStep('idle'); setIzipaySessionId(null); }}
                       className="block w-full text-center text-[11px] text-gray-400 hover:text-gray-600 underline pt-1"
@@ -1721,6 +1774,13 @@ export function RechargeModal({
                 {/* Botón para iniciar pago en línea */}
                 {(izipayStep === 'idle' || izipayStep === 'done') && (
                   <div className="space-y-2">
+                    {/* Aviso de impersonación — el admin no puede pagar por el padre */}
+                    {isViewAsMode && (
+                      <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 text-xs text-amber-800 font-semibold flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                        Modo "Ver como" activo. Los pagos con tarjeta están bloqueados por seguridad.
+                      </div>
+                    )}
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
                       <p className="font-bold flex items-center gap-1.5">
                         <CreditCard className="h-4 w-4" /> Pago instantáneo en línea
@@ -1733,7 +1793,7 @@ export function RechargeModal({
                     </div>
                     <Button
                       onClick={handleInitIziPay}
-                      disabled={izipayLoading || !amount || parseFloat(amount) < IZIPAY_MIN_AMOUNT}
+                      disabled={izipayLoading || !amount || parseFloat(amount) < IZIPAY_MIN_AMOUNT || isViewAsMode}
                       className="w-full h-12 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 font-bold text-base gap-2 shadow-lg shadow-red-200 disabled:from-gray-300 disabled:to-gray-300"
                     >
                       {izipayLoading

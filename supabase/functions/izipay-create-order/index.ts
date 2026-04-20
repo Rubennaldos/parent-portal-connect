@@ -103,6 +103,32 @@ serve(async (req) => {
     return json({ success: false, error: `Alumno '${studentId}' no pertenece al padre autenticado (userId: ${callerUserId})` }, 403);
   }
 
+  // ── 5b. Limpiar sesiones expiradas y verificar sesión activa ─────────────
+  // Prevención del ataque "doble pestaña": si ya existe una sesión IziPay
+  // activa (pending/processing) para este alumno, rechazamos la solicitud.
+  // Primero expiramos sesiones fantasma para liberar el candado.
+  await supabase.rpc("expire_stale_gateway_sessions").catch(() => {});
+
+  const { data: activeSession } = await supabase
+    .rpc("check_active_gateway_session", {
+      p_student_id: studentId,
+      p_gateway:    "izipay",
+    });
+
+  if (activeSession && activeSession.length > 0) {
+    const sess = activeSession[0];
+    const expiresIn = Math.max(0, Math.round(
+      (new Date(sess.expires_at).getTime() - Date.now()) / 60_000
+    ));
+    return json({
+      success: false,
+      error:   `Ya hay un pago IziPay en proceso para este alumno. ` +
+               `Completa o espera que expire (${expiresIn} min). ` +
+               `Si ya pagaste, usa "Verificar pago" en el portal.`,
+      active_session_id: sess.session_id,
+    }, 409);
+  }
+
   // ── 6. Config operativa ───────────────────────────────────────────────────
   const { data: gwConfig, error: gwError } = await supabase
     .from("payment_gateway_config")
