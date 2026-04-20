@@ -193,7 +193,7 @@ export function IziPayEmbeddedForm({
                 transition: 'height .3s ease',
               }}
               allow="payment"
-              sandbox="allow-scripts allow-same-origin allow-forms"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
             />
           )}
         </div>

@@ -52,30 +52,30 @@
     },
 
     {
-      "source": "/izipay-frame.html",
-      "headers": [
-        {
-          "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://secure.micuentaweb.pe https://static.micuentaweb.pe https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' https://static.micuentaweb.pe; connect-src https://api.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://*.supabase.co; img-src 'self' data: blob: https://static.micuentaweb.pe; font-src 'self' data: https://static.micuentaweb.pe; frame-src 'self' https://secure.micuentaweb.pe https://static.micuentaweb.pe; frame-ancestors https://parent-portal-connect.vercel.app 'self'; form-action 'none'; base-uri 'self'; object-src 'none';"
-        },
-        { "key": "X-Frame-Options",           "value": "SAMEORIGIN" },
-        { "key": "X-Content-Type-Options",     "value": "nosniff" },
-        { "key": "Referrer-Policy",            "value": "strict-origin-when-cross-origin" }
-      ]
-    },
-
-    {
       "source": "/(.*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://secure.micuentaweb.pe https://static.micuentaweb.pe https://*.supabase.co https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' https://static.micuentaweb.pe https://fonts.googleapis.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://api.ipify.org; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com https://static.micuentaweb.pe; frame-src 'self' https://secure.micuentaweb.pe https://static.micuentaweb.pe; frame-ancestors 'none'; form-action 'self' https://*.micuentaweb.pe; base-uri 'self'; object-src 'none'; upgrade-insecure-requests;"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://*.supabase.co https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' https://static.micuentaweb.pe https://fonts.googleapis.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://api.ipify.org; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com https://static.micuentaweb.pe; frame-src 'self' https://*.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe; frame-ancestors 'none'; form-action 'self' https://*.micuentaweb.pe; base-uri 'self'; object-src 'none'; upgrade-insecure-requests;"
         },
         { "key": "X-Frame-Options",           "value": "DENY" },
         { "key": "X-Content-Type-Options",     "value": "nosniff" },
         { "key": "Referrer-Policy",            "value": "strict-origin-when-cross-origin" },
         { "key": "Permissions-Policy",         "value": "camera=(), microphone=(), geolocation=(), payment=(self \"https://static.micuentaweb.pe\")" },
         { "key": "Strict-Transport-Security",  "value": "max-age=63072000; includeSubDomains; preload" }
+      ]
+    },
+
+    {
+      "source": "/izipay-frame.html",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://*.online-metrix.net https://h.online-metrix.net https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' https://*.micuentaweb.pe https://static.micuentaweb.pe; connect-src 'self' https://*.micuentaweb.pe https://api.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe https://*.online-metrix.net https://h.online-metrix.net https://*.supabase.co; img-src 'self' data: blob: https://*.micuentaweb.pe https://static.micuentaweb.pe https://*.online-metrix.net https://h.online-metrix.net; font-src 'self' data: https://*.micuentaweb.pe https://static.micuentaweb.pe; frame-src 'self' https://*.micuentaweb.pe https://secure.micuentaweb.pe https://static.micuentaweb.pe; frame-ancestors https://parent-portal-connect.vercel.app 'self'; form-action 'none'; base-uri 'self'; object-src 'none';"
+        },
+        { "key": "X-Frame-Options",           "value": "SAMEORIGIN" },
+        { "key": "X-Content-Type-Options",     "value": "nosniff" },
+        { "key": "Referrer-Policy",            "value": "strict-origin-when-cross-origin" }
       ]
     }
   ]
