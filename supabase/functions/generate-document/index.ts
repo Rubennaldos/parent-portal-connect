@@ -15,6 +15,7 @@ serve(async (req) => {
   // El gateway de Supabase NO verifica el JWT automáticamente — lo hacemos nosotros.
   const authHeader = req.headers.get("authorization") ?? "";
   const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "").trim();
   if (!bearerToken) {
     return new Response(
       JSON.stringify({ success: false, error: "No autorizado — inicia sesión primero" }),
@@ -24,18 +25,25 @@ serve(async (req) => {
   // Decodificar el payload del JWT (solo lectura del sub; la firma ya fue firmada por Supabase Auth)
   // Permite llamadas con service_role (p.ej. desde izipay-webhook para billing en tiempo real).
   let callerUserId: string | null = null;
-  try {
-    const parts = bearerToken.split(".");
-    if (parts.length === 3) {
-      const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      const payload = JSON.parse(atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "=")));
-      callerUserId = payload.sub ?? null;
-      // Las Edge Functions internas usan service_role key (no tiene 'sub' pero tiene role='service_role')
-      if (!callerUserId && payload.role === "service_role") {
-        callerUserId = "service_role_internal";
+
+  // Permitir llamadas internas backend->backend con la service_role key.
+  // Esto desbloquea process-billing-queue sin abrir la función al público.
+  if (serviceRoleKey && bearerToken === serviceRoleKey) {
+    callerUserId = "service_role_internal";
+  } else {
+    try {
+      const parts = bearerToken.split(".");
+      if (parts.length === 3) {
+        const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const payload = JSON.parse(atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "=")));
+        callerUserId = payload.sub ?? null;
+        // Las Edge Functions internas usan service_role key (no tiene 'sub' pero tiene role='service_role')
+        if (!callerUserId && payload.role === "service_role") {
+          callerUserId = "service_role_internal";
+        }
       }
-    }
-  } catch { /* JWT malformado — callerUserId queda null */ }
+    } catch { /* JWT malformado — callerUserId queda null */ }
+  }
 
   if (!callerUserId) {
     return new Response(
