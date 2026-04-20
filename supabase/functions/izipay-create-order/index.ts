@@ -1,11 +1,8 @@
 // @ts-nocheck — archivo Deno (Edge Function de Supabase)
 /**
- * izipay-create-order — PENTÁGONO DE SEGURIDAD v2.2 (DEBUG)
- * Cambios v2.2:
- *  - console.log detallado en cada paso para diagnosticar el 400.
- *  - Auth via supabase.auth.getUser() (robusto con tokens ES256/HS256).
- *  - Transactions: .neq('is_deleted', true) — NULL-safe (fix clave del 400).
- *  - Mensajes de error 100% descriptivos (nunca vacíos).
+ * izipay-create-order — PENTÁGONO DE SEGURIDAD v2.3
+ * v2.3: Logs de debug eliminados (PCI DSS hygiene). Solo logs operativos.
+ * v2.2: Auth via supabase.auth.getUser() + .neq('is_deleted', true) NULL-safe.
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -32,17 +29,13 @@ serve(async (req) => {
   const apiPassword   = (Deno.env.get("IZIPAY_API_PASSWORD") ?? "").trim();
   const envPublicKey  = (Deno.env.get("IZIPAY_PUBLIC_KEY")   ?? "").trim();
 
-  console.log(`${TAG} INICIO — merchantId configurado: ${!!envMerchantId}, apiUsername configurado: ${!!apiUsername}, apiPassword configurado: ${!!apiPassword}`);
-
   if (!envMerchantId || !apiUsername || !apiPassword) {
-    console.error(`${TAG} ERROR: Faltan secretos en Vault.`);
+    console.error(`${TAG} CRÍTICO: Faltan secretos en Vault.`);
     return json({ success: false, error: "Credenciales IziPay incompletas en Vault (IZIPAY_MERCHANT_ID / IZIPAY_API_USERNAME / IZIPAY_API_PASSWORD)." }, 500);
   }
 
   // ── 2. Autenticación ──────────────────────────────────────────────────────
   const authHeader = req.headers.get("authorization") ?? "";
-  console.log(`${TAG} authHeader presente: ${!!authHeader}, empieza con Bearer: ${authHeader.startsWith("Bearer ")}`);
-
   if (!authHeader.startsWith("Bearer ")) {
     return json({ success: false, error: "No autorizado — token de sesión ausente" }, 401);
   }
@@ -50,7 +43,6 @@ serve(async (req) => {
   const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   const supabaseUserClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
   const { data: authData, error: authError } = await supabaseUserClient.auth.getUser(bearerToken);
-  console.log(`${TAG} auth.getUser → user: ${authData?.user?.id ?? "null"}, error: ${authError?.message ?? "ninguno"}`);
 
   if (authError || !authData?.user?.id) {
     return json({ success: false, error: "Sesión inválida o expirada" }, 401);
@@ -67,8 +59,6 @@ serve(async (req) => {
     return json({ success: false, error: "No se pudo leer el cuerpo del request" }, 400);
   }
 
-  console.log(`${TAG} Body raw (primeros 500 chars): ${rawText.slice(0, 500)}`);
-
   let body: {
     studentId?:        string;
     orderId?:          string;
@@ -79,7 +69,6 @@ serve(async (req) => {
   try {
     body = rawText ? JSON.parse(rawText) : {};
   } catch {
-    console.error(`${TAG} Body no es JSON válido: ${rawText.slice(0, 200)}`);
     return json({ success: false, error: "Body JSON inválido — verifica el Content-Type del request" }, 400);
   }
 
@@ -91,9 +80,7 @@ serve(async (req) => {
     currency         = "PEN",
   } = body ?? {};
 
-  console.log("Payload recibido:", body);
   const normalizedOrderId = orderId || crypto.randomUUID();
-  console.log(`${TAG} Payload parseado → studentId: ${studentId}, orderId: ${normalizedOrderId}, paid_tx_ids: [${(paid_tx_ids ?? []).join(",")}], recharge_surplus: ${recharge_surplus}`);
 
   if (!studentId) {
     return json({ success: false, error: "Campo 'studentId' requerido — verifica que el modal envíe el ID del alumno" }, 400);
@@ -109,8 +96,6 @@ serve(async (req) => {
     .eq("parent_id", callerUserId)
     .maybeSingle();
 
-  console.log(`${TAG} Ownership check → student: ${student?.id ?? "null"}, error: ${studentError?.message ?? "ninguno"}`);
-
   if (studentError) {
     return json({ success: false, error: `Error al verificar el alumno: ${studentError.message}` }, 500);
   }
@@ -124,8 +109,6 @@ serve(async (req) => {
     .select("api_url, is_production, is_active, min_amount, max_amount, settings")
     .eq("gateway_name", "izipay")
     .single();
-
-  console.log(`${TAG} gwConfig → is_active: ${gwConfig?.is_active ?? "null"}, min: ${gwConfig?.min_amount}, max: ${gwConfig?.max_amount}, error: ${gwError?.message ?? "ninguno"}`);
 
   if (!gwConfig?.is_active) {
     return json({ success: false, error: "La pasarela Izipay no está activa. Actívala en Configuración → Pasarela de Pagos." }, 503);
@@ -149,24 +132,16 @@ serve(async (req) => {
       .neq("is_deleted", true)        // NULL-safe: incluye is_deleted IS NULL y is_deleted = false
       .eq("student_id", studentId);
 
-    console.log(`${TAG} TX query → rows encontradas: ${txRows?.length ?? 0}, error: ${txError?.message ?? "ninguno"}`);
-    if (txRows) {
-      txRows.forEach(tx => console.log(`${TAG}   tx: id=${tx.id} amount=${tx.amount} status=${tx.payment_status}`));
-    }
-
     if (txError) {
-      console.error(`${TAG} Error en query de transactions:`, txError);
-      // No bloquear: continuamos con debtAmount = 0
+      console.error(`${TAG} Error en query de transactions:`, txError.message);
     } else if (txRows && txRows.length > 0) {
       txFoundCount = txRows.length;
       debtAmount   = txRows.reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
     }
 
     if (txFoundCount === 0) {
-      console.warn(`${TAG} ADVERTENCIA: se enviaron ${paid_tx_ids.length} IDs pero no se encontraron transacciones pending para student=${studentId}.`);
+      console.warn(`${TAG} ADVERTENCIA: ${paid_tx_ids.length} IDs enviados pero ninguna TX pending encontrada.`);
     }
-  } else {
-    console.log(`${TAG} No se enviaron paid_tx_ids — pago es recarga pura.`);
   }
 
   const sanitizedRecharge = Math.max(0, Math.min(
@@ -176,13 +151,10 @@ serve(async (req) => {
 
   const serverAmount = Math.round((debtAmount + sanitizedRecharge) * 100) / 100;
 
-  console.log(`${TAG} Cálculo → debtAmount: ${debtAmount}, sanitizedRecharge: ${sanitizedRecharge}, serverAmount: ${serverAmount}, minAllowed: ${minAllowed}`);
-
   if (serverAmount <= 0) {
     const detail = (paid_tx_ids?.length ?? 0) > 0
       ? `Se enviaron ${paid_tx_ids.length} ID(s) de deuda pero no se encontraron transacciones pendientes (puede que ya estén pagadas o eliminadas).`
       : "No hay deudas seleccionadas ni recarga en el carrito.";
-    console.error(`${TAG} serverAmount = 0. ${detail}`);
     return json({ success: false, error: "Monto calculado S/ 0. Revisa que las deudas no estén ya pagadas o eliminadas" }, 400);
   }
   if (serverAmount < minAllowed) {
@@ -232,23 +204,9 @@ serve(async (req) => {
     customer: { reference: callerUserId, email: callerEmail },
   };
 
-  const maskedPass = apiPassword && apiPassword.length >= 4 ? `****${apiPassword.slice(-4)}` : "****";
   console.log(
-    `[DEBUG] Auth construido con Usuario: ${apiUsername} (Largo: ${apiUsername.length}) | ` +
-    `fallback merchantUser: ${merchantDerivedUser} (Largo: ${merchantDerivedUser.length})`,
-  );
-  console.log(
-    `[DEBUG] Auth Check -> Candidatos: ${authUserCandidates
-      .map((u) => `${u.slice(0, 4)}****(${u.length})`)
-      .join(" | ")} | PassTail: ${maskedPass} | URL: ${baseUrl}`,
-  );
-  if (baseUrl.includes("api.micuentaweb.pe")) {
-    console.log("[INFO] Operando en modo PRODUCCIÓN real");
-  }
-
-  console.log(
-    `${TAG} Llamando a Izipay → authCandidates=${authUserCandidates.length}, ` +
-    `url: ${baseUrl}, amountCents: ${amountInCents}, orderId: ${normalizedOrderId}`,
+    `${TAG} Llamando a Izipay → amountCents=${amountInCents}, orderId=${normalizedOrderId}, ` +
+    `production=${baseUrl.includes("api.micuentaweb.pe")}`,
   );
 
   // ── 9. Llamar a Izipay ────────────────────────────────────────────────────
@@ -259,7 +217,6 @@ serve(async (req) => {
     authUsed = candidateUser;
     const basicAuth = btoa(`${candidateUser}:${apiPassword}`);
     try {
-      console.log(`${TAG} Intentando auth con usuario ${candidateUser.slice(0, 4)}****`);
       izipayResponse = await fetch(`${baseUrl}/api-payment/V4/Charge/CreatePayment`, {
         method: "POST",
         headers: {
@@ -275,12 +232,7 @@ serve(async (req) => {
 
     izipayData = await izipayResponse.json().catch(() => null);
     const errorCode = izipayData?.answer?.errorCode ?? "N/A";
-    console.log(
-      `${TAG} Respuesta Izipay (user ${candidateUser.slice(0, 4)}****) → ` +
-      `http: ${izipayResponse.status}, status: ${izipayData?.status}, code: ${errorCode}`,
-    );
 
-    // Si fue SUCCESS, salimos.
     if (izipayResponse.ok && izipayData?.status === "SUCCESS") break;
 
     // Si fue INT_905 y hay más candidatos, seguimos al siguiente usuario.

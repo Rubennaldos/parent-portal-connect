@@ -370,7 +370,12 @@ export function RechargeModal({
 
       const serverAmount: number = Number(fnData.server_amount ?? numAmount);
       const responseOrderId = String(fnData.orderId ?? '');
-      const paymentUrl = String(fnData.paymentUrl ?? '');
+      // Añadir el origen de la app como parámetro para que el popup pueda
+      // restringir su postMessage solo a este origen (Fix V-3).
+      const rawPaymentUrl = String(fnData.paymentUrl ?? '');
+      const paymentUrl = rawPaymentUrl
+        ? `${rawPaymentUrl}&origin=${encodeURIComponent(window.location.origin)}`
+        : '';
 
       if (!paymentUrl || !responseOrderId) {
         throw new Error('Respuesta incompleta de la pasarela. Falta paymentUrl u orderId.');
@@ -433,6 +438,10 @@ export function RechargeModal({
   // ── Escuchar mensajes del popup IziPay ───────────────────────────────────
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      // SEGURIDAD V-2: solo aceptar mensajes de nuestro propio origen.
+      // El popup (izipay-frame.html) abre desde el mismo dominio, por lo que
+      // event.origin debe coincidir con window.location.origin.
+      if (event.origin !== window.location.origin) return;
       if (!event.data?.type) return;
       switch (event.data.type) {
         case 'IZIPAY_SUCCESS':

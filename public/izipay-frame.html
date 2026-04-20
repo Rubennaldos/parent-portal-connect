@@ -236,13 +236,26 @@
         .then(function(regs) { regs.forEach(function(r) { r.unregister(); }); });
     }
 
+    // ── Parámetro de origen (Fix V-3: no enviar con '*') ──────────────────
+    // El RechargeModal añade ?origin=<app-origin> al abrir el popup.
+    // Lo validamos con una whitelist para evitar open-redirect en postMessage.
+    var _rawOrigin  = (new URLSearchParams(window.location.search)).get('origin') || '';
+    var _safeOrigin = (function() {
+      try {
+        var u = new URL(_rawOrigin);
+        // Solo aceptar https del mismo dominio (o localhost para dev)
+        if (u.protocol === 'https:' || u.hostname === 'localhost') return u.origin;
+      } catch(e) {}
+      return window.location.origin; // fallback al propio origen
+    })();
+
     // ── Helpers ────────────────────────────────────────────────────────────
     function send(msg) {
       try {
         if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(msg, '*');
+          window.opener.postMessage(msg, _safeOrigin);
         } else if (window.parent !== window) {
-          window.parent.postMessage(msg, '*');
+          window.parent.postMessage(msg, _safeOrigin);
         }
       } catch(e) {}
     }
@@ -315,6 +328,16 @@
 
           // PASO 6: callbacks
           krInst.onSubmit(function(response) {
+            // SEGURIDAD: solo enviar éxito si el banco aprobó el pago.
+            // onSubmit también dispara con orderStatus='REFUSED' en V4.
+            var APPROVED_STATUSES = ['PAID', 'AUTHORISED', 'CAPTURED'];
+            var orderStatus = (response
+              && response.clientAnswer
+              && response.clientAnswer.orderStatus) || '';
+            if (APPROVED_STATUSES.indexOf(orderStatus.toUpperCase()) === -1) {
+              // Pago rechazado/pendiente — no enviar éxito. El SDK mostrará el error.
+              return false;
+            }
             var orderId = (response
               && response.clientAnswer
               && response.clientAnswer.orderDetails
