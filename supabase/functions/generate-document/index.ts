@@ -519,6 +519,28 @@ serve(async (req) => {
       console.error("Error guardando invoice:", dbErr);
     }
 
+    // CRÍTICO DE TRAZABILIDAD:
+    // Si Nubefact respondió pero no pudimos persistir/recuperar la fila en invoices,
+    // NO debemos devolver success=true porque el historial del padre queda "en proceso".
+    // Marcamos error explícito para que billing_queue quede en failed y se pueda reintentar.
+    if (!savedInvoice) {
+      const persistErr =
+        `INVOICE_PERSIST_ERROR: Comprobante ${serie}-${String(numero).padStart(8, "0")} ` +
+        `emitido en Nubefact pero no persistido en public.invoices. ` +
+        `Revisar constraints/RLS/esquema de invoices antes de reintentar.`;
+      console.error(`[generate-document] ${persistErr}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: persistErr,
+          serie,
+          numero,
+          nubefact: nubefactData,
+        }),
+        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
+
     // 14. Fallback: guardar en electronic_documents (compatibilidad)
     try {
       await supabase.from("electronic_documents").insert({
