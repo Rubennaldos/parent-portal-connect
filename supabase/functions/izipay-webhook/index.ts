@@ -629,10 +629,14 @@ serve(async (req) => {
         );
 
         if (genError || !(genResult as any)?.success) {
-          // Fallo en Nubefact — dejar billing_status='pending' para el cron nocturno
+          // Fallo en Nubefact — dejar billing_status='pending' para el cron nocturno.
+          // IMPORTANTE: esto NO revierte el crédito. El saldo ya fue acreditado correctamente.
+          // La boleta se reintentará con el cron nocturno o manualmente desde el admin.
+          const genErrMsg = genError?.message ?? (genResult as any)?.error ?? "respuesta vacía";
+          const nubefactDetail = (genResult as any)?.nubefact ? JSON.stringify((genResult as any).nubefact).slice(0, 200) : "";
           console.error(
-            "[izipay-webhook][billing] generate-document falló:",
-            genError?.message ?? (genResult as any)?.error ?? "respuesta vacía",
+            `[izipay-webhook][billing] generate-document falló (no crítico — crédito ya aplicado): ${genErrMsg}`,
+            nubefactDetail ? `| Nubefact: ${nubefactDetail}` : "",
           );
           return;
         }

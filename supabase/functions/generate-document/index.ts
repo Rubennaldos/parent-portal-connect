@@ -576,7 +576,7 @@ serve(async (req) => {
           documento:      savedInvoice ?? null,
           nubefact:       nubefactData,
         }),
-        { headers: { ...cors, "Content-Type": "application/json" } }
+        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
