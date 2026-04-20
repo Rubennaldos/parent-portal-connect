@@ -4,12 +4,7 @@
  * Fila 1: Historial de Compras · Mensajes (destacado) · Topes
  * Fila 2: Soporte · Agregar Hijo
  */
-import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus, Wallet, Zap, RefreshCw } from 'lucide-react';
-
-// ──────────────────────────────────────────────────────────────────────────────
-// FLAG DE PAUSA — Cambiar a false para volver a activar el botón de saldo
-// ──────────────────────────────────────────────────────────────────────────────
-const BALANCE_PAUSED = true;
+import { ShoppingBag, Headphones, ShieldCheck, MessageSquare, UserPlus, Zap, Wallet } from 'lucide-react';
 
 interface ServicesGridProps {
   onViewHistory:   () => void;
@@ -17,13 +12,12 @@ interface ServicesGridProps {
   onMessages?:     () => void;
   onSupport?:      () => void;
   onAddStudent?:   () => void;
-  onBalance?:      () => void;
-  studentBalance?: number;
   unreadNotifCount?: number;
   supportPhone?:   string;
-  /** Botón Recargas visible para alumnos prepago */
-  onRecharge?:     () => void;
-  isPrepaidStudent?: boolean;
+  /** Espejo pasivo: saldo de recargas desde ledger */
+  onRechargeBalance?: () => void;
+  rechargeLedgerBalance?: number | null;
+  isRechargeLedgerLoading?: boolean;
   /** Piloto IziPay: solo padremc1@gmail.com recibe true */
   isIzipayPilot?:  boolean;
 }
@@ -34,12 +28,11 @@ export function ServicesGrid({
   onMessages,
   onSupport,
   onAddStudent,
-  onBalance,
-  studentBalance = 0,
   unreadNotifCount = 0,
   supportPhone = '51991236870',
-  onRecharge,
-  isPrepaidStudent = false,
+  onRechargeBalance,
+  rechargeLedgerBalance = null,
+  isRechargeLedgerLoading = false,
   isIzipayPilot = false,
 }: ServicesGridProps) {
   return (
@@ -98,27 +91,27 @@ export function ServicesGrid({
       {/* ── Fila 2: 3 botones ── */}
       <div className="grid grid-cols-3 gap-2">
 
-        {/* SALDO */}
+        {/* SALDO DE RECARGAS (SSOT: view_recharge_ledger) */}
         <button
-          onClick={BALANCE_PAUSED ? undefined : (onBalance ?? (() => {}))}
-          disabled={BALANCE_PAUSED}
-          title={BALANCE_PAUSED ? 'Saldos temporalmente pausados' : undefined}
-          className={`flex flex-col items-center gap-2 p-2 rounded-2xl transition-all duration-200
-            ${BALANCE_PAUSED
-              ? 'opacity-40 cursor-not-allowed'
-              : 'hover:bg-slate-50/80 active:scale-95 cursor-pointer'
-            }`}
+          onClick={onRechargeBalance ?? (() => {})}
+          className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-emerald-50/80 cursor-pointer transition-all duration-200"
         >
-          <div className="relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm bg-gradient-to-br from-slate-100 to-slate-200 ring-2 ring-slate-200/50">
-            <Wallet className="w-5 h-5 text-slate-400" />
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-emerald-400 to-teal-500 ring-emerald-200/60 shadow-emerald-100">
+            <Wallet className="w-5 h-5 text-white" />
           </div>
-          <div className="flex flex-col items-center gap-0">
-            <span className="text-[10px] font-semibold leading-tight text-center text-slate-400">
-              Mi Saldo
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="text-[10px] font-semibold leading-tight text-center text-emerald-600">
+              Saldo de Recargas
             </span>
-            {BALANCE_PAUSED && (
+            {isRechargeLedgerLoading ? (
+              <span className="h-3 w-14 rounded-full bg-emerald-100 animate-pulse" />
+            ) : rechargeLedgerBalance === null ? (
               <span className="text-[8px] font-medium text-slate-400 leading-none">
-                pausado
+                Sin recargas
+              </span>
+            ) : (
+              <span className="text-[9px] font-bold text-emerald-700 leading-none">
+                S/ {rechargeLedgerBalance.toFixed(2)}
               </span>
             )}
           </div>
@@ -151,39 +144,22 @@ export function ServicesGrid({
 
       </div>
 
-      {/* ── Fila 3: Recargas (prepago) + RCR.C (solo piloto IziPay) ── */}
-      {(isPrepaidStudent || isIzipayPilot) && (
+      {/* ── Fila 3: RCR.C (solo piloto IziPay) ── */}
+      {isIzipayPilot && (
         <div className="grid grid-cols-3 gap-2 mt-2">
 
-          {/* RECARGAS — visible para alumnos en modo prepago */}
-          {isPrepaidStudent && (
-            <button
-              onClick={onRecharge ?? (() => {})}
-              className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-emerald-50/80 cursor-pointer transition-all duration-200"
-            >
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-emerald-400 to-teal-500 ring-emerald-200/60 shadow-emerald-100">
-                <RefreshCw className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-[10px] font-semibold leading-tight text-center text-emerald-600">
-                Recargas
-              </span>
-            </button>
-          )}
-
           {/* RCR.C — solo piloto IziPay */}
-          {isIzipayPilot && (
-            <button
-              onClick={onRecharge ?? (() => {})}
-              className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-blue-50/80 cursor-pointer transition-all duration-200"
-            >
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-blue-500 to-indigo-600 ring-blue-200/60 shadow-blue-200">
-                <Zap className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-[10px] font-semibold leading-tight text-center text-blue-600">
-                RCR.C
-              </span>
-            </button>
-          )}
+          <button
+            onClick={onRechargeBalance ?? (() => {})}
+            className="flex flex-col items-center gap-2 p-2 rounded-2xl active:scale-95 hover:bg-blue-50/80 cursor-pointer transition-all duration-200"
+          >
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ring-2 bg-gradient-to-br from-blue-500 to-indigo-600 ring-blue-200/60 shadow-blue-200">
+              <Zap className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-[10px] font-semibold leading-tight text-center text-blue-600">
+              RCR.C
+            </span>
+          </button>
 
         </div>
       )}

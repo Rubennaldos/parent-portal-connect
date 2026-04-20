@@ -144,7 +144,7 @@ BEGIN
   v_available := GREATEST(0, v_student.weekly_limit - v_spent_week);
 
   IF (v_spent_week + ABS(NEW.amount)) > v_student.weekly_limit THEN
-    RAISE EXCEPTION 'SPENDING_LIMIT: Tope semanal superado. Gastado esta semana: S/ %, disponible: S/ %, compra intentada: S/ %.',
+    RAISE EXCEPTION 'SPENDING_LIMIT: ¡Límite alcanzado! Esta semana ya gastó S/ %, solo le quedan S/ % y esta compra es de S/ %.',
       round(v_spent_week, 2),
       round(v_available, 2),
       round(ABS(NEW.amount), 2);

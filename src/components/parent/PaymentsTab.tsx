@@ -23,6 +23,10 @@ interface PendingTransaction {
   created_at: string;
   ticket_code?: string;
   metadata?: any;
+  /** Estado del voucher vinculado a esta deuda (null = sin voucher pendiente) */
+  voucher_status?: 'pending' | 'rejected' | null;
+  voucher_request_id?: string | null;
+  voucher_rejection_reason?: string | null;
 }
 
 interface VoucherStatus {
@@ -53,9 +57,21 @@ interface WalletTransaction {
   created_at: string;
 }
 
+interface RechargeCartItem {
+  id: string;
+  student_id: string;
+  student_name: string;
+  school_id?: string | null;
+  amount: number;
+  created_at: string;
+}
+
 interface PaymentsTabProps {
   userId: string;
   isActive?: boolean; // 🔄 Para refrescar cuando la pestaña se activa
+  rechargeCartItems: RechargeCartItem[];
+  onRemoveRechargeItem: (itemId: string) => void;
+  onClearRechargeCart: () => void;
 }
 
 /** Compras kiosco pendientes (UUID en transactions), sin almuerzos ni fila sintética de saldo. */
@@ -67,12 +83,27 @@ function isKioskPendingPurchase(tx: PendingTransaction): boolean {
   return true;
 }
 
-export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
+export const PaymentsTab = ({
+  userId,
+  isActive,
+  rechargeCartItems,
+  onRemoveRechargeItem,
+  onClearRechargeCart,
+}: PaymentsTabProps) => {
   const { toast } = useToast();
   const voucherSyncTs = useDebouncedSync('vouchers', 800);
   const [loading, setLoading] = useState(true);
   const [debts, setDebts] = useState<StudentDebt[]>([]);
   const [voucherStatuses, setVoucherStatuses] = useState<Map<string, VoucherStatus>>(new Map());
+
+  // ── Resumen financiero: valores calculados en DB (Ley de No-Cálculo) ──────
+  // Se leen de summary_* en la primera fila del RPC get_parent_debts_v2.
+  // El frontend NO realiza sumas sobre estos valores — solo los pinta.
+  const [serverSummary, setServerSummary] = useState<{
+    totalBruto:    number;
+    inReview:      number;
+    netoPayable:   number;
+  }>({ totalBruto: 0, inReview: 0, netoPayable: 0 });
 
   // ── Estado para el modal de pago ──
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -180,7 +211,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           .select('id, full_name, photo_url, school_id, balance, wallet_balance')
           .eq('parent_id', userId)
           .eq('is_active', true),
-        supabase.rpc('get_parent_debts', { p_parent_id: userId }),
+        supabase.rpc('get_parent_debts_v2', { p_parent_id: userId }),
       ]);
 
       if (studentsResult.error) throw studentsResult.error;
@@ -188,16 +219,23 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
       const students  = studentsResult.data ?? [];
       const debtRows  = (debtsResult.data ?? []) as Array<{
-        deuda_id:    string;
-        student_id:  string;
-        school_id:   string;
-        monto:       number;
-        descripcion: string;
-        fecha:       string;
-        fuente:      string;
-        es_almuerzo: boolean;
-        metadata:    any;
-        ticket_code: string | null;
+        deuda_id:                 string;
+        student_id:               string;
+        school_id:                string;
+        monto:                    number;
+        descripcion:              string;
+        fecha:                    string;
+        fuente:                   string;
+        es_almuerzo:              boolean;
+        metadata:                 any;
+        ticket_code:              string | null;
+        voucher_status:           'pending' | 'rejected' | null;
+        voucher_request_id:       string | null;
+        voucher_rejection_reason: string | null;
+        // v2.1 — campos de resumen (mismo valor en cada fila, calculados en DB)
+        summary_total_bruto:      number | null;
+        summary_in_review:        number | null;
+        summary_neto_payable:     number | null;
       }>;
 
       if (students.length === 0) {
@@ -225,14 +263,17 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         if (rows.length === 0) continue;
 
         const mappedTransactions: PendingTransaction[] = rows.map(row => ({
-          id:          row.deuda_id,
-          student_id:  student.id,
-          student_name: student.full_name,
-          amount:      Number(row.monto),
-          description: row.descripcion,
-          created_at:  row.fecha,
-          ticket_code: row.ticket_code ?? undefined,
-          metadata:    row.metadata,
+          id:                       row.deuda_id,
+          student_id:               student.id,
+          student_name:             student.full_name,
+          amount:                   Number(row.monto),
+          description:              row.descripcion,
+          created_at:               row.fecha,
+          ticket_code:              row.ticket_code ?? undefined,
+          metadata:                 row.metadata,
+          voucher_status:           row.voucher_status ?? null,
+          voucher_request_id:       row.voucher_request_id ?? null,
+          voucher_rejection_reason: row.voucher_rejection_reason ?? null,
         }));
 
         const totalDebt = mappedTransactions.reduce((sum, t) => sum + t.amount, 0);
@@ -250,81 +291,49 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
       setDebts(debtsData);
 
-      // ── Obtener estados de vouchers enviados por este padre ──
-      if (debtsData.length > 0) {
-        const studentIds = debtsData.map(d => d.student_id);
+      // ── Resumen del servidor (v2.1): leer de la primera fila ─────────────
+      // Si la DB todavía no tiene la migración v2.1, se hace fallback a 0
+      // (el RPC aún funciona, solo falta el resumen visual).
+      const firstRow = debtRows[0];
+      setServerSummary({
+        totalBruto:  Number(firstRow?.summary_total_bruto  ?? 0),
+        inReview:    Number(firstRow?.summary_in_review    ?? 0),
+        netoPayable: Number(firstRow?.summary_neto_payable ?? 0),
+      });
 
-        // Buscar vouchers pendientes o rechazados (lunch_payment y debt_payment)
-        const { data: rechargeRequests } = await supabase
-          .from('recharge_requests')
-          .select('id, student_id, status, rejection_reason, created_at, lunch_order_ids, request_type, paid_transaction_ids')
-          .eq('parent_id', userId)
-          .in('request_type', ['lunch_payment', 'debt_payment'])
-          .in('student_id', studentIds)
-          .in('status', ['pending', 'rejected'])
-          .order('created_at', { ascending: false });
+      // ── Derivar voucherStatuses y pendingDebtVoucherStudents desde los datos del RPC v2 ──
+      // get_parent_debts_v2 ya embebe el voucher_status por deuda en una query atómica.
+      // No se necesita una segunda query a recharge_requests.
+      {
+        const statusMap = new Map<string, VoucherStatus>();
+        const pendingDebtStudents = new Set<string>();
 
-        if (rechargeRequests && rechargeRequests.length > 0) {
-          const statusMap = new Map<string, VoucherStatus>();
-          const pendingDebtStudents = new Set<string>();
-
-          // Para debt_payment, los paid_transaction_ids nos dan mapeo directo
-          rechargeRequests.forEach(req => {
-            // Solo bloquear el botón si hay un debt_payment pendiente (no lunch_payment)
-            if (req.status === 'pending' && req.request_type === 'debt_payment') {
-              pendingDebtStudents.add(req.student_id);
-            }
-
-            // Mapear paid_transaction_ids directamente
-            if (req.paid_transaction_ids) {
-              req.paid_transaction_ids.forEach((txId: string) => {
-                const existing = statusMap.get(txId);
-                if (!existing || new Date(req.created_at) > new Date(existing.created_at || '')) {
-                  statusMap.set(txId, {
-                    transaction_id: txId,
-                    status: req.status as any,
-                    rejection_reason: req.rejection_reason || undefined,
-                    created_at: req.created_at,
-                  });
-                }
+        for (const debt of debtsData) {
+          for (const tx of debt.pending_transactions) {
+            if (tx.voucher_status === 'pending' || tx.voucher_status === 'rejected') {
+              statusMap.set(tx.id, {
+                transaction_id: tx.id,
+                status:         tx.voucher_status,
+                rejection_reason: tx.voucher_rejection_reason ?? undefined,
+                created_at:     tx.created_at,
               });
+              if (tx.voucher_status === 'pending') {
+                pendingDebtStudents.add(debt.student_id);
+              }
             }
+          }
 
-            // También mapear por lunch_order_ids (para lunch payments)
-            if (req.lunch_order_ids) {
-              // Necesitamos mapear lunch_order_id -> transaction_id
-              // Lo haremos después con las transacciones que tenemos
-              const allTx = debtsData.flatMap(d => d.pending_transactions);
-              req.lunch_order_ids.forEach((orderId: string) => {
-                const matchingTx = allTx.find(tx => tx.metadata?.lunch_order_id === orderId);
-                if (matchingTx) {
-                  const existing = statusMap.get(matchingTx.id);
-                  if (!existing || new Date(req.created_at) > new Date(existing.created_at || '')) {
-                    statusMap.set(matchingTx.id, {
-                      transaction_id: matchingTx.id,
-                      status: req.status as any,
-                      rejection_reason: req.rejection_reason || undefined,
-                      created_at: req.created_at,
-                    });
-                  }
-                }
-              });
-            }
-          });
-
-          // ── También marcar estudiantes cuyas transacciones YA están cubiertas por un voucher pendiente ──
-          debtsData.forEach(debt => {
-            if (debt.pending_transactions.length > 0) {
-              const allCovered = debt.pending_transactions.every(
-                tx => statusMap.get(tx.id)?.status === 'pending'
-              );
-              if (allCovered) pendingDebtStudents.add(debt.student_id);
-            }
-          });
-
-          setVoucherStatuses(statusMap);
-          setPendingDebtVoucherStudents(pendingDebtStudents);
+          // Marcar alumno si TODAS sus transacciones están en revisión
+          if (debt.pending_transactions.length > 0) {
+            const allCovered = debt.pending_transactions.every(
+              tx => tx.voucher_status === 'pending'
+            );
+            if (allCovered) pendingDebtStudents.add(debt.student_id);
+          }
         }
+
+        setVoucherStatuses(statusMap);
+        setPendingDebtVoucherStudents(pendingDebtStudents);
       }
     } catch (error: any) {
       console.error('Error fetching debts:', error);
@@ -383,22 +392,28 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     }
   };
 
-  const totalDebt = debts.reduce((sum, d) => sum + d.total_debt, 0);
+  // ── Totales del carrito (frontend: solo items de recarga) ────────────────
+  const rechargeCartTotal = rechargeCartItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const rechargeCartCount = rechargeCartItems.length;
 
-  // ── REGLA DE COBRANZAS: excluir "en revisión" del total a pagar ──
-  // Solo se suman deudas con estado pending (sin voucher) o rejected (voucher rechazado).
-  // Las transacciones cubiertas por un voucher pendiente se muestran como "en revisión" — no se cobran dos veces.
-  const totalPayable = debts.reduce((sum, d) => {
-    return sum + d.pending_transactions
-      .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
-      .reduce((s, tx) => s + tx.amount, 0);
-  }, 0);
-  const totalInReview = Math.max(0, totalDebt - totalPayable);
+  // ── Totales financieros: vienen del servidor (Ley de No-Cálculo) ─────────
+  // serverSummary se actualiza en cada llamada a fetchDebts.
+  // El frontend SOLO suma el carrito de recargas (estado local que el RPC no conoce).
+  const totalDebt     = serverSummary.totalBruto;   // alias para compatibilidad con código de pago por alumno
+  const totalInReview = serverSummary.inReview;
+  const totalPayable  = serverSummary.netoPayable;
+  const checkoutTotal = totalPayable + rechargeCartTotal;
+
+  // Conteo de ítems pagables (necesario para el subtítulo; lo calculamos localmente)
   const payableItemsCount = debts.reduce((sum, d) =>
     sum + d.pending_transactions.filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending').length, 0);
+  const checkoutItemsCount = payableItemsCount + rechargeCartCount;
 
   // ── Detectar si las deudas pertenecen a sedes distintas ──
-  const uniqueSchoolIds = [...new Set(debts.map(d => d.school_id).filter(Boolean))];
+  const uniqueSchoolIds = [...new Set([
+    ...debts.map(d => d.school_id).filter(Boolean),
+    ...rechargeCartItems.map(i => i.school_id).filter(Boolean),
+  ])];
   const isMultiSchool = uniqueSchoolIds.length > 1;
 
   // ── Datos para pago combinado ──
@@ -440,17 +455,36 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       }
     }
 
-    const combinedNames = allStudentNames.length <= 2
-      ? allStudentNames.join(' y ')
-      : allStudentNames.slice(0, -1).join(', ') + ' y ' + allStudentNames[allStudentNames.length - 1];
+    const rechargeItems = rechargeCartItems.map((item) => ({
+      id: item.id,
+      student_id: item.student_id,
+      student_name: item.student_name,
+      amount: Number(item.amount || 0),
+    }));
+    const rechargeTotal = rechargeItems.reduce((sum, item) => sum + item.amount, 0);
+    const nameSet = new Set<string>([...allStudentNames, ...rechargeItems.map((i) => i.student_name)]);
+    const mergedNames = [...nameSet];
+    const combinedNames = mergedNames.length <= 2
+      ? mergedNames.join(' y ')
+      : mergedNames.slice(0, -1).join(', ') + ' y ' + mergedNames[mergedNames.length - 1];
 
     return {
       allTransactionIds,
       allLunchOrderIds,
-      allBreakdownItems,
+      allBreakdownItems: [
+        ...allBreakdownItems,
+        ...rechargeItems.map((item) => ({
+          description: `Recarga carrito: ${item.student_name}`,
+          amount: item.amount,
+        })),
+      ],
       allStudentIds,
       combinedNames,
-      totalAmount: totalPayable, // Solo lo pagable — no incluye "en revisión"
+      totalAmount: totalPayable + rechargeTotal, // Deudas + recargas de carrito
+      debtAmount: totalPayable,
+      rechargeAmount: rechargeTotal,
+      hasDebtItems: allTransactionIds.length > 0 || allLunchOrderIds.length > 0,
+      rechargeItems,
     };
   };
 
@@ -464,8 +498,15 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       });
       return;
     }
-    // Calcular el total combinado antes de abrir el selector (para la regla de S/ 700)
     const combined = buildCombinedPaymentData();
+    if (combined.totalAmount <= 0) {
+      toast({
+        title: 'Sin ítems por pagar',
+        description: 'No hay deudas ni recargas en el carrito para procesar.',
+      });
+      return;
+    }
+    // Calcular el total combinado antes de abrir el selector (para la regla de S/ 700)
     setPendingInvoiceTotal(combined.totalAmount);
     setCombinedMode(true);
     setSelectedDebt(null);
@@ -477,18 +518,27 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
    */
   const handlePayDebt = (debt: StudentDebt) => {
     const allIds = debt.pending_transactions.map(t => t.id);
+    // Inicializar solo con transacciones pagables (excluir voucher_status="pending")
+    const payableIdsForInit = debt.pending_transactions
+      .filter(tx => tx.voucher_status !== 'pending')
+      .map(t => t.id);
     if (!selectedTxByStudent.has(debt.student_id)) {
-      setSelectedTxByStudent(prev => new Map(prev).set(debt.student_id, new Set(allIds)));
+      setSelectedTxByStudent(prev => new Map(prev).set(
+        debt.student_id,
+        new Set(payableIdsForInit.length > 0 ? payableIdsForInit : allIds),
+      ));
     }
     setSelectedDebt(debt);
     // Calcular el total seleccionado antes de abrir el selector (para la regla de S/ 700).
-    // Usa la misma lógica que getPaymentData: si hay selección parcial la usa; si no, todos.
+    // Excluir transacciones con voucher_status='pending' (ya en revisión):
+    // el servidor embebe ese estado en cada tx vía get_parent_debts_v2 (Ley de No-Cálculo).
     const existingSelection = selectedTxByStudent.get(debt.student_id);
     const effectiveIds = existingSelection && existingSelection.size > 0 ? existingSelection : new Set(allIds);
     const total = debt.pending_transactions
-      .filter(tx => effectiveIds.has(tx.id))
+      .filter(tx => effectiveIds.has(tx.id) && tx.voucher_status !== 'pending')
       .reduce((sum, tx) => sum + tx.amount, 0);
-    setPendingInvoiceTotal(total);
+    // Checkout integral: deudas seleccionadas + recargas en carrito.
+    setPendingInvoiceTotal(total + rechargeCartTotal);
     setShowInvoiceSelector(true);
   };
 
@@ -518,7 +568,8 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
 
     setSelectedTxByStudent(prev => new Map(prev).set(studentId, new Set(kioskTxs.map(t => t.id))));
     setSelectedDebt(debt);
-    setPendingInvoiceTotal(sumLista);
+    // Checkout integral: deudas seleccionadas + recargas en carrito.
+    setPendingInvoiceTotal(sumLista + rechargeCartTotal);
     setShowInvoiceSelector(true);
   };
 
@@ -539,7 +590,12 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     const allIds = debt.pending_transactions.map(t => t.id);
     const effectiveIds = selectedIds.size > 0 ? selectedIds : new Set(allIds);
 
-    const selectedTxList = debt.pending_transactions.filter(tx => effectiveIds.has(tx.id));
+    // Excluir transacciones que ya tienen un voucher pendiente (voucher_status='pending').
+    // El servidor embebe ese campo en cada tx via get_parent_debts_v2.
+    // Doble seguro: el trigger tg_block_duplicate_debt_payment también lo rechazaría.
+    const selectedTxList = debt.pending_transactions.filter(
+      tx => effectiveIds.has(tx.id) && tx.voucher_status !== 'pending'
+    );
     const lunchOrderIds: string[] = [];
     const transactionIds: string[] = [];
 
@@ -753,7 +809,7 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
     );
   }
 
-  if (debts.length === 0) {
+  if (debts.length === 0 && rechargeCartItems.length === 0) {
     return (
       <div className="space-y-4 pb-6">
         {/* Billetera aunque no haya deuda */}
@@ -844,25 +900,102 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
         )}
       </div>
 
-      {/* ── Barra de Total Pendiente — suma de ítems de get_parent_debts (sin saldo almacenado) ── */}
+      {/* ── Barra de Total — desglose 3 líneas cuando hay ítems en revisión ── */}
       <div id="cart-total-pending-card" className="bg-white rounded-2xl shadow-sm border border-slate-100 px-4 py-3 flex items-center gap-3">
-        <div className="flex-1">
-          <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Total pendiente</p>
-          <p className="text-2xl font-black text-slate-800">
-            S/ <span className="text-rose-500">{(totalPayable || 0).toFixed(2)}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
+            {totalInReview > 0 ? 'Desglose de pagos' : 'Total pendiente'}
           </p>
-          <p className="text-[10px] text-slate-400 mt-0.5">
-            {payableItemsCount} ítem(s) por pagar
+
+          {totalInReview > 0 ? (
+            /* ── Desglose 3 líneas: Bruto → En Revisión → Neto ── */
+            <div className="mt-1.5 space-y-1">
+              {/* Línea 1: Total bruto (tachado, muy discreta) */}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-300">Deuda total</span>
+                <span className="text-[10px] font-medium text-slate-300 line-through">
+                  S/ {(totalDebt + rechargeCartTotal).toFixed(2)}
+                </span>
+              </div>
+              {/* Línea 2: En revisión (descuento) */}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-blue-500 flex items-center gap-1">
+                  <Send className="h-2.5 w-2.5 shrink-0" />
+                  En revisión
+                </span>
+                <span className="text-[11px] font-bold text-blue-500">
+                  − S/ {totalInReview.toFixed(2)}
+                </span>
+              </div>
+              {/* Separador + Neto a pagar (protagonista) */}
+              <div className="border-t border-slate-200 pt-1.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-black text-slate-700 tracking-tight">
+                    Neto a pagar
+                  </span>
+                  <span className="text-2xl font-black text-rose-500 leading-none">
+                    S/ {(checkoutTotal || 0).toFixed(2)}
+                  </span>
+                </div>
+                {/* ── Desglose por alumno: explica de dónde viene el total ── */}
+                {debts.length >= 1 && (
+                  <div className="space-y-0.5 pt-0.5">
+                    {debts.map(d => {
+                      const sNeto = d.pending_transactions
+                        .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
+                        .reduce((s, tx) => s + tx.amount, 0);
+                      const sInReview = Math.max(0, d.total_debt - sNeto);
+                      if (sNeto <= 0 && sInReview <= 0) return null;
+                      return (
+                        <div key={d.student_id} className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-slate-500 flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded-full bg-slate-200 flex items-center justify-center text-[8px] font-bold text-slate-600 shrink-0">
+                              {d.student_name[0]}
+                            </span>
+                            <span className="font-semibold text-slate-600">{d.student_name.split(' ')[0]}</span>
+                            {sInReview > 0 && (
+                              <span className="text-blue-400 font-medium">
+                                · S/ {sInReview.toFixed(2)} en revisión
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-700">
+                            S/ {sNeto.toFixed(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {rechargeCartTotal > 0 && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-emerald-600 font-semibold">🛒 Recarga en carrito</span>
+                        <span className="text-[11px] font-bold text-emerald-700">S/ {rechargeCartTotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* ── Vista simple: solo el total ── */
+            <p className="text-2xl font-black text-slate-800 mt-0.5">
+              S/ <span className="text-rose-500">{(checkoutTotal || 0).toFixed(2)}</span>
+            </p>
+          )}
+
+          {/* Subtítulo: conteo de ítems + recarga en carrito */}
+          <p className="text-[10px] text-slate-400 mt-1">
+            {checkoutItemsCount} ítem(s) por pagar
             {debts.length >= 2 && ` · ${debts.length} alumnos`}
-            {totalInReview > 0 && (
-              <span className="ml-1.5 inline-flex items-center gap-0.5 text-blue-500 font-semibold">
-                · S/ {totalInReview.toFixed(2)} en revisión
+            {rechargeCartTotal > 0 && (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 text-emerald-600 font-semibold">
+                · +S/ {rechargeCartTotal.toFixed(2)} recarga(s)
               </span>
             )}
           </p>
         </div>
+
         {/* Botón pagar todo: solo si hay algo pagable y aplica */}
-        {debts.length >= 2 && !isMultiSchool && !hasCombinedPendingVoucher && totalPayable > 0 && (
+        {!isMultiSchool && !hasCombinedPendingVoucher && checkoutTotal > 0 && (
           <button
             onClick={handleCombinedPay}
             className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-sm font-bold shadow-md active:scale-95 transition-all"
@@ -871,13 +1004,52 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
             Pagar todo
           </button>
         )}
-        {hasCombinedPendingVoucher && totalPayable === 0 && (
+        {hasCombinedPendingVoucher && checkoutTotal === 0 && (
           <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 border border-blue-200">
             <Send className="h-3.5 w-3.5 text-blue-500" />
             <span className="text-xs font-semibold text-blue-700">En revisión</span>
           </div>
         )}
       </div>
+
+      {/* ── Ítems de recarga en carrito ── */}
+      {rechargeCartItems.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-emerald-100 px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+              Recargas en carrito
+            </p>
+            <button
+              onClick={onClearRechargeCart}
+              className="text-[10px] font-semibold text-slate-400 hover:text-slate-600"
+            >
+              Limpiar
+            </button>
+          </div>
+          <div className="space-y-2">
+            {rechargeCartItems.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-emerald-800 truncate">{item.student_name}</p>
+                  <p className="text-[10px] text-emerald-600">Item de recarga</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-black text-emerald-700">S/ {Number(item.amount).toFixed(2)}</span>
+                  <button
+                    onClick={() => onRemoveRechargeItem(item.id)}
+                    className="text-[10px] font-semibold text-slate-500 hover:text-rose-500"
+                  >
+                    Quitar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Lista de hijos — filas compactas con acordeón ── */}
       {debts.map((debt) => {
@@ -893,10 +1065,14 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
           ? selectedTxByStudent.get(debt.student_id)!
           : new Set(payableTxIds.length > 0 ? payableTxIds : allTxIds);
 
-        const allSelected = selectedIds.size === allTxIds.length;
+        // allSelected: true cuando todos los ítems PAGABLES están marcados
+        const allSelected = payableTxIds.length > 0
+          ? payableTxIds.every(id => selectedIds.has(id))
+          : selectedIds.size === allTxIds.length;
         const noneSelected = selectedIds.size === 0;
+        // selectedTotal: solo ítems pagables (excluir los "en revisión")
         const selectedTotal = debt.pending_transactions
-          .filter(tx => selectedIds.has(tx.id))
+          .filter(tx => selectedIds.has(tx.id) && tx.voucher_status !== 'pending')
           .reduce((sum, tx) => sum + tx.amount, 0);
 
         const isExpanded = expandedStudentId === debt.student_id;
@@ -974,7 +1150,9 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
                         ? 'Pagar'
                         : !allSelected
                         ? `Pagar S/ ${selectedTotal.toFixed(2)}`
-                        : 'Pagar'}
+                        : studentPayable > 0
+                        ? `Pagar S/ ${studentPayable.toFixed(2)}`
+                        : `Pagar S/ ${selectedTotal.toFixed(2)}`}
                     </button>
                   </div>
                 )}
@@ -1220,11 +1398,22 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       {/* ── Modal de Pago (individual) ── */}
       {!combinedMode && selectedDebt && (() => {
         const payData = getPaymentData(selectedDebt);
+        const totalWithRechargeCart = payData.totalSelected + rechargeCartTotal;
+        const mergedBreakdownItems = [
+          ...payData.selectedTxList.map(tx => ({
+            description: tx.description,
+            amount: tx.amount,
+          })),
+          ...rechargeCartItems.map((item) => ({
+            description: `Recarga carrito: ${item.student_name}`,
+            amount: Number(item.amount || 0),
+          })),
+        ];
         const walletBalance = selectedDebt.wallet_balance || 0;
         const useWallet = getUseWallet(selectedDebt.student_id);
         // Cuánto se descuenta de la billetera: mínimo entre saldo disponible y deuda total
         const walletToUse = useWallet
-          ? Math.min(walletBalance, payData.totalSelected)
+          ? Math.min(walletBalance, totalWithRechargeCart)
           : 0;
         return (
           <RechargeModal
@@ -1242,24 +1431,30 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               setInvoiceType(null);
               setInvoiceClientData(null);
             }}
-            onSuccess={fetchDebts}
             studentName={selectedDebt.student_name}
             studentId={selectedDebt.student_id}
             currentBalance={selectedDebt.student_balance}
             accountType="free_account"
             onRecharge={async () => {}}
-            suggestedAmount={payData.totalSelected}
+            suggestedAmount={totalWithRechargeCart}
             requestType="debt_payment"
-            requestDescription={payData.description}
+            requestDescription={
+              rechargeCartTotal > 0
+                ? `${payData.description} + recarga carrito S/ ${rechargeCartTotal.toFixed(2)}`
+                : payData.description
+            }
             lunchOrderIds={payData.lunchOrderIds.length > 0 ? payData.lunchOrderIds : undefined}
             paidTransactionIds={payData.transactionIds}
-            breakdownItems={payData.selectedTxList.map(tx => ({
-              description: tx.description,
-              amount: tx.amount,
-            }))}
+            breakdownItems={mergedBreakdownItems}
             invoiceType={invoiceType}
             invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
             walletAmountToUse={walletToUse}
+            rechargeCartAmount={rechargeCartTotal}
+            onSuccess={async () => {
+              if (rechargeCartTotal > 0) onClearRechargeCart();
+              await fetchDebts();
+              await fetchWalletData();
+            }}
           />
         );
       })()}
@@ -1279,6 +1474,11 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
       {/* ── Modal de Pago (combinado — todos los hijos juntos) ── */}
       {combinedMode && (() => {
         const combined = buildCombinedPaymentData();
+        const rechargeLabel = combined.rechargeAmount > 0
+          ? ` + recarga S/ ${combined.rechargeAmount.toFixed(2)}`
+          : '';
+        const requestType = combined.hasDebtItems ? 'debt_payment' : 'recharge';
+        const modalStudentId = debts[0]?.student_id || combined.rechargeItems[0]?.student_id || '';
         return (
           <RechargeModal
             isOpen={showPaymentModal}
@@ -1295,19 +1495,28 @@ export const PaymentsTab = ({ userId, isActive }: PaymentsTabProps) => {
               setInvoiceType(null);
               setInvoiceClientData(null);
             }}
-            onSuccess={fetchDebts}
+            onSuccess={async () => {
+              onClearRechargeCart();
+              await fetchDebts();
+              await fetchWalletData();
+            }}
             studentName={combined.combinedNames}
-            studentId={debts[0]?.student_id || ''}
+            studentId={modalStudentId}
             currentBalance={0}
             accountType="free_account"
             onRecharge={async () => {}}
             suggestedAmount={combined.totalAmount}
-            requestType="debt_payment"
-            requestDescription={`Pago combinado: ${combined.combinedNames} — ${combined.allTransactionIds.length} compra(s)`}
+            requestType={requestType}
+            requestDescription={
+              combined.hasDebtItems
+                ? `Pago combinado: ${combined.combinedNames} — ${combined.allTransactionIds.length} compra(s)${rechargeLabel}`
+                : `Recarga de carrito: ${combined.combinedNames}`
+            }
             lunchOrderIds={combined.allLunchOrderIds.length > 0 ? combined.allLunchOrderIds : undefined}
             paidTransactionIds={combined.allTransactionIds}
             breakdownItems={combined.allBreakdownItems}
             combinedStudentIds={combined.allStudentIds}
+            rechargeCartAmount={combined.rechargeAmount}
             invoiceType={invoiceType}
             invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
           />

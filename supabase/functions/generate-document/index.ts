@@ -22,13 +22,18 @@ serve(async (req) => {
     );
   }
   // Decodificar el payload del JWT (solo lectura del sub; la firma ya fue firmada por Supabase Auth)
+  // Permite llamadas con service_role (p.ej. desde izipay-webhook para billing en tiempo real).
   let callerUserId: string | null = null;
   try {
     const parts = bearerToken.split(".");
     if (parts.length === 3) {
       const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      const json = atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "="));
-      callerUserId = JSON.parse(json).sub ?? null;
+      const payload = JSON.parse(atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "=")));
+      callerUserId = payload.sub ?? null;
+      // Las Edge Functions internas usan service_role key (no tiene 'sub' pero tiene role='service_role')
+      if (!callerUserId && payload.role === "service_role") {
+        callerUserId = "service_role_internal";
+      }
     }
   } catch { /* JWT malformado — callerUserId queda null */ }
 

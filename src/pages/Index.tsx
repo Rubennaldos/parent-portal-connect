@@ -97,6 +97,15 @@ interface Transaction {
   payment_status?: 'paid' | 'pending' | 'partial';
 }
 
+interface RechargeCartItem {
+  id: string;
+  student_id: string;
+  student_name: string;
+  school_id?: string | null;
+  amount: number;
+  created_at: string;
+}
+
 const Index = () => {
   const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   // Piloto IziPay: solo este correo puede ver el botón de recargas habilitado
@@ -108,6 +117,8 @@ const Index = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0); // 🔴 Contador de pagos pendientes
   const [pendingRechargesMap, setPendingRechargesMap] = useState<Record<string, number>>({}); // ⏳ Recargas pendientes por estudiante
+  const [rechargeLedgerBalanceMap, setRechargeLedgerBalanceMap] = useState<Record<string, number | null>>({});
+  const [rechargeLedgerLoadingStudentId, setRechargeLedgerLoadingStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // ── CARRUSEL ────────────────────────────────────────────────────────────────
@@ -135,10 +146,29 @@ const Index = () => {
     return sessionStorage.getItem('parentPortalTab') || 'alumnos';
   });
 
+  // Carrito de recargas — declarado ANTES de cualquier useEffect que lo use
+  const [rechargeCartItems, setRechargeCartItems] = useState<RechargeCartItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('parentPortalRechargeCart');
+      return raw ? (JSON.parse(raw) as RechargeCartItem[]) : [];
+    } catch { return []; }
+  });
+
   // Guardar la pestaña activa cuando cambia
   useEffect(() => {
     sessionStorage.setItem('parentPortalTab', activeTab);
   }, [activeTab]);
+
+  // Persistir el carrito de recargas en localStorage para sobrevivir refresco de página
+  useEffect(() => {
+    try {
+      if (rechargeCartItems.length > 0) {
+        localStorage.setItem('parentPortalRechargeCart', JSON.stringify(rechargeCartItems));
+      } else {
+        localStorage.removeItem('parentPortalRechargeCart');
+      }
+    } catch { /* noop */ }
+  }, [rechargeCartItems]);
 
   // Sub-navegación del módulo de almuerzos: 'comprar' | 'pedidos'
   const [lunchSubTab, setLunchSubTab] = useState<'comprar' | 'pedidos'>('comprar');
@@ -507,6 +537,51 @@ const Index = () => {
     }
   };
 
+  // Saldo de recargas (SSOT): espejo pasivo desde view_recharge_ledger
+  const fetchRechargeLedgerBalanceForStudent = useCallback(async (student: Student) => {
+    if (!student?.id) return;
+    setRechargeLedgerLoadingStudentId(student.id);
+    try {
+      const { data, error } = await supabase
+        .from('view_recharge_ledger')
+        .select('recharge_remaining_student, recharge_effective_at')
+        .eq('student_id', student.id)
+        .order('recharge_effective_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      const raw = data?.[0]?.recharge_remaining_student;
+      const ledgerBalance = raw === null || raw === undefined ? null : Number(raw);
+
+      setRechargeLedgerBalanceMap((prev) => ({ ...prev, [student.id]: ledgerBalance }));
+
+      const totalBalance = Number(student.balance ?? 0);
+      const hasDiscrepancy =
+        (ledgerBalance === null && totalBalance !== 0) ||
+        (ledgerBalance !== null && Math.abs(ledgerBalance - totalBalance) > 0.009);
+
+      if (hasDiscrepancy) {
+        console.warn('Discrepancia detectada', {
+          student_id: student.id,
+          saldo_total: totalBalance,
+          saldo_recarga_ledger: ledgerBalance,
+        });
+      }
+    } catch (err) {
+      console.error('Error cargando saldo de recargas (ledger):', err);
+      setRechargeLedgerBalanceMap((prev) => ({ ...prev, [student.id]: null }));
+    } finally {
+      setRechargeLedgerLoadingStudentId((current) => (current === student.id ? null : current));
+    }
+  }, []);
+
+  useEffect(() => {
+    const active = students.find(s => s.id === activeStudentId) ?? students[0];
+    if (!active) return;
+    fetchRechargeLedgerBalanceForStudent(active);
+  }, [students, activeStudentId, fetchRechargeLedgerBalanceForStudent]);
+
   // ⏳ Obtener recargas pendientes de aprobación por estudiante
   const fetchPendingRecharges = async (studentsData: Student[]) => {
     if (!studentsData || studentsData.length === 0) return;
@@ -566,6 +641,27 @@ const Index = () => {
   const openRechargeModal = (student: Student) => {
     setSelectedStudent(student);
     setShowRechargeModal(true);
+  };
+
+  const addRechargeToCart = (amount: number) => {
+    if (!selectedStudent || amount <= 0) return;
+    const normalized = Number(amount.toFixed(2));
+    setRechargeCartItems((prev) => ([
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        student_id: selectedStudent.id,
+        student_name: selectedStudent.full_name,
+        school_id: selectedStudent.school_id ?? null,
+        amount: normalized,
+        created_at: new Date().toISOString(),
+      },
+    ]));
+    setActiveTab('carrito');
+    toast({
+      title: '🛒 Recarga añadida',
+      description: `Se añadió S/ ${normalized.toFixed(2)} al carrito. Continúa en “Pagos”.`,
+    });
   };
 
   const openMenuModal = (student: Student) => {
@@ -839,16 +935,15 @@ const Index = () => {
                         }}
                         unreadNotifCount={unreadNotifCount}
                         onAddStudent={() => setShowAddStudent(true)}
-                        onBalance={() => {
+                        onRechargeBalance={() => {
                           if (!isTransitioning && active) {
                             setSelectedStudent(active);
                             setShowBalanceSaldo(true);
                           }
                         }}
-                        studentBalance={active && active.balance > 0 ? active.balance : 0}
-                        isPrepaidStudent={active?.free_account === false}
+                        rechargeLedgerBalance={active ? (rechargeLedgerBalanceMap[active.id] ?? null) : null}
+                        isRechargeLedgerLoading={Boolean(active?.id) && rechargeLedgerLoadingStudentId === active?.id}
                         isIzipayPilot={isIzipayPilot}
-                        onRecharge={() => { if (!isTransitioning && active) openRechargeModal(active); }}
                       />
                     </>
                   );
@@ -932,7 +1027,15 @@ const Index = () => {
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="pendientes">
-                <PaymentsTab userId={user.id} isActive={activeTab === 'carrito'} />
+                <PaymentsTab
+                  userId={user.id}
+                  isActive={activeTab === 'carrito'}
+                  rechargeCartItems={rechargeCartItems}
+                  onRemoveRechargeItem={(itemId) =>
+                    setRechargeCartItems((prev) => prev.filter((x) => x.id !== itemId))
+                  }
+                  onClearRechargeCart={() => setRechargeCartItems([])}
+                />
               </TabsContent>
               <TabsContent value="historial">
                 <PaymentHistoryTab userId={user.id} isActive={activeTab === 'carrito'} />
@@ -1061,9 +1164,11 @@ const Index = () => {
         <BalanceSaldoModal
           isOpen={showBalanceSaldo}
           onClose={() => setShowBalanceSaldo(false)}
+          onAddRechargeToCart={addRechargeToCart}
           studentId={selectedStudent.id}
           studentName={selectedStudent.full_name}
-          currentBalance={selectedStudent.balance}
+          currentBalance={rechargeLedgerBalanceMap[selectedStudent.id] ?? null}
+          isBalanceLoading={rechargeLedgerLoadingStudentId === selectedStudent.id}
         />
       )}
 
@@ -1088,6 +1193,10 @@ const Index = () => {
             accountType={selectedStudent.free_account !== false ? 'free' : 'prepaid'}
             onRecharge={handleRecharge}
             suggestedAmount={rechargeSuggestedAmount}
+            onSuccess={async () => {
+              await fetchPendingRecharges([selectedStudent]);
+              await fetchRechargeLedgerBalanceForStudent(selectedStudent);
+            }}
           />
 
           <UploadPhotoModal

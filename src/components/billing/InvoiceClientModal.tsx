@@ -13,21 +13,54 @@ import {
   User, Building2, MapPin, X, ChevronRight, Info, Save,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { supabaseConfig } from '@/config/supabase.config';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Consulta DNI/RUC via nuestra función serverless en Vercel (/api/consult-dni)
-// Esto evita los problemas de CORS al llamar apis.net.pe desde el navegador.
+// Consulta DNI/RUC via fetch directo a la Edge Function 'consult-document'.
+// Usamos fetch() en vez de supabase.functions.invoke() porque en algunas
+// versiones del SDK los headers personalizados REEMPLAZAN los defaults (en vez
+// de fusionarse), eliminando el header 'apikey' que Supabase Gateway requiere.
+// Con fetch() tenemos control total: enviamos Authorization + apikey siempre.
 // ─────────────────────────────────────────────────────────────────────────────
-async function consultarDNIRUCPublico(tipo: 'dni' | 'ruc', numero: string): Promise<Record<string, any>> {
-  const res = await fetch('/api/consult-dni', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo, numero }),
-  });
-  if (!res.ok) {
-    return { success: false, error: `Error del servidor (${res.status})` };
+async function consultarDNIRUCPublico(
+  tipo: 'dni' | 'ruc',
+  numero: string,
+  schoolId?: string,
+): Promise<Record<string, any>> {
+  // Construir URL y clave anon desde la config activa (dev o prod según entorno)
+  const supabaseUrl  = supabaseConfig.url.replace(/\/$/, '');
+  const anonKey      = supabaseConfig.anonKey;
+  const functionUrl  = `${supabaseUrl}/functions/v1/consult-document`;
+
+  // Usar siempre el anon key (HS256) como Bearer.
+  // Los tokens de sesión de usuario usan ES256 (algoritmo nuevo de Supabase)
+  // pero la Edge Function solo acepta HS256 → usar el anon key garantiza HS256.
+  // Esta función solo consulta SUNAT/RENIEC — no requiere identidad de usuario.
+  const authToken = anonKey;
+
+  try {
+    const res = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'apikey':        anonKey,          // Supabase Gateway lo exige siempre
+      },
+      body: JSON.stringify({ tipo, numero, school_id: schoolId ?? null }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(`[consult-document] HTTP ${res.status}:`, text);
+      return { success: false, error: `Servicio no disponible (${res.status}). Escribe tu nombre manualmente.` };
+    }
+
+    const data = await res.json();
+    return data ?? { success: false, error: 'Respuesta vacía del servidor.' };
+  } catch (err) {
+    console.warn('[consult-document] Error de red:', err);
+    return { success: false, error: 'No se pudo conectar con el servicio de consulta.' };
   }
-  return res.json();
 }
 
 export type InvoiceType = 'boleta' | 'factura';
@@ -94,7 +127,7 @@ export const InvoiceClientModal = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [invoiceType, setInvoiceType] = useState<InvoiceType>(defaultType || 'boleta');
-  const [docType, setDocType] = useState<'dni' | 'ruc' | 'sin_documento'>('sin_documento');
+  const [docType, setDocType] = useState<'dni' | 'ruc' | 'sin_documento'>('dni');
   const [docNumber, setDocNumber] = useState('');
   const [razonSocial, setRazonSocial] = useState(defaultName);
   const [direccion, setDireccion] = useState('');
@@ -143,7 +176,7 @@ export const InvoiceClientModal = ({
       setSunatError('');
       setManualMode(false);
       setWantSaveProfile(false);
-      setDocType(tipo === 'factura' ? 'ruc' : 'sin_documento');
+      setDocType(tipo === 'factura' ? 'ruc' : 'dni');
       if (tipo === 'factura' && savedProfileData) {
         if (savedProfileData.ruc)          setDocNumber(savedProfileData.ruc);
         if (savedProfileData.razon_social)  setRazonSocial(savedProfileData.razon_social);
@@ -169,7 +202,7 @@ export const InvoiceClientModal = ({
         setDireccion('');
       }
     } else {
-      if (docType === 'ruc') setDocType('sin_documento');
+      if (docType === 'ruc') setDocType('dni');
       setRazonSocial(defaultName);
       setDireccion('');
     }
@@ -194,14 +227,12 @@ export const InvoiceClientModal = ({
     setSunatResult(null);
     setSearching(true);
     try {
-      const result = await consultarDNIRUCPublico(docType as 'dni' | 'ruc', numero);
+      const result = await consultarDNIRUCPublico(docType as 'dni' | 'ruc', numero, schoolId);
       if (!result.success) {
-        // Mensaje claro: el padre PUEDE seguir escribiendo su nombre manualmente
-        setSunatError(
-          result.error ||
-          `No se encontró el ${docType === 'ruc' ? 'RUC' : 'DNI'} en los registros oficiales. ` +
-          `Escribe tu nombre completo manualmente en el campo de abajo y continúa.`
-        );
+        const errorMsg = result.error || `No se encontró el ${docType === 'ruc' ? 'RUC' : 'DNI'} en los registros oficiales.`;
+        // Log para auditoría del administrador (no visible al padre)
+        console.warn(`[SUNAT/RENIEC] Consulta ${docType.toUpperCase()} ${docNumber} fallida:`, errorMsg);
+        setSunatError(errorMsg);
         setManualMode(true);
         return;
       }
@@ -209,10 +240,11 @@ export const InvoiceClientModal = ({
       setRazonSocial(result.razon_social || '');
       setDireccion(result.direccion || '');
       setManualMode(false);
-    } catch {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn('[SUNAT/RENIEC] Error inesperado en consulta:', errMsg);
       setSunatError(
-        `No se pudo conectar con ${docType === 'ruc' ? 'SUNAT' : 'RENIEC'} en este momento. ` +
-        `Escribe tu nombre completo manualmente en el campo de abajo y continúa.`
+        `No se pudo conectar con ${docType === 'ruc' ? 'SUNAT' : 'RENIEC'} en este momento.`
       );
       setManualMode(true);
     } finally {
@@ -248,21 +280,6 @@ export const InvoiceClientModal = ({
         toast({ title: 'RUC inválido', description: 'El RUC debe comenzar con 10 (persona natural) o 20 (empresa).', variant: 'destructive' });
         return;
       }
-    }
-
-    // ── Regla SUNAT: boleta >= S/ 700 requiere identificación del comprador ──
-    if (
-      invoiceType === 'boleta' &&
-      docType === 'sin_documento' &&
-      typeof totalAmount === 'number' &&
-      totalAmount >= 700
-    ) {
-      toast({
-        variant: 'destructive',
-        title: 'DNI requerido por SUNAT',
-        description: `Las boletas de S/ ${totalAmount.toFixed(2)} o más requieren DNI o RUC del cliente. Selecciona el tipo de documento e ingrésalo.`,
-      });
-      return;
     }
 
     // ── Validar formato de email (si fue ingresado) ──
@@ -340,19 +357,16 @@ export const InvoiceClientModal = ({
 
   const isFactura = invoiceType === 'factura';
 
-  // SUNAT: boleta >= S/ 700 exige identificación del comprador (DNI/RUC).
-  // Emitir a "Consumidor Final" (sin_documento) por ese monto → rechazo inmediato.
-  const needs700DocRule =
-    invoiceType === 'boleta' &&
-    typeof totalAmount === 'number' &&
-    totalAmount >= 700 &&
-    docType === 'sin_documento';
-
+  // Documento siempre obligatorio:
+  //  · Boleta DNI  → 8 dígitos exactos
+  //  · Boleta RUC  → 11 dígitos + razón social
+  //  · Factura     → 11 dígitos + razón social + dirección
+  const cleanDocLen = docNumber.replace(/\D/g, '').length;
   const canConfirm = isFactura
-    ? docNumber.replace(/\D/g, '').length === 11 && !!razonSocial.trim() && !!direccion.trim()
-    : needs700DocRule
-      ? false   // bloqueado hasta que seleccione DNI/RUC con datos
-      : true;   // boleta < S/ 700 sin documento: válido
+    ? cleanDocLen === 11 && !!razonSocial.trim() && !!direccion.trim()
+    : docType === 'ruc'
+      ? cleanDocLen === 11 && !!razonSocial.trim()
+      : cleanDocLen === 8;  // boleta DNI: 8 dígitos (nombre validado al confirmar)
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -426,13 +440,14 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* Selector de tipo de documento */}
+          {/* Selector de tipo de documento — DNI o RUC obligatorio */}
           {invoiceType === 'boleta' && (
             <div>
-              <Label className="text-sm font-semibold text-gray-700 mb-2 block">Documento del cliente</Label>
-              <div className="grid grid-cols-3 gap-2">
+              <Label className="text-sm font-semibold text-gray-700 mb-2 block">
+                Documento del cliente <span className="text-red-500">*</span>
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'sin_documento', label: 'Sin Doc.', icon: <User className="h-3.5 w-3.5" /> },
                   { value: 'dni', label: 'DNI', icon: <User className="h-3.5 w-3.5" /> },
                   { value: 'ruc', label: 'RUC', icon: <Building2 className="h-3.5 w-3.5" /> },
                 ].map((opt) => (
@@ -444,7 +459,7 @@ export const InvoiceClientModal = ({
                       setSunatResult(null);
                       setSunatError('');
                     }}
-                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg border text-xs font-semibold transition-all ${
                       docType === opt.value
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-500 hover:border-blue-300'
@@ -457,8 +472,8 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* Campo de número de documento */}
-          {docType !== 'sin_documento' && (
+          {/* Campo de número de documento — siempre visible */}
+          {(
             <div className="space-y-1">
               <Label className="text-sm font-semibold text-gray-700">
                 {docType === 'ruc' ? 'RUC (11 dígitos)' : 'DNI (8 dígitos)'}
@@ -496,7 +511,7 @@ export const InvoiceClientModal = ({
           )}
 
           {/* Botón manual de búsqueda */}
-          {docType !== 'sin_documento' && !searching && (
+          {!searching && (
             <Button
               variant="outline"
               size="sm"
@@ -597,32 +612,15 @@ export const InvoiceClientModal = ({
             />
           </div>
 
-          {/* Nota / bloqueo para boleta sin documento */}
-          {invoiceType === 'boleta' && docType === 'sin_documento' && (
-            needs700DocRule ? (
-              // ── BLOQUEO SUNAT: monto >= S/ 700 exige identificación ──
-              <div className="bg-red-50 border border-red-400 rounded-lg p-3 flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold text-red-700">
-                    SUNAT exige DNI para boletas mayores a S/ 700
-                  </p>
-                  <p className="text-xs text-red-600 mt-0.5">
-                    No se puede emitir a "Consumidor Final" por S/ {totalAmount?.toFixed(2)}.
-                    Selecciona <strong>DNI</strong> o <strong>RUC</strong> e ingresa el número del cliente.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              // ── Informativo: boleta sin doc por montos normales ──
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
-                <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-700">
-                  Se emitirá boleta a <strong>"Consumidor Final"</strong> sin número de documento.
-                  Es válido para SUNAT para ventas al público en general.
-                </p>
-              </div>
-            )
+          {/* Hint: DNI o RUC siempre obligatorio */}
+          {invoiceType === 'boleta' && !canConfirm && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                Ingresa tu <strong>{docType === 'ruc' ? 'RUC (11 dígitos)' : 'DNI (8 dígitos)'}</strong> para
+                continuar. La boleta quedará registrada a tu nombre y el PDF llegará por email si lo ingresas.
+              </p>
+            </div>
           )}
 
           {/* Banner de datos pre-cargados desde el perfil */}

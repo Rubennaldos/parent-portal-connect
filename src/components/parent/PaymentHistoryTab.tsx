@@ -63,6 +63,19 @@ interface PaymentRecord {
   sunat_invoices?: { pdf_url: string | null; full_number: string | null; invoice_type: string | null }[];
 }
 
+// Pago online procesado por IziPay (sin voucher del padre)
+interface GatewayPaymentRecord {
+  id: string;           // transactions.id
+  student_name: string;
+  amount: number;
+  created_at: string;
+  gateway_ref: string | null;  // orderId de IziPay
+  invoice_id: string | null;
+  invoice_pdf_url: string | null;
+  invoice_number: string | null;
+  invoice_type: string | null;
+}
+
 // Cobro directo realizado por admin vía CXC (sin voucher del padre)
 interface DirectPaymentGroup {
   groupKey: string;          // operationNumber + date + adminId
@@ -106,6 +119,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<PaymentRecord[]>([]);
   const [directPayments, setDirectPayments] = useState<DirectPaymentGroup[]>([]);
+  const [gatewayPayments, setGatewayPayments] = useState<GatewayPaymentRecord[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -239,11 +253,79 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
     }
   };
 
+  // ── Pagos online vía IziPay (recargas procesadas por el gateway) ─────────────
+  const fetchGatewayPayments = async () => {
+    try {
+      const { data: students } = await supabase
+        .from('students')
+        .select('id, full_name')
+        .eq('parent_id', userId)
+        .eq('is_active', true);
+
+      if (!students || students.length === 0) return;
+      const studentIds = students.map(s => s.id);
+      const nameMap = new Map<string, string>(students.map(s => [s.id, s.full_name]));
+
+      // Transacciones de tipo 'recharge' pagadas online a través de IziPay
+      const since = new Date();
+      since.setDate(since.getDate() - 180);
+
+      const { data: txData } = await supabase
+        .from('transactions')
+        .select('id, student_id, amount, created_at, metadata, invoice_id')
+        .in('student_id', studentIds)
+        .eq('payment_status', 'paid')
+        .eq('type', 'recharge')
+        .eq('is_deleted', false)
+        .filter('metadata->>source_channel', 'eq', 'online_payment')
+        .gte('created_at', since.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!txData || txData.length === 0) return;
+
+      // Cargar datos de las boletas (invoice_id → invoices.pdf_url)
+      const invoiceIds = [...new Set(txData.filter((t: any) => t.invoice_id).map((t: any) => t.invoice_id as string))];
+      const invoiceMap = new Map<string, { pdf_url: string | null; full_number: string | null; invoice_type: string | null }>();
+
+      if (invoiceIds.length > 0) {
+        const { data: invData } = await supabase
+          .from('invoices')
+          .select('id, pdf_url, full_number, invoice_type')
+          .in('id', invoiceIds);
+
+        if (invData) {
+          invData.forEach((inv: any) => invoiceMap.set(inv.id, inv));
+        }
+      }
+
+      const mapped: GatewayPaymentRecord[] = txData.map((tx: any) => {
+        const inv = tx.invoice_id ? invoiceMap.get(tx.invoice_id) : null;
+        return {
+          id:              tx.id,
+          student_name:    nameMap.get(tx.student_id) ?? 'Alumno',
+          amount:          Number(tx.amount),
+          created_at:      tx.created_at,
+          gateway_ref:     tx.metadata?.gateway_ref_id ?? null,
+          invoice_id:      tx.invoice_id ?? null,
+          invoice_pdf_url: inv?.pdf_url ?? null,
+          invoice_number:  inv?.full_number ?? null,
+          invoice_type:    inv?.invoice_type ?? null,
+        };
+      });
+
+      setGatewayPayments(mapped);
+    } catch (err) {
+      console.error('Error fetching gateway payments:', err);
+    }
+  };
+
   const fetchHistory = async () => {
     setLoading(true);
     try {
-      // Cargar cobros directos en paralelo
+      // Cargar cobros directos e IziPay en paralelo
       fetchDirectPayments();
+      fetchGatewayPayments();
 
       const { data, error } = await supabase
         .from('recharge_requests')
@@ -645,7 +727,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
     );
   }
 
-  if (records.length === 0 && directPayments.length === 0) {
+  if (records.length === 0 && directPayments.length === 0 && gatewayPayments.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4">
         <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mb-4">
@@ -662,7 +744,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
       {/* Encabezado */}
       <div className="flex items-center justify-between mb-3 px-0.5">
         <p className="text-xs text-slate-400">
-          {records.length + directPayments.length} registro{(records.length + directPayments.length) !== 1 ? 's' : ''} en tu historial
+          {records.length + directPayments.length + gatewayPayments.length} registro{(records.length + directPayments.length + gatewayPayments.length) !== 1 ? 's' : ''} en tu historial
         </p>
         <button
           onClick={fetchHistory}
@@ -781,6 +863,104 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                           </div>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Pagos Online — IziPay ── */}
+      {gatewayPayments.length > 0 && (
+        <div className="mb-4 space-y-2">
+          <div className="flex items-center gap-1.5 px-0.5 mb-1">
+            <CreditCard className="h-3.5 w-3.5 text-blue-500" />
+            <p className="text-[11px] font-semibold text-blue-700 uppercase tracking-wide">
+              Pagos online — IziPay
+            </p>
+          </div>
+          {gatewayPayments.map((gp) => {
+            const isExpanded = expandedId === `gw_${gp.id}`;
+            const boletaLabel = gp.invoice_type === 'factura' ? 'Factura' : 'Boleta';
+            return (
+              <div
+                key={gp.id}
+                className="bg-white rounded-2xl shadow-sm border-l-4 border-l-blue-400 border border-slate-100 overflow-hidden"
+              >
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : `gw_${gp.id}`)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+                >
+                  <div className="shrink-0 w-9 h-9 rounded-xl bg-blue-100 flex items-center justify-center">
+                    <CreditCard className="h-4 w-4 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm text-slate-800 truncate">
+                      Recarga online — {gp.student_name}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Tarjeta / IziPay · {format(new Date(gp.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700 text-[10px] gap-0.5">
+                        <CheckCircle2 className="h-3 w-3" /> Acreditado
+                      </Badge>
+                      <p className="text-sm font-black text-slate-800 mt-0.5">S/ {gp.amount.toFixed(2)}</p>
+                    </div>
+                    <svg
+                      className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-100 bg-slate-50/60 space-y-3">
+                    {/* Referencia del pago */}
+                    {gp.gateway_ref && (
+                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                        <Hash className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                        <p className="text-[11px] text-blue-700">
+                          Referencia IziPay: <span className="font-mono font-bold">{gp.gateway_ref}</span>
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Comprobante SUNAT */}
+                    <div className="bg-white border border-slate-100 rounded-xl px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                          {gp.invoice_id ? (
+                            <p className="text-[11px] text-indigo-700 font-semibold truncate">
+                              {boletaLabel}{gp.invoice_number && ` ${gp.invoice_number}`}
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-400 italic">
+                              Comprobante en proceso...
+                            </p>
+                          )}
+                        </div>
+                        {gp.invoice_pdf_url ? (
+                          <a
+                            href={gp.invoice_pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-700 active:scale-95 transition-all"
+                          >
+                            <Download className="h-3 w-3" />
+                            PDF
+                          </a>
+                        ) : gp.invoice_id ? (
+                          <span className="text-[10px] text-slate-400 italic">PDF en proceso</span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 )}

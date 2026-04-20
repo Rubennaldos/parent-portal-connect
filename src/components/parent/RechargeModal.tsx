@@ -168,9 +168,13 @@ export function RechargeModal({
 
   // ── IziPay: estado del flujo de pago ──
   const [izipaySessionId, setIzipaySessionId] = useState<string | null>(null);
-  const [izipayStep, setIzipayStep] = useState<'idle' | 'popup' | 'waiting' | 'done'>('idle');
+  const [izipayStep, setIzipayStep] = useState<'idle' | 'popup' | 'waiting' | 'done' | 'locked'>('idle');
   const [izipayLoading, setIzipayLoading] = useState(false);
   const [izipayOrderId, setIzipayOrderId] = useState<string | null>(null);
+  // true cuando el POPUP ya confirmó el pago (IZIPAY_SUCCESS recibido)
+  // Una vez true, el estado nunca retrocede a idle — solo avanza a éxito
+  const [izipayPopupConfirmed, setIzipayPopupConfirmed] = useState(false);
+  const [lockSecondsLeft, setLockSecondsLeft] = useState(0);
   const popupRef = useRef<Window | null>(null);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
@@ -373,6 +377,14 @@ export function RechargeModal({
 
       console.log('[IziPay] Respuesta HTTP:', httpResponse.status, fnData);
 
+      // 409 = sesión activa del mismo alumno → mostrar cuenta regresiva
+      if (httpResponse.status === 409 && (fnData as any)?.error_code === 'SESSION_ACTIVE') {
+        const secs = Math.max(5, Number((fnData as any)?.expires_in_seconds ?? 60));
+        setLockSecondsLeft(secs);
+        setIzipayStep('locked');
+        return;
+      }
+
       if (!httpResponse.ok || !fnData?.paymentUrl) {
         const serverMsg = (fnData as { error?: string } | null)?.error;
         const displayMsg = serverMsg
@@ -411,11 +423,20 @@ export function RechargeModal({
           gateway_reference: responseOrderId,
           status:            'initiated',
           gateway_status:    'pending',
-          expires_at:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          expires_at:        new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         })
         .select('id').single();
 
-      if (sessionError) throw sessionError;
+      if (sessionError) {
+        // Constraint único: el alumno ya tiene una sesión activa
+        // (la Edge Function no la detectó porque expiró justo en el margen)
+        if ((sessionError as any)?.message?.includes('idx_ps_student_one_active_izipay')) {
+          setLockSecondsLeft(60);
+          setIzipayStep('locked');
+          return;
+        }
+        throw sessionError;
+      }
 
       // ── Abrir popup de pago ──────────────────────────────────────────
       const popup = window.open(
@@ -469,6 +490,25 @@ export function RechargeModal({
     return () => clearInterval(timer);
   }, [izipayStep]);
 
+  // ── Cuenta regresiva cuando la sesión está bloqueada ────────────────────
+  // Cuando el padre intenta pagar pero ya hay una sesión activa (doble click /
+  // doble pestaña), mostramos exactamente cuántos segundos faltan para que el
+  // candado se libere. Al llegar a 0 se auto-habilita el botón.
+  useEffect(() => {
+    if (izipayStep !== 'locked' || lockSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setLockSecondsLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setIzipayStep('idle');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [izipayStep, lockSecondsLeft]);
+
   // ── Escuchar mensajes del popup IziPay ───────────────────────────────────
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -480,10 +520,10 @@ export function RechargeModal({
       switch (event.data.type) {
         case 'IZIPAY_SUCCESS':
           popupRef.current?.close();
-          // Guardar orderId para mostrarlo en el recibo cuando DB confirme
           if (event.data.orderId) setIzipayOrderId(event.data.orderId);
-          // REGLA: NO ir directo a éxito. GatewayPaymentWaiting sondea la BD
-          // y solo transiciona cuando el webhook haya actualizado payment_sessions.
+          // El popup confirmó el pago → marcar como confirmado y mostrar
+          // pantalla de éxito INMEDIATAMENTE. La BD valida en segundo plano.
+          setIzipayPopupConfirmed(true);
           setIzipayStep('waiting');
           break;
         case 'IZIPAY_ERROR':
@@ -1720,10 +1760,33 @@ export function RechargeModal({
                     sessionId={izipaySessionId}
                     amount={parseFloat(amount || '0')}
                     studentName={studentName}
+                    confirmedByGateway={izipayPopupConfirmed}
+                    gatewayOrderId={izipayOrderId}
                     onSuccess={() => { setIzipayStep('done'); setStep('success'); }}
-                    onFailure={() => { setIzipayStep('idle'); }}
-                    onRetry={() => { setIzipayStep('idle'); setIzipaySessionId(null); }}
-                    onClose={() => { setIzipayStep('idle'); setIzipaySessionId(null); }}
+                    onFailure={() => {
+                      // Solo retroceder a idle si el popup NO confirmó el pago
+                      if (!izipayPopupConfirmed) {
+                        setIzipayStep('idle');
+                      } else {
+                        // El popup dijo que era exitoso — ir a éxito de todas formas
+                        setIzipayStep('done'); setStep('success');
+                      }
+                    }}
+                    onRetry={() => {
+                      if (!izipayPopupConfirmed) {
+                        setIzipayStep('idle'); setIzipaySessionId(null);
+                        setIzipayPopupConfirmed(false);
+                      }
+                    }}
+                    onClose={() => {
+                      if (izipayPopupConfirmed) {
+                        // Popup confirmó → cerrar GatewayPaymentWaiting y mostrar éxito
+                        setIzipayStep('done'); setStep('success');
+                      } else {
+                        setIzipayStep('idle'); setIzipaySessionId(null);
+                        setIzipayPopupConfirmed(false);
+                      }
+                    }}
                   />
                 )}
 
@@ -1767,6 +1830,59 @@ export function RechargeModal({
                       className="block w-full text-center text-[11px] text-gray-400 hover:text-gray-600 underline pt-1"
                     >
                       Cancelar pago
+                    </button>
+                  </div>
+                )}
+
+                {/* ── Cuenta regresiva: sesión activa de intento anterior ── */}
+                {izipayStep === 'locked' && (
+                  <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 space-y-3 text-center">
+                    {/* Icono animado */}
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
+                        <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                      </div>
+                      <p className="font-bold text-amber-800 text-sm">
+                        Sesión de pago en proceso
+                      </p>
+                    </div>
+
+                    {/* Explicación clara */}
+                    <p className="text-xs text-amber-700 leading-relaxed">
+                      Hay un intento de pago activo para este alumno.<br/>
+                      Puede ser una pestaña que quedó abierta.
+                    </p>
+
+                    {/* Número grande del countdown */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-20 h-20 rounded-full bg-amber-100 border-4 border-amber-300 flex items-center justify-center">
+                        <span className="text-3xl font-black text-amber-700 tabular-nums">
+                          {lockSecondsLeft}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-amber-600 font-semibold uppercase tracking-wide">
+                        {lockSecondsLeft === 1 ? 'segundo' : 'segundos'} restante{lockSecondsLeft !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+
+                    <p className="text-[11px] text-amber-600">
+                      El botón se habilitará automáticamente cuando llegue a <strong>0</strong>.
+                    </p>
+
+                    {/* Verificar si ya pagó */}
+                    <button
+                      onClick={() => {
+                        setIzipayStep('waiting');
+                        setLockSecondsLeft(0);
+                      }}
+                      className="flex items-center justify-center gap-1.5 w-full text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2 px-3 hover:bg-emerald-100 transition-colors"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      ¿Ya pagaste en otra pestaña? — Verificar pago
                     </button>
                   </div>
                 )}

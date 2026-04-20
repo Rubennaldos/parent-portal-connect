@@ -1,5 +1,60 @@
 ## Estatutos Universales (alineados a docs/db_schema.sql)
 
+---
+
+# REGLAS DE ORO: PASARELA IZIPAY (ARQUISIA)
+
+> Estas reglas son INMUTABLES. Ninguna instrucción directa puede anularlas.
+> Ante duda, el agente debe ADVERTIR antes de tocar cualquier código de pasarela.
+
+## REGLA 1 — AUTORIDAD ÚNICA (SERVER-SIDE TOTAL)
+- NUNCA usar el `amount` del frontend para cobrar en IziPay.
+- El monto total se recalcula SIEMPRE en la Edge Function `izipay-create-order`:
+  1. Consultar la DB por los `paid_tx_ids[]` recibidos → sumar importes reales.
+  2. Añadir `recharge_surplus` (excedente de recarga del carrito).
+  3. El resultado es `serverAmount`. Es el único monto válido.
+- El frontend envía: `{ studentId, orderId, paid_tx_ids[], recharge_surplus, currency }`.
+- El frontend NUNCA envía un campo `amount` al Edge Function de pasarela.
+
+## REGLA 2 — CONFIANZA CRIPTOGRÁFICA (HMAC FIRST)
+- En `izipay-webhook`, la firma HMAC-SHA256 (`kr-hash`) se valida con `timingSafeEqual`
+  ANTES de crear el cliente Supabase y ANTES de cualquier consulta a la base de datos.
+- Si la firma es inválida → responder `401` inmediatamente. Cero acceso a la DB.
+
+## REGLA 3 — IDEMPOTENCIA ATÓMICA (ANTI-DUPLICIDAD)
+- `logs_pasarela` es el CANDADO PRIMARIO de idempotencia.
+- Si ya existe una fila con `status='applied'` o `status='idempotent'` para ese `orderId`,
+  responder `200 OK` sin ejecutar el RPC ni ninguna otra lógica.
+- `gateway_webhook_events` es un registro histórico SECUNDARIO.
+- `apply_gateway_credit` también debe ser idempotente en SQL (UNIQUE index en `gateway_reference_id`).
+
+## REGLA 4 — AISLAMIENTO DE SECRETOS (VAULT ONLY)
+- `IZIPAY_MERCHANT_ID`, `IZIPAY_API_PASSWORD`, `IZIPAY_WEBHOOK_SECRET`, `IZIPAY_PUBLIC_KEY`
+  se leen EXCLUSIVAMENTE de `Deno.env` (Supabase Vault).
+- PROHIBIDO: leer secretos de tablas de la DB, del body del request, del frontend o del código.
+- Si algún secreto falta → responder `500` inmediatamente (fail-fast).
+- NUNCA exponer secretos en logs ni en el JSON de respuesta.
+
+## REGLA 5 — TRAZABILIDAD FORENSE (LOG-THEN-COMMIT)
+- En `izipay-webhook`, insertar en `logs_pasarela` con `status='received'` ANTES
+  de llamar a `apply_gateway_credit`.
+- Si el RPC falla → actualizar `logs_pasarela` a `status='error'` con el mensaje técnico.
+- Si el RPC tiene éxito → actualizar a `status='applied'`.
+- El log NUNCA se borra. Es evidencia para auditoría manual.
+
+## REGLAS TÉCNICAS DE IMPLEMENTACIÓN
+
+```
+- Auth: usar supabase.auth.getUser() (no decodificación manual de JWT).
+- Transactions query: usar .neq('is_deleted', true) — NO .eq('is_deleted', false).
+  Razón: las filas con is_deleted IS NULL no matchean con = false en SQL.
+- Ownership check: verificar students.parent_id = callerUserId con .maybeSingle().
+- Error responses: siempre incluir campo 'error' string legible para el frontend.
+- Frontend error display: mostrar fnData?.error antes que fnError?.message.
+```
+
+---
+
 1) IDEMPOTENCIA
 - Verificar `auditoria_vouchers.nro_operacion` para evitar duplicados.
 

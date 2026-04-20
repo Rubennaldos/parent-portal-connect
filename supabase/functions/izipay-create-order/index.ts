@@ -117,15 +117,15 @@ serve(async (req) => {
 
   if (activeSession && activeSession.length > 0) {
     const sess = activeSession[0];
-    const expiresIn = Math.max(0, Math.round(
-      (new Date(sess.expires_at).getTime() - Date.now()) / 60_000
-    ));
+    // Guard window = 90 s desde created_at (independiente de expires_at)
+    const guardExpiresAt    = new Date(sess.created_at).getTime() + 90_000;
+    const expiresInSeconds  = Math.max(5, Math.ceil((guardExpiresAt - Date.now()) / 1_000));
     return json({
-      success: false,
-      error:   `Ya hay un pago IziPay en proceso para este alumno. ` +
-               `Completa o espera que expire (${expiresIn} min). ` +
-               `Si ya pagaste, usa "Verificar pago" en el portal.`,
-      active_session_id: sess.session_id,
+      success:            false,
+      error_code:         "SESSION_ACTIVE",
+      error:              `Ya hay un pago en proceso para este alumno. Espera ${expiresInSeconds} segundos o usa "Verificar pago".`,
+      expires_in_seconds: expiresInSeconds,
+      active_session_id:  sess.session_id,
     }, 409);
   }
 
@@ -303,7 +303,7 @@ serve(async (req) => {
       payment_gateway: "izipay",
       payment_method:  "pending_selection",
       status:          "pending",
-      expired_at:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      expired_at:      new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     }, { onConflict: "id" });
 
   if (upsertErr) {
