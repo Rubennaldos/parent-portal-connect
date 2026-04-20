@@ -168,6 +168,7 @@ export function RechargeModal({
   const [izipaySessionId, setIzipaySessionId] = useState<string | null>(null);
   const [izipayStep, setIzipayStep] = useState<'idle' | 'popup' | 'waiting' | 'done'>('idle');
   const [izipayLoading, setIzipayLoading] = useState(false);
+  const [izipayOrderId, setIzipayOrderId] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
@@ -436,7 +437,11 @@ export function RechargeModal({
       switch (event.data.type) {
         case 'IZIPAY_SUCCESS':
           popupRef.current?.close();
-          setIzipayStep('waiting'); // GatewayPaymentWaiting sondea la BD
+          // Guardar orderId para mostrarlo en el recibo
+          if (event.data.orderId) setIzipayOrderId(event.data.orderId);
+          // Ir directo a éxito — el webhook actualiza la BD en segundo plano
+          setIzipayStep('done');
+          setStep('success');
           break;
         case 'IZIPAY_ERROR':
           toast({
@@ -1818,67 +1823,103 @@ export function RechargeModal({
     );
   };
 
-  // ─────────────────────── PASO 4: Ã‰xito ───────────────────────
-  const renderStepSuccess = () => (
-    <div className="text-center space-y-5 py-4">
-      <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-        <CheckCircle2 className="h-12 w-12 text-green-600" />
-      </div>
-      <div>
-        <h3 className="text-xl font-bold text-gray-900">¡Comprobante enviado!</h3>
-        <p className="text-gray-500 mt-2 text-sm">
-          {requestType === 'lunch_payment'
-            ? <>Recibimos tu pago de almuerzo de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-            : requestType === 'debt_payment'
-            ? isCombinedPayment
-              ? <>Recibimos tu pago combinado de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-              : <>Recibimos tu pago de deuda de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-            : <>Recibimos tu solicitud de recarga de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-          }
-        </p>
-      </div>
+  // ─────────────────────── PASO 4: Éxito ───────────────────────
+  const renderStepSuccess = () => {
+    const wasIzipay = izipayOrderId !== null || izipayStep === 'done';
+    const now = new Date();
+    const fechaStr = now.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
+    const horaStr  = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
-      {isCombinedPayment && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-left">
-          <p className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
-            ðŸ‘¨â€ðŸ‘§â€ðŸ‘¦ Pago combinado para {combinedStudentIds?.length || 0} alumno(s)
-          </p>
-          <p className="text-[11px] text-emerald-600 mt-1">
-            Este comprobante cubre las deudas de todos tus hijos incluidos.
+    return (
+      <div className="text-center space-y-4 py-2">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+          <CheckCircle2 className="h-12 w-12 text-green-600" />
+        </div>
+
+        <div>
+          <h3 className="text-xl font-bold text-gray-900">
+            {wasIzipay ? '¡Pago confirmado!' : '¡Comprobante enviado!'}
+          </h3>
+          <p className="text-gray-500 mt-1 text-sm">
+            {requestType === 'lunch_payment'
+              ? <>Pago de almuerzo de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+              : requestType === 'debt_payment'
+              ? isCombinedPayment
+                ? <>Pago combinado de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+                : <>Pago de deuda de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+              : <>Recarga de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
+            }
           </p>
         </div>
-      )}
 
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
-        <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
-          <Clock className="h-4 w-4" /> ¿Qué pasa ahora?
-        </p>
-        <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-          <li>Un administrador verificará tu comprobante</li>
-          {requestType === 'lunch_payment' ? (
-            <>
-              <li>Tu pedido de almuerzo quedará <strong>confirmado</strong> al aprobarse</li>
-              <li>Recibirás la confirmación en la app</li>
-            </>
-          ) : requestType === 'debt_payment' ? (
-            <>
-              <li>Tus compras pendientes se marcarán como <strong>pagadas</strong></li>
-              <li>La deuda desaparecerá de tu cuenta al aprobarse</li>
-            </>
-          ) : (
-            <>
-              <li>El saldo se acreditará en menos de 24 horas</li>
-              <li>Podrás ver el saldo actualizado en la app</li>
-            </>
-          )}
-        </ul>
+        {/* Recibo digital — solo para pagos con IziPay */}
+        {wasIzipay && (
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 text-left space-y-3">
+            <p className="text-xs font-bold text-blue-800 uppercase tracking-wide flex items-center gap-1.5">
+              <CreditCard className="h-3.5 w-3.5" /> Recibo Digital · IziPay
+            </p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
+                <span className="text-gray-500 text-xs">Monto pagado</span>
+                <span className="font-black text-green-700 text-base">S/ {parseFloat(amount).toFixed(2)}</span>
+              </div>
+              {izipayOrderId && (
+                <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
+                  <span className="text-gray-500 text-xs">N° de operación</span>
+                  <span className="font-mono font-bold text-gray-800 text-xs">{izipayOrderId}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
+                <span className="text-gray-500 text-xs">Fecha</span>
+                <span className="font-semibold text-gray-700 text-xs">{fechaStr}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 text-xs">Hora</span>
+                <span className="font-semibold text-gray-700 text-xs">{horaStr}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+              <p className="text-[11px] text-green-700 font-semibold">
+                Pago procesado. El saldo se acreditará automáticamente.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {isCombinedPayment && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-left">
+            <p className="text-xs font-semibold text-emerald-800">
+              Pago combinado para {combinedStudentIds?.length || 0} alumno(s)
+            </p>
+          </div>
+        )}
+
+        {/* Próximos pasos — solo para pagos manuales */}
+        {!wasIzipay && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
+            <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+              <Clock className="h-4 w-4" /> ¿Qué pasa ahora?
+            </p>
+            <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+              <li>Un administrador verificará tu comprobante</li>
+              {requestType === 'lunch_payment' ? (
+                <><li>Tu pedido quedará <strong>confirmado</strong> al aprobarse</li></>
+              ) : requestType === 'debt_payment' ? (
+                <><li>Tus compras pendientes se marcarán como <strong>pagadas</strong></li></>
+              ) : (
+                <><li>El saldo se acreditará en menos de 24 horas</li></>
+              )}
+            </ul>
+          </div>
+        )}
+
+        <Button onClick={onClose} className="w-full h-11 bg-blue-600 hover:bg-blue-700 font-semibold">
+          Entendido
+        </Button>
       </div>
-
-      <Button onClick={onClose} className="w-full h-11 bg-blue-600 hover:bg-blue-700 font-semibold">
-        Entendido
-      </Button>
-    </div>
-  );
+    );
+  };
 
   if (RECHARGES_MAINTENANCE && requestType === 'recharge' && !izipayTestMode && !isIzipayPilotUser) {
     return (

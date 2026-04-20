@@ -296,8 +296,24 @@
 
           // Paso 4: registrar callbacks
           krInst.onSubmit(function(response) {
+            // Extraer orderId de la respuesta de IziPay
+            var orderId = (response
+              && response.clientAnswer
+              && response.clientAnswer.orderDetails
+              && response.clientAnswer.orderDetails.orderId)
+              || '';
+            var txUuid = (response
+              && response.clientAnswer
+              && response.clientAnswer.transactions
+              && response.clientAnswer.transactions[0]
+              && response.clientAnswer.transactions[0].uuid)
+              || '';
+
             showSuccess();
-            send({ type: 'IZIPAY_SUCCESS', response: response });
+            send({ type: 'IZIPAY_SUCCESS', orderId: orderId, txUuid: txUuid });
+
+            // Auto-cerrar la ventana después de 2 segundos
+            setTimeout(function() { window.close(); }, 2000);
             return false;
           });
 
