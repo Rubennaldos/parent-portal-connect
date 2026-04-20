@@ -91,13 +91,29 @@ serve(async (req) => {
   // PASO 2 — Leer SECRETOS desde Deno.env (REGLA 4 — VAULT ONLY)
   //          NO crear cliente Supabase todavía. NO tocar la DB.
   // ══════════════════════════════════════════════════════════════════════
-  const webhookSecret  = (Deno.env.get("IZIPAY_WEBHOOK_SECRET") ?? "").trim();
-  const expectedShopId = (Deno.env.get("IZIPAY_MERCHANT_ID")    ?? "").trim();
+  const webhookSecret   = (Deno.env.get("IZIPAY_WEBHOOK_SECRET") ?? "").trim();
+  const rawMerchantId   = (Deno.env.get("IZIPAY_MERCHANT_ID")    ?? "").trim();
+  const rawAllowedShops = (Deno.env.get("IZIPAY_ALLOWED_SHOP_IDS") ?? "").trim();
 
-  if (!webhookSecret || !expectedShopId) {
+  if (!webhookSecret || !rawMerchantId) {
     console.error("[izipay-webhook] CRÍTICO: Faltan secretos en Vault (IZIPAY_WEBHOOK_SECRET / IZIPAY_MERCHANT_ID).");
     return json({ error: "Configuración segura no disponible" }, 500);
   }
+
+  // shopId permitidos:
+  // - IZIPAY_MERCHANT_ID (normalizado)
+  // - IZIPAY_ALLOWED_SHOP_IDS (CSV opcional)
+  // - fallback explícito para entorno actual (tienda + afiliación)
+  const merchantBaseId = rawMerchantId.split(/[;:]/)[0]?.trim();
+  const envAllowedShopIds = rawAllowedShops
+    ? rawAllowedShops.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const allowedShopIds = Array.from(new Set([
+    merchantBaseId,
+    ...envAllowedShopIds,
+    "19723694", // tienda
+    "5822183",  // afiliación
+  ].filter(Boolean)));
 
   // ══════════════════════════════════════════════════════════════════════
   // PASO 3 — Parsear body: soporta JSON y application/x-www-form-urlencoded
@@ -228,24 +244,42 @@ serve(async (req) => {
     krAnswer = JSON.parse(krAnswerRaw);
   } catch (e) {
     console.error("[izipay-webhook] No se pudo parsear kr-answer como JSON:", e);
-    return json({ error: "No se pudo leer la respuesta del IPN" }, 400);
+    console.error("[izipay-webhook] kr-answer(raw) snippet:", krAnswerRaw.slice(0, 300));
+    return json({ error: "No se pudo leer la respuesta del IPN", reason: "INVALID_KR_ANSWER_JSON" }, 400);
   }
 
   const orderStatus     = (krAnswer.orderStatus as string | undefined) ?? "";
-  const orderId         = (krAnswer.orderId     as string | undefined) ?? "";
+  // IziPay puede enviar orderId en rutas distintas según integración/config.
+  const orderIdCandidates = [
+    (krAnswer.orderId as string | undefined),
+    ((krAnswer as any)?.orderDetails?.orderId as string | undefined),
+    ((krAnswer as any)?.orderDetails?.order_id as string | undefined),
+    ((krAnswer as any)?.transactions?.[0]?.orderId as string | undefined),
+    ((krAnswer as any)?.transactions?.[0]?.order_id as string | undefined),
+  ];
+  const orderId = (
+    orderIdCandidates.find((v) => typeof v === "string" && v.trim().length > 0) ?? ""
+  ).trim();
   const transactionUuid = (krAnswer.transactions as any)?.[0]?.uuid           ?? null;
   const paymentMethod   = (krAnswer.transactions as any)?.[0]?.paymentMethodType ?? "card";
   const shopId          = krAnswer.shopId as string | undefined;
 
   if (!orderId) {
-    return json({ error: "orderId ausente en el IPN" }, 400);
+    console.error(
+      "[izipay-webhook] orderId ausente en kr-answer.",
+      "keys:", Object.keys(krAnswer).join(", "),
+      "orderIdCandidates:", JSON.stringify(orderIdCandidates),
+    );
+    return json({ error: "orderId ausente en el IPN", reason: "ORDER_ID_MISSING" }, 400);
   }
 
   // ══════════════════════════════════════════════════════════════════════
   // PASO 7 — Verificar shopId contra Vault (segunda barrera de seguridad)
   // ══════════════════════════════════════════════════════════════════════
-  if (expectedShopId && shopId && shopId !== expectedShopId) {
-    console.error(`[izipay-webhook] shopId mismatch: recibido='${shopId}' esperado='${expectedShopId}'`);
+  if (shopId && !allowedShopIds.includes(shopId)) {
+    console.error(
+      `[izipay-webhook] shopId mismatch: recibido='${shopId}' permitidos='${allowedShopIds.join(",")}'`,
+    );
     return json({ error: "shopId no coincide con el registrado" }, 401);
   }
 
@@ -275,21 +309,23 @@ serve(async (req) => {
   //          Insertar en logs_pasarela ANTES de llamar al RPC.
   //          Si el RPC falla, el log queda en status='error' para auditoría.
   // ══════════════════════════════════════════════════════════════════════
-  await supabase
-    .from("logs_pasarela")
-    .upsert(
-      {
-        provider_name:          "izipay",
-        gateway_reference_id:   orderId,
-        gateway_transaction_id: transactionUuid ?? null,
-        payment_transaction_id: orderId,
-        event_type:             "webhook",
-        status:                 isApproved ? "received" : "rejected",
-        payload:                ipnData,
-      },
-      { onConflict: "provider_name,gateway_reference_id" },
-    )
-    .catch((e) => console.error("[izipay-webhook] No se pudo registrar logs_pasarela:", e));
+  {
+    const { error: lpUpsertErr } = await supabase
+      .from("logs_pasarela")
+      .upsert(
+        {
+          provider_name:          "izipay",
+          gateway_reference_id:   orderId,
+          gateway_transaction_id: transactionUuid ?? null,
+          payment_transaction_id: orderId,
+          event_type:             "webhook",
+          status:                 isApproved ? "received" : "rejected",
+          payload:                ipnData,
+        },
+        { onConflict: "provider_name,gateway_reference_id" },
+      );
+    if (lpUpsertErr) console.error("[izipay-webhook] No se pudo registrar logs_pasarela:", lpUpsertErr.message);
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // PASO 10 — IDEMPOTENCIA SECUNDARIA: gateway_webhook_events (histórico)
@@ -409,7 +445,7 @@ serve(async (req) => {
     if (creditError) {
       console.error("[izipay-webhook] apply_gateway_credit FALLÓ:", creditError);
 
-      await supabase.from("error_logs").insert({
+      const { error: errLogErr } = await supabase.from("error_logs").insert({
         module:    "izipay-webhook",
         message:   "Pago IziPay aprobado pero fallo al acreditar saldo",
         context: {
@@ -420,7 +456,8 @@ serve(async (req) => {
           rpc_error:        creditError.message,
         },
         resolved: false,
-      }).catch(() => { /* no bloquear si error_logs falla */ });
+      });
+      if (errLogErr) console.warn("[izipay-webhook] No se pudo guardar en error_logs:", errLogErr.message);
 
       await failLog(supabase, orderId, webhookEventId, creditError.message);
 
@@ -447,16 +484,18 @@ serve(async (req) => {
         .eq("id", webhookEventId);
     }
 
-    await supabase
-      .from("logs_pasarela")
-      .update({
-        status:        wasIdempotent ? "idempotent" : "applied",
-        processed_at:  new Date().toISOString(),
-        error_message: null,
-      })
-      .eq("provider_name", "izipay")
-      .eq("gateway_reference_id", orderId)
-      .catch(() => { /* no bloquear */ });
+    {
+      const { error: lpAppliedErr } = await supabase
+        .from("logs_pasarela")
+        .update({
+          status:        wasIdempotent ? "idempotent" : "applied",
+          processed_at:  new Date().toISOString(),
+          error_message: null,
+        })
+        .eq("provider_name", "izipay")
+        .eq("gateway_reference_id", orderId);
+      if (lpAppliedErr) console.warn("[izipay-webhook] No se pudo marcar logs_pasarela applied:", lpAppliedErr.message);
+    }
 
     // ── FORZAR payment_sessions.gateway_status = 'success' ───────────────────
     // CRÍTICO: apply_gateway_credit puede no actualizar payment_sessions si la
@@ -464,27 +503,18 @@ serve(async (req) => {
     // garantiza que GatewayPaymentWaiting siempre vea el estado correcto.
     // Se hace por sessionId (preferido) o por gateway_reference como fallback.
     if (sessionId) {
-      await supabase
+      const { error: psErr1 } = await supabase
         .from("payment_sessions")
-        .update({
-          gateway_status: "success",
-          status:         "completed",
-          completed_at:   new Date().toISOString(),
-        })
-        .eq("id", sessionId)
-        .catch(() => { /* no bloquear */ });
+        .update({ gateway_status: "success", status: "completed", completed_at: new Date().toISOString() })
+        .eq("id", sessionId);
+      if (psErr1) console.warn("[izipay-webhook] No se pudo actualizar payment_sessions (by id):", psErr1.message);
     } else {
-      // Fallback: buscar por gateway_reference (si la sesión fue creada después del guard)
-      await supabase
+      const { error: psErr2 } = await supabase
         .from("payment_sessions")
-        .update({
-          gateway_status: "success",
-          status:         "completed",
-          completed_at:   new Date().toISOString(),
-        })
+        .update({ gateway_status: "success", status: "completed", completed_at: new Date().toISOString() })
         .eq("gateway_reference", orderId)
-        .eq("gateway_name",      "izipay")
-        .catch(() => { /* no bloquear */ });
+        .eq("gateway_name",      "izipay");
+      if (psErr2) console.warn("[izipay-webhook] No se pudo actualizar payment_sessions (by ref):", psErr2.message);
     }
 
     // ── BILLING ASÍNCRONA (fire-and-forget) ──────────────────────────────────
@@ -574,13 +604,11 @@ serve(async (req) => {
         // Vincular el invoice_id a la transacción
         const invoiceId = (genResult as any)?.documento?.id as string | null ?? null;
         if (invoiceId) {
-          await supabase
+          const { error: invLinkErr } = await supabase
             .from("transactions")
             .update({ invoice_id: invoiceId, billing_status: "sent" })
-            .eq("id", creditTxId)
-            .catch((e: unknown) =>
-              console.error("[izipay-webhook][billing] No se pudo vincular invoice_id:", (e as Error).message),
-            );
+            .eq("id", creditTxId);
+          if (invLinkErr) console.error("[izipay-webhook][billing] No se pudo vincular invoice_id:", invLinkErr.message);
         }
 
         const docRef = `${(genResult as any)?.documento?.serie}-${(genResult as any)?.documento?.numero}`;
@@ -618,12 +646,14 @@ serve(async (req) => {
       .eq("id", webhookEventId);
   }
 
-  await supabase
-    .from("logs_pasarela")
-    .update({ status: "rejected", processed_at: new Date().toISOString() })
-    .eq("provider_name", "izipay")
-    .eq("gateway_reference_id", orderId)
-    .catch(() => { /* no bloquear */ });
+  {
+    const { error: lpRejErr } = await supabase
+      .from("logs_pasarela")
+      .update({ status: "rejected", processed_at: new Date().toISOString() })
+      .eq("provider_name", "izipay")
+      .eq("gateway_reference_id", orderId);
+    if (lpRejErr) console.warn("[izipay-webhook] No se pudo marcar logs_pasarela rejected:", lpRejErr.message);
+  }
 
   return json({ success: true, orderId, newStatus });
 });
@@ -644,13 +674,13 @@ async function failLog(
   errorMsg: string,
 ) {
   if (webhookEventId) {
-    await supabase
+    const { error: fwErr } = await supabase
       .from("gateway_webhook_events")
       .update({ processing_error: errorMsg, gateway_status: "failed" })
-      .eq("id", webhookEventId)
-      .catch(() => { /* no bloquear */ });
+      .eq("id", webhookEventId);
+    if (fwErr) console.warn("[izipay-webhook] failLog: no se pudo actualizar gateway_webhook_events:", fwErr.message);
   }
-  await supabase
+  const { error: flErr } = await supabase
     .from("logs_pasarela")
     .update({
       status:        "error",
@@ -658,6 +688,6 @@ async function failLog(
       processed_at:  new Date().toISOString(),
     })
     .eq("provider_name", "izipay")
-    .eq("gateway_reference_id", orderId)
-    .catch(() => { /* no bloquear */ });
+    .eq("gateway_reference_id", orderId);
+  if (flErr) console.warn("[izipay-webhook] failLog: no se pudo actualizar logs_pasarela:", flErr.message);
 }
