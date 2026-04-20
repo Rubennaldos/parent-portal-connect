@@ -93,8 +93,9 @@ export default defineConfig(({ mode }) => ({
         // Cachear recursos estáticos
         globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // ❌ NO cachear version.json (siempre debe ir al servidor)
-        navigateFallbackDenylist: [/^\/version\.json$/],
+        // ❌ NO cachear version.json ni izipay-frame.html (van directo al servidor)
+        // izipay-frame.html debe cargarse en su propio contexto limpio (popup aislado)
+        navigateFallbackDenylist: [/^\/version\.json$/, /^\/izipay-frame\.html/],
         runtimeCaching: [
           {
             // ❌ version.json SIEMPRE NetworkOnly (nunca cachear)
