@@ -113,11 +113,16 @@ serve(async (req) => {
   let krAnswerRaw: string;
   let receivedSig: string;
 
+  let krHashKey = "sha256_hmac"; // valor por defecto
+
   if (contentType.includes("application/x-www-form-urlencoded")) {
     // ── Formato URL-encoded (el que usa IziPay en producción) ─────────
+    // URLSearchParams URL-decodifica automáticamente los valores.
+    // El HMAC de Lyra se calcula sobre el valor DECODIFICADO de kr-answer.
     const params = new URLSearchParams(rawBody);
     receivedSig  = (params.get("kr-hash") ?? "").trim().toLowerCase();
     krAnswerRaw  = params.get("kr-answer") ?? "";
+    krHashKey    = (params.get("kr-hash-key") ?? "sha256_hmac").trim().toLowerCase();
 
     // Construir ipnData para logs y compatibilidad con el resto del código
     ipnData = {};
@@ -126,6 +131,7 @@ serve(async (req) => {
     console.log(
       "[izipay-webhook] IPN formato form-urlencoded. Claves:",
       [...params.keys()].join(", "),
+      "| kr-hash-key:", krHashKey,
     );
   } else {
     // ── Formato JSON (fallback / pruebas locales) ─────────────────────
@@ -137,10 +143,12 @@ serve(async (req) => {
     }
     receivedSig = ((ipnData["kr-hash"] as string | undefined) ?? "").trim().toLowerCase();
     krAnswerRaw = (ipnData["kr-answer"] as string | undefined) ?? "";
+    krHashKey   = ((ipnData["kr-hash-key"] as string | undefined) ?? "sha256_hmac").trim().toLowerCase();
 
     console.log(
       "[izipay-webhook] IPN formato JSON. Claves:",
       Object.keys(ipnData).join(", "),
+      "| kr-hash-key:", krHashKey,
     );
   }
 
@@ -155,12 +163,31 @@ serve(async (req) => {
     return json({ error: "kr-answer ausente en IPN" }, 400);
   }
 
-  // ── Calcular y verificar HMAC-SHA256 sobre kr-answer ─────────────────
-  // Usa IZIPAY_HMAC_SHA256 (= "Clave HMAC SHA-256" del Back Office Lyra).
-  // Fallback a IZIPAY_WEBHOOK_SECRET por compatibilidad.
-  const hmacKey = (
-    (Deno.env.get("IZIPAY_HMAC_SHA256") ?? "").trim() || webhookSecret
-  );
+  // ── Seleccionar clave HMAC según kr-hash-key (estándar Lyra V4) ──────
+  //
+  //   kr-hash-key = "sha256_hmac" → usar IZIPAY_HMAC_SHA256  (Back Office → "Clave HMAC SHA-256")
+  //   kr-hash-key = "password"    → usar IZIPAY_API_PASSWORD  (la contraseña de la cuenta API)
+  //
+  // Esto es crítico: IziPay elige qué clave usar y lo informa en kr-hash-key.
+  // Si usamos la clave incorrecta, el HMAC nunca va a coincidir.
+  const hmacSha256Key  = (Deno.env.get("IZIPAY_HMAC_SHA256")  ?? "").trim();
+  const apiPassword    = (Deno.env.get("IZIPAY_API_PASSWORD") ?? "").trim();
+
+  let hmacKey: string;
+  if (krHashKey === "password") {
+    // IziPay usó la contraseña API como clave de firma
+    hmacKey = apiPassword || webhookSecret;
+    console.log("[izipay-webhook] Usando clave: IZIPAY_API_PASSWORD (kr-hash-key=password)");
+  } else {
+    // kr-hash-key = "sha256_hmac" (o desconocido → default seguro)
+    hmacKey = hmacSha256Key || webhookSecret;
+    console.log("[izipay-webhook] Usando clave: IZIPAY_HMAC_SHA256 (kr-hash-key=sha256_hmac)");
+  }
+
+  if (!hmacKey) {
+    console.error("[izipay-webhook] CRÍTICO: No hay clave HMAC disponible en Vault para kr-hash-key=" + krHashKey);
+    return json({ error: "Clave de firma no configurada en el servidor" }, 500);
+  }
 
   let expectedSig: string;
   try {
@@ -173,9 +200,11 @@ serve(async (req) => {
   if (!timingSafeEqual(receivedSig, expectedSig.toLowerCase())) {
     console.error(
       "[izipay-webhook] Firma HMAC INVÁLIDA.",
+      `kr-hash-key usado: ${krHashKey}`,
       `Recibido: ${receivedSig.slice(0, 12)}...`,
       `Calculado: ${expectedSig.slice(0, 12)}...`,
-      "Verifica que IZIPAY_HMAC_SHA256 coincida con la 'Clave HMAC SHA-256' del Back Office.",
+      "Si kr-hash-key=password, verifica IZIPAY_API_PASSWORD en Vault.",
+      "Si kr-hash-key=sha256_hmac, verifica IZIPAY_HMAC_SHA256 en Vault.",
     );
     return json({ error: "Firma de seguridad inválida" }, 401);
   }
