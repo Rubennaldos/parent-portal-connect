@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pago seguro · IziPay</title>
+
+  <link rel="stylesheet"
+    href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.css">
+
+  <!--
+    KR.js cargado en este window aislado.
+    SIN kr-form-token → evita auto-render (CLIENT_725).
+  -->
+  <script
+    src="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js"
+    kr-post-url="javascript:void(0);"
+    kr-language="es-PE"
+    kr-hide-installment-number="true"
+    kr-hide-first-installment-delay="true"
+  ></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      padding: 16px 20px;
+      color: white;
+    }
+    .header-top { display: flex; align-items: center; justify-content: space-between; }
+    .header-brand { display: flex; align-items: center; gap: 10px; }
+    .header-shield {
+      background: rgba(255,255,255,.18);
+      border-radius: 50%;
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .header-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
+    .header-sub { font-size: 11px; color: rgba(191,219,254,1); margin-top: 2px; }
+    .header-amount { text-align: right; }
+    .header-amount-label { font-size: 10px; color: rgba(191,219,254,1); text-transform: uppercase; letter-spacing: .08em; }
+    .header-amount-value { font-size: 26px; font-weight: 800; line-height: 1.1; }
+    .brands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .brand-pill {
+      font-size: 9px; font-weight: 700; color: rgba(255,255,255,.9);
+      background: rgba(255,255,255,.15);
+      padding: 2px 8px; border-radius: 6px; letter-spacing: .05em;
+    }
+
+    /* ── Body ── */
+    .body { flex: 1; padding: 20px 16px; }
+
+    /* ── Loader ── */
+    #loader {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 16px; gap: 14px;
+      color: #94a3b8; font-size: 13px;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Error ── */
+    #error-msg {
+      display: none;
+      background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 12px; padding: 16px; margin-bottom: 12px;
+      color: #dc2626; font-size: 13px; text-align: center; line-height: 1.5;
+    }
+
+    /* ── Form card ── */
+    .form-card {
+      background: white; border-radius: 16px;
+      padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    }
+
+    /* ── KR.js cosmetic styles ── */
+    .kr-payment-button {
+      width: 100% !important;
+      background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
+      color: #fff !important;
+      font-size: 15px !important;
+      font-weight: 700 !important;
+      letter-spacing: .04em !important;
+      border: none !important;
+      border-radius: 12px !important;
+      padding: 14px 0 !important;
+      margin-top: 10px !important;
+      cursor: pointer !important;
+      box-shadow: 0 4px 14px rgba(37,99,235,.28) !important;
+      transition: opacity .15s !important;
+    }
+    .kr-payment-button:hover  { opacity: .92 !important; }
+    .kr-payment-button:active { opacity: .80 !important; }
+    .kr-form-error, .kr-field-error {
+      color: #ef4444 !important; font-size: 12px !important;
+    }
+
+    /* ── Footer seals ── */
+    .seals {
+      display: flex; align-items: center; justify-content: center;
+      gap: 10px; margin-top: 14px; flex-wrap: wrap;
+    }
+    .seal {
+      display: flex; align-items: center; gap: 4px;
+      background: #f8fafc; border: 1px solid #e2e8f0;
+      border-radius: 6px; padding: 4px 8px;
+      font-size: 9px; font-weight: 700;
+      color: #64748b; letter-spacing: .05em; text-transform: uppercase;
+    }
+
+    /* ── Success screen ── */
+    #success-screen {
+      display: none;
+      text-align: center; padding: 40px 20px;
+    }
+    .success-icon {
+      width: 72px; height: 72px;
+      background: #dcfce7; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .success-title { font-size: 20px; font-weight: 800; color: #166534; margin-bottom: 8px; }
+    .success-sub { font-size: 13px; color: #4ade80; line-height: 1.5; }
+    .close-btn {
+      margin-top: 24px;
+      background: #16a34a; color: white;
+      border: none; border-radius: 12px;
+      padding: 14px 32px; font-size: 15px; font-weight: 700;
+      cursor: pointer; transition: opacity .15s;
+    }
+    .close-btn:hover { opacity: .88; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div class="header-brand">
+        <div class="header-shield">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="header-title">Pago seguro</div>
+          <div class="header-sub">Cifrado TLS · Powered by IziPay</div>
+        </div>
+      </div>
+      <div class="header-amount">
+        <div class="header-amount-label">Total</div>
+        <div class="header-amount-value" id="amount-display">S/ —</div>
+      </div>
+    </div>
+    <div class="brands">
+      <span class="brand-pill">VISA</span>
+      <span class="brand-pill">Mastercard</span>
+      <span class="brand-pill">AMEX</span>
+      <span class="brand-pill">Diners</span>
+      <span class="brand-pill">Yape QR</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <span>Cargando formulario seguro…</span>
+    </div>
+
+    <div id="error-msg"></div>
+
+    <div id="success-screen">
+      <div class="success-icon">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+          stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <div class="success-title">¡Pago enviado!</div>
+      <div class="success-sub">
+        Tu pago fue procesado.<br>Puedes cerrar esta ventana.
+      </div>
+      <button class="close-btn" onclick="window.close()">Cerrar ventana</button>
+    </div>
+
+    <!--
+      .kr-embedded: SIEMPRE en el DOM con dimensiones reales.
+      SIN data-kr-form-token → evita auto-render (CLIENT_725).
+    -->
+    <div class="form-card" id="form-card">
+      <div class="kr-embedded"></div>
+    </div>
+
+    <div class="seals" id="seals">
+      <div class="seal">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+          stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+        SSL
+      </div>
+      <div class="seal">VISA</div>
+      <div class="seal">Mastercard</div>
+      <div class="seal">PCI DSS</div>
+    </div>
+
+  </div>
+
+  <script>
+    var params    = new URLSearchParams(window.location.search);
+    var formToken = params.get('token') || '';
+    var publicKey = params.get('key')   || '';
+
+    // Mostrar monto aproximado en header (se actualiza desde el servidor)
+    // El monto real lo calcula el servidor, aquí solo decorativo
+    var amountEl = document.getElementById('amount-display');
+
+    /**
+     * Enviar mensaje al padre.
+     * - Si estamos en popup: window.opener.postMessage (misma origin)
+     * - Si estamos en iframe: window.parent.postMessage
+     * - Si somos el top: ignorar (no hay padre)
+     */
+    function send(msg) {
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(msg, window.location.origin);
+        } else if (window.parent !== window) {
+          window.parent.postMessage(msg, '*');
+        }
+      } catch(e) {
+        // Si el acceso a opener está bloqueado, intentar parent
+        try {
+          if (window.parent !== window) window.parent.postMessage(msg, '*');
+        } catch(_) {}
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById('loader').style.display    = 'none';
+      document.getElementById('form-card').style.display = 'none';
+      document.getElementById('seals').style.display     = 'none';
+      var el = document.getElementById('error-msg');
+      el.style.display  = 'block';
+      el.textContent    = msg;
+      send({ type: 'IZIPAY_LOAD_ERROR', message: msg });
+    }
+
+    function showSuccess() {
+      document.getElementById('form-card').style.display    = 'none';
+      document.getElementById('seals').style.display        = 'none';
+      document.getElementById('success-screen').style.display = 'block';
+      document.body.style.background = '#f0fdf4';
+    }
+
+    function waitForKR(maxAttempts) {
+      return new Promise(function(resolve, reject) {
+        var n = 0;
+        function tick() {
+          if (window.KR) return resolve(window.KR);
+          if (++n > (maxAttempts || 60)) return reject(new Error('KR_TIMEOUT'));
+          setTimeout(tick, 150);
+        }
+        tick();
+      });
+    }
+
+    async function initKR() {
+      try {
+        if (!formToken || !publicKey) throw new Error('Parámetros de pago inválidos. Cierra esta ventana e intenta de nuevo.');
+
+        var KR = await waitForKR(60);
+
+        await KR.setFormConfig({
+          'kr-public-key':                   publicKey,
+          'kr-language':                     'es-PE',
+          'kr-hide-installment-number':      'true',
+          'kr-hide-first-installment-delay': 'true',
+        });
+
+        // Limpieza defensiva
+        var container = document.querySelector('.kr-embedded');
+        if (container) container.innerHTML = '';
+        await KR.removeForms();
+
+        // Negociar token
+        await KR.setFormToken(formToken);
+
+        // Renderizar
+        var result    = await KR.renderElements('.kr-embedded');
+        var krInst    = (result && result.KR) ? result.KR : KR;
+
+        krInst.onSubmit(function() {
+          showSuccess();
+          send({ type: 'IZIPAY_SUCCESS' });
+          return false;
+        });
+
+        krInst.onError(function(err) {
+          var msg = (err && (err.clientMessage || err.errorMessage)) || 'Error en el formulario';
+          send({ type: 'IZIPAY_ERROR', message: msg });
+          // No cerramos — el usuario puede corregir y reintentar
+        });
+
+        document.getElementById('loader').style.display = 'none';
+        send({ type: 'IZIPAY_READY' });
+
+      } catch(err) {
+        var msg = err.message === 'KR_TIMEOUT'
+          ? 'El formulario tardó demasiado. Cierra esta ventana e intenta de nuevo.'
+          : (err.message || 'Error al cargar el formulario de pago.');
+        showError(msg);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initKR);
+    } else {
+      initKR();
+    }
+  </script>
+</body>
+</html>
