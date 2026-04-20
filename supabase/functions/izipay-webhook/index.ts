@@ -553,18 +553,57 @@ serve(async (req) => {
       console.log(`[izipay-webhook] Sin debt_tx_ids en la sesión. orderId=${orderId}`);
     }
 
-    // ── BILLING ASÍNCRONA (fire-and-forget) ──────────────────────────────────
-    // Genera la boleta/factura en Nubefact DESPUÉS de responder a IziPay.
-    // Si falla: billing_status='pending' + cron nocturno reintenta.
-    // Si tiene éxito: transactions.invoice_id apunta a la boleta generada.
-    // ──────────────────────────────────────────────────────────────────────────
-    const billingTask = async (): Promise<void> => {
-      // No re-facturar pagos idempotentes (ya fueron procesados antes)
-      if (wasIdempotent || !creditTxId) return;
+    // ══════════════════════════════════════════════════════════════════════
+    // PASO 12b — BILLING EN TIEMPO REAL: INSERT SÍNCRONO en billing_queue
+    //
+    // REGLA DE ORO: El INSERT en billing_queue es OBLIGATORIO y se hace
+    // de forma síncrona ANTES de responder a IziPay. Si falla, se loguea
+    // con detalle. Solo el invoke de process-billing-queue es fire-and-forget.
+    //
+    // DIAGNÓSTICO: Si creditTxId es null (apply_gateway_credit no retornó
+    // transaction_id), se busca el TX por gateway_reference como fallback.
+    // ══════════════════════════════════════════════════════════════════════
 
-      try {
-        // Obtener school_id del alumno (necesario para billing_config y Nubefact)
-        const { data: studentData } = await supabase
+    // Saltar facturación solo en pagos idempotentes (ya facturados antes)
+    if (!wasIdempotent) {
+
+      // ── 1. Resolver creditTxId con fallback por gateway_reference ──────────
+      let resolvedTxId: string | null = creditTxId;
+
+      if (!resolvedTxId) {
+        console.warn(
+          `[izipay-webhook][billing] creditTxId es null — creditResult:`,
+          JSON.stringify(creditResult ?? null),
+          `Buscando TX por gateway_reference_id=${orderId}`,
+        );
+        const { data: fallbackTx, error: fallbackErr } = await supabase
+          .from("transactions")
+          .select("id")
+          .eq("gateway_reference_id", orderId)
+          .eq("student_id", txRecord.student_id)
+          .eq("type", "credit")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (fallbackErr) {
+          console.error("[izipay-webhook][billing] Error buscando TX fallback:", fallbackErr.message);
+        }
+        resolvedTxId = fallbackTx?.id ?? null;
+
+        if (resolvedTxId) {
+          console.log(`[izipay-webhook][billing] TX encontrado por fallback: ${resolvedTxId}`);
+        } else {
+          console.error(
+            "[izipay-webhook][billing] ⛔ No se encontró TX de crédito para orderId=" + orderId +
+            " — billing_queue NO insertado. Revisar apply_gateway_credit."
+          );
+        }
+      }
+
+      if (resolvedTxId) {
+        // ── 2. Obtener school_id del alumno ─────────────────────────────────
+        const { data: studentData, error: studentErr } = await supabase
           .from("students")
           .select("school_id")
           .eq("id", txRecord.student_id)
@@ -572,99 +611,96 @@ serve(async (req) => {
 
         const schoolId = (studentData as any)?.school_id as string | null ?? null;
 
+        if (studentErr) {
+          console.error("[izipay-webhook][billing] Error obteniendo school_id:", studentErr.message);
+        }
+
         if (!schoolId) {
-          console.error("[izipay-webhook][billing] Sin school_id — boleta no generada.");
-          return;
-        }
-
-        // Preparar transacción para billing (override de 'excluded')
-        const { error: updateErr } = await supabase
-          .from("transactions")
-          .update({ is_taxable: true, billing_status: "pending" })
-          .eq("id", creditTxId);
-
-        if (updateErr) {
-          console.error("[izipay-webhook][billing] No se pudo preparar TX:", updateErr.message);
-          return;
-        }
-
-        // Datos del cliente SUNAT (si el padre los especificó al iniciar el pago)
-        const clienteData = sessionInvoiceClient ?? {
-          doc_type:     "-",
-          doc_number:   "-",
-          razon_social: "Consumidor Final",
-          direccion:    "-",
-        };
-        const tipo = sessionInvoiceType === "factura" ? 1 : 2; // 2=boleta por defecto
-
-        // Llamar a generate-document con service_role key (bypass JWT interno)
-        const { data: genResult, error: genError } = await supabase.functions.invoke(
-          "generate-document",
-          {
-            body: {
-              transaction_id: creditTxId,
-              school_id:      schoolId,
-              tipo,
-              monto_total:    txRecord.amount,
-              cliente:        clienteData,
-              payment_method: "tarjeta",
-              items: [
-                {
-                  unidad_de_medida:        "NIU",
-                  codigo:                  "REC-OL",
-                  descripcion:             `Recarga de saldo kiosco en línea (IziPay, ref: ${orderId})`,
-                  cantidad:                1,
-                  precio_unitario:         txRecord.amount,
-                  valor_unitario:          txRecord.amount,
-                  descuento:               "",
-                  subtotal:                txRecord.amount,
-                  tipo_de_igv:             1,
-                  igv:                     0,
-                  total:                   txRecord.amount,
-                  anticipo_regularizacion: false,
-                },
-              ],
-            },
-          },
-        );
-
-        if (genError || !(genResult as any)?.success) {
-          // Fallo en Nubefact — dejar billing_status='pending' para el cron nocturno.
-          // IMPORTANTE: esto NO revierte el crédito. El saldo ya fue acreditado correctamente.
-          // La boleta se reintentará con el cron nocturno o manualmente desde el admin.
-          const genErrMsg = genError?.message ?? (genResult as any)?.error ?? "respuesta vacía";
-          const nubefactDetail = (genResult as any)?.nubefact ? JSON.stringify((genResult as any).nubefact).slice(0, 200) : "";
           console.error(
-            `[izipay-webhook][billing] generate-document falló (no crítico — crédito ya aplicado): ${genErrMsg}`,
-            nubefactDetail ? `| Nubefact: ${nubefactDetail}` : "",
+            "[izipay-webhook][billing] ⛔ Sin school_id para alumno=" + txRecord.student_id +
+            " — billing_queue NO insertado."
           );
-          return;
-        }
-
-        // Vincular el invoice_id a la transacción
-        const invoiceId = (genResult as any)?.documento?.id as string | null ?? null;
-        if (invoiceId) {
-          const { error: invLinkErr } = await supabase
+        } else {
+          // ── 3. Marcar TX como taxable / pending antes del insert ───────────
+          await supabase
             .from("transactions")
-            .update({ invoice_id: invoiceId, billing_status: "sent" })
-            .eq("id", creditTxId);
-          if (invLinkErr) console.error("[izipay-webhook][billing] No se pudo vincular invoice_id:", invLinkErr.message);
+            .update({ is_taxable: true, billing_status: "pending" })
+            .eq("id", resolvedTxId);
+
+          // ── 4. Preparar invoice_client_data ─────────────────────────────────
+          const invoiceClientData = sessionInvoiceClient
+            ? {
+                name:    (sessionInvoiceClient as any).razon_social ?? (sessionInvoiceClient as any).name    ?? null,
+                dni_ruc: (sessionInvoiceClient as any).doc_number   ?? (sessionInvoiceClient as any).dni_ruc ?? null,
+                email:   (sessionInvoiceClient as any).email        ?? null,
+                address: (sessionInvoiceClient as any).direccion    ?? (sessionInvoiceClient as any).address ?? null,
+              }
+            : null;
+
+          // ── 5. INSERT en billing_queue — SÍNCRONO y OBLIGATORIO ─────────────
+          console.log(
+            `[izipay-webhook][billing] Insertando billing_queue: tx=${resolvedTxId} ` +
+            `school=${schoolId} amount=${txRecord.amount} invoice_type=${sessionInvoiceType ?? "boleta"}`
+          );
+
+          const { data: queueEntry, error: queueInsertErr } = await supabase
+            .from("billing_queue")
+            .insert({
+              transaction_id:      resolvedTxId,
+              recharge_request_id: null,
+              student_id:          txRecord.student_id,
+              school_id:           schoolId,
+              amount:              txRecord.amount,
+              invoice_type:        sessionInvoiceType ?? "boleta",
+              invoice_client_data: invoiceClientData,
+              status:              "pending",
+            })
+            .select("id")
+            .single();
+
+          if (queueInsertErr || !queueEntry?.id) {
+            // Log DETALLADO — nunca ignorar este error
+            console.error(
+              "[izipay-webhook][billing] ⛔ FALLO INSERT billing_queue:",
+              queueInsertErr?.message ?? "sin id retornado",
+              "| code:", queueInsertErr?.code ?? "N/A",
+              "| details:", queueInsertErr?.details ?? "N/A",
+              "| hint:", queueInsertErr?.hint ?? "N/A",
+              "| tx:", resolvedTxId, "| school:", schoolId,
+            );
+          } else {
+            console.log(
+              `[izipay-webhook][billing] ✅ billing_queue insertado id=${queueEntry.id} ` +
+              `tx=${resolvedTxId} alumno=${txRecord.student_id} S/${txRecord.amount}`
+            );
+
+            // ── 6. Invocar process-billing-queue (fire-and-forget) ─────────────
+            // El DB trigger pg_net ya dispara automáticamente; esta llamada directa
+            // garantiza < 10 segundos de latencia.
+            const invokeTask = supabase.functions.invoke("process-billing-queue", {
+              body: { queue_id: queueEntry.id, source: "izipay_webhook_direct" },
+            }).then((res: any) => {
+              if (res.error) {
+                console.warn("[izipay-webhook][billing] process-billing-queue error (no crítico):", res.error.message);
+              } else {
+                const data = res.data as any;
+                console.log(
+                  `[izipay-webhook][billing] process-billing-queue resultado:`,
+                  JSON.stringify(data?.results?.[0] ?? data ?? null),
+                );
+              }
+            }).catch((e: Error) => {
+              console.warn("[izipay-webhook][billing] invoke falló (no crítico — DB trigger como respaldo):", e.message);
+            });
+
+            if (typeof (globalThis as any).EdgeRuntime !== "undefined") {
+              (globalThis as any).EdgeRuntime.waitUntil(invokeTask);
+            }
+          }
         }
-
-        const docRef = `${(genResult as any)?.documento?.serie}-${(genResult as any)?.documento?.numero}`;
-        console.log(`[izipay-webhook][billing] Boleta generada: ${docRef} → TX ${creditTxId}`);
-
-      } catch (e) {
-        // Error inesperado — billing_status queda 'pending' para cron nocturno
-        console.error("[izipay-webhook][billing] Error inesperado:", (e as Error).message);
       }
-    };
-
-    // Lanzar en background: responde a IziPay sin esperar la boleta
-    if (typeof (globalThis as any).EdgeRuntime !== "undefined") {
-      (globalThis as any).EdgeRuntime.waitUntil(billingTask());
     } else {
-      billingTask().catch(() => { /* test local — ignorar */ });
+      console.log(`[izipay-webhook][billing] Pago idempotente — billing_queue ya existente para orderId=${orderId}`);
     }
 
     return json({
