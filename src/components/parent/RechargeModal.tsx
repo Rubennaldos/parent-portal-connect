@@ -416,6 +416,7 @@ export function RechargeModal({
           parent_id:         user.id,
           student_id:        studentId,
           school_id:         studentData?.school_id,
+          debt_tx_ids:       paidTransactionIds ?? [],
           gateway_amount:    serverAmount,
           total_debt_amount: serverAmount,
           wallet_amount:     0,

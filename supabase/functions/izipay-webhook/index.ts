@@ -410,13 +410,16 @@ serve(async (req) => {
 
     const { data: session, error: sessionLookupError } = await supabase
       .from("payment_sessions")
-      .select("id, invoice_type, invoice_client_data")
+      .select("id, invoice_type, invoice_client_data, debt_tx_ids")
       .eq("gateway_reference", orderId)
       .maybeSingle();
 
     const sessionId            = session?.id ?? null;
     const sessionInvoiceType   = (session as any)?.invoice_type   as string | null ?? null;
     const sessionInvoiceClient = (session as any)?.invoice_client_data as Record<string, unknown> | null ?? null;
+    const sessionDebtTxIds = Array.isArray((session as any)?.debt_tx_ids)
+      ? ((session as any).debt_tx_ids as unknown[]).filter((v) => typeof v === "string" && v.length > 0) as string[]
+      : [];
 
     console.log(
       `[izipay-webhook] PASO-12 session: id=${sessionId ?? "NULL"} | student_id=${txRecord.student_id} amount=${txRecord.amount}`,
@@ -515,6 +518,39 @@ serve(async (req) => {
         .eq("gateway_reference", orderId)
         .eq("gateway_name",      "izipay");
       if (psErr2) console.warn("[izipay-webhook] No se pudo actualizar payment_sessions (by ref):", psErr2.message);
+    }
+
+    // ── CIERRE CONTABLE DE DEUDAS SELECCIONADAS (debt_tx_ids) ─────────────────
+    // Si el pago IziPay fue exitoso, además de acreditar recarga debemos cerrar
+    // las compras pendientes incluidas en esta sesión para que no sigan visibles.
+    if (sessionDebtTxIds.length > 0) {
+      const { data: clearedDebts, error: clearDebtErr } = await supabase
+        .from("transactions")
+        .update({
+          payment_status: "paid",
+          payment_method: paymentMethod ?? "card",
+        })
+        .in("id", sessionDebtTxIds)
+        .eq("student_id", txRecord.student_id)
+        .eq("type", "purchase")
+        .eq("payment_status", "pending")
+        .neq("is_deleted", true)
+        .select("id");
+
+      if (clearDebtErr) {
+        console.error(
+          "[izipay-webhook] No se pudieron cerrar debt_tx_ids tras pago exitoso:",
+          clearDebtErr.message,
+          "orderId:", orderId,
+          "debt_tx_ids:", JSON.stringify(sessionDebtTxIds),
+        );
+      } else {
+        console.log(
+          `[izipay-webhook] Deudas cerradas por IziPay: ${clearedDebts?.length ?? 0}/${sessionDebtTxIds.length} orderId=${orderId}`,
+        );
+      }
+    } else {
+      console.log(`[izipay-webhook] Sin debt_tx_ids en la sesión. orderId=${orderId}`);
     }
 
     // ── BILLING ASÍNCRONA (fire-and-forget) ──────────────────────────────────
