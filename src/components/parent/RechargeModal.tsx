@@ -142,10 +142,6 @@ export function RechargeModal({
   izipayTestMode = false,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = false; // Pasarela activa en producción
-  // EMERGENCIA 2026-04-19: IziPay desactivado mientras se resuelve fallo de webhook.
-  // Reactiva cambiando a true cuando el HMAC esté validado.
-  const IZIPAY_ENABLED = false;
-
   const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -154,6 +150,8 @@ export function RechargeModal({
   // Pilot controlado: solo este correo puede ver/probar IziPay mientras dura la prueba.
   const IZIPAY_PILOT_EMAIL = 'padremc1@gmail.com';
   const isIzipayPilotUser = (user?.email ?? '').toLowerCase() === IZIPAY_PILOT_EMAIL;
+  // EMERGENCIA controlada: IziPay habilitado únicamente para el padre piloto.
+  const IZIPAY_ENABLED = isIzipayPilotUser;
 
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
