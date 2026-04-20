@@ -1,35 +1,48 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
 
 /**
  * Hook para detectar el estado de conexión a internet en tiempo real.
  * Retorna `isOnline` (boolean) y una función `checkConnection` para forzar verificación.
+ *
+ * FIX: No usar import.meta.env.VITE_SUPABASE_URL directamente como fallback porque
+ * en producción puede estar vacío y caer a 'placeholder.supabase.co', lo cual hace
+ * que el POS crea que siempre está offline y nunca sincroniza la cola offline.
+ * Solución: leer la URL del cliente Supabase ya instanciado, con fallback a google/204.
  */
 export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastChecked, setLastChecked] = useState(Date.now());
 
-  // Verificación real: intenta hacer un fetch pequeño a Supabase
   const checkConnection = useCallback(async (): Promise<boolean> => {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000);
-      
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/`,
-        {
-          method: 'HEAD',
-          signal: controller.signal,
-          cache: 'no-store',
-          headers: supabaseKey ? { 'apikey': supabaseKey } : {},
-        }
-      );
+      // Leer URL real del cliente Supabase ya configurado
+      const supabaseUrl: string = (supabase as any).supabaseUrl
+        || import.meta.env.VITE_SUPABASE_URL
+        || '';
+      const supabaseKey: string = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+      // Si la URL no está disponible o es placeholder → ping a Google (siempre responde)
+      const pingUrl = supabaseUrl && !supabaseUrl.includes('placeholder')
+        ? `${supabaseUrl}/rest/v1/`
+        : 'https://www.google.com/generate_204';
+
+      const isSupabasePing = pingUrl.includes('supabase');
+
+      const response = await fetch(pingUrl, {
+        method: 'HEAD',
+        signal: controller.signal,
+        cache: 'no-store',
+        headers: isSupabasePing && supabaseKey ? { apikey: supabaseKey } : {},
+      });
       clearTimeout(timeout);
-      
-      // Con apikey el servidor devuelve 200; sin él devolvería 401 (ambos indican que está online)
-      const online = response.ok || response.status === 401;
+
+      // Supabase: 200 (con apikey) o 401 (sin apikey) = online
+      // Google generate_204: 204 = online
+      const online = response.ok || response.status === 401 || response.status === 204;
       setIsOnline(online);
       setLastChecked(Date.now());
       return online;
@@ -56,7 +69,7 @@ export function useOnlineStatus() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Verificar periódicamente (cada 30 segundos) para detectar internet lento
+    // Verificar periódicamente cada 30 segundos para detectar internet lento
     const interval = setInterval(async () => {
       if (navigator.onLine) {
         await checkConnection();
