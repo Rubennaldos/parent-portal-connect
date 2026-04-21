@@ -16,16 +16,15 @@ RETURNS TABLE (
   created_at timestamptz,
   ticket_code text,
   payment_status text,
-  db_type text,
   is_lunch boolean,
-  consumption_label text
+  consumption_label text,
+  items_detail text   -- productos reales: "Galleta x1, Jugo x2" o nombre del almuerzo
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- Seguridad: solo el padre del alumno o roles admin pueden consultar
   IF NOT EXISTS (
     SELECT 1
     FROM students s
@@ -33,8 +32,7 @@ BEGIN
       AND (
         s.parent_id = auth.uid()
         OR EXISTS (
-          SELECT 1
-          FROM profiles p
+          SELECT 1 FROM profiles p
           WHERE p.id = auth.uid()
             AND p.role IN ('admin_general', 'superadmin', 'gestor_unidad', 'supervisor_red')
         )
@@ -51,20 +49,48 @@ BEGIN
     t.created_at,
     t.ticket_code,
     t.payment_status,
-    t.type AS db_type,
     ((t.metadata->>'lunch_order_id') IS NOT NULL) AS is_lunch,
     CASE
       WHEN (t.metadata->>'lunch_order_id') IS NOT NULL THEN 'Almuerzo escolar'
       ELSE 'Compra kiosco'
-    END AS consumption_label
+    END AS consumption_label,
+
+    -- Detalle real de productos desde transaction_items
+    -- Si hay items: "Galleta x1 · Jugo x2"
+    -- Si no hay: usa la descripción de la transacción limpia (sin "Compra POS ...")
+    COALESCE(
+      NULLIF(
+        (
+          SELECT string_agg(
+            ti.product_name || ' x' || ti.quantity::int::text,
+            ' · '
+            ORDER BY ti.id
+          )
+          FROM transaction_items ti
+          WHERE ti.transaction_id = t.id
+        ),
+        ''
+      ),
+      NULLIF(
+        regexp_replace(
+          COALESCE(t.description, ''),
+          'Compra POS \(.*?\)\s*-\s*S/\s*[\d\.]+(\s*\[OFFLINE\])?',
+          '',
+          'i'
+        ),
+        ''
+      ),
+      'Sin detalle'
+    ) AS items_detail
+
   FROM transactions t
   WHERE t.student_id = p_student_id
     AND t.type = 'purchase'
     AND t.is_deleted = false
     AND t.payment_status <> 'cancelled'
   ORDER BY t.created_at DESC
-  LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 20), 100))
-  OFFSET GREATEST(COALESCE(p_offset, 0), 0);
+  LIMIT  GREATEST(1, LEAST(COALESCE(p_limit, 20), 100))
+  OFFSET GREATEST(0, COALESCE(p_offset, 0));
 END;
 $$;
 
@@ -72,6 +98,7 @@ GRANT EXECUTE ON FUNCTION public.get_student_purchase_history(uuid, integer, int
   TO authenticated;
 
 COMMENT ON FUNCTION public.get_student_purchase_history(uuid, integer, integer) IS
-  'Historial de compras (purchase) de un alumno para portal de padres. '
-  'Incluye clasificación backend (is_lunch/consumption_label) para evitar inferencias en frontend.';
+  'Historial de compras de un alumno para portal de padres. '
+  'Reglas de Oro: todo cálculo/clasificación en PostgreSQL, frontend solo renderiza. '
+  'items_detail: productos reales de transaction_items o descripción limpia como fallback.';
 

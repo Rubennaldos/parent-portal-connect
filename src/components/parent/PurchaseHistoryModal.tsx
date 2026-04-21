@@ -17,6 +17,7 @@ interface Purchase {
   payment_status: string;
   is_lunch: boolean;
   consumption_label: string;
+  items_detail: string;
 }
 
 interface PurchaseHistoryModalProps {
@@ -73,8 +74,10 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
           <p className="text-[11px] text-slate-400 mt-0.5 capitalize">
             {format(new Date(purchase.created_at), "EEEE d 'de' MMMM · HH:mm", { locale: es })}
           </p>
-          <p className="text-[10px] text-slate-400 mt-0.5">
-            {purchase.consumption_label}
+          <p className="text-[11px] text-slate-600 font-medium mt-0.5 leading-snug">
+            {purchase.items_detail !== 'Sin detalle' && purchase.items_detail
+              ? purchase.items_detail
+              : purchase.consumption_label}
           </p>
 
           {purchase.ticket_code && (
@@ -147,6 +150,7 @@ export const PurchaseHistoryModal = ({
         payment_status: tx.payment_status || 'paid',
         is_lunch: Boolean(tx.is_lunch),
         consumption_label: tx.consumption_label ?? 'Consumo',
+        items_detail: tx.items_detail ?? '',
       }));
 
       if (isReset) {
