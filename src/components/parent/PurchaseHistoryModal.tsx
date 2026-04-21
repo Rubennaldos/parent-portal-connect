@@ -10,13 +10,14 @@ const PAGE_SIZE = 20;
 
 interface Purchase {
   id: string;
-  type: string;
   amount: number;
   description: string;
   created_at: string;
   ticket_code: string | null;
   payment_status: string;
-  metadata: any;
+  db_type: string;
+  is_lunch: boolean;
+  consumption_label: string;
 }
 
 interface PurchaseHistoryModalProps {
@@ -51,9 +52,8 @@ const PurchaseCardSkeleton = () => (
 
 // ─── Purchase Card ────────────────────────────────────────────────────────────
 function PurchaseCard({ purchase }: { purchase: Purchase }) {
-  const isLunch = Boolean(purchase.metadata?.lunch_order_id);
-  const consumptionType = isLunch ? 'almuerzo' : 'kiosco';
-  const title = purchase.description || (isLunch ? 'Consumo de almuerzo' : 'Compra en kiosco');
+  const isLunch = purchase.is_lunch;
+  const title = purchase.description || 'Consumo';
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4 hover:shadow-sm transition-shadow">
@@ -75,7 +75,7 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
             {format(new Date(purchase.created_at), "EEEE d 'de' MMMM · HH:mm", { locale: es })}
           </p>
           <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wide">
-            Tipo: {consumptionType} · DB: {purchase.type}
+            {purchase.consumption_label} · DB: {purchase.db_type}
           </p>
 
           {purchase.ticket_code && (
@@ -130,29 +130,25 @@ export const PurchaseHistoryModal = ({
       const from = currentPage * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      // JOIN en una sola query — elimina el problema de N+1 queries
-      const { data, error } = await supabase
-        .from('transactions')
-        .select(`
-          id, type, amount, description, created_at, ticket_code, payment_status, metadata
-        `)
-        .eq('student_id', studentId)
-        .eq('type', 'purchase')
-        .neq('payment_status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .range(from, to);
+      // Regla de Oro: clasificación resuelta en backend (RPC), frontend solo renderiza.
+      const { data, error } = await supabase.rpc('get_student_purchase_history', {
+        p_student_id: studentId,
+        p_limit: PAGE_SIZE,
+        p_offset: from,
+      });
 
       if (error) throw error;
 
       const newPurchases: Purchase[] = (data ?? []).map((tx: any) => ({
         id: tx.id,
-        type: tx.type,
         amount: Number(tx.amount ?? 0),
         description: tx.description || '',
         created_at: tx.created_at,
         ticket_code: tx.ticket_code ?? null,
         payment_status: tx.payment_status || 'paid',
-        metadata: tx.metadata ?? {},
+        db_type: tx.db_type ?? 'purchase',
+        is_lunch: Boolean(tx.is_lunch),
+        consumption_label: tx.consumption_label ?? 'Consumo',
       }));
 
       if (isReset) {
