@@ -92,6 +92,7 @@ interface BillingConfig {
   bank_name: string | null;
   bank_account_number: string | null;
   bank_cci: string | null;
+  izipay_enabled: boolean;
 }
 
 export const BillingConfig = () => {
@@ -124,6 +125,7 @@ export const BillingConfig = () => {
   const [plinEnabled, setPlinEnabled] = useState(true);
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
   const [transferenciaEnabled, setTransferenciaEnabled] = useState(true);
+  const [izipayEnabled, setIzipayEnabled] = useState(false);
   const [bankName, setBankName] = useState('');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankCCI, setBankCCI] = useState('');
@@ -363,6 +365,7 @@ export const BillingConfig = () => {
         setPlinEnabled(data.plin_enabled ?? true);
         setShowPaymentInfo(data.show_payment_info || false);
         setTransferenciaEnabled(data.transferencia_enabled ?? true);
+        setIzipayEnabled(data.izipay_enabled ?? false);
         setBankName(data.bank_name || '');
         setBankAccountNumber(data.bank_account_number || '');
         setBankCCI(data.bank_cci || '');
@@ -382,6 +385,7 @@ export const BillingConfig = () => {
         setPlinEnabled(true);
         setShowPaymentInfo(false);
         setTransferenciaEnabled(true);
+        setIzipayEnabled(false);
         setBankName('');
         setBankAccountNumber('');
         setBankCCI('');
@@ -507,6 +511,7 @@ export const BillingConfig = () => {
         plin_enabled: plinEnabled,
         show_payment_info: showPaymentInfo,
         transferencia_enabled: transferenciaEnabled,
+        izipay_enabled: izipayEnabled,
         bank_name: bankName || null,
         bank_account_number: bankAccountNumber || null,
         bank_cci: bankCCI || null,
@@ -1068,6 +1073,35 @@ export const BillingConfig = () => {
                 />
               </div>
               <p className="text-xs text-gray-400">📱 Los padres solo podrán copiar los números de cuenta y CCI.</p>
+            </div>
+          </div>
+
+          {/* ── IziPay (Tarjeta / Yape QR) ── */}
+          <div className={`border-2 rounded-xl p-4 space-y-3 transition-all ${izipayEnabled ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-red-700 flex items-center gap-2">
+                  💳 IziPay — Tarjeta / Yape QR
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Permite pago instantáneo con Visa, Mastercard y Yape QR. No requiere datos bancarios.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 ml-4 shrink-0">
+                <Label htmlFor="izipay_enabled" className="text-xs text-gray-600 cursor-pointer">
+                  {izipayEnabled ? 'Activo' : 'Inactivo'}
+                </Label>
+                <Switch
+                  id="izipay_enabled"
+                  checked={izipayEnabled}
+                  onCheckedChange={setIzipayEnabled}
+                />
+              </div>
+            </div>
+            <div className={`text-xs rounded-lg px-3 py-2 ${izipayEnabled ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+              {izipayEnabled
+                ? '✅ Los padres ven el botón "Tarjeta / Yape" habilitado en el portal de pagos.'
+                : '🔒 Botón deshabilitado (gris) para todos los padres de esta sede. El cambio es inmediato.'}
             </div>
           </div>
 

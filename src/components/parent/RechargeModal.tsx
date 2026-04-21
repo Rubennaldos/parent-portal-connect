@@ -108,6 +108,7 @@ interface PaymentConfig {
   bank_account_number: string | null;
   bank_cci: string | null;
   show_payment_info: boolean;
+  izipay_enabled: boolean;
 }
 
 type PaymentMethod = 'yape' | 'plin' | 'transferencia' | 'izipay';
@@ -147,11 +148,12 @@ export function RechargeModal({
   const { toast } = useToast();
   const { isViewAsMode } = useViewAsStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Pilot controlado: solo este correo puede ver/probar IziPay mientras dura la prueba.
-  const IZIPAY_PILOT_EMAIL = 'padremc1@gmail.com';
-  const isIzipayPilotUser = (user?.email ?? '').toLowerCase() === IZIPAY_PILOT_EMAIL;
-  // EMERGENCIA controlada: IziPay habilitado únicamente para el padre piloto.
-  const IZIPAY_ENABLED = isIzipayPilotUser;
+  // IziPay habilitado según la configuración de la sede (billing_config.izipay_enabled).
+  // El admin puede activar/desactivar por sede desde Facturación → Configuración SUNAT.
+  const isIzipayPilotUser = false; // Mantenido por compatibilidad con izipayTestMode
+  const IZIPAY_ENABLED = izipayTestMode
+    ? true
+    : (paymentConfig?.izipay_enabled ?? false);
 
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
@@ -276,7 +278,7 @@ export function RechargeModal({
 
       const { data: config } = await supabase
         .from('billing_config')
-        .select('yape_number, yape_holder, yape_enabled, plin_number, plin_holder, plin_enabled, bank_account_info, bank_account_holder, transferencia_enabled, bank_name, bank_account_number, bank_cci, show_payment_info')
+        .select('yape_number, yape_holder, yape_enabled, plin_number, plin_holder, plin_enabled, bank_account_info, bank_account_holder, transferencia_enabled, bank_name, bank_account_number, bank_cci, show_payment_info, izipay_enabled')
         .eq('school_id', student.school_id)
         .single();
 
@@ -625,16 +627,17 @@ export function RechargeModal({
       accountNumber: paymentConfig?.bank_account_number || null,
       cci: paymentConfig?.bank_cci || null,
     },
-    // TODO: Reactivar mañana tras pruebas finales de comunicación.
-    // IZIPAY_ENABLED controla visibilidad completa de este método.
     izipay: {
       label: 'Tarjeta / Yape',
-      icon: <CreditCard className="h-7 w-7 text-red-600" />,
+      icon: <CreditCard className={`h-7 w-7 ${IZIPAY_ENABLED ? 'text-red-600' : 'text-gray-400'}`} />,
       color: 'red',
       enabled: IZIPAY_ENABLED,
-      number: IZIPAY_ENABLED ? 'available' : null, // null oculta el método en el selector
+      // Siempre se muestra en el selector; null = deshabilitado visualmente (gris)
+      number: 'available',
       holder: null,
-      hint: 'Paga al instante con tarjeta Visa/Mastercard o Yape QR.',
+      hint: IZIPAY_ENABLED
+        ? 'Paga al instante con tarjeta Visa/Mastercard o Yape QR.'
+        : 'Método no disponible para esta sede.',
       isGateway: true,
     },
   };
@@ -773,27 +776,37 @@ export function RechargeModal({
             <div className="space-y-2">
               <Label className="font-semibold text-sm">Elige cómo vas a pagar</Label>
               <div className="grid grid-cols-4 gap-2">
-                {(Object.keys(methodInfo) as PaymentMethod[]).filter(m => m !== 'izipay' || IZIPAY_ENABLED).map((m) => {
+                {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
-                  const isAvailable = !!info.number && info.enabled && (m !== 'izipay' || canUseIzipay);
+                  // IziPay deshabilitado por sede: botón gris, no clickeable
+                  const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
+                  const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
                   const isSelected = selectedMethod === m;
                   return (
                     <button
                       key={m}
+                      type="button"
                       onClick={() => isAvailable && setSelectedMethod(m)}
                       disabled={!isAvailable}
+                      title={isDisabledBySede ? 'Método no disponible para esta sede' : undefined}
                       className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all
                         ${isSelected && isAvailable
                           ? m === 'izipay'
                             ? 'border-red-600 bg-red-50 shadow-sm'
                             : 'border-blue-500 bg-blue-50 shadow-sm'
                           : 'border-gray-200 bg-white'}
-                        ${!isAvailable ? 'opacity-30 cursor-not-allowed' : 'hover:border-gray-300 cursor-pointer'}
+                        ${!isAvailable
+                          ? isDisabledBySede
+                            ? 'opacity-40 cursor-not-allowed grayscale'
+                            : 'opacity-30 cursor-not-allowed'
+                          : 'hover:border-gray-300 cursor-pointer'}
                       `}
                     >
                       <div className="h-10 w-10 flex items-center justify-center">{info.icon}</div>
-                      <span className="text-xs font-semibold text-gray-800">{info.label}</span>
-                      {!isAvailable && <span className="text-[10px] text-gray-400">No disponible</span>}
+                      <span className={`text-xs font-semibold ${isDisabledBySede ? 'text-gray-400' : 'text-gray-800'}`}>{info.label}</span>
+                      {isDisabledBySede
+                        ? <span className="text-[10px] text-gray-400">No disponible</span>
+                        : !isAvailable && <span className="text-[10px] text-gray-400">No disponible</span>}
                     </button>
                   );
                 })}
@@ -1457,15 +1470,18 @@ export function RechargeModal({
             <div>
               <p className="text-xs font-semibold text-gray-500 mb-1.5">Método de pago</p>
               <div className="grid grid-cols-4 gap-2">
-                {(Object.keys(methodInfo) as PaymentMethod[]).filter(m => m !== 'izipay' || IZIPAY_ENABLED).map((m) => {
+                {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
-                  const isAvailable = !!info.number && info.enabled && (m !== 'izipay' || canUseIzipay);
+                  const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
+                  const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
                   const isSelected = selectedMethod === m;
                   return (
                     <button
                       key={m}
+                      type="button"
                       onClick={() => isAvailable && setSelectedMethod(m)}
                       disabled={!isAvailable}
+                      title={isDisabledBySede ? 'Método no disponible para esta sede' : undefined}
                       className={cn(
                         "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all",
                         isSelected && isAvailable
@@ -1473,12 +1489,12 @@ export function RechargeModal({
                             ? "border-red-600 bg-red-50 shadow-sm"
                             : "border-blue-500 bg-blue-50 shadow-sm"
                           : "border-gray-200 bg-white",
-                        !isAvailable && "opacity-30 cursor-not-allowed",
+                        !isAvailable && (isDisabledBySede ? "opacity-40 cursor-not-allowed grayscale" : "opacity-30 cursor-not-allowed"),
                         isAvailable && !isSelected && "hover:border-gray-300"
                       )}
                     >
                       <div className="h-8 w-8 flex items-center justify-center">{info.icon}</div>
-                      <span className="text-[10px] font-bold text-gray-800">{info.label}</span>
+                      <span className={`text-[10px] font-bold ${isDisabledBySede ? 'text-gray-400' : 'text-gray-800'}`}>{info.label}</span>
                     </button>
                   );
                 })}
