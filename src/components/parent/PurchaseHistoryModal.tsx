@@ -15,7 +15,6 @@ interface Purchase {
   created_at: string;
   ticket_code: string | null;
   payment_status: string;
-  db_type: string;
   is_lunch: boolean;
   consumption_label: string;
 }
@@ -74,8 +73,8 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
           <p className="text-[11px] text-slate-400 mt-0.5 capitalize">
             {format(new Date(purchase.created_at), "EEEE d 'de' MMMM · HH:mm", { locale: es })}
           </p>
-          <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wide">
-            {purchase.consumption_label} · DB: {purchase.db_type}
+          <p className="text-[10px] text-slate-400 mt-0.5">
+            {purchase.consumption_label}
           </p>
 
           {purchase.ticket_code && (
@@ -146,7 +145,6 @@ export const PurchaseHistoryModal = ({
         created_at: tx.created_at,
         ticket_code: tx.ticket_code ?? null,
         payment_status: tx.payment_status || 'paid',
-        db_type: tx.db_type ?? 'purchase',
         is_lunch: Boolean(tx.is_lunch),
         consumption_label: tx.consumption_label ?? 'Consumo',
       }));
