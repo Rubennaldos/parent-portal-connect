@@ -318,6 +318,8 @@ export function BalanceSaldoModal({
   const pendingTotal = pending.reduce((s, r) => s + safeNum(r.amount), 0);
   const isEmpty      = !loading && ledger.length === 0 && pending.length === 0;
   const showSkeleton = loading && totalRemaining === null;
+  // Bloqueo temporal "antimachucable": no permitir nuevas recargas manuales.
+  const MANUAL_RECHARGES_DISABLED = true;
   const RECHARGE_MIN_AMOUNT = 10;
   const quickAmounts = [10, 20, 50, 100];
   const manualAmount = safeNum(customRechargeAmount);
@@ -403,12 +405,19 @@ export function BalanceSaldoModal({
           {/* Historial de recargas identificadas */}
           <div className="px-4 pt-4 pb-5">
             <div className="mb-3.5">
-              {!showRechargeSelector ? (
+              {!showRechargeSelector || MANUAL_RECHARGES_DISABLED ? (
                 <Button
-                  onClick={() => setShowRechargeSelector(true)}
+                  disabled={MANUAL_RECHARGES_DISABLED}
+                  // Seguridad: aunque alguien intente disparar eventos, no abrimos selector.
+                  onClick={() => {
+                    if (MANUAL_RECHARGES_DISABLED) return;
+                    setShowRechargeSelector(true);
+                  }}
                   className={[
                     'w-full h-11 font-semibold shadow-sm transition-all',
-                    (totalRemaining ?? 0) <= 0
+                    MANUAL_RECHARGES_DISABLED
+                      ? 'bg-slate-300 text-slate-600 grayscale opacity-40 cursor-not-allowed hover:bg-slate-300'
+                      : (totalRemaining ?? 0) <= 0
                       ? 'bg-emerald-600 hover:bg-emerald-700'
                       : 'bg-emerald-500 hover:bg-emerald-600',
                   ].join(' ')}

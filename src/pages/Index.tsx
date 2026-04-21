@@ -110,6 +110,8 @@ const Index = () => {
   const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   // Piloto IziPay: solo este correo puede ver el botón de recargas habilitado
   const isIzipayPilot = (user?.email ?? '').toLowerCase() === 'padremc1@gmail.com';
+  // Bloqueo temporal global: desactivar nuevas recargas manuales en portal padre.
+  const MANUAL_RECHARGES_DISABLED = true;
   const { toast } = useToast();
   const { isChecking } = useOnboardingCheck();
   const balanceSyncTs = useDebouncedSync('balances', 800);
@@ -639,11 +641,22 @@ const Index = () => {
   // ────────────────────────────────────────────────────────────────────────────
 
   const openRechargeModal = (student: Student) => {
+    if (MANUAL_RECHARGES_DISABLED) {
+      toast({
+        title: 'Recargas temporalmente desactivadas',
+        description: 'Estamos estabilizando el flujo de deudas e IziPay.',
+      });
+      return;
+    }
     setSelectedStudent(student);
     setShowRechargeModal(true);
   };
 
   const addRechargeToCart = (amount: number) => {
+    if (MANUAL_RECHARGES_DISABLED) {
+      // Seguridad: impedir alta de recargas aunque intenten forzar el evento por consola.
+      return;
+    }
     if (!selectedStudent || amount <= 0) return;
     const normalized = Number(amount.toFixed(2));
     setRechargeCartItems((prev) => ([
@@ -1222,6 +1235,13 @@ const Index = () => {
               limit_type: s.limit_type,
             }))}
             onRequestRecharge={(suggestedAmount?: number) => {
+              if (MANUAL_RECHARGES_DISABLED) {
+                toast({
+                  title: 'Recargas temporalmente desactivadas',
+                  description: 'Estamos estabilizando el flujo de deudas e IziPay.',
+                });
+                return;
+              }
               setRechargeSuggestedAmount(suggestedAmount);
               setShowRechargeModal(true);
             }}
