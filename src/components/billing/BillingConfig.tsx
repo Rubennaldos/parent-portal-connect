@@ -126,6 +126,7 @@ export const BillingConfig = () => {
   const [showPaymentInfo, setShowPaymentInfo] = useState(false);
   const [transferenciaEnabled, setTransferenciaEnabled] = useState(true);
   const [izipayEnabled, setIzipayEnabled] = useState(false);
+  const [savingGlobalPayment, setSavingGlobalPayment] = useState(false);
   const [bankName, setBankName] = useState('');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankCCI, setBankCCI] = useState('');
@@ -531,6 +532,52 @@ export const BillingConfig = () => {
     }
   };
 
+  const handleToggleAllSchoolsPaymentMethod = async (
+    method: 'yape' | 'plin' | 'transferencia' | 'izipay',
+    enabled: boolean,
+  ) => {
+    if (!user) return;
+    setSavingGlobalPayment(true);
+    try {
+      const columnMap: Record<typeof method, string> = {
+        yape: 'yape_enabled',
+        plin: 'plin_enabled',
+        transferencia: 'transferencia_enabled',
+        izipay: 'izipay_enabled',
+      };
+      const targetColumn = columnMap[method];
+
+      const payload: Record<string, unknown> = {
+        [targetColumn]: enabled,
+        updated_by: user.id,
+      };
+
+      const { error } = await supabase
+        .from('billing_config')
+        .update(payload)
+        .not('school_id', 'is', null);
+
+      if (error) throw error;
+
+      if (selectedSchool) {
+        await fetchConfig();
+      }
+
+      toast({
+        title: 'Actualización masiva aplicada',
+        description: `${method.toUpperCase()} fue ${enabled ? 'activado' : 'desactivado'} para todas las sedes.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Error al actualizar todas las sedes',
+        description: error?.message || 'No se pudo aplicar el cambio masivo.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingGlobalPayment(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -922,6 +969,91 @@ export const BillingConfig = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-5 p-3 sm:p-6">
+          {canViewAllSchools && (
+            <div className="border-2 border-dashed border-slate-300 rounded-xl p-3 sm:p-4 bg-slate-50">
+              <div className="flex items-center gap-2 mb-3">
+                <Settings className="h-4 w-4 text-slate-700" />
+                <p className="text-sm font-semibold text-slate-800">Control masivo (todas las sedes)</p>
+              </div>
+              <p className="text-xs text-slate-600 mb-3">
+                Aplica cambios globales inmediatos para todos los padres, sin depender de la sede seleccionada.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('izipay', true)}
+                  className="justify-start"
+                >
+                  Encender IziPay en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('izipay', false)}
+                  className="justify-start"
+                >
+                  Apagar IziPay en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('yape', true)}
+                  className="justify-start"
+                >
+                  Encender Yape en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('yape', false)}
+                  className="justify-start"
+                >
+                  Apagar Yape en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('plin', true)}
+                  className="justify-start"
+                >
+                  Encender Plin en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('plin', false)}
+                  className="justify-start"
+                >
+                  Apagar Plin en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('transferencia', true)}
+                  className="justify-start"
+                >
+                  Encender Transferencia en todas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingGlobalPayment}
+                  onClick={() => handleToggleAllSchoolsPaymentMethod('transferencia', false)}
+                  className="justify-start"
+                >
+                  Apagar Transferencia en todas
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* ── Yape ── */}
           <div className={`border-2 rounded-xl p-4 space-y-3 transition-all ${yapeEnabled ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200 opacity-60'}`}>

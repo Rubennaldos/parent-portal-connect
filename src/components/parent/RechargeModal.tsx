@@ -148,13 +148,6 @@ export function RechargeModal({
   const { toast } = useToast();
   const { isViewAsMode } = useViewAsStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // IziPay habilitado según la configuración de la sede (billing_config.izipay_enabled).
-  // El admin puede activar/desactivar por sede desde Facturación → Configuración SUNAT.
-  const isIzipayPilotUser = false; // Mantenido por compatibilidad con izipayTestMode
-  const IZIPAY_ENABLED = izipayTestMode
-    ? true
-    : (paymentConfig?.izipay_enabled ?? false);
-
   const skipAmountStep = !!suggestedAmount && suggestedAmount > 0;
 
   const [step, setStep] = useState<'amount' | 'method' | 'voucher' | 'combined' | 'success'>('combined');
@@ -181,6 +174,12 @@ export function RechargeModal({
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  // IziPay habilitado según la configuración de la sede (billing_config.izipay_enabled).
+  // El admin puede activar/desactivar por sede desde Facturación → Configuración SUNAT.
+  const isIzipayPilotUser = false; // Mantenido por compatibilidad con izipayTestMode
+  const IZIPAY_ENABLED = izipayTestMode
+    ? true
+    : (paymentConfig?.izipay_enabled ?? false);
   // ── Comprobantes adicionales (pago en partes) ──
   const [extraVouchers, setExtraVouchers] = useState<ExtraVoucher[]>([]);
   const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
