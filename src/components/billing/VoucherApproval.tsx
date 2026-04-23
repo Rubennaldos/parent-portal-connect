@@ -1038,6 +1038,22 @@ export const VoucherApproval = () => {
               description: 'No se encontró la solicitud en la base de datos. Recarga la lista e intenta de nuevo.',
             });
             fetchRequests();
+          } else if (msg.includes('ANTIFRAUDE') && msg.toLowerCase().includes('rechazó este voucher')) {
+            // El Auditor IA rechazó este voucher previamente.
+            // Solo superadmin / admin_general pueden anular el rechazo.
+            const canOverride = role === 'superadmin' || role === 'admin_general';
+            toast({
+              variant: 'destructive',
+              title: '🛡️ Voucher rechazado por el Auditor IA',
+              description: canOverride
+                ? `Este voucher fue rechazado por la IA. Como ${role}, puedes anularlo: `
+                  + `ve a "Auditoría" → busca el voucher → cambia el estado a "Válido" y luego aprueba aquí. `
+                  + `O ejecuta en Supabase: UPDATE auditoria_vouchers SET estado_ia = \'ANULADO_POR_ADMIN\' WHERE id_cobranza = \'${req.id}\';`
+                : 'Este voucher fue rechazado por el Auditor IA. '
+                  + 'No puedes aprobarlo directamente. '
+                  + 'Contacta a un Superadmin o Admin General para que anule el rechazo.',
+              duration: 20000,
+            });
           } else if (
             msg.toLowerCase().includes('coalesce') ||
             msg.toLowerCase().includes('cannot be matched') ||
