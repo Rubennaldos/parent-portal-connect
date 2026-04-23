@@ -557,19 +557,9 @@ const Index = () => {
       const ledgerBalance = raw === null || raw === undefined ? null : Number(raw);
 
       setRechargeLedgerBalanceMap((prev) => ({ ...prev, [student.id]: ledgerBalance }));
-
-      const totalBalance = Number(student.balance ?? 0);
-      const hasDiscrepancy =
-        (ledgerBalance === null && totalBalance !== 0) ||
-        (ledgerBalance !== null && Math.abs(ledgerBalance - totalBalance) > 0.009);
-
-      if (hasDiscrepancy) {
-        console.warn('Discrepancia detectada', {
-          student_id: student.id,
-          saldo_total: totalBalance,
-          saldo_recarga_ledger: ledgerBalance,
-        });
-      }
+      // Comparación de saldo eliminada: la verificación de discrepancias es responsabilidad
+      // de la base de datos (fn_sync_student_balance / audit_billing_logs), no del frontend.
+      // Regla 11.A: cero cálculos financieros en el cliente.
     } catch (err) {
       console.error('Error cargando saldo de recargas (ledger):', err);
       setRechargeLedgerBalanceMap((prev) => ({ ...prev, [student.id]: null }));

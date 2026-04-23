@@ -194,6 +194,7 @@ export const SalesList = () => {
   // Mapa local: transaction.id → pdf_url (para mostrar "Ver PDF" tras emitir sin recargar)
   const [localPdfMap, setLocalPdfMap] = useState<Map<string, string | null>>(new Map());
   const fetchTxRequestId = useRef(0);
+  const fetchSummaryRequestId = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState<Transaction[] | null>(null);
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
@@ -231,6 +232,10 @@ export const SalesList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const [summaryStats, setSummaryStats] = useState<{ totalSales: number; transactions: number }>({
+    totalSales: 0,
+    transactions: 0,
+  });
 
   // Exportación: estado de carga independiente para no bloquear la lista
   const [isExporting, setIsExporting] = useState(false);
@@ -582,8 +587,12 @@ export const SalesList = () => {
         q = q.or('payment_method.eq.yape,payment_method.eq.yape_qr,payment_method.eq.yape_numero');
       } else if (selectedPaymentMethod === 'plin') {
         q = q.or('payment_method.eq.plin,payment_method.eq.plin_qr,payment_method.eq.plin_numero');
+      } else if (selectedPaymentMethod === 'efectivo') {
+        q = q.or('payment_method.eq.efectivo,payment_method.eq.cash,payment_method.eq.money,payment_method.eq.dinero');
       } else if (selectedPaymentMethod === 'tarjeta') {
         q = q.or('payment_method.eq.tarjeta,payment_method.eq.card,payment_method.eq.visa,payment_method.eq.mastercard');
+      } else if (selectedPaymentMethod === 'transferencia') {
+        q = q.or('payment_method.eq.transferencia,payment_method.eq.transfer');
       } else {
         q = q.eq('payment_method', selectedPaymentMethod);
       }
@@ -631,6 +640,87 @@ export const SalesList = () => {
       toast({ variant: 'destructive', title: 'Error', description: 'No se pudieron cargar las ventas' });
     } finally {
       if (currentRequestId === fetchTxRequestId.current) setLoading(false);
+    }
+  };
+
+  const matchesPaymentMethodFilter = (method: string | null | undefined): boolean => {
+    if (selectedPaymentMethod === 'all') return true;
+
+    const m = (method || '').trim().toLowerCase();
+    if (selectedPaymentMethod === 'yape') return ['yape', 'yape_qr', 'yape_numero'].includes(m);
+    if (selectedPaymentMethod === 'plin') return ['plin', 'plin_qr', 'plin_numero'].includes(m);
+    if (selectedPaymentMethod === 'efectivo') return ['efectivo', 'cash', 'money', 'dinero'].includes(m);
+    if (selectedPaymentMethod === 'tarjeta') return ['tarjeta', 'card', 'visa', 'mastercard'].includes(m);
+    if (selectedPaymentMethod === 'transferencia') return ['transferencia', 'transfer'].includes(m);
+    return m === selectedPaymentMethod;
+  };
+
+  const matchesLocalFilters = (t: Transaction, shouldApplySearchTerm: boolean) => {
+    if (salesFilter === 'pos' && isLunchTransaction(t)) return false;
+    if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false;
+
+    if (personFilter === 'alumno' && !t.student_id) return false;
+    if (personFilter === 'profesor' && !t.teacher_id) return false;
+    if (!matchesPaymentMethodFilter(t.payment_method)) return false;
+
+    if (!shouldApplySearchTerm || !searchTerm.trim()) return true;
+
+    const search = searchTerm.toLowerCase();
+    return (
+      t.ticket_code?.toLowerCase().includes(search) ||
+      t.student?.full_name?.toLowerCase().includes(search) ||
+      t.teacher?.full_name?.toLowerCase().includes(search) ||
+      t.invoice_client_name?.toLowerCase().includes(search) ||
+      t.description?.toLowerCase().includes(search) ||
+      Math.abs(t.amount || 0).toString().includes(search)
+    );
+  };
+
+  const fetchSummaryStats = async () => {
+    const currentRequestId = ++fetchSummaryRequestId.current;
+    try {
+      if (!permissions.canView || permissions.loading) return;
+      if (!canViewAllSchools && !userSchoolId) return;
+
+      // Si hay búsqueda global activa, ya tenemos el set completo en memoria.
+      if (globalSearchResults !== null) {
+        const filtered = globalSearchResults.filter((t) => matchesLocalFilters(t, false));
+        const totalSales = filtered
+          .filter((t) => !t.is_deleted && t.payment_status !== 'cancelled')
+          .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+        if (currentRequestId === fetchSummaryRequestId.current) {
+          setSummaryStats({ totalSales, transactions: filtered.length });
+        }
+        return;
+      }
+
+      const PAGE = 1000;
+      let from = 0;
+      let hasMore = true;
+      let allData: Transaction[] = [];
+
+      while (hasMore) {
+        const { data, error } = await buildBaseQuery()
+          .range(from, from + PAGE - 1) as any;
+        if (error) throw error;
+
+        allData = allData.concat((data ?? []) as Transaction[]);
+        hasMore = (data?.length ?? 0) === PAGE;
+        from += PAGE;
+      }
+
+      const filtered = allData.filter((t) => matchesLocalFilters(t, true));
+      const totalSales = filtered
+        .filter((t) => !t.is_deleted && t.payment_status !== 'cancelled')
+        .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+
+      if (currentRequestId === fetchSummaryRequestId.current) {
+        setSummaryStats({ totalSales, transactions: filtered.length });
+      }
+    } catch (error) {
+      if (currentRequestId !== fetchSummaryRequestId.current) return;
+      console.error('Error fetching summary stats:', error);
+      setSummaryStats({ totalSales: 0, transactions: 0 });
     }
   };
 
@@ -1078,32 +1168,32 @@ export const SalesList = () => {
   // useMemo: evita re-filtrar 394+ items en cada render no relacionado.
   const baseTransactions = globalSearchResults !== null ? globalSearchResults : transactions;
   const filteredTransactions = useMemo(() => baseTransactions.filter(t => {
-    if (salesFilter === 'pos'   && isLunchTransaction(t))  return false;
-    if (salesFilter === 'lunch' && !isLunchTransaction(t)) return false;
-
-    if (personFilter === 'alumno'   && !t.student_id)  return false;
-    if (personFilter === 'profesor' && !t.teacher_id)  return false;
-
-    if (globalSearchResults !== null) return true;
-
-    if (!searchTerm.trim()) return true;
-
-    const search = searchTerm.toLowerCase();
-    return (
-      t.ticket_code?.toLowerCase().includes(search) ||
-      t.student?.full_name?.toLowerCase().includes(search) ||
-      t.teacher?.full_name?.toLowerCase().includes(search) ||
-      t.invoice_client_name?.toLowerCase().includes(search) ||
-      t.description?.toLowerCase().includes(search) ||
-      Math.abs(t.amount).toString().includes(search)
-    );
+    return matchesLocalFilters(t, globalSearchResults === null);
   }), [baseTransactions, salesFilter, personFilter, globalSearchResults, searchTerm]);
 
   const getTotalSales = () => {
-    return filteredTransactions
-      .filter(t => !t.is_deleted && t.payment_status !== 'cancelled')
-      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    return summaryStats.totalSales;
   };
+
+  useEffect(() => {
+    fetchSummaryStats();
+  }, [
+    activeTab,
+    dateFrom,
+    dateTo,
+    timeFrom,
+    timeTo,
+    opNumberSearch,
+    selectedPaymentMethod,
+    selectedSchool,
+    userSchoolId,
+    salesFilter,
+    personFilter,
+    searchTerm,
+    globalSearchResults,
+    permissions.loading,
+    permissions.canView,
+  ]);
 
   // ── Agrupación por alumno/cliente ──────────────────────────────────────────
   const studentGroups = useMemo(() => {
@@ -1829,7 +1919,7 @@ export const SalesList = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs text-blue-600 font-semibold uppercase">Transacciones</p>
-                    <p className="text-2xl font-black text-blue-900">{filteredTransactions.length}</p>
+                    <p className="text-2xl font-black text-blue-900">{summaryStats.transactions}</p>
                   </div>
                   <ShoppingCart className="h-8 w-8 text-blue-600 opacity-50" />
                 </div>
@@ -1842,7 +1932,7 @@ export const SalesList = () => {
                   <div>
                     <p className="text-xs text-purple-600 font-semibold uppercase">Promedio</p>
                     <p className="text-2xl font-black text-purple-900">
-                      S/ {filteredTransactions.length > 0 ? (getTotalSales() / filteredTransactions.length).toFixed(2) : '0.00'}
+                      S/ {summaryStats.transactions > 0 ? (getTotalSales() / summaryStats.transactions).toFixed(2) : '0.00'}
                     </p>
                   </div>
                   <ArrowUpDown className="h-8 w-8 text-purple-600 opacity-50" />

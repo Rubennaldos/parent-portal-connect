@@ -410,11 +410,23 @@ async function markTransactionsSent(
   ];
 
   if (directIds.length > 0) {
-    await supabase
+    const { error: txUpdateErr } = await supabase
       .from("transactions")
       .update(updateData)
       .in("id", directIds)
       .eq("school_id", schoolId);  // guard multi-sede
+    if (txUpdateErr) {
+      // Log crítico: si invoice_id no existe en transactions o hay otro error de esquema
+      // el administrador debe revisar la migración de la columna transactions.invoice_id
+      console.error(
+        `[markTransactionsSent] ERROR actualizando transactions (ids=${directIds.join(",")}) ` +
+        `invoice_id=${invoiceId}: ${txUpdateErr.code} ${txUpdateErr.message} | ${txUpdateErr.details ?? ""}`,
+      );
+    } else {
+      console.log(
+        `[markTransactionsSent] ✅ ${directIds.length} transaction(s) vinculada(s) → invoice_id=${invoiceId}`,
+      );
+    }
   }
 
   // Actualizar por lunch_order_id en metadata

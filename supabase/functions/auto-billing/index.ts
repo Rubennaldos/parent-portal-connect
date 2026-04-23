@@ -26,6 +26,21 @@ const BATCH_UPDATE_SIZE = 500;
 // se considera fallida y se regresa automáticamente a 'pending'
 const PROCESSING_TTL_MINUTES = 30;
 
+// ══════════════════════════════════════════════════════════════════════
+// FRENO DE EMERGENCIA — 2026-04-20
+//
+// El cron de boletas AGRUPADAS está DESACTIVADO porque generaba un único
+// PDF mezclando pagos de distintos padres (ej: S/ 448 con todos los alumnos
+// del día), lo cual viola privacidad y contabilidad individual.
+//
+// Las transacciones permanecen en billing_status='pending' hasta que el
+// nuevo worker individual (process-billing-queue) las procese emitiendo
+// una boleta por padre/voucher usando los datos reales de la DB.
+//
+// Para reactivar: cambiar a false SOLO después de validar el worker individual.
+// ══════════════════════════════════════════════════════════════════════
+const GROUPED_BILLING_DISABLED = true;
+
 // ── Helpers matemáticos ───────────────────────────────────────────────────────
 
 function round2(n: number): number {
@@ -174,6 +189,20 @@ serve(async (req) => {
         const [y, m, d] = todayLima.split("-").map(Number);
         const start = new Date(Date.UTC(y, m - 1, d, 5, 0, 0));
         const end   = new Date(Date.UTC(y, m - 1, d + 1, 5, 0, 0));
+
+        // ── FRENO DE EMERGENCIA: boletas agrupadas desactivadas ──────────────
+        // Mientras GROUPED_BILLING_DISABLED=true, saltamos la emisión de
+        // resúmenes. Las transacciones quedan en pending para el worker
+        // individual (process-billing-queue) que emitirá una boleta por padre.
+        if (GROUPED_BILLING_DISABLED) {
+          console.log(
+            `[auto-billing] ⛔ GROUPED_BILLING_DISABLED=true — ` +
+            `sede ${schoolId}: emisión de resúmenes agrupados SUSPENDIDA. ` +
+            `Transacciones conservadas en billing_status=pending para worker individual.`
+          );
+          results.push({ school_id: schoolId, groups: 0, total: 0, errors: ["GROUPED_BILLING_DISABLED: emisión suspendida"], zombies_reset: zombiesReset });
+          continue;
+        }
 
         // ── FIX 4: FETCH con filtro amount > 0 — excluir negativos ───────────
         const PAGE_SIZE = 1000;

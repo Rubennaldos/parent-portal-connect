@@ -285,6 +285,8 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
           items:          nubefactItems,
           monto_total:    montoTotal,
           payment_method: 'manual',
+          // Mantener paridad con process-billing-queue: vincular transaction_id cuando existe.
+          transaction_id: isManualMode ? null : transaction.id,
         },
       });
 

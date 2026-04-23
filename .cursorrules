@@ -118,3 +118,8 @@ Todo modulo nuevo (Topes, Puntos, Saldos, Descuentos, Cuotas) pasa este filtro A
   - OBLIGATORIO: now() AT TIME ZONE 'America/Lima' en PostgreSQL para todo calculo temporal.
   - Peru no tiene horario de verano. America/Lima = UTC-5 permanente.
   - Aplica a: reinicios de tope, vencimientos de almuerzo, periodos de sesion de caja.
+
+12) CERO OPTIMISMO, MAXIMO ANALISIS
+- Antes de proponer o aplicar cualquier SQL, evaluar rigurosamente consecuencias logicas, financieras y operativas.
+- No elegir el camino mas corto: priorizar soluciones profesionales, robustas e idempotentes.
+- Toda simplificacion debe demostrar que no rompe facturacion, perfil de usuario, ni trazabilidad de pagos.

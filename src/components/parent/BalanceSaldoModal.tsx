@@ -145,18 +145,9 @@ export function BalanceSaldoModal({
       setPending(pRows);
       setTotalRemaining(total);
 
-      // Log de discrepancia: si el saldo "legacy" difiere del ledger,
-      // el admin debe auditarlo manualmente. El modal muestra el ledger; nunca el legacy.
-      if (currentBalance !== null && currentBalance !== undefined) {
-        const legacy = safeNum(currentBalance);
-        if (Math.abs(total - legacy) > 0.009) {
-          console.warn('[BalanceSaldoModal] Discrepancia detectada — auditar manualmente', {
-            student_id:   studentId,
-            saldo_tabla:  legacy,
-            saldo_ledger: total,
-          });
-        }
-      }
+      // Comparación de saldo eliminada del frontend (Regla 11.A).
+      // La auditoría de discrepancias entre saldo legacy y ledger corresponde
+      // a fn_sync_student_balance en la base de datos, no a código React.
     } catch (err) {
       console.error('[BalanceSaldoModal] fetchLedger:', err);
       // En error de red/RPC → mostrar S/ 0.00 (nunca el saldo legacy)
@@ -169,6 +160,12 @@ export function BalanceSaldoModal({
   }, [studentId, currentBalance]);
 
   useEffect(() => {
+eCartTotal
+Necesario — el carrito es estado local antes de enviarse a la BD
+4
+PaymentsTab.tsx:537-541
+Total seleccionado por alumno al abrir el modal de pago
+Bajo — no se usa para cobrar, es pre-visualización
     if (isOpen && studentId) {
       setLedger([]);
       setPending([]);

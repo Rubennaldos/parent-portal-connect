@@ -216,13 +216,135 @@ serve(async (req) => {
     // Técnica "último ítem absorbe residuo":
     //   Garantiza sum(item.igv) == total_igv y sum(item.subtotal) == base_imponible
     //   sin fugas de ±0.01 que SUNAT rechaza.
+    let normalizedItems: any[] = Array.isArray(items) ? [...items] : [];
+
+    // Enriquecimiento de detalle real para pagos IziPay:
+    // si el item viene genérico (ej. "Recarga online ... ref:UUID"), intentamos reconstruir
+    // conceptos reales desde payment_sessions.debt_tx_ids y transactions.
+    const hasGenericGatewayItem = normalizedItems.some((it: any) => {
+      const d = String(it?.descripcion ?? "").toLowerCase();
+      return d.includes("recarga online") || d.includes("izipay") || d.includes(" ref:");
+    });
+
+    const relationTxId = transaction_id ?? sale_id ?? null;
+    if ((normalizedItems.length === 0 || hasGenericGatewayItem) && relationTxId) {
+      try {
+        const { data: baseTx } = await supabase
+          .from("transactions")
+          .select("id, school_id, student_id, amount, description, created_at, payment_session_id, ticket_code")
+          .eq("id", relationTxId)
+          .eq("school_id", school_id)
+          .maybeSingle();
+
+        if (baseTx) {
+          let rebuiltItems: any[] = [];
+          let rebuiltTotal = 0;
+
+          // 1) Si la sesión tiene deudas vinculadas, esos son los ítems reales pagados.
+          const sessionId = (baseTx as any).payment_session_id as string | null;
+          if (sessionId) {
+            const { data: session } = await supabase
+              .from("payment_sessions")
+              .select("debt_tx_ids")
+              .eq("id", sessionId)
+              .maybeSingle();
+
+            const debtTxIds = Array.isArray((session as any)?.debt_tx_ids)
+              ? ((session as any).debt_tx_ids as string[])
+              : [];
+
+            if (debtTxIds.length > 0) {
+              const { data: debtTxRows } = await supabase
+                .from("transactions")
+                .select("id, amount, description, created_at, ticket_code, metadata, student_id")
+                .in("id", debtTxIds)
+                .eq("school_id", school_id)
+                .neq("is_deleted", true)
+                .order("created_at", { ascending: true });
+
+              const studentIds = Array.from(new Set((debtTxRows ?? []).map((r: any) => r.student_id).filter(Boolean)));
+              const studentMap = new Map<string, string>();
+              if (studentIds.length > 0) {
+                const { data: sRows } = await supabase
+                  .from("students")
+                  .select("id, full_name")
+                  .in("id", studentIds);
+                for (const s of sRows ?? []) {
+                  studentMap.set((s as any).id, (s as any).full_name ?? "Alumno");
+                }
+              }
+
+              rebuiltItems = (debtTxRows ?? []).map((r: any, idx: number) => {
+                const studentName = studentMap.get(r.student_id) ?? "Alumno";
+                const hasLunch = !!(r.metadata?.lunch_order_id ?? r.metadata?.["lunch_order_id"]);
+                const fallbackDate = new Date(r.created_at);
+                const dd = String(fallbackDate.getUTCDate()).padStart(2, "0");
+                const mm = String(fallbackDate.getUTCMonth() + 1).padStart(2, "0");
+                const yyyy = String(fallbackDate.getUTCFullYear());
+                const desc = hasLunch
+                  ? `Almuerzo - ${studentName} - ${dd}/${mm}/${yyyy}`
+                  : (r.description?.trim() || `Pago cafetería - ${studentName}`);
+                const price = Math.abs(Number(r.amount ?? 0));
+                rebuiltTotal += price;
+                return {
+                  unidad_de_medida: "NIU",
+                  codigo: r.ticket_code || `TX-${String(r.id).slice(0, 8)}` || String(idx + 1).padStart(3, "0"),
+                  descripcion: desc,
+                  cantidad: 1,
+                  precio_unitario: +price.toFixed(2),
+                };
+              });
+            }
+          }
+
+          // 2) Si no hubo debt_tx_ids, al menos usar una descripción limpia (sin ref UUID).
+          if (rebuiltItems.length === 0) {
+            const baseDescRaw = String((baseTx as any).description ?? "").trim();
+            const baseDesc = baseDescRaw
+              .replace(/\s*ref:[a-f0-9-]{8,}/ig, "")
+              .replace(/\s{2,}/g, " ")
+              .trim();
+            const cleanDesc = baseDesc || "Recarga en línea";
+            const price = Math.abs(Number((baseTx as any).amount ?? 0));
+            rebuiltItems = [{
+              unidad_de_medida: "NIU",
+              codigo: (baseTx as any).ticket_code || `TX-${String((baseTx as any).id).slice(0, 8)}`,
+              descripcion: cleanDesc,
+              cantidad: 1,
+              precio_unitario: +price.toFixed(2),
+            }];
+            rebuiltTotal = price;
+          }
+
+          // 3) Si el monto total difiere (ej. recarga excedente), agregar línea de ajuste explícita.
+          const delta = +(Number(monto_total) - rebuiltTotal).toFixed(2);
+          if (Math.abs(delta) > 0.02) {
+            rebuiltItems.push({
+              unidad_de_medida: "NIU",
+              codigo: "REC-SALDO",
+              descripcion: "Recarga de saldo",
+              cantidad: 1,
+              precio_unitario: +delta.toFixed(2),
+            });
+          }
+
+          if (rebuiltItems.length > 0) {
+            normalizedItems = rebuiltItems;
+            console.log(`[generate-document] items enriquecidos desde DB para tx=${relationTxId}: ${rebuiltItems.length} línea(s)`);
+          }
+        }
+      } catch (enrichErr) {
+        console.warn("[generate-document] No se pudo enriquecer items desde DB:", String(enrichErr));
+      }
+    }
+
     let itemsNubefact: Record<string, unknown>[];
 
-    if (items && items.length > 0) {
+    if (normalizedItems && normalizedItems.length > 0) {
       // Recalcular todos los ítems con la tasa correcta (billing_config)
       const divisorX100 = 100 + igv_pct;
 
-      const rawCalcs = (items as any[]).map((item: any) => {
+      const rawCalcs = (normalizedItems as any[]).map((item: any) => {
         const qty          = Number(item.cantidad)        || 1;
         const precioUnit   = Number(item.precio_unitario) || 0;
         const itemTotalCents = Math.round(precioUnit * qty * 100);
@@ -404,19 +526,25 @@ serve(async (req) => {
     // Ticket de consulta asíncrona — Nubefact lo devuelve cuando SUNAT no confirma
     // en tiempo real (sunat_status = 'processing'). Lo guardamos para el futuro poller.
     // Campos documentados por Nubefact: ticket, numero_ticket, ticket_id (varía por versión).
+    // El ticket de polling de Nubefact es un valor numérico/UUID devuelto por la API.
+    // Nunca debe ser el serie-numero del comprobante (ej. "BMC3-00000518") — eso es basura.
+    // Si Nubefact no devuelve ticket real, guardamos null para que el poller consulte por serie+numero.
+    const rawTicket =
+      nubefactData.ticket        ||
+      nubefactData.numero_ticket ||
+      nubefactData.ticket_id     ||
+      null;
+    const TICKET_BASURA_RE = /^[A-Z0-9]+-\d+$/;
     const nubefact_ticket: string | null =
-      sunat_status === "processing"
-        ? (nubefactData.ticket        ||
-           nubefactData.numero_ticket ||
-           nubefactData.ticket_id     ||
-           null)
+      sunat_status === "processing" && rawTicket && !TICKET_BASURA_RE.test(String(rawTicket))
+        ? String(rawTicket)
         : null;
 
     // 13. Guardar en tabla `invoices` (nueva, principal)
     let savedInvoice: any = null;
     try {
       // Items para tabla invoice_items
-      const invoiceItemsDB = (items ?? []).map((it: any) => ({
+      const invoiceItemsDB = (normalizedItems ?? []).map((it: any) => ({
         description:         it.descripcion || "Consumo",
         quantity:            it.cantidad || 1,
         unit_price:          it.valor_unitario || base_imponible,
@@ -430,13 +558,15 @@ serve(async (req) => {
         discount_amount:     0,
       }));
 
-      const invoicePayload = {
+      // Compatibilidad multi-esquema:
+      // - Esquema A (legacy): NO tiene invoice_type/items/sale_id y sí transaction_id.
+      // - Esquema B (setup completo): exige invoice_type + items (NOT NULL), puede usar sale_id.
+      // Intentamos varias formas de payload para evitar "emitido en Nubefact, no persistido local".
+      const commonPayload = {
         school_id,
-        transaction_id:    transaction_id ?? sale_id ?? null,
         payment_id:        payment_id ?? null,
         cashier_id:        cashier_id ?? null,
         created_by:        created_by ?? null,
-        invoice_type:      invoice_type_map[tipo] || "boleta",
         document_type_code: document_type_code_map[tipo] || "03",
         serie,
         numero,
@@ -445,13 +575,9 @@ serve(async (req) => {
         client_name:            cliente?.razon_social || cliente?.nombre || "Consumidor Final",
         client_address:         cliente?.direccion || null,
         client_email:           cliente?.email || null,
-        currency:               "PEN",
         subtotal:               +base_imponible.toFixed(2),
-        igv_rate:               igv_pct / 100,
         igv_amount:             +igv_monto.toFixed(2),
-        discount_amount:        0,
         total_amount:           +monto_total.toFixed(2),
-        items:                  invoiceItemsDB,
         sunat_status,
         sunat_response_code:    nubefactData.codigo_respuesta_sunat ?? null,
         sunat_response_message: nubefactData.respuesta_sunat ?? nubefactData.errors ?? null,
@@ -468,32 +594,83 @@ serve(async (req) => {
         is_demo:                effectiveDemoMode,
         sent_to_sunat_at:       !effectiveDemoMode ? new Date().toISOString() : null,
         notes:                  effectiveDemoMode ? "MODO DEMO — no enviado a SUNAT" : null,
-        // Ticket de consulta asíncrona: solo presente cuando SUNAT no confirmó en tiempo real.
-        // El poller (futuro) usará este campo para recuperar la respuesta final.
         nubefact_ticket,
       };
 
-      const { data: inv, error: invErr } = await supabase
-        .from("invoices")
-        .insert(invoicePayload)
-        .select()
-        .single();
+      const setupFieldsPayload = {
+        invoice_type:   invoice_type_map[tipo] || "boleta",
+        currency:       "PEN",
+        igv_rate:       igv_pct / 100,
+        discount_amount: 0,
+        items:          invoiceItemsDB,
+      };
+
+      const relationId = transaction_id ?? sale_id ?? null;
+      const insertAttempts = [
+        // Setup completo con transaction_id (cuando existe)
+        { ...commonPayload, ...setupFieldsPayload, transaction_id: relationId },
+        // Setup completo con sale_id (si la instalación aún usa esa columna)
+        { ...commonPayload, ...setupFieldsPayload, sale_id: relationId },
+        // Legacy sin items/invoice_type con transaction_id
+        { ...commonPayload, transaction_id: relationId },
+        // Legacy sin items/invoice_type con sale_id
+        { ...commonPayload, sale_id: relationId },
+        // Último fallback: sin columna relacional
+        { ...commonPayload, ...setupFieldsPayload },
+      ];
+
+      let inv: any = null;
+      let invErr: any = null;
+      const insertErrors: any[] = [];
+
+      for (const [idx, payloadVariant] of insertAttempts.entries()) {
+        const attempt = await supabase
+          .from("invoices")
+          .insert(payloadVariant)
+          .select()
+          .single();
+
+        if (!attempt.error && attempt.data) {
+          inv = attempt.data;
+          invErr = null;
+          if (idx > 0) {
+            console.warn(`[generate-document] INSERT invoices recuperado en intento #${idx + 1}`);
+          }
+          break;
+        }
+
+        invErr = attempt.error;
+        insertErrors.push({
+          attempt: idx + 1,
+          code: attempt.error?.code ?? null,
+          message: attempt.error?.message ?? null,
+          details: attempt.error?.details ?? null,
+          hint: attempt.error?.hint ?? null,
+        });
+      }
 
       if (invErr) {
-        console.error("Error guardando en invoices:", invErr);
-        // Si el error es por duplicado (constraint), intentar recuperar el registro existente
-        // usando serie+numero como clave única del comprobante.
-        if (invErr.code === "23505") {
-          const { data: existing } = await supabase
-            .from("invoices")
-            .select()
-            .eq("serie", serie)
-            .eq("numero", numero)
-            .eq("school_id", school_id)
-            .single();
-          if (existing) {
-            console.log("Invoice ya existía, recuperado por serie+numero:", existing.id);
-            savedInvoice = existing;
+        console.error("[generate-document] Error INSERT invoices (último intento):", invErr.code, invErr.message, invErr.details);
+        console.error("[generate-document] Error INSERT invoices JSON:", JSON.stringify(invErr));
+        console.error("[generate-document] Historial intentos INSERT:", JSON.stringify(insertErrors));
+        if (invErr.code === "42501") {
+          console.error("[generate-document] POSIBLE RLS/PERMISO: revisar políticas INSERT en public.invoices para el rol activo.");
+        }
+        // Intentar recuperar siempre por serie+numero (cubre duplicado 23505 y otros errores de esquema)
+        const { data: existing, error: recErr } = await supabase
+          .from("invoices")
+          .select()
+          .eq("serie", serie)
+          .eq("numero", numero)
+          .eq("school_id", school_id)
+          .maybeSingle();
+        if (existing) {
+          console.log("[generate-document] Invoice recuperado por serie+numero tras error INSERT:", existing.id);
+          savedInvoice = existing;
+        } else {
+          console.error("[generate-document] No se pudo recuperar invoice tras error INSERT:", recErr?.message ?? "no encontrado");
+          if (recErr) {
+            console.error("[generate-document] Error recuperación JSON:", JSON.stringify(recErr));
           }
         }
       } else {

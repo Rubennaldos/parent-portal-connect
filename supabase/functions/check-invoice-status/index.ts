@@ -81,21 +81,70 @@ function extractSunatErrorMsg(data: any): string {
   return code ? `[SUNAT ${code}] ${rawStr}` : rawStr;
 }
 
+// Nubefact usa tipos numéricos (1=factura, 2=boleta, 3=nota crédito, 4=nota débito)
+// mientras nuestra BD suele guardar códigos SUNAT (01,03,07,08).
+function mapToNubefactDocType(documentTypeCode: string | null | undefined): number {
+  const code = String(documentTypeCode ?? "").trim();
+  switch (code) {
+    case "01": return 1; // factura
+    case "03": return 2; // boleta
+    case "07": return 3; // nota de crédito
+    case "08": return 4; // nota de débito
+    default:   return 2; // fallback seguro: boleta
+  }
+}
+
+async function safeInvoicingLog(
+  supabase: ReturnType<typeof createClient>,
+  payload: Record<string, unknown>,
+) {
+  const { error } = await supabase.from("invoicing_logs").insert(payload);
+  if (error) {
+    console.warn("[check-invoice-status] No se pudo escribir invoicing_log:", error.message);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  try {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase    = createClient(supabaseUrl, serviceKey);
 
   // ── 1. Seleccionar lote de comprobantes pendientes de confirmar ─────────
-  const { data: invoices, error: fetchErr } = await supabase
+  // NOTA: ya NO filtramos por nubefact_ticket IS NOT NULL.
+  // Boletas en sunat_status='processing' sin ticket (o con ticket inválido)
+  // también se consultan usando serie+numero, que son clave primaria del CPE en Nubefact.
+  //
+  // Compatibilidad de esquema:
+  // algunos proyectos antiguos pueden no tener evidence_retry_count.
+  // Si falta esa columna, hacemos fallback automático sin romper toda la función.
+  let invoices: any[] | null = null;
+  let fetchErr: { message?: string } | null = null;
+
+  const withRetryColumn = await supabase
     .from("invoices")
     .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status, evidence_retry_count")
     .eq("sunat_status", "processing")
-    .not("nubefact_ticket", "is", null)
     .order("created_at", { ascending: true })
     .limit(BATCH_SIZE);
+
+  if (withRetryColumn.error && String(withRetryColumn.error.message ?? "").includes("evidence_retry_count")) {
+    console.warn("[check-invoice-status] Columna evidence_retry_count no existe. Usando fallback compatible.");
+    const fallback = await supabase
+      .from("invoices")
+      .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status")
+      .eq("sunat_status", "processing")
+      .order("created_at", { ascending: true })
+      .limit(BATCH_SIZE);
+
+    invoices = (fallback.data ?? []).map((inv: any) => ({ ...inv, evidence_retry_count: 0 }));
+    fetchErr = fallback.error;
+  } else {
+    invoices = withRetryColumn.data;
+    fetchErr = withRetryColumn.error;
+  }
 
   if (fetchErr) {
     console.error("[check-invoice-status] Error consultando invoices:", fetchErr);
@@ -113,6 +162,45 @@ serve(async (req) => {
       JSON.stringify({ message: "Sin comprobantes pendientes", processed: 0 }),
       { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
     );
+  }
+
+  // ── Guardia de retraso crítico: >15 min en processing sin PDF ───────────────
+  const criticalCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: criticalCandidates } = await supabase
+    .from("invoices")
+    .select("id, serie, numero, created_at, school_id")
+    .eq("sunat_status", "processing")
+    .is("pdf_url", null)
+    .lt("created_at", criticalCutoff)
+    .limit(200);
+
+  if (criticalCandidates && criticalCandidates.length > 0) {
+    const candidateIds = criticalCandidates.map((c) => c.id);
+    const { data: recentCriticalLogs } = await supabase
+      .from("invoicing_logs")
+      .select("invoice_id")
+      .eq("event_type", "critical_delay")
+      .in("invoice_id", candidateIds)
+      .gte("created_at", criticalCutoff);
+
+    const alreadyLogged = new Set((recentCriticalLogs ?? []).map((r: any) => r.invoice_id));
+    for (const c of criticalCandidates) {
+      if (alreadyLogged.has(c.id)) continue;
+      const label = `${c.serie}-${String(c.numero).padStart(8, "0")}`;
+      await safeInvoicingLog(supabase, {
+        invoice_id:    c.id,
+        event_type:    "critical_delay",
+        action:        "delay_guard",
+        status:        "critical",
+        event_message: `CRITICAL_DELAY: ${label} lleva más de 15 minutos en processing sin PDF.`,
+        request_payload: {
+          threshold_minutes: 15,
+          detected_at: new Date().toISOString(),
+          created_at: c.created_at,
+          school_id: c.school_id,
+        },
+      });
+    }
   }
 
   // ── 2. Cargar credenciales POR SEDE (PFC-01) ────────────────────────────
@@ -156,13 +244,15 @@ serve(async (req) => {
     if (!creds && !globalToken) {
       const msg = `Sin credenciales Nubefact para school_id=${invoice.school_id}. Configura billing_config.`;
       console.error(`[check-invoice-status] ${label}: ${msg}`);
-      await supabase.from("invoicing_logs").insert({
+      await safeInvoicingLog(supabase, {
         invoice_id: invoice.id,
         event_type: "error",
+        action: "poll",
+        status: "error",
         event_message: `Poller: ${msg}`,
         error_code:    "NO_CREDENTIALS",
         error_message: msg,
-      }).catch(() => {});
+      });
       results.push({ id: invoice.id, action: "error", error: msg });
       continue;
     }
@@ -170,17 +260,39 @@ serve(async (req) => {
     const nubefactUrl   = creds?.ruta  ?? globalUrl;
     const nubefactToken = creds?.token ?? globalToken!;
 
-    console.log(`[check-invoice-status] Consultando ticket ${invoice.nubefact_ticket} para ${label}`);
+    // Detectar ticket "basura": si coincide con el patrón serie-numero (ej. "BMC3-00000518")
+    // ese valor NO es un ticket de polling de Nubefact sino el correlativo del comprobante.
+    // En ese caso usamos solo serie+numero para la consulta (suficiente para Nubefact).
+    const TICKET_BASURA_RE = /^[A-Z0-9]+-\d{8}$/;
+    const ticketValido = invoice.nubefact_ticket && !TICKET_BASURA_RE.test(invoice.nubefact_ticket)
+      ? invoice.nubefact_ticket
+      : null;
+
+    console.log(
+      `[check-invoice-status] Consultando ${label}` +
+      (ticketValido ? ` (ticket=${ticketValido})` : " (por serie+numero — sin ticket válido)"),
+    );
 
     try {
       // ── 3a. Llamada a Nubefact ─────────────────────────────────────────
+      // Nubefact acepta serie+numero como identificador estable del CPE.
+      // El ticket solo acelera la consulta cuando existe y es válido.
       const nubefactPayload = {
         operacion:           "consultar_comprobante",
-        tipo_de_comprobante: Number(invoice.document_type_code ?? "03"),
+        tipo_de_comprobante: mapToNubefactDocType(invoice.document_type_code),
         serie:               invoice.serie,
         numero:              invoice.numero,
-        ...(invoice.nubefact_ticket ? { ticket: invoice.nubefact_ticket } : {}),
+        ...(ticketValido ? { ticket: ticketValido } : {}),
       };
+
+      await safeInvoicingLog(supabase, {
+        invoice_id: invoice.id,
+        event_type: "poll_attempt",
+        action: "poll",
+        status: "requesting",
+        event_message: `Poller: consultando ${label} en Nubefact.`,
+        request_payload: nubefactPayload,
+      });
 
       const nubefactRes = await fetch(nubefactUrl, {
         method:  "POST",
@@ -197,6 +309,16 @@ serve(async (req) => {
 
       const nubefactData = await nubefactRes.json();
       console.log(`[check-invoice-status] Respuesta para ${label}:`, JSON.stringify(nubefactData));
+
+      await safeInvoicingLog(supabase, {
+        invoice_id: invoice.id,
+        event_type: "poll_response",
+        action: "poll",
+        status: "received",
+        event_message: `Poller: respuesta Nubefact recibida para ${label}.`,
+        request_payload: nubefactPayload,
+        response_payload: nubefactData,
+      });
 
       // ── 3b. Determinar nuevo estado ────────────────────────────────────
       const newStatus       = resolveNewStatus(nubefactData);
@@ -239,13 +361,17 @@ serve(async (req) => {
               .eq("id", invoice.id)
               .eq("sunat_status", "processing");
 
-            await supabase.from("invoicing_logs").insert({
+            await safeInvoicingLog(supabase, {
               invoice_id:    invoice.id,
               event_type:    "error",
+              action: "poll",
+              status: "retrying",
               event_message: `ADVERTENCIA LEGAL: ${label} aceptado por SUNAT pero sin URL de XML/PDF (intento ${retryCount}/${MAX_EVIDENCE_RETRIES}). Sin evidencia no hay validez ante auditoría SUNAT. Reintentando en próxima vuelta.`,
               error_code:    "MISSING_XML_EVIDENCE",
               error_message: "enlace_del_xml y enlace_del_pdf ausentes en respuesta Nubefact",
-            }).catch(() => {});
+              request_payload: nubefactPayload,
+              response_payload: nubefactData,
+            });
 
             console.warn(`[check-invoice-status] ${label} aceptado pero SIN evidencia XML/PDF (retry ${retryCount})`);
             results.push({ id: invoice.id, action: "retrying_evidence", estado: "accepted_no_xml" });
@@ -253,13 +379,17 @@ serve(async (req) => {
           } else {
             // Límite de reintentos alcanzado: marcar accepted pero con alerta crítica
             console.error(`[check-invoice-status] ${label} excedió ${MAX_EVIDENCE_RETRIES} reintentos de evidencia. Marcando accepted con alerta.`);
-            await supabase.from("invoicing_logs").insert({
+            await safeInvoicingLog(supabase, {
               invoice_id:    invoice.id,
               event_type:    "error",
+              action: "poll",
+              status: "critical",
               event_message: `ALERTA CRÍTICA: ${label} marcado como aceptado sin XML/CDR tras ${MAX_EVIDENCE_RETRIES} reintentos. Verificar manualmente en panel Nubefact.`,
               error_code:    "EVIDENCE_EXHAUSTED",
               error_message: "No se pudieron obtener URLs de evidencia tras máximos reintentos",
-            }).catch(() => {});
+              request_payload: nubefactPayload,
+              response_payload: nubefactData,
+            });
           }
         }
       }
@@ -275,22 +405,54 @@ serve(async (req) => {
         throw new Error(`Error actualizando invoice en BD: ${updateErr.message}`);
       }
 
+      // ── 3d-bis. Propagar pdf_url a billing_queue y transactions ────────
+      // Garantía de Recepción: cuando el PDF llega, actualizar TODAS las tablas
+      // que el portal del padre consulta. Sin esto el padre ve "En proceso" aunque
+      // invoices ya tenga el PDF.
+      if (newStatus === "accepted" && updatePayload.pdf_url) {
+        // Actualizar billing_queue vinculado a este invoice
+        await supabase
+          .from("billing_queue")
+          .update({
+            pdf_url:      updatePayload.pdf_url,
+            sunat_status: "accepted",
+          })
+          .eq("nubefact_ticket", label)  // billing_queue.nubefact_ticket = "BMC3-XXXXXXXX"
+          .eq("status", "emitted");
+
+        // Actualizar transaction vinculada al invoice
+        if (invoice.id) {
+          const { error: txPdfErr } = await supabase
+            .from("transactions")
+            .update({ billing_status: "sent" })
+            .eq("invoice_id", invoice.id);
+          if (txPdfErr) {
+            console.warn(`[check-invoice-status] No se pudo actualizar transactions para invoice ${invoice.id}:`, txPdfErr.message);
+          }
+        }
+
+        console.log(`[check-invoice-status] ✅ PDF propagado a billing_queue + transactions para ${label}`);
+      }
+
       // ── 3e. Log de auditoría con código de error SUNAT (PFC-06) ───────
       const logEvent   = newStatus === "accepted" ? "accepted" : "rejected";
       const logMsg     = newStatus === "accepted"
         ? `Poller: ${label} ACEPTADO por SUNAT.${updatePayload.pdf_url ? " PDF disponible." : " SIN PDF."}`
         : `Poller: ${label} RECHAZADO por SUNAT. ${sunatErrorMsg}`;
 
-      await supabase.from("invoicing_logs").insert({
+      await safeInvoicingLog(supabase, {
         invoice_id:       invoice.id,
         event_type:       logEvent,
+        action:           "poll",
+        status:           newStatus,
         event_message:    logMsg,
+        request_payload:  nubefactPayload,
         response_payload: nubefactData,
         ...(newStatus === "rejected" ? {
           error_code:    sunatErrorCode ?? "REJECTED",
           error_message: sunatErrorMsg,
         } : {}),
-      }).catch(() => {});
+      });
 
       console.log(`[check-invoice-status] ${label} → ${newStatus.toUpperCase()}`);
       results.push({ id: invoice.id, action: "updated", estado: newStatus });
@@ -300,13 +462,21 @@ serve(async (req) => {
       console.error(`[check-invoice-status] Error procesando ${label}:`, errMsg);
 
       // PFC-07: Log del error con trazabilidad completa
-      await supabase.from("invoicing_logs").insert({
+      await safeInvoicingLog(supabase, {
         invoice_id:    invoice.id,
         event_type:    "error",
+        action:        "poll",
+        status:        "error",
         event_message: `Poller: error consultando ${label} en Nubefact. ${errMsg}`,
         error_code:    "POLLER_FETCH_ERROR",
         error_message: errMsg,
-      }).catch(() => {});
+        request_payload: {
+          invoice_id: invoice.id,
+          label,
+          doc_type: invoice.document_type_code,
+          ticket_valido: ticketValido,
+        },
+      });
 
       results.push({ id: invoice.id, action: "error", error: errMsg });
     }
@@ -328,4 +498,12 @@ serve(async (req) => {
     JSON.stringify({ processed: total, updated, skipped, retrying, errors, details: results }),
     { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
   );
+  } catch (err) {
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error("[check-invoice-status] FATAL:", msg);
+    return new Response(
+      JSON.stringify({ error: msg }),
+      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
+    );
+  }
 });

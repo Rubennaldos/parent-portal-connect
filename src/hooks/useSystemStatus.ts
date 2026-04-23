@@ -14,6 +14,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
+/** Estado de cada método de pago en el portal de padres (control global). */
+export interface PaymentMethodsConfig {
+  yape_active:          boolean;
+  plin_active:          boolean;
+  transferencia_active: boolean;
+  izipay_active:        boolean;
+}
+
+/** Constantes para evitar hardcodear nombres de métodos. */
+export const PAYMENT_METHOD_KEYS = ['yape_active', 'plin_active', 'transferencia_active', 'izipay_active'] as const;
+export type PaymentMethodKey = typeof PAYMENT_METHOD_KEYS[number];
+
+export const PAYMENT_METHOD_DEFAULTS: PaymentMethodsConfig = {
+  yape_active:          true,
+  plin_active:          true,
+  transferencia_active: true,
+  izipay_active:        true,
+};
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethodKey, string> = {
+  yape_active:          'Yape',
+  plin_active:          'Plin',
+  transferencia_active: 'Transferencia',
+  izipay_active:        'Tarjeta / IziPay',
+};
+
 export interface SystemStatus {
   is_parent_portal_enabled: boolean;
   is_admin_panel_enabled: boolean;
@@ -23,6 +49,13 @@ export interface SystemStatus {
   parent_bypass_emails: string[];
   /** Emails que pueden saltarse el bloqueo del panel admin */
   admin_bypass_emails: string[];
+  /**
+   * Control global de métodos de pago para el Portal de Padres.
+   * Los correos en parent_bypass_emails ven todos los métodos aunque
+   * alguno esté desactivado aquí (mismo "puente" del modo mantenimiento).
+   * Si el campo falta → todos activos (regla defensiva, nunca bloquear por error).
+   */
+  payment_methods_config: PaymentMethodsConfig;
 }
 
 const DEFAULTS: SystemStatus = {
@@ -32,9 +65,10 @@ const DEFAULTS: SystemStatus = {
   admin_maintenance_msg:    'Sistema en mantenimiento programado.',
   parent_bypass_emails:     [],
   admin_bypass_emails:      [],
+  payment_methods_config:   PAYMENT_METHOD_DEFAULTS,
 };
 
-const SELECT_COLS = 'is_parent_portal_enabled,is_admin_panel_enabled,parent_maintenance_msg,admin_maintenance_msg,parent_bypass_emails,admin_bypass_emails';
+const SELECT_COLS = 'is_parent_portal_enabled,is_admin_panel_enabled,parent_maintenance_msg,admin_maintenance_msg,parent_bypass_emails,admin_bypass_emails,payment_methods_config';
 
 export function useSystemStatus() {
   const [status, setStatus]           = useState<SystemStatus>(DEFAULTS);

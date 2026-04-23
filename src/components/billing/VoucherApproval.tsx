@@ -886,13 +886,46 @@ export const VoucherApproval = () => {
       return;
     }
 
+    // Guardia 3: Verificar status real en BD antes de cualquier escritura.
+    // El dato local puede ser stale si otro admin ya procesó el voucher.
+    // Hacerlo aquí evita que un UPDATE directo al reference_code dispare
+    // el trigger antifraude con OLD.status='approved' AND NEW.status='approved'.
+    {
+      const { data: freshStatus } = await supabase
+        .from('recharge_requests')
+        .select('id, status, reference_code')
+        .eq('id', req.id)
+        .maybeSingle();
+
+      if (freshStatus && freshStatus.status !== 'pending') {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Ya fue procesado',
+          description: 'Este comprobante ya fue aprobado o rechazado por otro administrador. Recargando lista…',
+        });
+        fetchRequests();
+        return;
+      }
+      // Sincronizar reference_code real si difiere del dato local
+      if (freshStatus?.reference_code && !req.reference_code) {
+        req = { ...req, reference_code: freshStatus.reference_code };
+      }
+    }
+
     // Si el admin ingresó un código override, guardarlo en la BD antes de aprobar
     if (!req.reference_code && effectiveRefCode) {
-      await supabase
+      const { error: refUpdateErr } = await supabase
         .from('recharge_requests')
         .update({ reference_code: effectiveRefCode })
         .eq('id', req.id);
-      // Actualizar el objeto local para que el resto del flujo lo use
+
+      if (refUpdateErr) {
+        // Si el trigger rechaza la actualización (ej. status cambió mientras esperábamos),
+        // refrescar la lista en lugar de continuar con datos incoherentes.
+        console.warn('[VoucherApproval] No se pudo guardar reference_code antes de aprobar:', refUpdateErr.message);
+        fetchRequests();
+        return;
+      }
       req = { ...req, reference_code: effectiveRefCode };
     }
 
@@ -963,13 +996,39 @@ export const VoucherApproval = () => {
             });
             fetchRequests();
           } else if (msg.includes('NO_DEBTS_FOUND')) {
+            // Inteligencia operativa:
+            // Si ya entró un pago por gateway (IziPay/tarjeta) recientemente,
+            // informamos explícitamente que este voucher quedó redundante.
+            let gatewayHint = '';
+            try {
+              const { data: recentGatewayTx } = await supabase
+                .from('transactions')
+                .select('id, amount, payment_method, created_at, gateway_reference_id')
+                .eq('student_id', req.student_id)
+                .eq('type', 'recharge')
+                .eq('payment_status', 'paid')
+                .in('payment_method', ['izipay', 'tarjeta', 'card', 'card_visa', 'card_mastercard'])
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (recentGatewayTx) {
+                gatewayHint =
+                  ` Ya existe un pago digital aplicado (S/ ${Number(recentGatewayTx.amount || 0).toFixed(2)})` +
+                  ` el ${new Date(recentGatewayTx.created_at).toLocaleString('es-PE')}.` +
+                  ` Este voucher ya no era necesario para saldar esa deuda.`;
+              }
+            } catch (gatewayCheckErr) {
+              console.warn('[VoucherApproval] No se pudo verificar pago gateway reciente:', gatewayCheckErr);
+            }
+
             toast({
               variant: 'destructive',
               title: '⚠️ Alumno sin deuda activa',
               description:
                 `${req.students?.full_name || 'El alumno'} no tiene transacciones pendientes ` +
                 'ni saldo negativo en kiosco. Es posible que la deuda ya fue saldada por otro pago. ' +
-                'Recarga la lista de deudores y verifica antes de proceder.',
+                `Recarga la lista de deudores y verifica antes de proceder.${gatewayHint}`,
               duration: 12000,
             });
           } else if (msg.includes('NOT_FOUND')) {

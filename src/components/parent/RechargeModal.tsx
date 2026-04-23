@@ -1,6 +1,7 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useViewAsStore } from '@/stores/viewAsStore';
 import { useRechargeSubmit } from '@/hooks/useRechargeSubmit';
+import { useSystemStatus, PAYMENT_METHOD_DEFAULTS } from '@/hooks/useSystemStatus';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -180,6 +181,23 @@ export function RechargeModal({
   const IZIPAY_ENABLED = izipayTestMode
     ? true
     : (paymentConfig?.izipay_enabled ?? false);
+
+  // ── Control global de métodos de pago (SuperAdmin → Status) ──────────────
+  // Regla defensiva: si falla la lectura → todos los métodos activos.
+  const { status: systemStatus } = useSystemStatus();
+  const globalPm = systemStatus.payment_methods_config ?? PAYMENT_METHOD_DEFAULTS;
+  /**
+   * Puente: si el correo del padre logueado está en parent_bypass_emails,
+   * ve TODOS los métodos aunque estén desactivados globalmente.
+   * Mismo mecanismo que el bypass de mantenimiento.
+   */
+  const userEmail = (user?.email ?? '').toLowerCase();
+  const isBridgeUser = (systemStatus.parent_bypass_emails ?? [])
+    .map(e => e.toLowerCase())
+    .includes(userEmail);
+  /** Devuelve true si el método puede mostrarse a este usuario. */
+  const isMethodGloballyAllowed = (key: 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active') =>
+    isBridgeUser || (globalPm[key] ?? true);
   // ── Comprobantes adicionales (pago en partes) ──
   const [extraVouchers, setExtraVouchers] = useState<ExtraVoucher[]>([]);
   const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -600,7 +618,8 @@ export function RechargeModal({
       label: 'Yape',
       icon: <YapeLogo className="w-8 h-8" />,
       color: 'purple',
-      enabled: paymentConfig?.yape_enabled ?? true,
+      // enabled = activo en sede Y activo globalmente (o usuario con puente)
+      enabled: (paymentConfig?.yape_enabled ?? true) && isMethodGloballyAllowed('yape_active'),
       number: paymentConfig?.yape_number || null,
       holder: paymentConfig?.yape_holder || null,
       hint: 'Abre tu app de Yape y transfiere al número indicado.',
@@ -609,7 +628,7 @@ export function RechargeModal({
       label: 'Plin',
       icon: <PlinLogo className="w-8 h-8" />,
       color: 'green',
-      enabled: paymentConfig?.plin_enabled ?? true,
+      enabled: (paymentConfig?.plin_enabled ?? true) && isMethodGloballyAllowed('plin_active'),
       number: paymentConfig?.plin_number || null,
       holder: paymentConfig?.plin_holder || null,
       hint: 'Abre tu app de Plin y transfiere al número indicado.',
@@ -618,7 +637,7 @@ export function RechargeModal({
       label: 'Transferencia',
       icon: <Building2 className="h-7 w-7 text-orange-600" />,
       color: 'orange',
-      enabled: paymentConfig?.transferencia_enabled ?? true,
+      enabled: (paymentConfig?.transferencia_enabled ?? true) && isMethodGloballyAllowed('transferencia_active'),
       number: (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info) ? 'available' : null,
       holder: paymentConfig?.bank_account_holder || null,
       hint: 'Realiza una transferencia bancaria con los datos indicados.',
@@ -628,13 +647,13 @@ export function RechargeModal({
     },
     izipay: {
       label: 'Tarjeta / Yape',
-      icon: <CreditCard className={`h-7 w-7 ${IZIPAY_ENABLED ? 'text-red-600' : 'text-gray-400'}`} />,
+      icon: <CreditCard className={`h-7 w-7 ${IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active') ? 'text-red-600' : 'text-gray-400'}`} />,
       color: 'red',
-      enabled: IZIPAY_ENABLED,
+      enabled: IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active'),
       // Siempre se muestra en el selector; null = deshabilitado visualmente (gris)
       number: 'available',
       holder: null,
-      hint: IZIPAY_ENABLED
+      hint: IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active')
         ? 'Paga al instante con tarjeta Visa/Mastercard o Yape QR.'
         : 'Método no disponible para esta sede.',
       isGateway: true,

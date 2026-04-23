@@ -8,7 +8,14 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSystemStatus, SystemStatus } from '@/hooks/useSystemStatus';
+import {
+  useSystemStatus,
+  SystemStatus,
+  PaymentMethodKey,
+  PAYMENT_METHOD_KEYS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHOD_DEFAULTS,
+} from '@/hooks/useSystemStatus';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,7 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Users, ShieldCheck, AlertTriangle, Wifi, FlaskConical, X, Plus } from 'lucide-react';
+import { Users, ShieldCheck, AlertTriangle, Wifi, FlaskConical, X, Plus, CreditCard } from 'lucide-react';
 
 type FlagKey = 'is_parent_portal_enabled' | 'is_admin_panel_enabled';
 
@@ -54,6 +61,8 @@ export function SystemStatusControl() {
   const [newParentEmail, setNewParentEmail] = useState('');
   const [newAdminEmail, setNewAdminEmail]   = useState('');
   const [savingBypass, setSavingBypass]     = useState(false);
+  // Métodos de pago
+  const [savingMethod, setSavingMethod]     = useState<PaymentMethodKey | null>(null);
 
   const effectiveStatus = localOverride ? { ...status, ...localOverride } : status;
 
@@ -174,6 +183,41 @@ export function SystemStatusControl() {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally {
       setSavingBypass(false);
+    }
+  };
+
+  /** Activa / desactiva un método de pago globalmente */
+  const togglePaymentMethod = async (key: PaymentMethodKey, value: boolean) => {
+    const currentConfig = effectiveStatus.payment_methods_config ?? PAYMENT_METHOD_DEFAULTS;
+    const updated = { ...currentConfig, [key]: value };
+    // Optimismo inmediato
+    setLocalOverride(prev => ({
+      ...prev,
+      payment_methods_config: updated,
+    }));
+    setSavingMethod(key);
+    try {
+      const { error } = await supabase
+        .from('system_status')
+        .update({ payment_methods_config: updated, updated_by: user?.id })
+        .eq('id', 1);
+      if (error) throw error;
+      toast({
+        title: value ? `✅ ${PAYMENT_METHOD_LABELS[key]} activado` : `⚠️ ${PAYMENT_METHOD_LABELS[key]} desactivado`,
+        description: value
+          ? `Los padres ya pueden ver y usar ${PAYMENT_METHOD_LABELS[key]}.`
+          : `${PAYMENT_METHOD_LABELS[key]} ya no aparece en el portal de padres. Los correos de prueba sí lo ven.`,
+      });
+      refresh();
+    } catch (err: any) {
+      // Revertir optimismo si falló
+      setLocalOverride(prev => ({
+        ...prev,
+        payment_methods_config: currentConfig,
+      }));
+      toast({ title: 'Error al guardar', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingMethod(null);
     }
   };
 
@@ -435,6 +479,62 @@ export function SystemStatusControl() {
               </div>
             )}
           </div>
+
+          <div className="border-t" />
+
+          {/* — Pasarelas y Métodos de Pago — */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                <CreditCard className="h-4 w-4 text-blue-700" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Pasarelas y Métodos de Pago</p>
+                <p className="text-xs text-muted-foreground">
+                  Controla qué métodos ven los padres al realizar un pago.
+                  Los correos de prueba (arriba) ven todos aunque estén desactivados.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pl-10">
+              {PAYMENT_METHOD_KEYS.map(key => {
+                const pmConfig = effectiveStatus.payment_methods_config ?? PAYMENT_METHOD_DEFAULTS;
+                const isActive = pmConfig[key] ?? true;
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between p-3 rounded-xl border bg-card hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{PAYMENT_METHOD_LABELS[key]}</span>
+                      <Badge
+                        className={isActive
+                          ? 'bg-green-100 text-green-700 border-0 text-[10px] px-1.5 py-0'
+                          : 'bg-gray-100 text-gray-500 border-0 text-[10px] px-1.5 py-0'
+                        }
+                      >
+                        {isActive ? 'ACTIVO' : 'OCULTO'}
+                      </Badge>
+                    </div>
+                    <Switch
+                      checked={isActive}
+                      onCheckedChange={v => togglePaymentMethod(key, v)}
+                      disabled={savingMethod === key}
+                      className="data-[state=checked]:bg-green-600"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="pl-10 text-[11px] text-muted-foreground">
+              💡 Desactivar un método lo oculta visualmente para todos los padres.
+              No afecta pagos ya realizados ni la configuración por sede (Facturación → Config SUNAT).
+            </p>
+          </div>
+
+          <div className="border-t" />
 
           {/* Aviso de seguridad */}
           <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
