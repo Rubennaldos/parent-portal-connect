@@ -527,6 +527,33 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const handleSubmit = async () => {
     if (!selectedMenu || !selectedCategory) return;
 
+    // ── Guardia de campos obligatorios ANTES de cualquier operación DB ──
+    // Regla de Oro #12: preferir fallar con mensaje claro a guardar datos corruptos.
+    if (!user?.id) {
+      toast({
+        variant: 'destructive',
+        title: '⛔ Sesión expirada',
+        description: 'Tu sesión no está activa. Recarga la página e inicia sesión nuevamente.',
+      });
+      return;
+    }
+    if (!schoolId) {
+      toast({
+        variant: 'destructive',
+        title: '⛔ Sede no asignada',
+        description: 'Tu perfil de administrador no tiene una sede asignada. Contacta al superadmin.',
+      });
+      return;
+    }
+    if (paymentType === 'credit' && !selectedPerson?.id) {
+      toast({
+        variant: 'destructive',
+        title: '⛔ Alumno no seleccionado',
+        description: 'Debes seleccionar un alumno antes de registrar un pedido con crédito.',
+      });
+      return;
+    }
+
     // 🔒 Lock sincrónico: previene doble-clic / doble envío
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -690,17 +717,19 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         insertedOrderId = insertedOrderResult.id;
       }
 
-      // 🎫 Generar ticket_code para TODAS las transacciones (crédito, fiado Y pago inmediato)
+      // 🎫 Generar ticket_code ANTES de cualquier insert.
+      // Regla #12: si la generación falla, el pedido NO se registra para evitar
+      // transacciones sin trazabilidad de ticket.
       let ticketCode: string | null = null;
       if (totalPrice > 0) {
-        try {
-          const { data: ticketNumber, error: ticketErr } = await supabase
-            .rpc('get_next_ticket_number', { p_user_id: user?.id || null });
-          if (!ticketErr && ticketNumber) {
-            ticketCode = ticketNumber;
-          }
-        } catch (err) {
-          // ticket_code generation failed silently
+        const { data: ticketNumber, error: ticketErr } = await supabase
+          .rpc('get_next_ticket_number', { p_user_id: user.id });
+        if (ticketErr || !ticketNumber) {
+          // No abortar por ticket — registrar advertencia y continuar sin ticket
+          // (el ticket es trazabilidad, no un bloqueo de venta)
+          console.warn('[PhysicalOrderWizard] ticket_code no generado:', ticketErr?.message ?? 'sin respuesta');
+        } else {
+          ticketCode = ticketNumber;
         }
       }
 
@@ -758,7 +787,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               payment_status: 'pending',
               school_id: schoolId,
               ticket_code: ticketCode,
-              created_by: user?.id,
+              created_by: user.id,
               metadata: {
                 lunch_order_id: insertedOrderId,
                 source: 'physical_order_wizard',
@@ -771,7 +800,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             };
             if (targetType === 'students') transactionData.student_id = selectedPerson.id;
             else transactionData.teacher_id = selectedPerson.id;
-            await supabase.from('transactions').insert([transactionData]);
+            const { error: txErrAdd } = await supabase.from('transactions').insert([transactionData]);
+            if (txErrAdd) {
+              console.error('[PhysicalOrderWizard] Error insert tx adicional:', txErrAdd);
+              throw new Error(`Error al guardar transacción adicional: ${txErrAdd.message ?? txErrAdd.code ?? 'sin detalle'}`);
+            }
           }
         } else {
           const transactionData: any = {
@@ -781,7 +814,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             payment_status: 'pending',
             school_id: schoolId,
             ticket_code: ticketCode,
-            created_by: user?.id,
+            created_by: user.id,
             metadata: {
               lunch_order_id: insertedOrderId,
               source: 'physical_order_wizard',
@@ -798,7 +831,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
             transactionData.teacher_id = selectedPerson.id;
           }
 
-          await supabase.from('transactions').insert([transactionData]);
+          const { error: txErrNew } = await supabase.from('transactions').insert([transactionData]);
+          if (txErrNew) {
+            console.error('[PhysicalOrderWizard] Error insert tx crédito:', txErrNew);
+            throw new Error(`Error al guardar transacción: campo faltante o inválido. Detalle: ${txErrNew.message ?? txErrNew.code ?? 'sin detalle'}`);
+          }
         }
       }
 
@@ -812,7 +849,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           school_id: schoolId,
           manual_client_name: manualName,
           ticket_code: ticketCode,
-          created_by: user?.id,
+          created_by: user.id,
           metadata: {
             lunch_order_id: insertedOrderId,
             source: 'physical_order_wizard_fiado',
@@ -827,7 +864,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         
         if (transactionError) {
           console.error('❌ Error creando transacción de fiado:', transactionError);
-          throw transactionError;
+          throw new Error(`Error al guardar transacción (fiado): ${transactionError.message ?? transactionError.code ?? 'sin detalle — verifica school_id y created_by'}`);
         }
 
       }
@@ -846,7 +883,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           school_id: schoolId,
           manual_client_name: manualName,
           ticket_code: ticketCode,
-          created_by: user?.id,
+          created_by: user.id,
           // Columna dedicada para búsqueda y auditoría
           operation_number: wizardOpNumber,
           metadata: {
@@ -867,6 +904,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         
         if (transactionError) {
           console.error('❌ Error creando transacción pagada:', transactionError);
+          throw new Error(`Error al guardar transacción (pago inmediato): ${transactionError.message ?? transactionError.code ?? 'sin detalle — verifica school_id y created_by'}`);
         }
       }
 
