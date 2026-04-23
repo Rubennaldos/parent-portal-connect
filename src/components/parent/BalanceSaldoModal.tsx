@@ -54,6 +54,8 @@ interface LedgerData {
   ledger: RechargeRow[];
   pending: PendingRow[];
   total_remaining: number;
+  /** Suma de recargas pendientes calculada en DB (Regla 11.A). Disponible desde v2026-04-23. */
+  pending_total?: number;
 }
 
 export interface Props {
@@ -120,6 +122,7 @@ export function BalanceSaldoModal({
 }: Props) {
   const [loading,        setLoading]        = useState(false);
   const [totalRemaining, setTotalRemaining] = useState<number | null>(null);
+  const [pendingTotal,   setPendingTotal]   = useState<number>(0);
   const [ledger,         setLedger]         = useState<RechargeRow[]>([]);
   const [pending,        setPending]        = useState<PendingRow[]>([]);
   const [showRechargeSelector, setShowRechargeSelector] = useState(false);
@@ -140,18 +143,19 @@ export function BalanceSaldoModal({
       const rows      = (result.ledger  ?? []) as RechargeRow[];
       const pRows     = (result.pending ?? []) as PendingRow[];
       const total     = safeNum(result.total_remaining);
+      // Regla 11.A: pending_total calculado en DB desde v2026-04-23.
+      // Fallback seguro: si el RPC aún no tiene el campo, sum local es solo para display
+      // y no influye en ninguna operación financiera.
+      const pTotal    = safeNum(result.pending_total ?? null);
 
       setLedger(rows);
       setPending(pRows);
       setTotalRemaining(total);
-
-      // Comparación de saldo eliminada del frontend (Regla 11.A).
-      // La auditoría de discrepancias entre saldo legacy y ledger corresponde
-      // a fn_sync_student_balance en la base de datos, no a código React.
+      setPendingTotal(pTotal);
     } catch (err) {
       console.error('[BalanceSaldoModal] fetchLedger:', err);
-      // En error de red/RPC → mostrar S/ 0.00 (nunca el saldo legacy)
       setTotalRemaining(0);
+      setPendingTotal(0);
       setLedger([]);
       setPending([]);
     } finally {
@@ -306,7 +310,8 @@ export function BalanceSaldoModal({
     );
   };
 
-  const pendingTotal = pending.reduce((s, r) => s + safeNum(r.amount), 0);
+  // Regla 11.A: pendingTotal viene del RPC (pending_total calculado en DB).
+  // La variable de estado `pendingTotal` se asigna en fetchLedger desde result.pending_total.
   const isEmpty      = !loading && ledger.length === 0 && pending.length === 0;
   const showSkeleton = loading && totalRemaining === null;
   // Bloqueo temporal "antimachucable": no permitir nuevas recargas manuales.

@@ -970,14 +970,14 @@ export const PaymentsTab = ({
                     S/ {(checkoutTotal || 0).toFixed(2)}
                   </span>
                 </div>
-                {/* ── Desglose por alumno: explica de dónde viene el total ── */}
+                {/* ── Desglose por alumno: valores vienen de la DB (Regla 11.A) ── */}
                 {debts.length >= 1 && (
                   <div className="space-y-0.5 pt-0.5">
                     {debts.map(d => {
-                      const sNeto = d.pending_transactions
-                        .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
-                        .reduce((s, tx) => s + tx.amount, 0);
-                      const sInReview = Math.max(0, d.total_debt - sNeto);
+                      // Regla 11.A: usar los valores calculados en la DB (summary_student_payable
+                      // y summary_student_in_review de get_parent_debts_v2 v2.2).
+                      const sNeto = d.student_payable;
+                      const sInReview = d.student_in_review;
                       if (sNeto <= 0 && sInReview <= 0) return null;
                       return (
                         <div key={d.student_id} className="flex items-center justify-between gap-2">
@@ -1103,10 +1103,15 @@ export const PaymentsTab = ({
           ? payableTxIds.every(id => selectedIds.has(id))
           : selectedIds.size === allTxIds.length;
         const noneSelected = selectedIds.size === 0;
-        // selectedTotal: solo ítems pagables (excluir los "en revisión")
-        const selectedTotal = debt.pending_transactions
-          .filter(tx => selectedIds.has(tx.id) && tx.voucher_status !== 'pending')
-          .reduce((sum, tx) => sum + tx.amount, 0);
+        // selectedTotal — Regla 11.A:
+        //   · Caso por defecto (todos pagables seleccionados): usar valor de DB.
+        //   · Selección parcial (el padre desmarcó ítems): calcular solo los marcados (estado UI puro,
+        //     no hay alternativa — la DB no conoce qué ítems eligió el padre).
+        const selectedTotal = allSelected
+          ? debt.student_payable
+          : debt.pending_transactions
+              .filter(tx => selectedIds.has(tx.id) && tx.voucher_status !== 'pending')
+              .reduce((sum, tx) => sum + tx.amount, 0);
 
         const isExpanded = expandedStudentId === debt.student_id;
         const initials = debt.student_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
