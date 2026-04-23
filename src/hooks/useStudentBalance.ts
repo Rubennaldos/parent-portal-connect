@@ -8,15 +8,16 @@ interface UseStudentBalanceResult {
 }
 
 /**
- * Devuelve la deuda total del alumno desde view_student_debts (vía RPC).
+ * Devuelve el balance del alumno desde students.balance (query directa, < 1ms).
  *
- * FUENTE ÚNICA: get_student_debt_total usa view_student_debts, la misma fuente
- * que PaymentsTab / get_parent_debts_v2.  Esto elimina la discrepancia con
- * students.balance, que solo refleja lo que el trigger fn_sync_student_balance
- * haya sincronizado y no incluye almuerzos huérfanos ni kiosco pendiente.
+ * RENDIMIENTO: students.balance se actualiza por el trigger fn_sync_student_balance
+ * y es la fuente más rápida para el hero visual. La cifra exacta de deuda
+ * (incluyendo almuerzos huérfanos) se muestra en PaymentsTab vía get_parent_debts_v2.
  *
- * Regla 11.A — Cero Cálculos en el Cliente: el hook recibe el total de DB,
- * no lo calcula.
+ * DECISIÓN ARQUITECTURAL: get_student_debt_total (llamaba view_student_debts) causaba
+ * un segundo query costoso en cada carga del hero, duplicando la presión sobre
+ * view_student_debts y provocando statement_timeout 57014.
+ * students.balance es suficiente para el indicador visual del hero.
  */
 export function useStudentBalance(studentId: string | null): UseStudentBalanceResult {
   const [balance, setBalance] = useState<number | null>(null);
@@ -42,7 +43,10 @@ export function useStudentBalance(studentId: string | null): UseStudentBalanceRe
       }
 
       const { data, error: queryError } = await supabase
-        .rpc('get_student_debt_total', { p_student_id: studentId });
+        .from('students')
+        .select('balance')
+        .eq('id', studentId)
+        .maybeSingle();
 
       if (!isMounted) return;
 
@@ -53,7 +57,7 @@ export function useStudentBalance(studentId: string | null): UseStudentBalanceRe
         return;
       }
 
-      setBalance(Number(data ?? 0));
+      setBalance(Number(data?.balance ?? 0));
       setIsLoading(false);
     };
 
