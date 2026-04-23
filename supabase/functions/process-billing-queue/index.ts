@@ -154,29 +154,22 @@ serve(async (req) => {
           continue;
         }
 
-        // ── PASO 3B: Verificación de integridad de monto ─────────────────
+        // ── PASO 3B: Diferencia de monto — solo log, NUNCA bloqueo ──────────
         //
-        // El total calculado en PostgreSQL (v_computed_total) DEBE coincidir
-        // con el monto aprobado en billing_queue.amount.
-        // Si la discrepancia supera S/0.02, marcamos como error de integridad:
-        //   → el admin debe revisar qué transacciones fueron anuladas o duplicadas.
+        // integrity_ok=false indica que el total calculado desde las transacciones
+        // difiere del monto aprobado en el voucher (ej. voucher S/12 vs deuda S/13).
+        // POR DISEÑO esto NO debe detener la facturación:
+        //   - La boleta se emite por el monto real pagado (payload.monto_total).
+        //   - El sobrante/faltante ya fue manejado en process_traditional_voucher_approval.
+        //   - Bloquear aquí deja al padre sin ticket y al sistema en estado inconsistente.
         if (!payload.integrity_ok) {
           const diff = Math.abs((payload.amount_computed ?? 0) - (payload.amount_approved ?? 0));
-          if (diff > 0.02) {
-            const errMsg =
-              `INTEGRITY_MISMATCH: monto aprobado=S/${payload.amount_approved} ` +
-              `calculado en BD=S/${payload.amount_computed} ` +
-              `diferencia=S/${diff.toFixed(2)}. Revisar transacciones del voucher.`;
-            await markFailed(supabase, queueId, errMsg);
-            runLog.push({
-              queue_id: queueId,
-              status:   "integrity_error",
-              student:  payload.student_name,
-              amount:   payload.amount_approved,
-              error:    errMsg,
-            });
-            continue;
-          }
+          console.warn(
+            `[process-billing-queue] ${queueId} — diferencia de monto S/${diff.toFixed(2)} ` +
+            `(aprobado S/${payload.amount_approved}, calculado S/${payload.amount_computed}). ` +
+            `Emitiendo boleta con monto calculado en BD. No se bloquea el flujo.`
+          );
+          // Continúa hacia generate-document — no se llama markFailed
         }
 
         // ── PASO 3C: Fecha de emisión en hora Lima ────────────────────────

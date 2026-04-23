@@ -160,12 +160,6 @@ export function BalanceSaldoModal({
   }, [studentId, currentBalance]);
 
   useEffect(() => {
-eCartTotal
-Necesario — el carrito es estado local antes de enviarse a la BD
-4
-PaymentsTab.tsx:537-541
-Total seleccionado por alumno al abrir el modal de pago
-Bajo — no se usa para cobrar, es pre-visualización
     if (isOpen && studentId) {
       setLedger([]);
       setPending([]);
