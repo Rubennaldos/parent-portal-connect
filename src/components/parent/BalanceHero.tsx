@@ -42,7 +42,7 @@ export function BalanceHero({
           <div className="flex justify-center gap-2 flex-wrap">
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-full shadow-sm">
               <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-semibold text-amber-600">Almuerzos: S/ {currentBalance.toFixed(2)}</span>
+              <span className="text-xs font-semibold text-amber-600">Deuda: S/ {currentBalance.toFixed(2)}</span>
             </div>
           </div>
         </>

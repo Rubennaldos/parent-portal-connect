@@ -20,10 +20,6 @@
 -- TAMBIÉN:
 --   Nueva función get_parent_wallet_total(uuid) → numeric
 --   Sustituye el .reduce() de fetchWalletData sobre wallet_balance de students.
---
--- REGLA DE NO-CÁLCULO (Regla 11.A):
---   El frontend NUNCA suma ni resta montos.  Solo recibe valores finales y los pinta.
--- ============================================================================
 
 -- ── 1. get_parent_debts_v2 v2.2 ─────────────────────────────────────────────
 -- DROP obligatorio: Postgres no permite cambiar RETURN TABLE con OR REPLACE.
@@ -33,7 +29,11 @@ CREATE OR REPLACE FUNCTION public.get_parent_debts_v2(p_parent_id uuid)
 RETURNS TABLE(
   -- ── Columnas originales (sin cambios — retrocompatible) ─────────────────
   deuda_id                 text,
-  student_id               uuid,
+  student_id--
+-- REGLA DE NO-CÁLCULO (Regla 11.A):
+--   El frontend NUNCA suma ni resta montos.  Solo recibe valores finales y los pinta.
+-- ============================================================================
+               uuid,
   school_id                uuid,
   monto                    numeric,
   descripcion              text,
@@ -212,3 +212,58 @@ $$;
 COMMENT ON FUNCTION public.get_parent_wallet_total(uuid) IS
   '2026-04-23 — Suma wallet_balance de todos los hijos activos de un padre. '
   'Reemplaza el .reduce() sobre students en fetchWalletData (Regla 11.A).';
+
+
+-- ── 3. get_student_debt_total ────────────────────────────────────────────────
+-- Suma la deuda pendiente de UN alumno usando view_student_debts (la misma
+-- fuente que get_parent_debts_v2 y la pestaña Pagos).
+-- Reemplaza la lectura de students.balance en BalanceHero / useStudentBalance:
+-- students.balance solo refleja lo que el trigger fn_sync_student_balance haya
+-- sincronizado; view_student_debts incluye almuerzos, kiosco y deudas huérfanas.
+DROP FUNCTION IF EXISTS public.get_student_debt_total(uuid);
+
+CREATE OR REPLACE FUNCTION public.get_student_debt_total(p_student_id uuid)
+RETURNS numeric
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_id   uuid;
+  v_parent_id   uuid;
+  v_caller_role text;
+  v_total       numeric;
+BEGIN
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN RETURN 0; END IF;
+
+  -- Obtener el padre del alumno para validar permisos
+  SELECT parent_id INTO v_parent_id
+  FROM   public.students
+  WHERE  id = p_student_id AND is_active = true;
+
+  IF v_parent_id IS NULL THEN RETURN 0; END IF;
+
+  SELECT role INTO v_caller_role
+  FROM   public.profiles
+  WHERE  id = v_caller_id;
+
+  -- Solo el padre del alumno o roles admin pueden consultar
+  IF v_caller_role NOT IN ('admin_general', 'gestor_unidad', 'superadmin', 'supervisor_red')
+    AND v_caller_id <> v_parent_id THEN
+    RETURN 0;
+  END IF;
+
+  SELECT COALESCE(SUM(monto), 0)
+  INTO   v_total
+  FROM   public.view_student_debts
+  WHERE  student_id = p_student_id;
+
+  RETURN v_total;
+END;
+$$;
+
+COMMENT ON FUNCTION public.get_student_debt_total(uuid) IS
+  '2026-04-23 — Deuda total de un alumno desde view_student_debts. '
+  'Fuente unificada para BalanceHero y PaymentsTab (elimina discrepancias con students.balance). '
+  'Regla 11.A: el frontend solo recibe el total, no lo calcula.';

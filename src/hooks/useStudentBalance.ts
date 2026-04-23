@@ -8,8 +8,15 @@ interface UseStudentBalanceResult {
 }
 
 /**
- * SSOT: devuelve exclusivamente students.balance del alumno seleccionado.
- * No calcula deudas ni combina montos en frontend.
+ * Devuelve la deuda total del alumno desde view_student_debts (vía RPC).
+ *
+ * FUENTE ÚNICA: get_student_debt_total usa view_student_debts, la misma fuente
+ * que PaymentsTab / get_parent_debts_v2.  Esto elimina la discrepancia con
+ * students.balance, que solo refleja lo que el trigger fn_sync_student_balance
+ * haya sincronizado y no incluye almuerzos huérfanos ni kiosco pendiente.
+ *
+ * Regla 11.A — Cero Cálculos en el Cliente: el hook recibe el total de DB,
+ * no lo calcula.
  */
 export function useStudentBalance(studentId: string | null): UseStudentBalanceResult {
   const [balance, setBalance] = useState<number | null>(null);
@@ -35,10 +42,7 @@ export function useStudentBalance(studentId: string | null): UseStudentBalanceRe
       }
 
       const { data, error: queryError } = await supabase
-        .from('students')
-        .select('balance')
-        .eq('id', studentId)
-        .maybeSingle();
+        .rpc('get_student_debt_total', { p_student_id: studentId });
 
       if (!isMounted) return;
 
@@ -49,7 +53,7 @@ export function useStudentBalance(studentId: string | null): UseStudentBalanceRe
         return;
       }
 
-      setBalance(Number(data?.balance ?? 0));
+      setBalance(Number(data ?? 0));
       setIsLoading(false);
     };
 
