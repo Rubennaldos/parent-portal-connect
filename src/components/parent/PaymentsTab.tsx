@@ -43,7 +43,12 @@ interface StudentDebt {
   student_balance: number;
   wallet_balance: number;
   school_id: string;
+  /** Deuda bruta del alumno — proviene de summary_student_total (DB v2.2) */
   total_debt: number;
+  /** Lo que puede pagar ahora (excl. vouchers en revisión) — DB v2.2 */
+  student_payable: number;
+  /** Lo que ya está en revisión — DB v2.2 */
+  student_in_review: number;
   pending_transactions: PendingTransaction[];
 }
 
@@ -232,10 +237,14 @@ export const PaymentsTab = ({
         voucher_status:           'pending' | 'rejected' | null;
         voucher_request_id:       string | null;
         voucher_rejection_reason: string | null;
-        // v2.1 — campos de resumen (mismo valor en cada fila, calculados en DB)
+        // v2.1 — resumen GLOBAL (mismo valor en cada fila)
         summary_total_bruto:      number | null;
         summary_in_review:        number | null;
         summary_neto_payable:     number | null;
+        // v2.2 — resumen POR ALUMNO (varía según student_id)
+        summary_student_total:     number | null;
+        summary_student_payable:   number | null;
+        summary_student_in_review: number | null;
       }>;
 
       if (students.length === 0) {
@@ -276,15 +285,19 @@ export const PaymentsTab = ({
           voucher_rejection_reason: row.voucher_rejection_reason ?? null,
         }));
 
-        const totalDebt = mappedTransactions.reduce((sum, t) => sum + t.amount, 0);
+        // Totales por alumno: vienen de las window functions de DB (v2.2).
+        // La primera fila tiene el mismo valor para todo el grupo del alumno.
+        const firstRow = rows[0];
         debtsData.push({
-          student_id:      student.id,
-          student_name:    student.full_name,
-          student_photo:   student.photo_url,
-          student_balance: student.balance    ?? 0,
-          wallet_balance:  student.wallet_balance ?? 0,
-          school_id:       student.school_id,
-          total_debt:      totalDebt,
+          student_id:        student.id,
+          student_name:      student.full_name,
+          student_photo:     student.photo_url,
+          student_balance:   student.balance         ?? 0,
+          wallet_balance:    student.wallet_balance  ?? 0,
+          school_id:         student.school_id,
+          total_debt:        Number(firstRow?.summary_student_total     ?? 0),
+          student_payable:   Number(firstRow?.summary_student_payable   ?? 0),
+          student_in_review: Number(firstRow?.summary_student_in_review ?? 0),
           pending_transactions: mappedTransactions,
         });
       }
@@ -350,16 +363,20 @@ export const PaymentsTab = ({
   const fetchWalletData = async () => {
     setLoadingWallet(true);
     try {
-      const { data: students, error: studentsError } = await supabase
-        .from('students')
-        .select('id, full_name, wallet_balance')
-        .eq('parent_id', userId)
-        .eq('is_active', true);
+      // Suma de wallet_balance: viene del RPC (Regla 11.A — sin .reduce() financiero)
+      const [studentsResult, walletTotalResult] = await Promise.all([
+        supabase
+          .from('students')
+          .select('id, full_name, wallet_balance')
+          .eq('parent_id', userId)
+          .eq('is_active', true),
+        supabase.rpc('get_parent_wallet_total', { p_parent_id: userId }),
+      ]);
 
-      if (studentsError) throw studentsError;
+      if (studentsResult.error) throw studentsResult.error;
 
-      const allStudents = students ?? [];
-      const total = allStudents.reduce((sum, s) => sum + (Number(s.wallet_balance) || 0), 0);
+      const allStudents = studentsResult.data ?? [];
+      const total = Number(walletTotalResult.data ?? 0);
       setTotalWalletBalance(total);
 
       if (total > 0) {
@@ -529,14 +546,24 @@ export const PaymentsTab = ({
       ));
     }
     setSelectedDebt(debt);
-    // Calcular el total seleccionado antes de abrir el selector (para la regla de S/ 700).
-    // Excluir transacciones con voucher_status='pending' (ya en revisión):
-    // el servidor embebe ese estado en cada tx vía get_parent_debts_v2 (Ley de No-Cálculo).
+    // Total para el umbral SUNAT (S/ 700): usar el valor por alumno que viene de DB.
+    // Si el padre desmarcó ítems manualmente (selección parcial), calcular solo lo seleccionado.
     const existingSelection = selectedTxByStudent.get(debt.student_id);
-    const effectiveIds = existingSelection && existingSelection.size > 0 ? existingSelection : new Set(allIds);
-    const total = debt.pending_transactions
-      .filter(tx => effectiveIds.has(tx.id) && tx.voucher_status !== 'pending')
-      .reduce((sum, tx) => sum + tx.amount, 0);
+    const hasCustomSelection =
+      existingSelection !== undefined &&
+      existingSelection.size > 0 &&
+      existingSelection.size < allIds.length;
+
+    let total: number;
+    if (hasCustomSelection) {
+      // Selección parcial del padre: calcular solo los ítems marcados (estado UI puro).
+      total = debt.pending_transactions
+        .filter(tx => existingSelection!.has(tx.id) && tx.voucher_status !== 'pending')
+        .reduce((sum, tx) => sum + tx.amount, 0);
+    } else {
+      // Caso por defecto: usar el total pagable calculado en DB (Regla 11.A).
+      total = debt.student_payable;
+    }
     // Checkout integral: deudas seleccionadas + recargas en carrito.
     setPendingInvoiceTotal(total + rechargeCartTotal);
     setShowInvoiceSelector(true);
@@ -588,7 +615,8 @@ export const PaymentsTab = ({
   const getPaymentData = (debt: StudentDebt) => {
     const selectedIds = getSelectedTx(debt.student_id);
     const allIds = debt.pending_transactions.map(t => t.id);
-    const effectiveIds = selectedIds.size > 0 ? selectedIds : new Set(allIds);
+    const isDefaultSelection = selectedIds.size === 0;
+    const effectiveIds = isDefaultSelection ? new Set(allIds) : selectedIds;
 
     // Excluir transacciones que ya tienen un voucher pendiente (voucher_status='pending').
     // El servidor embebe ese campo en cada tx via get_parent_debts_v2.
@@ -611,7 +639,12 @@ export const PaymentsTab = ({
       }
     });
 
-    const totalSelected = selectedTxList.reduce((sum, tx) => sum + tx.amount, 0);
+    // Total seleccionado:
+    //  · Caso por defecto (todos los ítems): usar valor precalculado de DB (Regla 11.A).
+    //  · Selección parcial del padre: calcular solo los ítems marcados (estado UI puro).
+    const totalSelected = isDefaultSelection
+      ? debt.student_payable
+      : selectedTxList.reduce((sum, tx) => sum + tx.amount, 0);
     const count = selectedTxList.length;
     const description = `Pago de deuda: ${count} compra(s) — ${debt.student_name}`;
 
@@ -1078,11 +1111,9 @@ export const PaymentsTab = ({
         const isExpanded = expandedStudentId === debt.student_id;
         const initials = debt.student_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
-        // Monto por alumno: solo lo pagable (sin "en revisión")
-        const studentPayable = debt.pending_transactions
-          .filter(tx => voucherStatuses.get(tx.id)?.status !== 'pending')
-          .reduce((s, tx) => s + tx.amount, 0);
-        const studentInReview = Math.max(0, debt.total_debt - studentPayable);
+        // Monto por alumno: proviene de la DB (v2.2) — Regla 11.A Cero Cálculos en el Cliente.
+        const studentPayable  = debt.student_payable;
+        const studentInReview = debt.student_in_review;
 
         return (
           <div
