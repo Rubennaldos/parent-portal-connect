@@ -332,7 +332,7 @@ serve(async (req) => {
   // ══════════════════════════════════════════════════════════════════════
   const { data: existingEvent } = await supabase
     .from("gateway_webhook_events")
-    .select("id, processed_at, processing_error")
+    .select("id, processed_at, processing_error, gateway_status")
     .eq("provider_name", "izipay")
     .eq("external_event_id", orderId)
     .maybeSingle();
@@ -340,7 +340,7 @@ serve(async (req) => {
   let webhookEventId: string | null = existingEvent?.id ?? null;
 
   if (existingEvent) {
-    if (existingEvent.processed_at && !existingEvent.processing_error) {
+    if (existingEvent.processed_at && !existingEvent.processing_error && existingEvent.gateway_status === "success") {
       // Este path solo se llega si logs_pasarela NO tenía status='applied'
       // (raro, puede pasar si la tabla fue limpiada manualmente).
       // Por seguridad, devolvemos 200 igualmente.
