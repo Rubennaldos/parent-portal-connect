@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { Plus, Trash2, Package, Percent, X, Check, ShoppingCart, Sparkles, Zap, Gift, Tag, Building2 } from 'lucide-react';
+import { Plus, Trash2, Package, Percent, X, Check, ShoppingCart, Sparkles, Zap, Gift, Tag, Building2, Pencil, Archive } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 
 interface Product {
@@ -33,6 +33,8 @@ interface Combo {
   school_ids: string[];
   applyToAllSchools: boolean;
   active: boolean;
+  valid_from: string | null;
+  valid_until: string | null;
 }
 
 interface Promotion {
@@ -45,6 +47,8 @@ interface Promotion {
   school_ids: string[];
   applyToAllSchools: boolean;
   active: boolean;
+  valid_from?: string | null;
+  valid_until?: string | null;
 }
 
 export const CombosPromotionsManager = () => {
@@ -57,6 +61,7 @@ export const CombosPromotionsManager = () => {
   
   const [showComboModal, setShowComboModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
+  const [editingComboId, setEditingComboId] = useState<string | null>(null);
   
   const [comboForm, setComboForm] = useState<Combo>({
     name: '',
@@ -65,6 +70,8 @@ export const CombosPromotionsManager = () => {
     school_ids: [],
     applyToAllSchools: true,
     active: true,
+    valid_from: null,
+    valid_until: null,
   });
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,6 +92,10 @@ export const CombosPromotionsManager = () => {
   });
 
   const [step, setStep] = useState(1);
+  const [comboStatusFilter, setComboStatusFilter] = useState<string>('all');
+  const [comboSchoolFilter, setComboSchoolFilter] = useState<string>('all');
+  const [promoStatusFilter, setPromoStatusFilter] = useState<string>('all');
+  const [promoSchoolFilter, setPromoSchoolFilter] = useState<string>('all');
 
   useEffect(() => {
     fetchProducts();
@@ -151,16 +162,23 @@ export const CombosPromotionsManager = () => {
 
   const fetchCombos = async () => {
     try {
-      const { data, error } = await supabase
-        .from('combos')
-        .select('*')
-        .eq('active', true)
-        .order('created_at', { ascending: false });
+      const [{ data, error }, { data: runtimeData }] = await Promise.all([
+        supabase.from('combos').select('*').order('created_at', { ascending: false }),
+        supabase.from('v_combos_runtime_status').select('id, runtime_status, is_sellable_now'),
+      ]);
 
       if (error) {
         console.error('Error fetching combos:', error);
         return;
       }
+
+      const runtimeById = new Map<string, { runtime_status: string; is_sellable_now: boolean }>();
+      (runtimeData || []).forEach((row: any) => {
+        runtimeById.set(row.id, {
+          runtime_status: row.runtime_status,
+          is_sellable_now: Boolean(row.is_sellable_now),
+        });
+      });
 
       // Cargar items de cada combo por separado
       const combosWithItems = await Promise.all(
@@ -188,7 +206,13 @@ export const CombosPromotionsManager = () => {
             product: products?.find(p => p.id === item.product_id)
           }));
 
-          return { ...combo, combo_items };
+          const runtime = runtimeById.get(combo.id);
+          return {
+            ...combo,
+            runtime_status: runtime?.runtime_status ?? getComboRuntimeStatus(combo),
+            is_sellable_now: runtime?.is_sellable_now ?? false,
+            combo_items,
+          };
         })
       );
 
@@ -199,11 +223,34 @@ export const CombosPromotionsManager = () => {
   };
 
   const fetchPromotions = async () => {
-    const { data } = await supabase
-      .from('promotions')
-      .select('*')
-      .order('created_at', { ascending: false });
-    setPromotions(data || []);
+    const [{ data }, { data: runtimeData }] = await Promise.all([
+      supabase
+        .from('promotions')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('v_promotions_runtime_status')
+        .select('id, runtime_status, is_active_now'),
+    ]);
+
+    const runtimeById = new Map<string, { runtime_status: string; is_active_now: boolean }>();
+    (runtimeData || []).forEach((row: any) => {
+      runtimeById.set(row.id, {
+        runtime_status: row.runtime_status,
+        is_active_now: Boolean(row.is_active_now),
+      });
+    });
+
+    const promotionsWithRuntime = (data || []).map((promo: any) => {
+      const runtime = runtimeById.get(promo.id);
+      return {
+        ...promo,
+        runtime_status: runtime?.runtime_status ?? getPromotionRuntimeStatus(promo),
+        is_active_now: runtime?.is_active_now ?? false,
+      };
+    });
+
+    setPromotions(promotionsWithRuntime);
   };
 
   const addProductToCombo = () => {
@@ -240,6 +287,15 @@ export const CombosPromotionsManager = () => {
       return;
     }
 
+    if (comboForm.valid_from && comboForm.valid_until && comboForm.valid_from > comboForm.valid_until) {
+      toast({
+        variant: 'destructive',
+        title: 'Rango inválido',
+        description: 'La fecha de inicio no puede ser mayor que la fecha fin.',
+      });
+      return;
+    }
+
     const selectedSchools = comboForm.applyToAllSchools ? schools.map(s => s.id) : comboForm.school_ids;
 
     if (selectedSchools.length === 0) {
@@ -248,18 +304,55 @@ export const CombosPromotionsManager = () => {
     }
 
     try {
-      const { data: combo, error: comboError } = await supabase
-        .from('combos')
-        .insert({ 
-          name: comboForm.name, 
-          combo_price: comboForm.combo_price, 
-          active: comboForm.active,
-          school_ids: selectedSchools
-        })
+      let shouldCreateNewVersion = false;
+      if (editingComboId) {
+        const { data: hasSales, error: salesCheckError } = await supabase.rpc('combo_has_sales', {
+          p_combo_id: editingComboId,
+        });
+
+        if (!salesCheckError && hasSales === true) {
+          const shouldUpdateCurrent = window.confirm(
+            'Este combo ya tiene ventas históricas.\n\nAceptar: actualizar este mismo combo.\nCancelar: crear un combo nuevo basado en este.'
+          );
+          shouldCreateNewVersion = !shouldUpdateCurrent;
+        }
+      }
+
+      const comboPayload = {
+        name: comboForm.name,
+        combo_price: comboForm.combo_price,
+        active: comboForm.active,
+        school_ids: selectedSchools,
+        school_id: selectedSchools[0] || null,
+        valid_from: comboForm.valid_from,
+        valid_until: comboForm.valid_until,
+        is_archived: false,
+      };
+
+      const isEditingInPlace = Boolean(editingComboId && !shouldCreateNewVersion);
+      const comboQuery = isEditingInPlace
+        ? supabase
+            .from('combos')
+            .update(comboPayload)
+            .eq('id', editingComboId)
+        : supabase
+            .from('combos')
+            .insert(comboPayload);
+
+      const { data: combo, error: comboError } = await comboQuery
         .select()
         .single();
 
       if (comboError) throw comboError;
+
+      // En edición, reemplazamos la receta del combo por la nueva.
+      if (isEditingInPlace) {
+        const { error: deleteItemsError } = await supabase
+          .from('combo_items')
+          .delete()
+          .eq('combo_id', editingComboId);
+        if (deleteItemsError) throw deleteItemsError;
+      }
 
       const items = comboForm.products.map(p => ({
         combo_id: combo.id,
@@ -270,7 +363,16 @@ export const CombosPromotionsManager = () => {
       const { error: itemsError } = await supabase.from('combo_items').insert(items);
       if (itemsError) throw itemsError;
 
-      toast({ title: '🎉 ¡Combo creado!', description: 'Listo para vender' });
+      toast({
+        title: editingComboId
+          ? (shouldCreateNewVersion ? '🧬 Nuevo combo creado' : '✅ Combo actualizado')
+          : '🎉 ¡Combo creado!',
+        description: editingComboId
+          ? (shouldCreateNewVersion
+            ? 'Se creó una nueva versión y se preservó el historial del combo anterior.'
+            : 'Se guardaron los cambios correctamente')
+          : 'Listo para vender',
+      });
       setShowComboModal(false);
       resetComboForm();
       fetchCombos();
@@ -324,6 +426,49 @@ export const CombosPromotionsManager = () => {
     }
   };
 
+  const editCombo = (combo: any) => {
+    const comboProducts = (combo.combo_items || [])
+      .filter((item: any) => item?.product?.id)
+      .map((item: any) => ({
+        product_id: item.product.id,
+        quantity: Number(item.quantity) || 1,
+      }));
+
+    const schoolsFromCombo: string[] = Array.isArray(combo.school_ids) ? combo.school_ids : [];
+    setEditingComboId(combo.id);
+    setComboForm({
+      name: combo.name || '',
+      combo_price: Number(combo.combo_price) || 0,
+      products: comboProducts,
+      school_ids: schoolsFromCombo,
+      applyToAllSchools: schoolsFromCombo.length === 0 || schoolsFromCombo.length === schools.length,
+      active: Boolean(combo.active),
+      valid_from: combo.valid_from || null,
+      valid_until: combo.valid_until || null,
+    });
+    setSearchQuery('');
+    setStep(1);
+    setShowComboModal(true);
+  };
+
+  const archiveCombo = async (combo: any) => {
+    const ok = window.confirm(`¿Archivar el combo "${combo.name}"?\nDejará de aparecer en la lista activa y en ventas vigentes.`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from('combos')
+      .update({ is_archived: true, active: false })
+      .eq('id', combo.id);
+
+    if (error) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+      return;
+    }
+
+    toast({ title: '🗂️ Combo archivado', description: 'El combo ya no se mostrará en la lista activa.' });
+    fetchCombos();
+  };
+
   const togglePromoStatus = async (id: string, currentStatus: boolean) => {
     const { error } = await supabase.from('promotions').update({ active: !currentStatus }).eq('id', id);
     if (!error) {
@@ -333,13 +478,16 @@ export const CombosPromotionsManager = () => {
   };
 
   const resetComboForm = () => {
+    setEditingComboId(null);
     setComboForm({ 
       name: '', 
       combo_price: 0, 
       products: [], 
       school_ids: [],
       applyToAllSchools: true,
-      active: true 
+      active: true,
+      valid_from: null,
+      valid_until: null,
     });
     setSearchQuery(''); // Limpiar búsqueda al resetear
     setStep(1);
@@ -368,6 +516,132 @@ export const CombosPromotionsManager = () => {
     return map[category] || '📦';
   };
 
+  const todayLima = () =>
+    new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+
+  const getComboRuntimeStatus = (combo: any): string => {
+    if (combo?.is_archived) return 'archivado';
+    if (!combo?.active) return 'pausado';
+
+    const now = todayLima();
+    const start = combo?.valid_from ? new Date(`${combo.valid_from}T00:00:00`) : null;
+    const end = combo?.valid_until ? new Date(`${combo.valid_until}T23:59:59`) : null;
+
+    if (start && now < start) return 'programado';
+    if (end && now > end) return 'vencido';
+    return 'vigente';
+  };
+
+  const getPromotionRuntimeStatus = (promo: any): string => {
+    if (!promo?.active) return 'pausada';
+
+    const now = todayLima();
+    const start = promo?.valid_from ? new Date(`${promo.valid_from}T00:00:00`) : null;
+    const end = promo?.valid_until ? new Date(`${promo.valid_until}T23:59:59`) : null;
+
+    if (start && now < start) return 'programada';
+    if (end && now > end) return 'vencida';
+    return 'vigente';
+  };
+
+  const statusBadgeClass = (status: string): string => {
+    switch (status) {
+      case 'vigente':
+        return 'bg-green-50 text-green-700 border-green-200';
+      case 'programado':
+      case 'programada':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'vencido':
+      case 'vencida':
+        return 'bg-gray-100 text-gray-700 border-gray-300';
+      case 'pausado':
+      case 'pausada':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'archivado':
+        return 'bg-rose-50 text-rose-700 border-rose-200';
+      default:
+        return '';
+    }
+  };
+
+  const getSchoolNames = (schoolIds: string[] | null | undefined): string[] => {
+    if (!schoolIds || schoolIds.length === 0) return ['Todas las sedes'];
+    return schoolIds
+      .map((id) => schools.find((s) => s.id === id)?.name)
+      .filter(Boolean);
+  };
+
+  const filteredCombos = useMemo(() => {
+    return combos.filter((combo) => {
+      const status = combo.runtime_status || getComboRuntimeStatus(combo);
+      const schoolIds: string[] = Array.isArray(combo.school_ids) ? combo.school_ids : [];
+      const matchStatus = comboStatusFilter === 'all' || status === comboStatusFilter;
+      const matchSchool =
+        comboSchoolFilter === 'all'
+          ? true
+          : schoolIds.length === 0
+            ? comboSchoolFilter === 'global'
+            : schoolIds.includes(comboSchoolFilter);
+      return matchStatus && matchSchool;
+    });
+  }, [combos, comboStatusFilter, comboSchoolFilter, schools]);
+
+  const filteredPromotions = useMemo(() => {
+    return promotions.filter((promo) => {
+      const status = promo.runtime_status || getPromotionRuntimeStatus(promo);
+      const schoolIds: string[] = Array.isArray(promo.school_ids) ? promo.school_ids : [];
+      const matchStatus = promoStatusFilter === 'all' || status === promoStatusFilter;
+      const matchSchool =
+        promoSchoolFilter === 'all'
+          ? true
+          : schoolIds.length === 0
+            ? promoSchoolFilter === 'global'
+            : schoolIds.includes(promoSchoolFilter);
+      return matchStatus && matchSchool;
+    });
+  }, [promotions, promoStatusFilter, promoSchoolFilter, schools]);
+
+  const comboCounts = useMemo(() => {
+    const counts = {
+      total: combos.length,
+      visible: filteredCombos.length,
+      vigente: 0,
+      programado: 0,
+      pausado: 0,
+      vencido: 0,
+      archivado: 0,
+    };
+
+    combos.forEach((combo) => {
+      const status = combo.runtime_status || getComboRuntimeStatus(combo);
+      if (status in counts) {
+        counts[status as keyof typeof counts] += 1;
+      }
+    });
+
+    return counts;
+  }, [combos, filteredCombos]);
+
+  const promotionCounts = useMemo(() => {
+    const counts = {
+      total: promotions.length,
+      visible: filteredPromotions.length,
+      vigente: 0,
+      programada: 0,
+      pausada: 0,
+      vencida: 0,
+    };
+
+    promotions.forEach((promo) => {
+      const status = promo.runtime_status || getPromotionRuntimeStatus(promo);
+      if (status in counts) {
+        counts[status as keyof typeof counts] += 1;
+      }
+    });
+
+    return counts;
+  }, [promotions, filteredPromotions]);
+
   return (
     <div className="space-y-6">
       <Tabs defaultValue="combos" className="w-full">
@@ -395,21 +669,67 @@ export const CombosPromotionsManager = () => {
             </Button>
           </div>
 
-          {combos.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-sm text-muted-foreground">Filtrar por estado</Label>
+              <Select value={comboStatusFilter} onValueChange={setComboStatusFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos los estados" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="vigente">Vigentes</SelectItem>
+                  <SelectItem value="programado">Programados</SelectItem>
+                  <SelectItem value="pausado">Pausados</SelectItem>
+                  <SelectItem value="vencido">Vencidos</SelectItem>
+                  <SelectItem value="archivado">Archivados</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-sm text-muted-foreground">Filtrar por sede</Label>
+              <Select value={comboSchoolFilter} onValueChange={setComboSchoolFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas las sedes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las sedes</SelectItem>
+                  <SelectItem value="global">Global (todas)</SelectItem>
+                  {schools.map((school) => (
+                    <SelectItem key={school.id} value={school.id}>
+                      {school.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+            <Badge variant="outline" className="justify-center py-2">Total: {comboCounts.total}</Badge>
+            <Badge variant="outline" className="justify-center py-2">Viendo: {comboCounts.visible}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('vigente')}`}>Vigentes: {comboCounts.vigente}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('programado')}`}>Programados: {comboCounts.programado}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('pausado')}`}>Pausados: {comboCounts.pausado}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('vencido')}`}>Vencidos: {comboCounts.vencido}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('archivado')}`}>Archivados: {comboCounts.archivado}</Badge>
+          </div>
+
+          {filteredCombos.length === 0 ? (
             <Card className="border-dashed border-2">
               <CardContent className="py-16 text-center">
                 <Gift className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-semibold mb-2">No hay combos aún</h3>
-                <p className="text-muted-foreground mb-4">Crea tu primer combo para aumentar ventas</p>
+                <h3 className="text-lg font-semibold mb-2">No hay combos para ese filtro</h3>
+                <p className="text-muted-foreground mb-4">Ajusta filtros o crea un combo nuevo</p>
                 <Button onClick={() => setShowComboModal(true)} variant="outline">
                   <Plus className="h-4 w-4 mr-2" />
-                  Crear Primer Combo
+                  Crear Combo
                 </Button>
               </CardContent>
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {combos.map(combo => (
+              {filteredCombos.map(combo => (
                 <Card key={combo.id} className={`hover:shadow-xl transition-all duration-300 ${combo.active ? 'border-2 border-purple-200' : 'opacity-60'}`}>
                   <CardHeader className="bg-gradient-to-br from-purple-50 to-pink-50 pb-4">
                     <div className="flex justify-between items-start">
@@ -422,9 +742,21 @@ export const CombosPromotionsManager = () => {
                           S/ {combo.combo_price?.toFixed(2)}
                         </div>
                       </div>
-                      <Badge variant={combo.active ? 'default' : 'secondary'} className="text-xs">
-                        {combo.active ? '✓ Activo' : '⏸ Pausado'}
+                      <Badge variant="outline" className={`text-xs ${statusBadgeClass(combo.runtime_status)}`}>
+                        {combo.runtime_status || getComboRuntimeStatus(combo)}
                       </Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {getSchoolNames(combo.school_ids).slice(0, 3).map((schoolName) => (
+                        <Badge key={`${combo.id}-${schoolName}`} variant="secondary" className="text-[10px]">
+                          {schoolName}
+                        </Badge>
+                      ))}
+                      {getSchoolNames(combo.school_ids).length > 3 && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          +{getSchoolNames(combo.school_ids).length - 3}
+                        </Badge>
+                      )}
                     </div>
                   </CardHeader>
                   <CardContent className="pt-4">
@@ -449,6 +781,24 @@ export const CombosPromotionsManager = () => {
                     >
                       {combo.active ? '⏸ Pausar' : '▶ Activar'}
                     </Button>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => editCombo(combo)}
+                      >
+                        <Pencil className="h-4 w-4 mr-1" />
+                        Editar
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => archiveCombo(combo)}
+                      >
+                        <Archive className="h-4 w-4 mr-1" />
+                        Eliminar
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -469,21 +819,65 @@ export const CombosPromotionsManager = () => {
             </Button>
           </div>
 
-          {promotions.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-sm text-muted-foreground">Filtrar por estado</Label>
+              <Select value={promoStatusFilter} onValueChange={setPromoStatusFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos los estados" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="vigente">Vigentes</SelectItem>
+                  <SelectItem value="programada">Programadas</SelectItem>
+                  <SelectItem value="pausada">Pausadas</SelectItem>
+                  <SelectItem value="vencida">Vencidas</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-sm text-muted-foreground">Filtrar por sede</Label>
+              <Select value={promoSchoolFilter} onValueChange={setPromoSchoolFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas las sedes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las sedes</SelectItem>
+                  <SelectItem value="global">Global (todas)</SelectItem>
+                  {schools.map((school) => (
+                    <SelectItem key={school.id} value={school.id}>
+                      {school.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+            <Badge variant="outline" className="justify-center py-2">Total: {promotionCounts.total}</Badge>
+            <Badge variant="outline" className="justify-center py-2">Viendo: {promotionCounts.visible}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('vigente')}`}>Vigentes: {promotionCounts.vigente}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('programada')}`}>Programadas: {promotionCounts.programada}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('pausada')}`}>Pausadas: {promotionCounts.pausada}</Badge>
+            <Badge variant="outline" className={`justify-center py-2 ${statusBadgeClass('vencida')}`}>Vencidas: {promotionCounts.vencida}</Badge>
+          </div>
+
+          {filteredPromotions.length === 0 ? (
             <Card className="border-dashed border-2">
               <CardContent className="py-16 text-center">
                 <Percent className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-semibold mb-2">No hay promociones aún</h3>
-                <p className="text-muted-foreground mb-4">Crea descuentos para impulsar tus ventas</p>
+                <h3 className="text-lg font-semibold mb-2">No hay promociones para ese filtro</h3>
+                <p className="text-muted-foreground mb-4">Ajusta filtros o crea una promoción nueva</p>
                 <Button onClick={() => setShowPromoModal(true)} variant="outline">
                   <Sparkles className="h-4 w-4 mr-2" />
-                  Crear Primera Promoción
+                  Crear Promoción
                 </Button>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-3">
-              {promotions.map(promo => (
+              {filteredPromotions.map(promo => (
                 <Card key={promo.id} className={`hover:shadow-lg transition-all duration-300 ${promo.active ? 'border-l-4 border-orange-500' : 'opacity-60'}`}>
                   <CardContent className="p-4">
                     <div className="flex justify-between items-center">
@@ -494,8 +888,8 @@ export const CombosPromotionsManager = () => {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
                             <h3 className="font-bold text-lg">{promo.name}</h3>
-                            <Badge variant={promo.active ? 'default' : 'secondary'}>
-                              {promo.active ? '✓ Activa' : '⏸ Pausada'}
+                            <Badge variant="outline" className={statusBadgeClass(promo.runtime_status)}>
+                              {promo.runtime_status || getPromotionRuntimeStatus(promo)}
                             </Badge>
                           </div>
                           <div className="flex gap-4 text-sm">
@@ -509,6 +903,18 @@ export const CombosPromotionsManager = () => {
                             </div>
                             <div className="px-2 py-0.5 bg-gray-100 rounded text-xs font-medium capitalize">
                               {promo.applies_to === 'all' ? 'Todos los productos' : promo.applies_to}
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {getSchoolNames(promo.school_ids).slice(0, 2).map((schoolName) => (
+                                <Badge key={`${promo.id}-${schoolName}`} variant="secondary" className="text-[10px]">
+                                  {schoolName}
+                                </Badge>
+                              ))}
+                              {getSchoolNames(promo.school_ids).length > 2 && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  +{getSchoolNames(promo.school_ids).length - 2}
+                                </Badge>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -529,12 +935,15 @@ export const CombosPromotionsManager = () => {
       </Tabs>
 
       {/* MODAL: CREAR COMBO */}
-      <Dialog open={showComboModal} onOpenChange={setShowComboModal}>
+      <Dialog open={showComboModal} onOpenChange={(open) => {
+        setShowComboModal(open);
+        if (!open) resetComboForm();
+      }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="text-2xl flex items-center gap-2">
               <Gift className="h-6 w-6 text-purple-600" />
-              Crear Combo Especial
+              {editingComboId ? 'Editar Combo Especial' : 'Crear Combo Especial'}
             </DialogTitle>
           </DialogHeader>
 
@@ -801,13 +1210,60 @@ export const CombosPromotionsManager = () => {
                   )}
                 </div>
 
+                {/* Vigencia */}
+                <div className="border-2 border-dashed rounded-xl p-4 bg-purple-50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Tag className="h-5 w-5 text-purple-600" />
+                    <Label className="text-base font-semibold">Vigencia del combo</Label>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-sm text-muted-foreground">Fecha inicio</Label>
+                      <Input
+                        type="date"
+                        value={comboForm.valid_from || ''}
+                        onChange={(e) => setComboForm({
+                          ...comboForm,
+                          valid_from: e.target.value || null,
+                        })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm text-muted-foreground">Fecha fin (opcional)</Label>
+                      <Input
+                        type="date"
+                        value={comboForm.valid_until || ''}
+                        disabled={comboForm.valid_until === null}
+                        onChange={(e) => setComboForm({
+                          ...comboForm,
+                          valid_until: e.target.value || null,
+                        })}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <Checkbox
+                      checked={comboForm.valid_until === null}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setComboForm({ ...comboForm, valid_until: null });
+                        } else {
+                          const today = new Date().toISOString().slice(0, 10);
+                          setComboForm({ ...comboForm, valid_until: comboForm.valid_from || today });
+                        }
+                      }}
+                    />
+                    <Label className="text-sm">Indefinida (sin fecha de vencimiento)</Label>
+                  </div>
+                </div>
+
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setStep(2)}>
                     ← Anterior
                   </Button>
                   <Button onClick={saveCombo} disabled={comboForm.combo_price <= 0} className="flex-1 h-14 text-lg bg-gradient-to-r from-purple-600 to-pink-600">
                     <Check className="h-5 w-5 mr-2" />
-                    Guardar Combo
+                    {editingComboId ? 'Guardar Cambios' : 'Guardar Combo'}
                   </Button>
                 </div>
               </div>

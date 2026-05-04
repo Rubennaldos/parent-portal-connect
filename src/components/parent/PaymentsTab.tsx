@@ -1249,7 +1249,9 @@ export const PaymentsTab = ({
                   return (
                     <div
                       key={transaction.id}
-                      onClick={() => {
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement | null;
+                        if (target?.closest('[data-no-row-click="true"]')) return;
                         if (isKioskBalance) {
                           setPosDetailStudent({ id: debt.student_id, name: debt.student_name, showHistory: true });
                         } else if (isPos && !isCoveredByPending) {
@@ -1275,12 +1277,23 @@ export const PaymentsTab = ({
                             <ShoppingBag className="h-4 w-4 text-rose-400" />
                           </div>
                         ) : !isCoveredByPending ? (
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="shrink-0"
-                          />
+                          <button
+                            type="button"
+                            data-no-row-click="true"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
+                            }}
+                            className="shrink-0 -m-1 p-1 rounded-md hover:bg-emerald-50 active:scale-95 transition-all"
+                            aria-label={isSelected ? 'Deseleccionar compra' : 'Seleccionar compra'}
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={() => {}}
+                              className="shrink-0 pointer-events-none"
+                            />
+                          </button>
                         ) : (
                           <div className="h-4 w-4 shrink-0 flex items-center justify-center">
                             <Send className="h-3.5 w-3.5 text-blue-400" />

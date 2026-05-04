@@ -581,6 +581,11 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               console.log(`💳 Estudiante ${student.full_name} tiene CUENTA LIBRE - Creando transacción`);
               
               const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
+              if (!lunchOrderId) {
+                throw new Error(
+                  `No se pudo vincular lunch_order_id para ${student.full_name} (${dateStr}). Se canceló para evitar mezcla con topes.`
+                );
+              }
 
               // 🎫 Generar ticket_code T-CAL-
               let ticketCode: string | null = null;
@@ -603,7 +608,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                 created_at: new Date().toISOString(),
                 ticket_code: ticketCode,
                 metadata: {
-                  lunch_order_id: lunchOrderId || null,
+                  lunch_order_id: lunchOrderId,
                   source: 'parent_lunch_calendar',
                   order_date: dateStr
                 },
@@ -616,6 +621,11 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
               // Recargas y almuerzos son cajas 100% independientes.
               // Se crea una transacción pendiente igual que cuenta libre.
               const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
+              if (!lunchOrderId) {
+                throw new Error(
+                  `No se pudo vincular lunch_order_id para ${student.full_name} (${dateStr}). Se canceló para evitar mezcla con topes.`
+                );
+              }
 
               // 🎫 Generar ticket_code T-CAL-
               let ticketCode2: string | null = null;
@@ -638,7 +648,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
                 created_at: new Date().toISOString(),
                 ticket_code: ticketCode2,
                 metadata: {
-                  lunch_order_id: lunchOrderId || null,
+                  lunch_order_id: lunchOrderId,
                   source: 'parent_lunch_calendar',
                   order_date: dateStr
                 },
@@ -656,8 +666,18 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
           .insert(transactions);
 
         if (transError) {
-          console.error('❌ Error insertando transacciones:', transError);
-          throw transError;
+          console.error('❌ Error insertando transacciones — revertiendo pedidos para evitar huérfanos:', transError);
+          // Cancelar todos los lunch_orders recién creados para que no queden sin deuda
+          if (insertedOrders && insertedOrders.length > 0) {
+            const orphanedIds = insertedOrders.map((o: any) => o.id);
+            await supabase
+              .from('lunch_orders')
+              .update({ is_cancelled: true, status: 'cancelled' })
+              .in('id', orphanedIds);
+          }
+          throw new Error(
+            'No se pudieron registrar las deudas de los pedidos. Los pedidos fueron cancelados automáticamente. Por favor intenta de nuevo.'
+          );
         }
       }
 

@@ -38,7 +38,6 @@ import { StudentCard } from '@/components/parent/StudentCard';
 import { RechargeModal } from '@/components/parent/RechargeModal';
 import { WeeklyMenuModal } from '@/components/parent/WeeklyMenuModal';
 import { VersionBadge } from '@/components/VersionBadge';
-import { FreeAccountWarningModal } from '@/components/parent/FreeAccountWarningModal';
 import { FreeAccountOnboardingModal } from '@/components/parent/FreeAccountOnboardingModal';
 import { SpendingLimitsModal } from '@/components/parent/SpendingLimitsModal';
 import { PaymentsTab } from '@/components/parent/PaymentsTab';
@@ -190,7 +189,6 @@ const Index = () => {
   const [showNotifSheet, setShowNotifSheet] = useState(false);
   const [showBalanceSaldo, setShowBalanceSaldo] = useState(false);
   const { count: unreadNotifCount, clearCount: clearNotifCount } = useUnreadNotifCount();
-  const [showFreeAccountWarning, setShowFreeAccountWarning] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
   const [showPhotoConsent, setShowPhotoConsent] = useState(false);
   const [showEditStudent, setShowEditStudent] = useState(false);
@@ -751,35 +749,6 @@ const Index = () => {
 
   // handleConfirmLunchOrder eliminado
 
-  const handleToggleFreeAccount = async (student: Student, newValue: boolean) => {
-    const targetMode = newValue ? 'free' : 'recharge';
-
-    try {
-      const { error } = await supabase.rpc('set_student_payment_mode', {
-        p_student_id: student.id,
-        p_target_mode: targetMode,
-      });
-
-      if (error) throw error;
-
-      toast({
-        title: newValue ? '✅ Cuenta Libre Activada' : '✅ Recargas Activadas',
-        description: newValue
-          ? `${student.full_name} volvió a Cuenta Libre.`
-          : 'Se apagó Cuenta Libre, se apagaron los topes y ya puedes usar Recargas.',
-      });
-
-      await fetchStudents();
-    } catch (error: any) {
-      console.error('Error toggling free account:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error?.message || 'No se pudo cambiar el modo de cuenta',
-      });
-    }
-  };
-
   const handleLogout = async () => {
     await signOut();
   };
@@ -907,6 +876,7 @@ const Index = () => {
                   return (
                     <>
                       <BalanceHero
+                        parentId={user?.id ?? null}
                         studentId={active?.id ?? null}
                         isLoading={loading}
                       />
@@ -1193,7 +1163,7 @@ const Index = () => {
             studentName={selectedStudent.full_name}
             studentId={selectedStudent.id}
             currentBalance={selectedStudent.balance}
-            accountType={selectedStudent.free_account !== false ? 'free' : 'prepaid'}
+            accountType="free"
             onRecharge={handleRecharge}
             suggestedAmount={rechargeSuggestedAmount}
             onSuccess={async () => {
@@ -1273,13 +1243,6 @@ const Index = () => {
             onAccept={handlePhotoConsentAccept}
             studentName={selectedStudent.full_name}
             parentId={user?.id || ''}
-          />
-
-          <FreeAccountWarningModal
-            open={showFreeAccountWarning}
-            onOpenChange={setShowFreeAccountWarning}
-            studentName={selectedStudent.full_name}
-            onConfirmDisable={() => handleToggleFreeAccount(selectedStudent, false)}
           />
 
           <StudentLinksManager

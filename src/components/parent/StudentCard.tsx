@@ -10,11 +10,9 @@ import {
   Settings2,
   Camera,
   TrendingDown,
-  RefreshCw,
   Pencil,
   Clock,
   ShieldCheck,
-  ArrowRight,
   AlertCircle,
   Wrench,
   Phone,
@@ -24,11 +22,7 @@ import {
   UtensilsCrossed,
   ShoppingBag,
   Settings,
-  Loader2,
-  CheckCircle,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { useToast } from '@/hooks/use-toast';
 
 interface Student {
   id: string;
@@ -54,13 +48,12 @@ interface StudentCardProps {
   lunchDebt?: number;
   kioskDebt?: number;
   pendingRechargeAmount?: number;
-  onRecharge: () => void;
+  onRecharge?: () => void;
   onViewHistory: () => void;
-  onViewMenu: () => void;
+  onViewMenu?: () => void;
   onOpenSettings: () => void;
   onPhotoClick: () => void;
   onEdit?: () => void;
-  onUpdate?: () => void;
 }
 
 export function StudentCard({
@@ -69,63 +62,20 @@ export function StudentCard({
   lunchDebt = 0,
   kioskDebt = 0,
   pendingRechargeAmount = 0,
-  onRecharge,
   onViewHistory,
-  onViewMenu,
   onOpenSettings,
   onPhotoClick,
   onEdit,
-  onUpdate,
 }: StudentCardProps) {
   const RECHARGES_MAINTENANCE = true;
-  const { toast } = useToast();
 
-  const isFreeAccount = student.free_account !== false;
-  const isPrepaid = !isFreeAccount;
-  const rechargeEnabled = student.recharge_enabled === true;
-  const hasPositivePrepaidBalance = isPrepaid && student.balance > 0;
-  const isSaldoAFavorMode = isPrepaid && !rechargeEnabled && hasPositivePrepaidBalance;
+  const isPrepaid = false;
+  const isSaldoAFavorMode = false;
   const [showMaintenanceInfo, setShowMaintenanceInfo] = useState(false);
   const [showDebtDetail, setShowDebtDetail] = useState(false);
-  const [showAccountConfig, setShowAccountConfig] = useState(false);
-  const [selectedAccountType, setSelectedAccountType] = useState<'free' | 'prepaid'>(
-    isFreeAccount ? 'free' : 'prepaid'
-  );
-  const [isSaving, setIsSaving] = useState(false);
-  const [showSuccessAnim, setShowSuccessAnim] = useState(false);
-
-  const handleSaveAccountConfig = async () => {
-    setIsSaving(true);
-    try {
-      const targetMode = selectedAccountType === 'free' ? 'free' : 'recharge';
-      const { error } = await supabase.rpc('set_student_payment_mode', {
-        p_student_id: student.id,
-        p_target_mode: targetMode,
-      });
-
-      if (error) throw error;
-
-      // Mostrar animación de éxito 2 segundos, luego cerrar
-      setShowSuccessAnim(true);
-      setTimeout(() => {
-        setShowAccountConfig(false);
-        setShowSuccessAnim(false);
-        onUpdate?.();
-      }, 2000);
-    } catch (err: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error al guardar',
-        description: err?.message || 'No se pudo actualizar la cuenta. Intenta de nuevo.',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-  const prepaidBalance = isPrepaid ? student.balance : 0;
-  const hasKioskDebt = isPrepaid && prepaidBalance < 0;
-  const displayBalance = Math.max(0, prepaidBalance);
-  const isActivePrepaid = isPrepaid && displayBalance > 0;
+  const hasKioskDebt = kioskDebt > 0;
+  const displayBalance = Math.max(0, student.balance ?? 0);
+  const isActivePrepaid = false;
   // hasDebt = hay deuda de almuerzo (independiente del saldo del kiosco)
   const hasLunchDebt = lunchDebt > 0;
   const hasDebt = hasKioskDebt || hasLunchDebt;
@@ -179,9 +129,9 @@ export function StudentCard({
               )}
               <button
                 id={`student-settings-btn-${student.id}`}
-                onClick={(e) => { e.stopPropagation(); setShowAccountConfig(true); }}
+                onClick={(e) => { e.stopPropagation(); onOpenSettings(); }}
                 className="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition-colors"
-                title="Configuración de cuenta"
+                title="Configuración de topes"
               >
                 <Settings className="h-3.5 w-3.5 text-gray-500 hover:text-gray-700 transition-colors" />
               </button>
@@ -242,7 +192,7 @@ export function StudentCard({
                   hasDebt ? 'text-red-600' : isActivePrepaid ? 'text-blue-600' : 'text-green-600'
                 }`}>
                   {hasDebt
-                    ? `S/ ${(lunchDebt + (hasKioskDebt ? Math.abs(prepaidBalance) : 0)).toFixed(2)}`
+                    ? `S/ ${(lunchDebt + (hasKioskDebt ? kioskDebt : 0)).toFixed(2)}`
                     : isActivePrepaid
                     ? `S/ ${displayBalance.toFixed(2)}`
                     : 'Al día'}
@@ -283,7 +233,7 @@ export function StudentCard({
                       <ShoppingBag className="h-3 w-3 text-red-400" />
                       <span className="text-[10px] text-red-700">Deuda Kiosco</span>
                     </div>
-                    <span className="text-[10px] font-semibold text-red-700">S/ {Math.abs(prepaidBalance).toFixed(2)}</span>
+                    <span className="text-[10px] font-semibold text-red-700">S/ {kioskDebt.toFixed(2)}</span>
                   </div>
                 )}
                 {hasLunchDebt && (
@@ -298,7 +248,7 @@ export function StudentCard({
                 <div className="flex items-center justify-between pt-1 border-t border-red-200">
                   <span className="text-[10px] font-bold text-red-800">Total</span>
                   <span className="text-[10px] font-bold text-red-800">
-                    S/ {(lunchDebt + (hasKioskDebt ? Math.abs(prepaidBalance) : 0)).toFixed(2)}
+                    S/ {(lunchDebt + (hasKioskDebt ? kioskDebt : 0)).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -359,15 +309,9 @@ export function StudentCard({
 
         {/* Status badges (compact row) */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {isPrepaid ? (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-300 text-gray-600 bg-gray-50">
-              {isSaldoAFavorMode ? 'Mi saldo a favor' : 'Modo: Recargas'}
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-200 text-gray-500 bg-gray-50">
-              Sin recargas activas
-            </Badge>
-          )}
+          <Badge variant="outline" className="text-[9px] py-0 px-2 border-gray-200 text-gray-500 bg-gray-50">
+            Cuenta libre
+          </Badge>
           {/* Badge de tope */}
           {limitType !== 'none' && currentLimit > 0 && !student.kiosk_disabled && (
             <Badge variant="outline" className="text-[9px] py-0 px-2 border-amber-200 text-amber-600 bg-amber-50">
@@ -440,27 +384,6 @@ export function StudentCard({
 
         {/* Action buttons */}
         <div className="space-y-2 pt-1">
-          {/* Recharge button — HIDDEN during maintenance */}
-          {!RECHARGES_MAINTENANCE && isPrepaid && rechargeEnabled && !student.kiosk_disabled && (
-            <Button
-              onClick={onRecharge}
-              variant="outline"
-              size="sm"
-              className={`w-full h-9 text-xs ${
-                hasKioskDebt
-                  ? 'border-red-200 text-red-700 hover:bg-red-50 font-semibold'
-                  : 'border-blue-200 text-blue-700 hover:bg-blue-50'
-              }`}
-            >
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              {hasKioskDebt
-                ? `Recargar para cubrir deuda (S/ ${Math.abs(prepaidBalance).toFixed(2)})`
-                : displayBalance === 0
-                ? 'Cargar Saldo Kiosco'
-                : 'Recargar Kiosco'}
-            </Button>
-          )}
-
           {/* Bottom row: History + Settings (Settings siempre visible — topes independientes de recargas) */}
           <div className="grid grid-cols-2 gap-2">
             <Button
@@ -473,13 +396,13 @@ export function StudentCard({
               Historial
             </Button>
             <Button
-              onClick={isSaldoAFavorMode ? () => setShowAccountConfig(true) : onOpenSettings}
+              onClick={onOpenSettings}
               variant="ghost"
               size="sm"
               className="h-9 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50"
             >
               <Settings2 className="h-3.5 w-3.5 mr-1" />
-              {isSaldoAFavorMode ? 'Activar Cuenta Libre' : 'Topes'}
+              Topes
             </Button>
           </div>
         </div>
@@ -488,122 +411,6 @@ export function StudentCard({
     </Card>
 
     {/* ── Modales fuera de Card para evitar conflictos de z-index/portal ── */}
-
-    {/* Modal configuración de cuenta */}
-    <Dialog open={showAccountConfig} onOpenChange={setShowAccountConfig}>
-      <DialogContent className="max-w-xs p-4" aria-describedby={undefined}>
-        <DialogHeader className="pb-2">
-          <DialogTitle className="flex items-center gap-2 text-sm font-medium text-gray-700">
-            <Settings className="h-4 w-4 text-gray-400" />
-            Configuración de cuenta
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-2">
-          {/* ── Vista de éxito ── */}
-          {showSuccessAnim ? (
-            <div className="flex flex-col items-center justify-center py-6 gap-3">
-              <CheckCircle className="w-12 h-12 text-green-500 animate-bounce" />
-              <p className="text-sm font-medium text-gray-700 text-center">
-                {selectedAccountType === 'free'
-                  ? '¡Cuenta Libre Activada!'
-                  : '¡Modo Recargas Activado!'}
-              </p>
-              <p className="text-[10px] text-gray-400 text-center">
-                Cerrando en un momento...
-              </p>
-            </div>
-          ) : (
-            <>
-          {/* Opción A: Cuenta Libre */}
-          <button
-            type="button"
-            onClick={() => setSelectedAccountType('free')}
-            className={`w-full text-left rounded-lg border p-3 transition-colors ${
-              selectedAccountType === 'free'
-                ? 'border-gray-400 bg-gray-100'
-                : 'border-gray-200 bg-white hover:bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-700">Cuenta Libre</span>
-              <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${
-                selectedAccountType === 'free'
-                  ? 'border-gray-500 bg-gray-500'
-                  : 'border-gray-300'
-              }`} />
-            </div>
-            <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
-              Consumo sin límite diario. Se paga lo consumido.
-            </p>
-          </button>
-
-          {/* Opción B: Cuenta con Recargas */}
-          <button
-            id="account-type-prepaid-btn"
-            type="button"
-            disabled={hasDebt}
-            onClick={() => !hasDebt && setSelectedAccountType('prepaid')}
-            className={`w-full text-left rounded-lg border p-3 transition-colors ${
-              hasDebt
-                ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
-                : selectedAccountType === 'prepaid'
-                ? 'border-gray-400 bg-gray-100'
-                : 'border-gray-200 bg-white hover:bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-700">Cuenta con Recargas</span>
-              <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${
-                selectedAccountType === 'prepaid' && !hasDebt
-                  ? 'border-gray-500 bg-gray-500'
-                  : 'border-gray-300'
-              }`} />
-            </div>
-            <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
-              Consumo limitado al saldo previo.
-            </p>
-            {hasDebt && (
-              <p className="text-[10px] text-red-400 mt-1 leading-snug">
-                Debe liquidar su deuda actual para cambiar a recargas.
-              </p>
-            )}
-          </button>
-            </>
-          )}
-        </div>
-
-        {/* Botones: solo visibles cuando NO está en animación de éxito */}
-        {!showSuccessAnim && (
-        <div className="flex gap-2 pt-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="flex-1 h-8 text-xs text-gray-500"
-            onClick={() => setShowAccountConfig(false)}
-          >
-            Cancelar
-          </Button>
-          <Button
-            id="account-config-save-btn"
-            size="sm"
-            className="flex-1 h-8 text-xs bg-gray-700 hover:bg-gray-800 text-white"
-            disabled={isSaving}
-            onClick={handleSaveAccountConfig}
-          >
-            {isSaving ? (
-              <>
-                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                Guardando...
-              </>
-            ) : (
-              'Guardar'
-            )}
-          </Button>
-        </div>
-        )}
-      </DialogContent>
-    </Dialog>
 
     {/* Modal informativo de mantenimiento */}
     <Dialog open={showMaintenanceInfo} onOpenChange={setShowMaintenanceInfo}>

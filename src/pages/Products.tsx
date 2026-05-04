@@ -20,6 +20,13 @@ import { PriceMatrix } from '@/components/products/PriceMatrix';
 import { BulkProductUpload } from '@/components/products/BulkProductUpload';
 import { CombosPromotionsManager } from '@/components/products/CombosPromotionsManager';
 import { ProductRequestModal } from '@/components/products/ProductRequestModal';
+import {
+  saveProductScopeAndPrices,
+  isPriceScopeRelatedError,
+  getPriceScopeFriendlyToast,
+  getSupabaseErrorBlob,
+  type ProductSchoolPricePayload,
+} from '@/services/productScopePricingService';
 
 interface Product {
   id: string;
@@ -39,7 +46,7 @@ interface Product {
   wholesale_qty?: number;
   wholesale_price?: number;
   active: boolean;
-  school_ids: string[];
+  school_ids: string[] | null;
   stock_control_enabled: boolean;
   is_verified?: boolean;
 }
@@ -320,7 +327,8 @@ const Products = () => {
 
   const fetchProductSchoolPrices = async () => {
     if (!userSchoolId) return;
-    
+    // Lectura de solo lectura: puebla el mapa visual de precios en el listado de productos.
+    // No es una escritura; el canal de escritura único es el RPC save_product_scope_and_prices.
     try {
       const { data, error } = await supabase
         .from('product_school_prices')
@@ -547,7 +555,55 @@ const Products = () => {
         school_ids: selectedSchools,
       };
 
-      if (editingProductId) {
+      /** Admin / supervisor al editar: alcance + precios por sede en un solo RPC tras guardar el resto (sin school_ids duplicado). */
+      const canAtomicScopePrices =
+        !!editingProductId && (role === 'admin_general' || role === 'supervisor_red');
+
+      if (editingProductId && canAtomicScopePrices) {
+        const { school_ids: _scopeFromForm, ...restProductFields } = productData;
+
+        // Lectura de solo lectura: recupera los precios vigentes para re-enviarlos al RPC
+        // filtrando solo los que siguen dentro del nuevo alcance.
+        // El canal de escritura único sigue siendo el RPC; esta query no modifica nada.
+        const { data: existingPsp, error: pspFetchErr } = await supabase
+          .from('product_school_prices')
+          .select('school_id, price_sale, price_cost, is_available')
+          .eq('product_id', editingProductId);
+
+        if (pspFetchErr) throw pspFetchErr;
+
+        const inScope = (schoolId: string) => {
+          if (selectedSchools === null) return true;
+          if (selectedSchools.length === 0) return false;
+          return selectedSchools.includes(schoolId);
+        };
+
+        const pricesPayload: ProductSchoolPricePayload[] = (existingPsp || [])
+          .filter(row => inScope(row.school_id))
+          .map(row => ({
+            school_id: row.school_id,
+            price_sale: Number(row.price_sale),
+            price_cost: row.price_cost != null ? Number(row.price_cost) : null,
+            is_available: row.is_available ?? true,
+          }));
+
+        const { error: updateErr } = await supabase
+          .from('products')
+          .update(restProductFields)
+          .eq('id', editingProductId);
+        if (updateErr) throw updateErr;
+
+        await saveProductScopeAndPrices({
+          productId: editingProductId,
+          schoolIds: selectedSchools,
+          prices: pricesPayload,
+        });
+
+        toast({
+          title: '✅ Producto actualizado',
+          description: 'Datos y disponibilidad/precios por sede guardados en una sola operación.',
+        });
+      } else if (editingProductId) {
         const { error } = await supabase
           .from('products')
           .update(productData)
@@ -563,8 +619,14 @@ const Products = () => {
       setShowProductModal(false);
       resetForm();
       fetchProducts();
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } catch (error: unknown) {
+      if (isPriceScopeRelatedError(error)) {
+        const fb = getPriceScopeFriendlyToast();
+        toast({ variant: 'destructive', title: fb.title, description: fb.description });
+      } else {
+        const blob = getSupabaseErrorBlob(error);
+        toast({ variant: 'destructive', title: 'Error', description: blob || 'Error al guardar' });
+      }
     }
   };
 

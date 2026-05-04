@@ -1,0 +1,150 @@
+---
+description: Reglas maestras Lima Cafe 28 para integridad financiera y arquitectura
+alwaysApply: true
+---
+
+# REGLAS DE ORO: LIMA CAFE 28 (MASTER)
+
+## ORDEN DE PRECEDENCIA (SI HAY DUDA)
+
+1. Integridad financiera y dinero real
+2. Seguridad e idempotencia
+3. Auditabilidad y trazabilidad
+4. Arquitectura y estructura de carpetas
+5. Legibilidad y estilo
+
+Si dos reglas parecen chocar, se respeta la de mayor precedencia.
+
+---
+
+## #0 - NIVEL ARQUITECTO (EXPLICAR ANTES DE TOCAR)
+
+Antes de tocar codigo:
+- explicar el problema en espanol simple
+- explicar la solucion propuesta sin jerga innecesaria
+- explicar riesgos de negocio, datos y operacion
+
+Si hay riesgo de dinero real, saldos, pagos o procesos masivos:
+- detener ejecucion
+- pedir confirmacion explicita: "Dale?"
+
+---
+
+## #1 - SSOT DE SALDO
+
+- La unica fuente de verdad de saldo es `alumnos.saldo_actual`.
+- Prohibido recalcular saldos o deudas en React.
+
+## #2 - IDEMPOTENCIA DE VOUCHER
+
+- Validar duplicados por `auditoria_vouchers.nro_operacion`.
+- El mismo voucher no puede acreditarse dos veces.
+
+## #3 - ATOMICIDAD SQL
+
+- Voucher + actualizacion de saldo deben ejecutarse en una sola transaccion.
+- Si falla un paso, se revierte todo (rollback).
+
+## #4 - CERO CALCULOS FINANCIEROS EN CLIENTE
+
+- Prohibido usar `.reduce()`, `.map()`, `.filter()` para sumar/restar dinero en `.tsx`.
+- Todo calculo financiero debe venir de SQL (View/Function/RPC).
+
+## #5 - MURALLA DE VALIDACIONES EN DB
+
+- Las reglas criticas se validan en PostgreSQL con `BEFORE INSERT` y `RAISE EXCEPTION`.
+- El frontend no es autoridad de validacion financiera.
+
+## #6 - RELOJ UNICO
+
+- Timestamps y ventanas financieras deben usar reloj de PostgreSQL.
+- Zona horaria oficial: `America/Lima`.
+- Prohibido usar `new Date()` para decisiones financieras.
+
+## #7 - SSOT DE TRANSACTIONS
+
+- Solo `fn_sync_student_balance` puede sincronizar saldos desde `transactions`.
+- Solo `trg_transactions_balance_sync` puede disparar esa sincronizacion.
+- Prohibido crear triggers paralelos de saldo.
+
+---
+
+## #8 - PRESERVACION DE LOGICA CRITICA
+
+- Prohibido eliminar idempotencia, atomicidad o validaciones por "cleanup".
+- Si una logica financiera esta mal ubicada, se mueve al backend (RPC/SQL), no se borra.
+- Si no se entiende una validacion critica, no se toca hasta aclarar su proposito.
+
+## #9 - CHECKLIST PRE-EJECUCION (PRE-FLIGHT)
+
+Antes de cambios de dinero o cambios masivos, listar siempre:
+1. que puede romperse
+2. si el cambio es reversible
+3. si afecta usuarios masivamente
+4. si requiere migracion de base de datos
+
+Luego pausar y esperar "Dale" explicito.
+
+## #10 - CONTROL UNICO DE BALANCE
+
+- Se refuerza #7: no existen caminos alternos para actualizar saldo.
+- Cliente y servicios no "ayudan" a sincronizar saldo fuera de la funcion oficial.
+
+## #11 - TRIPLE RESTRICCION (CIERRE HERMETICO)
+
+### 11.A Cero calculos financieros en cliente
+- El cliente solo muestra resultados finales del servidor.
+
+### 11.B Backend first
+- Limites, bloqueos y reglas de negocio criticas viven en trigger o funcion SQL.
+- Usar prefijos estandar en errores (`SPENDING_LIMIT`, `INSUFFICIENT_BALANCE`, `STUDENT_BLOCKED`, etc.).
+
+### 11.C Reloj de servidor
+- Sin hora de servidor no hay validez financiera.
+- Toda marca temporal relevante debe originarse en DB (`now()` / `timezone('America/Lima', now())`).
+
+## #12 - CERO OPTIMISMO, ANALISIS DE RIESGO
+
+- Antes de SQL sensible, evaluar impacto financiero, operativo y de trazabilidad.
+- Prioridad de negocio: no bloquear ingreso legitimo de dinero por deuda menor.
+- Si aplica excepcion comercial, registrar y auditar la compensacion posterior de saldo.
+
+## #13 - REGLA DE LOS 3 ERRORES (HIGIENE DE CONTEXTO)
+
+- Si fallan 3 intentos sobre el mismo bug sin progreso real, sugerir abrir chat nuevo.
+- Es recomendacion fuerte, no bloqueo absoluto.
+
+---
+
+## #14 - UBICACION POR DOMINIO (APLICA A FRONTEND APP)
+
+- Codigo nuevo de negocio en app web debe ir en `src/features/[modulo]/`.
+- No aplica a `supabase/migrations`, `scripts`, `docs`, `tests`, ni configuraciones globales.
+
+## #15 - ESTRUCTURA DE MODULO FRONTEND
+
+Cada modulo en `src/features/[modulo]/` debe separar:
+- `components/` para UI
+- `hooks/` para estado y orquestacion
+- `services/` para acceso a datos/API/Supabase
+
+## #16 - LIMITE DE TAMANO DE ARCHIVO
+
+- Objetivo: <= 300 lineas por archivo de app cuando sea razonable.
+- Excepciones permitidas: migraciones SQL, archivos generados, listas de tipos extensas, configuracion y casos donde dividir reduce claridad.
+
+## #17 - PROTOCOLO ARCHITECTURE
+
+- Antes de tareas de arquitectura o nuevas rutas/modulos, leer `ARCHITECTURE.md` si existe.
+- Si se crea una ruta de alto impacto, actualizar `ARCHITECTURE.md` en el mismo cambio.
+- Si `ARCHITECTURE.md` no existe o esta desactualizado, reportarlo y proponer actualizacion.
+
+---
+
+## REGLAS DE SOPORTE (COMPATIBILIDAD DEL SISTEMA)
+
+- Auditabilidad obligatoria: registrar cambios financieros en `audit_logs` o `audit_billing_logs`.
+- `school_id`: solo filtrar por `school_id` cuando la tabla realmente tenga esa columna.
+- SQL real: no inventar columnas o tablas fuera de `docs/db_schema.sql`.
+- DRY/SRP/Decoupling: no duplicar logica de negocio y no mezclar UI con SQL.
+

@@ -321,7 +321,17 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
           ...BILLING_EXCLUDED,
         });
 
-      if (transactionError) throw transactionError;
+      if (transactionError) {
+        await supabase
+          .from('lunch_orders')
+          .update({
+            is_cancelled: true,
+            status: 'cancelled',
+            cancellation_reason: 'AUTO: transacción de almuerzo fallida en TeacherLunchCalendar'
+          })
+          .eq('id', insertedOrder.id);
+        throw transactionError;
+      }
 
       toast({
         title: '✅ Pedido confirmado',

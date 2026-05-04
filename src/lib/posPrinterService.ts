@@ -62,6 +62,9 @@ interface CartItem {
 interface SaleData {
   ticketCode: string;
   clientName: string;
+  clientDocument?: string;
+  cashierLabel?: string;
+  documentType?: 'ticket' | 'boleta' | 'factura';
   cart: CartItem[];
   total: number;
   paymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
@@ -154,6 +157,12 @@ export async function printPOSSale(saleData: SaleData): Promise<void> {
   try {
     // Obtener configuración de impresora
     const config = await getPrinterConfig(saleData.schoolId);
+
+    // Para ticket interno siempre mostramos cuadro de impresion profesional
+    // (mantiene control manual del cajero y evita cierres automáticos).
+    if ((saleData.documentType || 'ticket') === 'ticket') {
+      return await printPOSSaleHTML(saleData, config);
+    }
     
     // Intentar QZ Tray con timeout
     let qzAvailable = false;
@@ -302,8 +311,12 @@ async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null):
         businessAddress: config?.business_address || null,
         businessPhone: config?.business_phone || null,
         ticketCode: saleData.ticketCode,
+        ticketCorrelative: saleData.ticketCode,
         date: new Date().toLocaleString('es-PE'),
         clientName: saleData.clientName,
+        clientDocument: saleData.clientDocument,
+        cashierLabel: saleData.cashierLabel,
+        documentType: saleData.documentType || 'ticket',
         items: saleData.cart.map(item => ({
           name: item.product.name,
           quantity: item.quantity,
@@ -313,6 +326,7 @@ async function printPOSSaleHTML(saleData: SaleData, config: PrintConfig | null):
         subtotal: saleData.total / 1.18, // Sin IGV
         tax: saleData.total - (saleData.total / 1.18), // IGV 18%
         total: saleData.total,
+        currency: 'S/',
         paymentMethod: saleData.paymentMethod === 'cash' ? 'Efectivo' :
                        saleData.paymentMethod === 'card' ? 'Tarjeta P.O.S' :
                        saleData.paymentMethod === 'yape' ? 'Yape / Plin' :

@@ -10,12 +10,13 @@ import {
   Loader2, ArrowDownCircle, ArrowUpCircle, Lock, Unlock, RefreshCw, Send,
   ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown,
   Wallet, ChevronDown, ChevronUp, Clock, Eye, AlertTriangle, Globe,
-  ClipboardList,
+  ClipboardList, ScanSearch,
 } from 'lucide-react';
 import { format, subDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CashSession, CashManualEntry, DailySalesTotals } from '@/types/cashRegisterV2';
 import ManualCashEntryModal from './ManualCashEntryModal';
+import InventoryAuditModal from './InventoryAuditModal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -344,6 +345,7 @@ export default function CashDayDashboard({
   // ── 3. Modales ────────────────────────────────────────────────────────────
   const [showIncomeModal, setShowIncomeModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
 
   // ── 4. DrillDown (lupa) ───────────────────────────────────────────────────
   const [drillDown, setDrillDown] = useState<DrillDownState | null>(null);
@@ -1071,6 +1073,22 @@ export default function CashDayDashboard({
             </CardContent>
           </Card>
 
+          {/* ── BOTÓN AUDITORÍA DE INVENTARIO — solo admins, solo modo día ──── */}
+          {!isRangeMode && !isAllSchools && (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAuditModal(true)}
+                className="border-amber-400 text-amber-700 hover:bg-amber-50 font-semibold gap-2"
+              >
+                <ScanSearch className="h-4 w-4" />
+                Auditar Salida de Productos
+              </Button>
+            </div>
+          )}
+
           {/* ── INGRESOS + EGRESOS MANUALES — ocultar en modo rango ─────────── */}
           {!isRangeMode && !isAllSchools && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1170,6 +1188,16 @@ export default function CashDayDashboard({
       {/* ── HISTORIAL DE TURNOS / AUDITORÍA — Solo admins ──────────────── */}
       {isAdmin && !isAllSchools && (
         <CashAuditHistory schoolId={schoolId} />
+      )}
+
+      {/* ── MODAL AUDITORÍA DE INVENTARIO — solo admins ─────────────────── */}
+      {isAdmin && (
+        <InventoryAuditModal
+          open={showAuditModal}
+          onClose={() => setShowAuditModal(false)}
+          schoolId={schoolId}
+          date={selectedDate}
+        />
       )}
 
       {/* ── DRILL-DOWN MODAL (lupa) ───────────────────────────────────────── */}

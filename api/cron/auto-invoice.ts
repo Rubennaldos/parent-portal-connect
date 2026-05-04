@@ -530,14 +530,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const msg = err instanceof Error ? err.message : String(err);
 
       // Intentar guardar el error en logs; si esto también falla, solo lo ignoramos
-      await supabase.from('logs_auto_facturacion').insert({
+      const { error: logInsertErr } = await supabase.from('logs_auto_facturacion').insert({
         school_id:     schoolId,
         fecha_proceso: fechaHoy,
         estado:        'error',
         dias_emitidos: 0,
         monto_total:   0,
         detalle:       { hora_lima: horaLima, error: msg },
-      }).catch(() => undefined);
+      });
+      void logInsertErr;
 
       resultados.push({ school: schoolName, estado: 'error', error: msg });
     }

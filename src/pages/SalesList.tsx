@@ -5,11 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { LogOut, ArrowLeft, BarChart3, FileText, Lock, TrendingUp } from 'lucide-react';
+import { LogOut, ArrowLeft, BarChart3, FileText, Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { SalesList as SalesListGrid } from '@/components/admin/SalesList';
 import { DashboardInteligente } from '@/components/admin/DashboardInteligente';
-import { ReportesAvanzados } from '@/components/admin/ReportesAvanzados';
 import { supabase } from '@/lib/supabase';
 
 interface School {
@@ -19,9 +18,6 @@ interface School {
 
 // Solo estos roles acceden al dashboard analítico
 const DASHBOARD_ROLES = ['admin_general', 'superadmin', 'gestor_unidad'] as const;
-// Admin general, superadmin y gestor_unidad acceden a Reportes Avanzados
-// (gestor_unidad solo ve su propia sede — ya filtrado por schoolId)
-const REPORTES_ROLES  = ['admin_general', 'superadmin', 'gestor_unidad'] as const;
 
 const SalesList = () => {
   const { signOut, user } = useAuth();
@@ -32,12 +28,11 @@ const SalesList = () => {
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
 
   const canViewDashboard = role ? (DASHBOARD_ROLES as readonly string[]).includes(role) : false;
-  const canViewReportes  = role ? (REPORTES_ROLES  as readonly string[]).includes(role) : false;
   // gestor_unidad SOLO ve su propia sede — el selector está bloqueado
   const isGestorUnidad = role === 'gestor_unidad';
 
   // Número de columnas del TabsList
-  const tabCols = 1 + (canViewDashboard ? 1 : 0) + (canViewReportes ? 1 : 0);
+  const tabCols = 1 + (canViewDashboard ? 1 : 0);
 
   useEffect(() => {
     if (canViewAllSchools) loadSchools();
@@ -95,7 +90,7 @@ const SalesList = () => {
             </Button>
             <div>
               <h1 className="text-xl font-bold text-gray-800">Módulo de Ventas</h1>
-              <p className="text-xs text-gray-500">Historial y reportes</p>
+              <p className="text-xs text-gray-500">Operación de ventas y monitoreo en tiempo real</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -132,29 +127,11 @@ const SalesList = () => {
                 Dashboard & Analytics
               </TabsTrigger>
             )}
-
-            {canViewReportes && (
-              <TabsTrigger
-                value="reportes"
-                className="data-[state=active]:bg-slate-800 data-[state=active]:text-white gap-1.5"
-              >
-                <TrendingUp className="h-4 w-4" />
-                Reportes Avanzados
-              </TabsTrigger>
-            )}
           </TabsList>
 
           <TabsContent value="list">
             <SalesListGrid />
           </TabsContent>
-
-          {canViewReportes && (
-            <TabsContent value="reportes">
-              <ReportesAvanzados
-                schoolId={isGestorUnidad ? userSchoolId : null}
-              />
-            </TabsContent>
-          )}
 
           {canViewDashboard && (
             <TabsContent value="dashboard">

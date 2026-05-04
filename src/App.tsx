@@ -43,7 +43,9 @@ import CashRegisterPage from "./pages/CashRegister";
 import CashRegisterV2Page from "./pages/CashRegisterV2";
 import Facturacion from "./pages/Facturacion";
 import Auditoria from "./pages/Auditoria";
+import ReportsCenter from "./pages/ReportsCenter";
 import IziPayTest from "./pages/IziPayTest";
+import PaymentReturn from "./pages/PaymentReturn";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -305,6 +307,16 @@ const App = () => (
               }
             />
 
+            {/* Centro de Reportes — Solo admin_general */}
+            <Route
+              path="/reports-center"
+              element={
+                <ProtectedRoute allowedRoles={['admin_general']}>
+                  <ReportsCenter />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Reclamaciones → redirigir a Control de Acceso */}
             <Route
               path="/reclamaciones"
@@ -317,6 +329,16 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['admin_general', 'superadmin']}>
                   <IziPayTest />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Retorno de pasarela IziPay (modo redirección) — Solo para padres */}
+            <Route
+              path="/pago/retorno"
+              element={
+                <ProtectedRoute allowedRoles={['parent']}>
+                  <PaymentReturn />
                 </ProtectedRoute>
               }
             />

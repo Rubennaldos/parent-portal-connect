@@ -864,7 +864,21 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
           txData.teacher_id = selectedPerson.id;
         }
 
-        await supabase.from('transactions').insert([txData]);
+        const { error: txError } = await supabase.from('transactions').insert([txData]);
+        if (txError) {
+          // Si falla deuda, no dejamos el almuerzo "sin pedido" activo para evitar huérfanos
+          await supabase
+            .from('lunch_orders')
+            .update({
+              is_cancelled: true,
+              status: 'cancelled',
+              cancellation_reason: 'AUTO: transacción fallida en delivery_no_order'
+            })
+            .eq('id', inserted.id);
+          throw new Error(
+            'No se pudo registrar la deuda del almuerzo. El registro fue cancelado automáticamente.'
+          );
+        }
       }
 
       toast({ title: '✅ Almuerzo registrado', description: `${selectedPerson.full_name} — ${category.name} (entregado + deuda generada)` });

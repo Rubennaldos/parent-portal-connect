@@ -1473,11 +1473,7 @@ export const VoucherApproval = () => {
           throw txErr;
         }
 
-        // Activar modo "Con Recargas" usando la misma ruta auditada del portal
-        await supabase.rpc('set_student_payment_mode', {
-          p_student_id: req.student_id,
-          p_target_mode: 'recharge',
-        });
+        // Modo recargas desactivado temporalmente: no cambiar modo de cuenta.
 
         // ══════════════════════════════════════════════════════════
         // 💳 AUTO-SALDAR deudas pendientes del kiosco con el nuevo saldo

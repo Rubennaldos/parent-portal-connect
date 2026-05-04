@@ -240,6 +240,9 @@ const getCategoryIcon = (categoryName: string) => {
 interface LastSalePrintData {
   ticketCode: string;
   clientName: string;
+  clientDocument?: string;
+  cashierLabel?: string;
+  documentType?: 'ticket' | 'boleta' | 'factura';
   cart: any[];
   total: number;
   paymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
@@ -372,10 +375,6 @@ const POS = () => {
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
   /** URL del PDF del último comprobante emitido (para compartir por WhatsApp) */
   const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState<string | null>(null);
-
-  // Estado de ticket generado
-  const [showTicketPrint, setShowTicketPrint] = useState(false);
-  const [ticketData, setTicketData] = useState<any>(null);
 
   // Último ticket vendido — permite reimprimir sin llamar al servidor
   const [lastSalePrintData, setLastSalePrintData] = useState<LastSalePrintData | null>(null);
@@ -901,7 +900,7 @@ const POS = () => {
 
   const fetchCombos = async () => {
     try {
-      // Obtener el school_id del usuario actual
+      // Obtener la sede del usuario actual para filtrar combos vendibles.
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('school_id')
@@ -913,11 +912,55 @@ const POS = () => {
         return;
       }
 
+      // Camino principal (Fase 6): BD decide vigencia con hora Lima + archivado + sede.
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_active_combos_for_school', {
+        p_school_id: profile.school_id,
+      });
+
+      if (!rpcError && Array.isArray(rpcData)) {
+        const rpcCombos = rpcData.map((row: any) => ({
+          id: row.combo_id,
+          name: row.combo_name,
+          description: row.combo_description,
+          combo_price: row.combo_price,
+          image_url: row.combo_image_url,
+          runtime_status: row.runtime_status,
+          combo_items: Array.isArray(row.products)
+            ? row.products.map((productRow: any) => ({
+                quantity: Number(productRow.quantity) || 1,
+                product: {
+                  id: productRow.product_id,
+                  name: productRow.product_name,
+                  price_sale: productRow.price,
+                  has_stock: productRow.has_stock,
+                },
+              }))
+            : [],
+        }));
+
+        setCombos(rpcCombos);
+
+        if (rpcCombos.length > 0) {
+          setOrderedCategories(prev => {
+            const hasComboCategory = prev.some(c => c.id === 'combos');
+            if (!hasComboCategory) {
+              return [...prev, { id: 'combos', label: 'Combos', icon: Gift }];
+            }
+            return prev;
+          });
+        }
+        return;
+      }
+
+      // Fallback temporal: mantiene compatibilidad mientras la migración no esté aplicada.
+      if (rpcError) {
+        console.warn('⚠️ POS - RPC get_active_combos_for_school no disponible, usando fallback legacy:', rpcError.message);
+      }
+
       const { data, error } = await supabase
         .from('combos')
         .select('*')
         .eq('active', true)
-        .eq('school_id', profile.school_id)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -925,16 +968,38 @@ const POS = () => {
         return;
       }
 
+      const nowLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+
+      const legacyScoped = (data || []).filter((combo: any) => {
+        const archived = combo.is_archived === true;
+        if (archived) return false;
+
+        // Compatibilidad dual: combos antiguos con school_id + nuevos con school_ids.
+        const inSchoolIdScope = !combo.school_id || combo.school_id === profile.school_id;
+        const inSchoolIdsScope = !combo.school_ids
+          || combo.school_ids.length === 0
+          || combo.school_ids.includes(profile.school_id);
+        if (!(inSchoolIdScope || inSchoolIdsScope)) return false;
+
+        // Vigencia local solo como fallback hasta que el RPC esté disponible.
+        const validFrom = combo.valid_from ? new Date(`${combo.valid_from}T00:00:00`) : null;
+        const validUntil = combo.valid_until ? new Date(`${combo.valid_until}T23:59:59`) : null;
+
+        if (validFrom && nowLima < validFrom) return false;
+        if (validUntil && nowLima > validUntil) return false;
+        return true;
+      });
+
       // Cargar items de cada combo
       const combosWithItems = await Promise.all(
-        (data || []).map(async (combo) => {
+        legacyScoped.map(async (combo: any) => {
           const { data: items } = await supabase
             .from('combo_items')
             .select('quantity, product_id')
             .eq('combo_id', combo.id);
 
           const productIds = (items || []).map(item => item.product_id);
-          
+
           if (productIds.length === 0) {
             return { ...combo, combo_items: [] };
           }
@@ -954,23 +1019,13 @@ const POS = () => {
         })
       );
 
-      // Filtrar combos que aplican a esta sede
-      const filteredCombos = combosWithItems.filter(combo => {
-        if (!combo.school_ids || combo.school_ids.length === 0) return true;
-        return combo.school_ids.includes(profile.school_id);
-      });
+      setCombos(combosWithItems);
 
-      setCombos(filteredCombos);
-      
-      // Si hay combos, agregar categoría
-      if (filteredCombos.length > 0) {
+      if (combosWithItems.length > 0) {
         setOrderedCategories(prev => {
           const hasComboCategory = prev.some(c => c.id === 'combos');
           if (!hasComboCategory) {
-            return [
-              ...prev,
-              { id: 'combos', label: 'Combos', icon: Gift }
-            ];
+            return [...prev, { id: 'combos', label: 'Combos', icon: Gift }];
           }
           return prev;
         });
@@ -1265,40 +1320,14 @@ const POS = () => {
       };
     }
 
-    // 1. Cuenta Libre (free_account = true o null)
-    if (student.free_account !== false) {
-      const limitBadge = getLimitBadge(student);
-      if (limitBadge) {
-        return { canPurchase: true, statusText: limitBadge.text, statusColor: limitBadge.color };
-      }
-      return {
-        canPurchase: true,
-        statusText: '✨ Cuenta Libre',
-        statusColor: 'text-emerald-600'
-      };
-    }
-
-    // 2. Con Recargas (free_account = false)
-    const balance = student.balance || 0;
-
-    // 3. Sin saldo → bloquear
-    if (balance <= 0) {
-      return {
-        canPurchase: false,
-        statusText: '💳 Sin Saldo - S/ 0.00',
-        statusColor: 'text-red-600',
-        reason: 'Sin saldo disponible. El padre debe recargar.'
-      };
-    }
-
-    // 4. Con saldo — mostrar tope si está activo
+    // 1. Cuenta Libre (modo único actual)
     const limitBadge = getLimitBadge(student);
     if (limitBadge) {
-      return { canPurchase: true, statusText: `${limitBadge.text} | 💰 S/ ${balance.toFixed(2)}`, statusColor: limitBadge.color };
+      return { canPurchase: true, statusText: limitBadge.text, statusColor: limitBadge.color };
     }
     return {
       canPurchase: true,
-      statusText: `💰 Saldo: S/ ${balance.toFixed(2)}`,
+      statusText: '✨ Cuenta Libre',
       statusColor: 'text-emerald-600'
     };
   };
@@ -1654,12 +1683,8 @@ const POS = () => {
         }
       }
 
-      // ── Cuenta libre → siempre puede comprar ────────────────────────
-      if (selectedStudent.free_account !== false) return null;
-
-      // ── Con Recargas → necesita saldo suficiente ────────────────────
-      if (selectedStudent.balance >= getTotal()) return null;
-      return `Saldo insuficiente (S/ ${selectedStudent.balance.toFixed(2)}). El alumno necesita recargar para poder comprar.`;
+      // ── Modo único actual: cuenta libre ─────────────────────────────
+      return null;
     }
 
     if (clientMode === 'teacher') {
@@ -1695,11 +1720,11 @@ const POS = () => {
     }
   };
 
-  const handleConfirmCheckout = async (shouldPrint: boolean = false) => {
+  const handleConfirmCheckout = async (shouldPrint: boolean = true) => {
     // Guarda contra doble-clic: si ya estamos procesando, ignorar llamadas adicionales
     if (isProcessing) return;
     // Procesar directamente (ya no hay segundo modal)
-    await processCheckout();
+    await processCheckout(undefined, shouldPrint);
     
     // La impresión ahora la maneja posPrinterService automáticamente
     // No necesitamos window.print() aquí ya que interfiere con el ticket HTML
@@ -1972,6 +1997,8 @@ const POS = () => {
       printPOSSale({
         ticketCode: tempTicket,
         clientName: selectedStudent?.full_name || selectedTeacher?.full_name || 'CLIENTE GENÉRICO',
+        cashierLabel: user?.email || undefined,
+        documentType: 'ticket',
         cart,
         total,
         paymentMethod: clientMode === 'student' ? 'credit' : clientMode === 'teacher' ? 'teacher' : 'cash',
@@ -2001,7 +2028,7 @@ const POS = () => {
     client_dni_ruc?: string;
   }
 
-  const processCheckout = async (billingData?: BillingData) => {
+  const processCheckout = async (billingData?: BillingData, shouldPrint: boolean = true) => {
     /** Normaliza el método de pago al formato que espera la tabla `sales` (en inglés) */
     const toSalesMethod = (method: string | null): string => {
       const map: Record<string, string> = {
@@ -2315,7 +2342,7 @@ const POS = () => {
         cashierEmail:   user?.email || 'No disponible',
         newBalance:     actualNewBalance,
         amountToDeduct: paidFromBalance ? serverTotal : 0,
-        isFreeAccount:  clientMode === 'student' ? (selectedStudent?.free_account !== false) : false,
+        isFreeAccount:  clientMode === 'student',
         paidFromBalance,
         teacherName:    clientMode === 'teacher' ? selectedTeacher?.full_name : undefined,
       };
@@ -2411,10 +2438,13 @@ const POS = () => {
       // Snapshot del carrito antes de que resetClient() lo vacíe
       const cartSnapshot = [...cart];
 
-      if (schoolIdForPrint) {
+      if (schoolIdForPrint && shouldPrint) {
         printPOSSale({
           ticketCode,
           clientName: ticketInfo.clientName,
+          clientDocument: billingData?.client_dni_ruc,
+          cashierLabel: ticketInfo.cashierEmail,
+          documentType: ticketInfo.documentType,
           cart: cartSnapshot,
           total: serverTotal,
           paymentMethod: resolvedPaymentMethod,
@@ -2428,6 +2458,9 @@ const POS = () => {
         setLastSalePrintData({
           ticketCode,
           clientName: ticketInfo.clientName,
+          clientDocument: billingData?.client_dni_ruc,
+          cashierLabel: ticketInfo.cashierEmail,
+          documentType: ticketInfo.documentType,
           cart: cartSnapshot,
           total: serverTotal,
           paymentMethod: resolvedPaymentMethod,
@@ -2435,9 +2468,6 @@ const POS = () => {
           schoolId: schoolIdForPrint,
         });
       }
-
-      // Guardar datos del ticket para imprimir si es necesario
-      setTicketData(ticketInfo);
       
       // Cerrar modales
       setShowPaymentDialog(false);
@@ -2473,36 +2503,6 @@ const POS = () => {
     }
   };
 
-  const handlePrintTicket = () => {
-    window.print();
-  };
-
-  const handleContinue = () => {
-    console.log('🔘 BOTÓN CONTINUAR PRESIONADO');
-    console.log('🔄 CONTINUANDO - Reseteando POS para siguiente cliente');
-    console.log('Estado antes del reset:', {
-      clientMode,
-      selectedStudent: selectedStudent?.full_name,
-      cart: cart.length,
-      showTicketPrint
-    });
-    
-    // Reset y preparar para siguiente cliente
-    setShowTicketPrint(false);
-    setTicketData(null);
-    resetClient();
-    
-    console.log('✅ POS reseteado - Listo para nuevo cliente');
-    
-    // Forzar verificación del estado después del reset
-    setTimeout(() => {
-      console.log('Estado después del reset:', {
-        clientMode,
-        showTicketPrint
-      });
-    }, 100);
-  };
-
   const handleLogout = async () => {
     await signOut();
   };
@@ -2516,10 +2516,7 @@ const POS = () => {
   // Verificar saldo insuficiente en useEffect
   useEffect(() => {
     if (!selectedStudent) { setInsufficientBalance(false); return; }
-    const isFree = selectedStudent.free_account !== false;
-    // Solo mostrar error si: NO es cuenta libre y saldo no alcanza
-    const insufficient = !isFree && (selectedStudent.balance < getTotal());
-    setInsufficientBalance(!!insufficient);
+    setInsufficientBalance(false);
   }, [selectedStudent, cart]);
 
   // admin_general y superadmin pueden operar sin sesión de caja (supervisión/emergencia).
@@ -3520,19 +3517,6 @@ const POS = () => {
                     <p className="text-[9px] sm:text-xs text-gray-400 mt-1 sm:mt-2">{cart.length} productos</p>
                   </div>
 
-                  {/* Con Recargas + saldo suficiente → descuenta del saldo */}
-                  {selectedStudent && selectedStudent.free_account === false && selectedStudent.balance >= getTotal() && (
-                    <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2">
-                      <Check className="h-3 w-3 sm:h-5 sm:w-5 text-blue-600 flex-shrink-0" />
-                      <div>
-                        <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
-                        <p className="text-[8px] sm:text-xs text-blue-700">
-                          Saldo: S/ {selectedStudent.balance.toFixed(2)} → S/ {(selectedStudent.balance - getTotal()).toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Estado de pago del alumno — dinámico según kiosco + topes */}
                   {selectedStudent && (() => {
                     const s = selectedStudent;
@@ -3570,31 +3554,16 @@ const POS = () => {
                       );
                     }
 
-                    // 3) Cuenta Libre sin tope
-                    if (s.free_account !== false) {
-                      return (
-                        <div className={`border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 ${
-                          s.balance >= total ? 'bg-blue-50 border-blue-300' : 'bg-green-50 border-green-300'
-                        }`}>
-                          <Check className={`h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 ${s.balance >= total ? 'text-blue-600' : 'text-green-600'}`} />
-                          <div>
-                            {s.balance >= total ? (
-                              <>
-                                <p className="font-bold text-blue-800 text-[9px] sm:text-sm">💰 Se descontará del saldo</p>
-                                <p className="text-[8px] sm:text-xs text-blue-700">
-                                  Saldo: S/ {s.balance.toFixed(2)} → S/ {(s.balance - total).toFixed(2)}
-                                </p>
-                              </>
-                            ) : (
-                              <>
-                                <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
-                                <p className="text-[8px] sm:text-xs text-green-700">Se registrará como deuda pendiente</p>
-                              </>
-                            )}
-                          </div>
+                    // 3) Cuenta Libre sin tope (modo único actual)
+                    return (
+                      <div className="border-2 rounded-xl p-1.5 sm:p-3 flex items-center gap-1.5 sm:gap-2 bg-green-50 border-green-300">
+                        <Check className="h-3 w-3 sm:h-5 sm:w-5 flex-shrink-0 text-green-600" />
+                        <div>
+                          <p className="font-bold text-green-800 text-[9px] sm:text-sm">✓ Cuenta Libre</p>
+                          <p className="text-[8px] sm:text-xs text-green-700">Se registrará como deuda pendiente</p>
                         </div>
-                      );
-                    }
+                      </div>
+                    );
 
                     return null;
                   })()}
@@ -3626,6 +3595,9 @@ const POS = () => {
                         printPOSSale({
                           ticketCode:    lastSalePrintData.ticketCode,
                           clientName:    lastSalePrintData.clientName,
+                          clientDocument:lastSalePrintData.clientDocument,
+                          cashierLabel:  lastSalePrintData.cashierLabel,
+                          documentType:  lastSalePrintData.documentType,
                           cart:          lastSalePrintData.cart,
                           total:         lastSalePrintData.total,
                           paymentMethod: lastSalePrintData.paymentMethod,
@@ -4175,7 +4147,7 @@ const POS = () => {
             <div className="grid grid-cols-2 gap-3">
               <Button
                 onClick={async () => {
-                  await handleConfirmCheckout(false); // Sin imprimir
+                  await handleConfirmCheckout(false);
                 }}
                 disabled={isProcessing}
                 className="h-14 text-base font-bold bg-emerald-500 hover:bg-emerald-600"
@@ -4195,7 +4167,7 @@ const POS = () => {
 
               <Button
                 onClick={async () => {
-                  await handleConfirmCheckout(true); // Con impresión
+                  await handleConfirmCheckout(true);
                 }}
                 disabled={isProcessing}
                 variant="outline"
@@ -4228,87 +4200,6 @@ const POS = () => {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* TICKET TÉRMICO 80MM (Para impresión directa si se necesita) */}
-      {ticketData && (
-        <div className="hidden print:block">
-          <style>{`
-            @media print {
-              @page {
-                size: 80mm auto;
-                margin: 0;
-              }
-              body {
-                width: 80mm;
-                margin: 0;
-                padding: 0;
-              }
-            }
-          `}</style>
-          <div style={{ width: '80mm', fontFamily: 'monospace', fontSize: '12px', padding: '10px' }}>
-            <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-              <h2 style={{ margin: '0', fontSize: '16px', fontWeight: 'bold' }}>LIMA CAFÉ 28</h2>
-              <p style={{ margin: '2px 0', fontSize: '10px' }}>Kiosco Escolar</p>
-              <p style={{ margin: '2px 0', fontSize: '10px' }}>RUC: 20XXXXXXXXX</p>
-              <p style={{ margin: '2px 0', fontSize: '10px' }}>──────────────────────</p>
-            </div>
-
-            <div style={{ marginBottom: '10px' }}>
-              <p style={{ margin: '2px 0' }}><strong>TICKET:</strong> {ticketData.code}</p>
-              <p style={{ margin: '2px 0' }}><strong>FECHA:</strong> {ticketData.timestamp.toLocaleDateString('es-PE')} {ticketData.timestamp.toLocaleTimeString('es-PE')}</p>
-              <p style={{ margin: '2px 0' }}><strong>CAJERO:</strong> {ticketData.cashierEmail}</p>
-              <p style={{ margin: '2px 0' }}><strong>CLIENTE:</strong> {ticketData.clientName}</p>
-              {ticketData.documentType !== 'ticket' && (
-                <p style={{ margin: '2px 0' }}><strong>DOC:</strong> {ticketData.documentType.toUpperCase()}</p>
-              )}
-            </div>
-
-            <p style={{ margin: '10px 0', fontSize: '10px' }}>──────────────────────</p>
-
-            <div style={{ marginBottom: '10px' }}>
-              {ticketData.items.map((item: CartItem, idx: number) => (
-                <div key={idx} style={{ marginBottom: '8px' }}>
-                  <p style={{ margin: '0', fontWeight: 'bold' }}>{item.product.name}</p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{item.quantity} x S/ {item.product.price.toFixed(2)}</span>
-                    <span style={{ fontWeight: 'bold' }}>S/ {(item.product.price * item.quantity).toFixed(2)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <p style={{ margin: '10px 0', fontSize: '10px' }}>──────────────────────</p>
-
-            <div style={{ textAlign: 'right', marginBottom: '10px' }}>
-              <p style={{ margin: '4px 0', fontSize: '16px', fontWeight: 'bold' }}>
-                TOTAL: S/ {ticketData.total.toFixed(2)}
-              </p>
-              {ticketData.paymentMethod && (
-                <p style={{ margin: '2px 0', fontSize: '10px' }}>
-                  Pago: {{
-                    'efectivo': 'EFECTIVO',
-                    'yape': 'YAPE / PLIN',
-                    'tarjeta': 'TARJETA P.O.S',
-                    'transferencia': 'TRANSFERENCIA',
-                    'mixto': 'PAGO MIXTO',
-                    'credito': 'CRÉDITO',
-                  }[ticketData.paymentMethod] ?? ticketData.paymentMethod.toUpperCase()}
-                </p>
-              )}
-              {ticketData.newBalance !== undefined && (
-                <p style={{ margin: '2px 0', fontSize: '10px' }}>
-                  Saldo restante: S/ {ticketData.newBalance.toFixed(2)}
-                </p>
-              )}
-            </div>
-
-            <div style={{ textAlign: 'center', marginTop: '15px' }}>
-              <p style={{ margin: '2px 0', fontSize: '10px' }}>¡Gracias por su compra!</p>
-              <p style={{ margin: '2px 0', fontSize: '10px' }}>──────────────────────</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal para ver foto ampliada del estudiante */}
       {selectedStudent?.photo_url && (
@@ -4348,7 +4239,7 @@ const POS = () => {
               onClick={() => {
                 setSelectedDocumentType('ticket');
                 setShowDocumentTypeDialog(false);
-                handleConfirmCheckout(true);
+                handleConfirmCheckout();
               }}
               className="flex flex-col items-center gap-4 p-8 border-4 border-emerald-300 bg-emerald-50 rounded-2xl hover:bg-emerald-100 hover:border-emerald-400 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
             >

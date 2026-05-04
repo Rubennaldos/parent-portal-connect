@@ -252,22 +252,6 @@ const SuperAdmin = () => {
             <DevBacklogMonitor />
           </TabsContent>
 
-          {/* Logs Tab */}
-          <TabsContent value="errors" className="space-y-4">
-            <Card className="border">
-              <CardHeader>
-                <CardTitle className="text-base">System Logs</CardTitle>
-                <CardDescription>Error monitoring and debug output</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-muted rounded-md p-4 font-mono text-xs">
-                  <p className="text-muted-foreground">[info] No critical errors logged</p>
-                  <p className="text-muted-foreground mt-1">[info] System running normally</p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
           {/* Database Tab */}
           <TabsContent value="database" className="space-y-4">
             <Card className="border max-w-lg">

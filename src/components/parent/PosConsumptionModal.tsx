@@ -67,7 +67,7 @@ const Skeleton = ({ className }: { className?: string }) => (
 function parseSaleItems(rawItems: any[]): ProductItem[] {
   if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
   return rawItems.map((it: any) => ({
-    name:     it.product_name || it.name || it.descripcion || it.nombre || 'Producto',
+    name:     it.product_name || it.name || it.descripcion || it.nombre || 'Producto retirado',
     quantity: Number(it.quantity ?? it.cantidad ?? it.qty ?? 1),
     price:    it.unit_price != null ? Number(it.unit_price)
             : it.price     != null ? Number(it.price)

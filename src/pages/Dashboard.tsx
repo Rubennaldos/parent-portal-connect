@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -83,6 +83,23 @@ const COLOR_MAP: { [key: string]: string } = {
   pink: 'bg-pink-500/10 text-pink-600 border-pink-500/30',
 };
 
+const MODULE_VISIBILITY_RULES: Record<string, { allowedRoles: string[] }> = {
+  centro_reportes: {
+    allowedRoles: ['admin_general'],
+  },
+};
+
+const getModuleAccessKey = (module: Module): string => {
+  if (
+    module.code === 'centro_reportes' ||
+    module.code === 'reportes' ||
+    module.name.toLowerCase() === 'centro de reportes'
+  ) {
+    return 'centro_reportes';
+  }
+  return module.code;
+};
+
 const Dashboard = () => {
   const { user, signOut, isTempPassword, clearTempPasswordFlag } = useAuth();
   const { role, isStaff } = useRole();
@@ -96,6 +113,15 @@ const Dashboard = () => {
   const [forcingUpdate, setForcingUpdate] = useState(false);
   const [cancellationAlerts, setCancellationAlerts] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+
+  const visibleModules = useMemo(() => {
+    return modules.filter((module) => {
+      const rule = MODULE_VISIBILITY_RULES[getModuleAccessKey(module)];
+      if (!rule) return true;
+      if (!role) return false;
+      return rule.allowedRoles.includes(role);
+    });
+  }, [modules, role]);
 
   if (maintenance.blocked) {
     return (
@@ -395,6 +421,18 @@ const Dashboard = () => {
           icon: 'ScanSearch',
           color: 'purple',
           route: '/auditoria',
+          is_active: true,
+          is_enabled: false,
+          status: 'functional' as const,
+        },
+        {
+          id: '18',
+          code: 'centro_reportes',
+          name: 'Centro de Reportes',
+          description: 'Panel centralizado de reportes ejecutivos y operativos',
+          icon: 'BarChart3',
+          color: 'indigo',
+          route: '/reports-center',
           is_active: true,
           is_enabled: false,
           status: 'functional' as const,
@@ -707,7 +745,7 @@ const Dashboard = () => {
         
         {/* VISTA MÓVIL - Bolitas circulares */}
         <div className="grid grid-cols-3 gap-4 sm:hidden">
-          {modules.map((module) => {
+          {visibleModules.map((module) => {
             const IconComponent = ICON_MAP[module.icon];
             const colorClass = COLOR_MAP[module.color];
 
@@ -756,7 +794,7 @@ const Dashboard = () => {
 
         {/* VISTA DESKTOP - Cuadrados (original) */}
         <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {modules.map((module) => {
+          {visibleModules.map((module) => {
             const IconComponent = ICON_MAP[module.icon];
             const colorClass = COLOR_MAP[module.color];
 

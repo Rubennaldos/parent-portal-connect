@@ -1836,32 +1836,18 @@ const ParentConfiguration = () => {
                         {/* Tipo de Cuenta y Límites */}
                         <div className="grid grid-cols-2 gap-4">
                           {/* Tipo de Cuenta */}
-                          <div className={`rounded-lg p-4 border-2 ${
-                            child.free_account !== false
-                              ? 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-300' 
-                              : 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300'
-                          }`}>
+                          <div className="rounded-lg p-4 border-2 bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-300">
                             <div className="flex items-center gap-2 mb-2">
-                              {child.free_account !== false ? (
-                                <Wallet className="h-5 w-5 text-emerald-600" />
-                              ) : (
-                                <CreditCard className="h-5 w-5 text-blue-600" />
-                              )}
-                              <p className={`text-sm font-bold ${
-                                child.free_account !== false ? 'text-emerald-700' : 'text-blue-700'
-                              }`}>
+                              <Wallet className="h-5 w-5 text-emerald-600" />
+                              <p className="text-sm font-bold text-emerald-700">
                                 Tipo de Cuenta
                               </p>
                             </div>
                             <Badge 
                               variant="secondary" 
-                              className={`text-sm ${
-                                child.free_account !== false
-                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
-                                  : 'bg-blue-100 text-blue-800 border-blue-300'
-                              }`}
+                              className="text-sm bg-emerald-100 text-emerald-800 border-emerald-300"
                             >
-                              {child.free_account !== false ? '🆓 Cuenta Libre' : '💳 Con Recarga'}
+                              🆓 Cuenta Libre
                             </Badge>
                             
                             {/* Mostrar tipo de límite si existe */}
@@ -1882,28 +1868,8 @@ const ParentConfiguration = () => {
                             )}
                           </div>
 
-                          {/* Saldo (solo si es con recarga) */}
-                          {child.free_account === false && (
-                            <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border-2 border-green-300">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Wallet className="h-5 w-5 text-green-600" />
-                                <p className="text-sm font-bold text-green-700">Saldo Actual</p>
-                              </div>
-                              <p className="text-2xl font-black text-green-900">
-                                S/ {(child.balance || 0).toFixed(2)}
-                              </p>
-                              <p className={`text-xs mt-1 font-medium ${
-                                (child.balance || 0) < 0 
-                                  ? 'text-red-600' 
-                                  : 'text-green-600'
-                              }`}>
-                                {(child.balance || 0) < 0 ? '⚠️ Deuda Pendiente' : '✅ Saldo Disponible'}
-                              </p>
-                            </div>
-                          )}
-                          
                           {/* Información de cuenta libre sin límite */}
-                          {child.free_account !== false && (!child.limit_type || child.limit_type === 'none') && (
+                          {(!child.limit_type || child.limit_type === 'none') && (
                             <div className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-lg p-4 border-2 border-amber-300">
                               <div className="flex items-center gap-2 mb-2">
                                 <CreditCard className="h-5 w-5 text-amber-600" />

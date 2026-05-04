@@ -3,6 +3,7 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, RotateCcw } from "lucide-react";
+import { logSystemErrorAsync } from "@/lib/systemErrorLogger";
 
 type AppErrorBoundaryState = {
   error: Error | null;
@@ -18,9 +19,15 @@ export class AppErrorBoundary extends React.Component<
     return { error };
   }
 
-  // Avoid logging sensitive details; render them only behind <details>.
-  componentDidCatch() {
-    // no-op
+  componentDidCatch(error: Error) {
+    logSystemErrorAsync({
+      errorMessage: error.message || "AppErrorBoundary error",
+      stackTrace: error.stack ?? null,
+      componentName: "AppErrorBoundary",
+      metadata: {
+        source: "app_root_boundary",
+      },
+    });
   }
 
   render() {

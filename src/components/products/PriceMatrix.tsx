@@ -1,18 +1,22 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { Building2, DollarSign, Save, X, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { Building2, DollarSign, Save, X, Check, AlertCircle, RefreshCw, Globe, Lock } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
+import {
+  saveProductScopeAndPrices,
+  isPriceScopeRelatedError,
+  getPriceScopeFriendlyToast,
+  getSupabaseErrorBlob,
+} from '@/services/productScopePricingService';
 
 interface School {
   id: string;
@@ -26,6 +30,8 @@ interface Product {
   category: string;
   price_sale: number;
   price_cost: number;
+  /** null = global en BD; ausente si el padre no lo envía */
+  school_ids?: string[] | null;
 }
 
 interface SchoolPrice {
@@ -40,6 +46,12 @@ interface PriceMatrixProps {
   isOpen: boolean;
   onClose: () => void;
   product: Product | null;
+}
+
+function getGenericSaveErrorDescription(err: unknown): string {
+  const blob = getSupabaseErrorBlob(err);
+  if (blob) return blob;
+  return 'No se pudo guardar los precios.';
 }
 
 export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
@@ -60,67 +72,72 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
 
   const fetchData = async () => {
     if (!product) return;
-    
+
     setLoading(true);
     try {
-      // Obtener la sede del usuario (si no es admin_general)
-      let userSchool = null;
-      if (role !== 'admin_general' && user) {
+      // 1. Determinar la sede del usuario (gestor: solo la suya; admin/supervisor: todas)
+      let userSchool: string | null = null;
+      if (role !== 'admin_general' && role !== 'supervisor_red' && user) {
         const { data: profileData } = await supabase
           .from('profiles')
           .select('school_id')
           .eq('id', user.id)
           .maybeSingle();
-        
+
         userSchool = profileData?.school_id || null;
         setUserSchoolId(userSchool);
       }
 
-      // Obtener sedes (todas para admin_general, solo la del usuario para otros roles)
+      // 2. Cargar sedes visibles para el usuario (admin ve todas, gestor ve solo la suya)
       let schoolsQuery = supabase
         .from('schools')
         .select('id, name')
         .order('name');
-      
+
       if (userSchool) {
         schoolsQuery = schoolsQuery.eq('id', userSchool);
       }
 
-      const { data: schoolsData, error: schoolsError } = await schoolsQuery;
+      const [{ data: schoolsData, error: schoolsError }, { data: customPrices, error: pricesError }] =
+        await Promise.all([
+          schoolsQuery,
+          supabase.from('product_school_prices').select('*').eq('product_id', product.id),
+        ]);
 
       if (schoolsError) throw schoolsError;
-
-      // Obtener precios personalizados existentes para este producto
-      const { data: customPrices, error: pricesError } = await supabase
-        .from('product_school_prices')
-        .select('*')
-        .eq('product_id', product.id);
-
       if (pricesError) throw pricesError;
 
-      setSchools(schoolsData || []);
+      // 3. Prellenado inteligente: intersectar sedes del usuario con el alcance del producto.
+      //    - school_ids === null  → producto global → mostrar todas las sedes del usuario.
+      //    - school_ids = []     → sin sedes activas → tabla vacía.
+      //    - school_ids = [a,b]  → solo mostrar esas sedes (si el usuario tiene acceso).
+      const scopeIds = product.school_ids; // null | string[]
+      const visibleSchools =
+        scopeIds == null
+          ? (schoolsData ?? [])
+          : (schoolsData ?? []).filter(s => (scopeIds as string[]).includes(s.id));
 
-      // Inicializar el Map con precios base o personalizados
+      setSchools(visibleSchools);
+
+      // 4. Construir Map de precios solo para las sedes visibles
       const pricesMap = new Map<string, SchoolPrice>();
-      
-      (schoolsData || []).forEach(school => {
-        const customPrice = (customPrices || []).find(cp => cp.school_id === school.id);
-        
+      visibleSchools.forEach(school => {
+        const customPrice = (customPrices ?? []).find(cp => cp.school_id === school.id);
         pricesMap.set(school.id, {
           school_id: school.id,
-          price_sale: customPrice?.price_sale || null,
-          price_cost: customPrice?.price_cost || null,
+          price_sale: customPrice?.price_sale ?? null,
+          price_cost: customPrice?.price_cost ?? null,
           is_available: customPrice?.is_available ?? true,
           is_custom: !!customPrice,
         });
       });
 
       setSchoolPrices(pricesMap);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudo cargar la información: ' + error.message,
+        description: 'No se pudo cargar la información: ' + getSupabaseErrorBlob(error),
       });
     } finally {
       setLoading(false);
@@ -170,56 +187,41 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
 
     setSaving(true);
     try {
-      const isAdminGeneral = role === 'admin_general';
-
-      if (isAdminGeneral) {
-        // Admin general: borrar TODOS los precios personalizados del producto y reinsertar
-        await supabase
-          .from('product_school_prices')
-          .delete()
-          .eq('product_id', product.id);
-      } else if (userSchoolId) {
-        // Admin de sede: borrar SOLO el precio personalizado de SU sede
-        // ✅ NO tocamos los precios de las demás sedes
-        await supabase
-          .from('product_school_prices')
-          .delete()
-          .eq('product_id', product.id)
-          .eq('school_id', userSchoolId);
-      }
-
-      // Insertar solo los precios personalizados (los que fueron modificados)
       const customPricesArray = Array.from(schoolPrices.entries())
         .filter(([_, price]) => price.is_custom && (price.price_sale !== null || !price.is_available))
         .map(([schoolId, price]) => ({
-          product_id: product.id,
           school_id: schoolId,
-          price_sale: price.price_sale || product.price_sale,
-          price_cost: price.price_cost || product.price_cost,
+          price_sale: price.price_sale ?? product.price_sale,
+          price_cost: price.price_cost ?? null,
           is_available: price.is_available,
         }));
 
-      if (customPricesArray.length > 0) {
-        const { error: insertError } = await supabase
-          .from('product_school_prices')
-          .insert(customPricesArray);
+      const schoolIdsForRpc = product.school_ids ?? null;
 
-        if (insertError) throw insertError;
-      }
+      const result = await saveProductScopeAndPrices({
+        productId: product.id,
+        schoolIds: schoolIdsForRpc,
+        prices: customPricesArray,
+      });
+
+      const n = result.rows_inserted ?? customPricesArray.length;
 
       toast({
         title: '✅ Precios actualizados',
-        description: isAdminGeneral
-          ? `Se guardaron los precios para ${customPricesArray.length} sede(s)`
-          : 'Se actualizó el precio para tu sede correctamente',
+        description:
+          role === 'admin_general' || role === 'supervisor_red'
+            ? `Guardado atómico: ${n} sede(s) con precio personalizado`
+            : 'Se actualizó el precio para tu sede correctamente',
       });
 
       onClose();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const scopeError = isPriceScopeRelatedError(error);
+      const friendly = getPriceScopeFriendlyToast();
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo guardar: ' + error.message,
+        title: scopeError ? friendly.title : 'Error',
+        description: scopeError ? friendly.description : getGenericSaveErrorDescription(error),
       });
     } finally {
       setSaving(false);
@@ -281,6 +283,33 @@ export const PriceMatrix = ({ isOpen, onClose, product }: PriceMatrixProps) => {
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Banner de alcance del producto */}
+            {product.school_ids == null ? (
+              <div className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+                <Globe className="h-4 w-4 flex-shrink-0 text-indigo-500" />
+                <span>
+                  <strong>Producto global</strong> — se muestran todas las sedes.
+                  Puedes configurar precios distintos en cualquiera de ellas.
+                </span>
+              </div>
+            ) : product.school_ids.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <Lock className="h-4 w-4 flex-shrink-0 text-amber-500" />
+                <span>
+                  <strong>Sin sedes asignadas.</strong> Asigna sedes en el paso de Disponibilidad antes de configurar precios.
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <Lock className="h-4 w-4 flex-shrink-0 text-amber-500" />
+                <span>
+                  <strong>Alcance restringido</strong> — solo se muestran las{' '}
+                  <strong>{product.school_ids.length} sede(s)</strong> donde este producto está disponible.
+                  Para ampliar el alcance, edita la Disponibilidad del producto.
+                </span>
+              </div>
+            )}
+
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
               <div className="flex items-start gap-2">
                 <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />

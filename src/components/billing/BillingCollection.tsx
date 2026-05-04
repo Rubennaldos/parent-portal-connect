@@ -195,7 +195,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       const items = itemsByTxId.get(t.id);
       if (items && items.length > 0) {
         productDesc = items
-          .map((i: any) => `${i.product_name}${i.quantity > 1 ? ` x${i.quantity}` : ''}`)
+          .map((i: any) => `${i.product_name || 'Producto retirado'}${i.quantity > 1 ? ` x${i.quantity}` : ''}`)
           .join(', ');
       } else if (t.metadata?.menu_name) {
         productDesc = `Almuerzo - ${t.metadata.menu_name}`;
@@ -1507,7 +1507,7 @@ Gracias.`;
         const items = itemsByTxId.get(t.id);
         if (items && items.length > 0) {
           const productLines = items.map((item: any) =>
-            `${item.product_name}${item.quantity > 1 ? ` x${item.quantity}` : ''}`
+            `${item.product_name || 'Producto retirado'}${item.quantity > 1 ? ` x${item.quantity}` : ''}`
           );
           desc = productLines.join(', ');
         } else if (t.metadata?.menu_name && !desc.toLowerCase().includes(t.metadata.menu_name.toLowerCase())) {

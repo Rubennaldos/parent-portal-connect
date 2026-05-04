@@ -433,7 +433,7 @@ export default function Teacher() {
         doc.setFont('helvetica', 'normal');
         
         transaction.transaction_items.forEach((item: any) => {
-          doc.text(`${item.quantity}x ${item.product_name}`, 20, yPos);
+          doc.text(`${item.quantity}x ${item.product_name || 'Producto retirado'}`, 20, yPos);
           doc.text(`S/ ${item.subtotal.toFixed(2)}`, pageWidth - 20, yPos, { align: 'right' });
           yPos += 5;
         });
@@ -887,7 +887,7 @@ export default function Teacher() {
                                 {transaction.transaction_items.map((item: any, idx: number) => (
                                   <div key={idx} className="flex justify-between text-sm">
                                     <span className="text-gray-700">
-                                      {item.quantity}x {item.product_name}
+                                      {item.quantity}x {item.product_name || 'Producto retirado'}
                                     </span>
                                     <span className="text-gray-900 font-medium">
                                       S/ {item.subtotal.toFixed(2)}
@@ -1125,7 +1125,7 @@ export default function Teacher() {
                                     {transaction.transaction_items.map((item: any, idx: number) => (
                                       <div key={idx} className="flex justify-between text-sm">
                                         <span className="text-gray-700">
-                                          {item.quantity}x {item.product_name}
+                                          {item.quantity}x {item.product_name || 'Producto retirado'}
                                         </span>
                                         <span className="text-gray-900 font-medium">
                                           S/ {item.subtotal.toFixed(2)}
@@ -1244,7 +1244,7 @@ export default function Teacher() {
                                         {transaction.transaction_items.map((item: any, idx: number) => (
                                           <div key={idx} className="flex justify-between text-sm">
                                             <span className="text-gray-700">
-                                              {item.quantity}x {item.product_name}
+                                              {item.quantity}x {item.product_name || 'Producto retirado'}
                                             </span>
                                             <span className="text-gray-900 font-medium">
                                               S/ {item.subtotal.toFixed(2)}

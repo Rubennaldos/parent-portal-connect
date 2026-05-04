@@ -561,7 +561,18 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
 
         if (transactionError) {
           console.error('Error creating transaction:', transactionError);
-          // No lanzar error, el pedido ya se creó
+          // Sin transacción no dejamos pedido activo (evita huérfanos y mezcla con topes)
+          await supabase
+            .from('lunch_orders')
+            .update({
+              is_cancelled: true,
+              status: 'cancelled',
+              cancellation_reason: 'AUTO: transacción de almuerzo fallida al crear pedido'
+            })
+            .eq('id', insertedOrder.id);
+          throw new Error(
+            'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Intenta nuevamente.'
+          );
         }
       }
 

@@ -40,6 +40,8 @@ interface TicketDetail {
   description: string | null;
   created_at: string;
   items: SaleItem[];  // vacío si no hay detalle de productos
+  /** True si la transacción viene de pedido de almuerzo (no siempre hay fila en `sales`). */
+  has_lunch_order: boolean;
 }
 
 interface PaymentRecord {
@@ -70,11 +72,21 @@ interface GatewayPaymentRecord {
   amount: number;
   created_at: string;
   gateway_ref: string | null;  // orderId de IziPay
+  /** Código de ticket en la fila de pago gateway (si la BD lo guardó en esa transacción). */
+  ticket_code: string | null;
+  /** Tickets de deudas pagadas en esta sesión IziPay (payment_sessions.debt_tx_ids). */
+  paid_ticket_codes: string[];
+  /** Texto de la transacción (ej. recarga, deuda, almuerzo) para cruzar con lo cobrado. */
+  transaction_description: string | null;
   invoice_id: string | null;
   invoice_pdf_url: string | null;
   invoice_number: string | null;
+  /** Tipo en el comprobante SUNAT ya emitido (invoices). */
   invoice_type: string | null;
+  /** Boleta/factura pedida al pagar (billing_queue), útil antes de que exista invoice. */
+  queue_invoice_type: string | null;
   queue_status: string | null;
+  queue_error_message: string | null;
 }
 
 // Cobro directo realizado por admin vía CXC (sin voucher del padre)
@@ -114,6 +126,16 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
   transferencia: 'Transferencia bancaria',
   efectivo: 'Efectivo en caja',
 };
+
+/**
+ * Códigos GW-YYYYMMDD-HHMMSS: referencia interna del crédito IziPay en BD
+ * (`apply_gateway_credit` cuando falla el generador normal o como convención).
+ * No son tickets de venta en caja (esos suelen ser T-…).
+ */
+function isGatewaySyntheticTicketCode(code: string | null | undefined): boolean {
+  if (!code || typeof code !== 'string') return false;
+  return /^GW-\d{8}-\d{6}$/i.test(code.trim());
+}
 
 export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) => {
   const { toast } = useToast();
@@ -254,99 +276,45 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
     }
   };
 
-  // ── Pagos online vía IziPay (recargas procesadas por el gateway) ─────────────
+  // ── Pagos online vía IziPay (transacciones gateway; en BD suelen ser type=recharge + online_payment) ──
   const fetchGatewayPayments = async () => {
     try {
-      const { data: students } = await supabase
-        .from('students')
-        .select('id, full_name')
-        .eq('parent_id', userId)
-        .eq('is_active', true);
-
-      if (!students || students.length === 0) return;
-      const studentIds = students.map(s => s.id);
-      const nameMap = new Map<string, string>(students.map(s => [s.id, s.full_name]));
-
-      // Transacciones de tipo 'recharge' pagadas online a través de IziPay
-      const since = new Date();
-      since.setDate(since.getDate() - 180);
-
-      const { data: txData } = await supabase
-        .from('transactions')
-        .select('id, student_id, amount, created_at, metadata, invoice_id')
-        .in('student_id', studentIds)
-        .eq('payment_status', 'paid')
-        .eq('type', 'recharge')
-        .eq('is_deleted', false)
-        .filter('metadata->>source_channel', 'eq', 'online_payment')
-        .gte('created_at', since.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!txData || txData.length === 0) return;
-
-      // Cargar datos de las boletas (invoice_id → invoices.pdf_url)
-      const invoiceIds = [...new Set(txData.filter((t: any) => t.invoice_id).map((t: any) => t.invoice_id as string))];
-      const invoiceMap = new Map<string, { pdf_url: string | null; full_number: string | null; invoice_type: string | null }>();
-      const txIds = [...new Set(txData.map((t: any) => t.id as string))];
-      const queueMap = new Map<string, { status: string | null; pdf_url: string | null; nubefact_ticket: string | null }>();
-
-      if (invoiceIds.length > 0) {
-        const { data: invData } = await supabase
-          .from('invoices')
-          .select('id, pdf_url, full_number, invoice_type')
-          .in('id', invoiceIds);
-
-        if (invData) {
-          invData.forEach((inv: any) => invoiceMap.set(inv.id, inv));
-        }
-      }
-
-      // Fallback de resiliencia: si invoices todavía no está enlazada, usar billing_queue emitida
-      // para mostrar al menos el número BXXX-00000NNN y evitar "Comprobante en proceso..." eterno.
-      if (txIds.length > 0) {
-        const { data: queueData } = await supabase
-          .from('billing_queue')
-          .select('transaction_id, status, pdf_url, nubefact_ticket, created_at')
-          .in('transaction_id', txIds)
-          .order('created_at', { ascending: false });
-
-        if (queueData) {
-          for (const row of queueData as any[]) {
-            const txId = row.transaction_id as string | null;
-            if (!txId) continue;
-            if (!queueMap.has(txId)) {
-              queueMap.set(txId, {
-                status: row.status ?? null,
-                pdf_url: row.pdf_url ?? null,
-                nubefact_ticket: row.nubefact_ticket ?? null,
-              });
-            }
-          }
-        }
-      }
-
-      const mapped: GatewayPaymentRecord[] = txData.map((tx: any) => {
-        const inv = tx.invoice_id ? invoiceMap.get(tx.invoice_id) : null;
-        const q   = queueMap.get(tx.id);
-        const hasQueueEmission = q?.status === 'emitted';
-        return {
-          id:              tx.id,
-          student_name:    nameMap.get(tx.student_id) ?? 'Alumno',
-          amount:          Number(tx.amount),
-          created_at:      tx.created_at,
-          gateway_ref:     tx.metadata?.gateway_ref_id ?? null,
-          invoice_id:      tx.invoice_id ?? null,
-          invoice_pdf_url: inv?.pdf_url ?? q?.pdf_url ?? null,
-          invoice_number:  inv?.full_number ?? (hasQueueEmission ? (q?.nubefact_ticket ?? null) : null),
-          invoice_type:    inv?.invoice_type ?? (hasQueueEmission ? 'boleta' : null),
-          queue_status:    q?.status ?? null,
-        };
+      const { data, error } = await supabase.rpc('get_parent_gateway_payments_v1', {
+        p_parent_id: userId,
+        p_since_days: 180,
+        p_limit: 80,
       });
+
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        setGatewayPayments([]);
+        return;
+      }
+
+      const mapped: GatewayPaymentRecord[] = (data as any[]).map((row) => ({
+        id: row.transaction_id,
+        student_name: row.student_name ?? 'Alumno',
+        amount: Number(row.amount ?? 0),
+        created_at: row.created_at,
+        gateway_ref: row.gateway_ref ?? null,
+        ticket_code: row.ticket_code ?? null,
+        paid_ticket_codes: Array.isArray(row.paid_ticket_codes)
+          ? row.paid_ticket_codes.filter((v: unknown): v is string => typeof v === 'string' && v.trim().length > 0)
+          : [],
+        transaction_description: row.transaction_description ?? null,
+        invoice_id: row.invoice_id ?? null,
+        invoice_pdf_url: row.invoice_pdf_url ?? row.queue_pdf_url ?? null,
+        invoice_number: row.invoice_number ?? (row.queue_status === 'emitted' ? (row.queue_nubefact_ticket ?? null) : null),
+        invoice_type: row.invoice_type ?? null,
+        queue_invoice_type: row.queue_invoice_type ?? null,
+        queue_status: row.queue_status ?? null,
+        queue_error_message: row.queue_error_message ?? null,
+      }));
 
       setGatewayPayments(mapped);
     } catch (err) {
       console.error('Error fetching gateway payments:', err);
+      setGatewayPayments([]);
     }
   };
 
@@ -526,7 +494,7 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           const items: SaleItem[] = Array.isArray(s.items)
             ? s.items.map((it: any) => ({
                 product_id:   it.product_id ?? null,
-                product_name: it.product_name ?? 'Producto',
+                product_name: it.product_name || 'Producto retirado',
                 quantity:     Number(it.quantity ?? 1),
                 unit_price:   Number(it.unit_price ?? 0),
                 subtotal:     Number(it.subtotal ?? 0),
@@ -537,12 +505,13 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
       }
 
       const details: TicketDetail[] = txData.map((tx: any) => ({
-        id:          tx.id,
-        ticket_code: tx.ticket_code ?? null,
-        amount:      Math.abs(Number(tx.amount)),
-        description: tx.description ?? null,
-        created_at:  tx.created_at,
-        items:       salesMap.get(tx.id) ?? [],
+        id:              tx.id,
+        ticket_code:     tx.ticket_code ?? null,
+        amount:          Math.abs(Number(tx.amount)),
+        description:     tx.description ?? null,
+        created_at:      tx.created_at,
+        items:           salesMap.get(tx.id) ?? [],
+        has_lunch_order: !!(tx.metadata && (tx.metadata as { lunch_order_id?: string }).lunch_order_id),
       }));
 
       setTicketDetailsMap(prev => new Map(prev).set(record.id, details));
@@ -913,7 +882,25 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
           </div>
           {gatewayPayments.map((gp) => {
             const isExpanded = expandedId === `gw_${gp.id}`;
-            const boletaLabel = gp.invoice_type === 'factura' ? 'Factura' : 'Boleta';
+            const paidTickets = gp.paid_ticket_codes ?? [];
+            const cafeteriaPaidCodes = paidTickets.filter((c) => !isGatewaySyntheticTicketCode(c));
+            const internalGwCode = isGatewaySyntheticTicketCode(gp.ticket_code) ? gp.ticket_code : null;
+            /** Ticket de compra/deuda en cafetería; no confundir con GW- interno del crédito. */
+            const primaryTicket =
+              cafeteriaPaidCodes[0] ??
+              (!isGatewaySyntheticTicketCode(gp.ticket_code) ? gp.ticket_code : null) ??
+              gp.ticket_code ??
+              null;
+            /** Hubo deudas/tickets de cafetería en la sesión (no solo código interno GW-). */
+            const isPayingTicketsOrDebts = cafeteriaPaidCodes.length > 0;
+            const rawConcept = (gp.transaction_description ?? '').trim();
+            const isGenericIzipayRechargeLine = /^Recarga online\s*—\s*IziPay/i.test(rawConcept);
+            const docKind = gp.invoice_type ?? gp.queue_invoice_type ?? null;
+            const comprobanteLabel =
+              docKind === 'factura' ? 'Factura' : docKind === 'boleta' ? 'Boleta' : 'Comprobante SUNAT';
+            const hasInvoiceDetail = !!(gp.invoice_id || gp.invoice_number || gp.invoice_pdf_url);
+            const isQueueFailed = gp.queue_status === 'failed';
+            const isQueueInProgress = gp.queue_status === 'pending' || gp.queue_status === 'processing';
             return (
               <div
                 key={gp.id}
@@ -928,10 +915,22 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm text-slate-800 truncate">
-                      Recarga online — {gp.student_name}
+                      Pago con tarjeta (IziPay) — {gp.student_name}
                     </p>
-                    <p className="text-[11px] text-slate-400">
-                      Tarjeta / IziPay · {format(new Date(gp.created_at), "d MMM yyyy · HH:mm", { locale: es })}
+                    <p className="text-[11px] text-slate-400 truncate">
+                      {[
+                        primaryTicket && !isGatewaySyntheticTicketCode(primaryTicket)
+                          ? `Ticket ${primaryTicket}`
+                          : internalGwCode
+                            ? `Ref. ${internalGwCode}`
+                            : primaryTicket
+                              ? `Ticket ${primaryTicket}`
+                              : null,
+                        `Tarjeta / IziPay`,
+                        format(new Date(gp.created_at), "d MMM yyyy · HH:mm", { locale: es }),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -962,18 +961,103 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                       </div>
                     )}
 
+                    {/* Ticket / concepto que estás pagando (misma transacción que acredita IziPay) */}
+                    <div className="bg-white border border-slate-100 rounded-xl px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <Ticket className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                        <p className="text-[11px] font-semibold text-slate-700">Lo que pagaste en este cargo</p>
+                      </div>
+                      <div className="grid gap-1 text-[11px] text-slate-600">
+                        {internalGwCode && (
+                          <div>
+                            <span className="text-slate-400">Referencia interna del pago: </span>
+                            <span className="font-mono font-semibold text-slate-700">{internalGwCode}</span>
+                            <span className="text-slate-400 text-[10px] block mt-0.5">
+                              (No es el ticket T-… de una venta en caja; es el código que guardó el sistema para este cargo con tarjeta.)
+                            </span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-slate-400">
+                            {cafeteriaPaidCodes.length > 0 ? 'Ticket(s) de cafetería pagados: ' : 'Ticket cafetería: '}
+                          </span>
+                          {cafeteriaPaidCodes.length > 0 ? (
+                            <span className="font-mono font-semibold text-slate-800">
+                              {cafeteriaPaidCodes.join(', ')}
+                            </span>
+                          ) : primaryTicket && !isGatewaySyntheticTicketCode(primaryTicket) ? (
+                            <span className="font-mono font-semibold text-slate-800">{primaryTicket}</span>
+                          ) : internalGwCode ? (
+                            <span className="italic text-slate-500">
+                              No hay ticket T-… enlazado a esta sesión; usa la referencia interna arriba o la referencia IziPay.
+                            </span>
+                          ) : (
+                            <span className="italic text-slate-400">Sin código de ticket en el registro</span>
+                          )}
+                        </div>
+                        {cafeteriaPaidCodes.length > 1 && (
+                          <p className="leading-snug text-[10px] text-slate-500">
+                            Varios ítems saldados en un solo pago con tarjeta.
+                          </p>
+                        )}
+                        {(isPayingTicketsOrDebts || !!internalGwCode) && isGenericIzipayRechargeLine && (
+                          <p className="leading-snug text-slate-600">
+                            <span className="text-slate-400">Resumen: </span>
+                            {isPayingTicketsOrDebts
+                              ? `Pago con tarjeta (IziPay) aplicado a los ticket(s) de cafetería indicados arriba${
+                                  cafeteriaPaidCodes.length > 1 ? ` (${cafeteriaPaidCodes.length} tickets)` : ''
+                                }.`
+                              : 'Pago con tarjeta (IziPay). El código GW- es solo referencia interna del sistema para este cargo; no sustituye al ticket T-… de una compra en caja.'}
+                          </p>
+                        )}
+                        {gp.transaction_description &&
+                          !((isPayingTicketsOrDebts || !!internalGwCode) && isGenericIzipayRechargeLine) && (
+                          <p className="leading-snug">
+                            <span className="text-slate-400">Concepto: </span>
+                            {gp.transaction_description}
+                          </p>
+                        )}
+                        <div>
+                          <span className="text-slate-400">Comprobante que pediste al pagar: </span>
+                          <span className="font-semibold text-slate-800">
+                            {gp.queue_invoice_type === 'factura'
+                              ? 'Factura'
+                              : gp.queue_invoice_type === 'boleta'
+                                ? 'Boleta'
+                                : 'No registrado (suele tratarse como boleta)'}
+                          </span>
+                          {gp.invoice_type &&
+                            gp.queue_invoice_type &&
+                            gp.invoice_type !== gp.queue_invoice_type && (
+                            <span className="text-slate-400 text-[10px] block mt-0.5">
+                              En SUNAT quedó como{' '}
+                              {gp.invoice_type === 'factura' ? 'factura' : 'boleta'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Comprobante SUNAT */}
                     <div className="bg-white border border-slate-100 rounded-xl px-3 py-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-                          {(gp.invoice_id || gp.invoice_number || gp.queue_status === 'emitted') ? (
+                          {hasInvoiceDetail || gp.queue_status === 'emitted' ? (
                             <p className="text-[11px] text-indigo-700 font-semibold truncate">
-                              {boletaLabel}{gp.invoice_number && ` ${gp.invoice_number}`}
+                              {comprobanteLabel}{gp.invoice_number && ` ${gp.invoice_number}`}
+                            </p>
+                          ) : isQueueFailed ? (
+                            <p className="text-[11px] text-rose-500 font-semibold">
+                              Error al emitir comprobante
+                            </p>
+                          ) : isQueueInProgress ? (
+                            <p className="text-[11px] text-slate-500 italic">
+                              Emisión en proceso...
                             </p>
                           ) : (
                             <p className="text-[11px] text-slate-400 italic">
-                              Comprobante en proceso...
+                              Facturación no iniciada
                             </p>
                           )}
                         </div>
@@ -987,10 +1071,15 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                             <Download className="h-3 w-3" />
                             PDF
                           </a>
-                        ) : (gp.invoice_id || gp.invoice_number || gp.queue_status === 'emitted') ? (
+                        ) : (hasInvoiceDetail || gp.queue_status === 'emitted' || isQueueInProgress) ? (
                           <span className="text-[10px] text-slate-400 italic">PDF en proceso</span>
                         ) : null}
                       </div>
+                      {isQueueFailed && gp.queue_error_message && (
+                        <p className="text-[10px] text-rose-600 mt-1.5">
+                          {gp.queue_error_message}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1139,6 +1228,14 @@ export const PaymentHistoryTab = ({ userId, isActive }: PaymentHistoryTabProps) 
                                 </div>
                               ))}
                             </div>
+                          ) : ticket.description ? (
+                            <p className="text-[10px] text-slate-500 pl-1 leading-snug">
+                              {ticket.description}
+                            </p>
+                          ) : ticket.has_lunch_order ? (
+                            <p className="text-[10px] text-slate-500 pl-1 italic leading-snug">
+                              Almuerzo — aquí no se listan platos línea por línea; el importe corresponde al pedido ligado a este ticket.
+                            </p>
                           ) : (
                             <p className="text-[10px] text-slate-300 pl-1 italic">
                               Detalle no disponible

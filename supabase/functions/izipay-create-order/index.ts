@@ -81,6 +81,7 @@ async function handleRequest(req: Request, TAG: string): Promise<Response> {
     orderId?:          string;
     paid_tx_ids?:      string[];
     recharge_surplus?: number;
+    request_type?:     "recharge" | "debt_payment" | "lunch_payment";
     currency?:         string;
   };
   try {
@@ -94,13 +95,32 @@ async function handleRequest(req: Request, TAG: string): Promise<Response> {
     orderId,
     paid_tx_ids      = [],
     recharge_surplus = 0,
+    request_type     = "recharge",
     currency         = "PEN",
   } = body ?? {};
+
+  const normalizedRequestType = (
+    request_type === "debt_payment" || request_type === "lunch_payment"
+      ? request_type
+      : "recharge"
+  ) as "recharge" | "debt_payment" | "lunch_payment";
 
   const normalizedOrderId = orderId || crypto.randomUUID();
 
   if (!studentId) {
     return json({ success: false, error: "Campo 'studentId' requerido — verifica que el modal envíe el ID del alumno" }, 400);
+  }
+
+  // Blindaje: pago de deuda/almuerzo requiere IDs explícitos de deuda.
+  if (
+    (normalizedRequestType === "debt_payment" || normalizedRequestType === "lunch_payment") &&
+    (!Array.isArray(paid_tx_ids) || paid_tx_ids.length === 0)
+  ) {
+    return json({
+      success: false,
+      error: "No hay deudas vinculadas al pago. Refresca pendientes e intenta de nuevo.",
+      error_code: "DEBT_IDS_REQUIRED",
+    }, 400);
   }
   // ── 4. Cliente service_role ───────────────────────────────────────────────
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -202,6 +222,13 @@ async function handleRequest(req: Request, TAG: string): Promise<Response> {
 
     if (txFoundCount === 0) {
       console.warn(`${TAG} ADVERTENCIA: ${paid_tx_ids.length} IDs enviados pero ninguna TX pending encontrada.`);
+      if (normalizedRequestType === "debt_payment" || normalizedRequestType === "lunch_payment") {
+        return json({
+          success: false,
+          error: "Las deudas seleccionadas ya no están pendientes. Actualiza la pantalla y vuelve a seleccionar.",
+          error_code: "DEBT_IDS_NOT_PENDING",
+        }, 409);
+      }
     }
   }
 

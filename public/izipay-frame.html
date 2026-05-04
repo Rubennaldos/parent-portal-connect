@@ -269,6 +269,31 @@
     }
 
     function showSuccess(orderId) {
+      var returnUrl = params.get('return_url') || '';
+      var sid       = params.get('sid')        || '';
+
+      if (returnUrl) {
+        // ── Modo redirección: volver a la app con el resultado ──
+        // El padre pagó en esta misma pestaña; redirigimos de vuelta al portal.
+        try {
+          var dest = new URL(returnUrl);
+          dest.searchParams.set('status', 'success');
+          if (orderId) dest.searchParams.set('oid', orderId);
+          if (sid)     dest.searchParams.set('sid', sid);
+          window.location.replace(dest.toString());
+        } catch (e) {
+          // URL malformada — fallback simple
+          window.location.replace(
+            returnUrl +
+            '?status=success' +
+            (orderId ? '&oid=' + encodeURIComponent(orderId) : '') +
+            (sid     ? '&sid=' + encodeURIComponent(sid)     : '')
+          );
+        }
+        return;
+      }
+
+      // ── Modo popup (legacy) ──
       document.getElementById('form-container').style.display = 'none';
       document.getElementById('seals').style.display          = 'none';
       document.getElementById('success-screen').style.display = 'block';

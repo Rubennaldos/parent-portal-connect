@@ -14,7 +14,6 @@ import { supabaseConfig } from '@/config/supabase.config';
 import { cn } from '@/lib/utils';
 import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
-import { GatewayPaymentWaiting } from './GatewayPaymentWaiting';
 import {
   CreditCard,
   Building2,
@@ -162,16 +161,11 @@ export function RechargeModal({
   const [notes, setNotes] = useState('');
   const onSuccessCalledRef = useRef(false);
 
-  // ── IziPay: estado del flujo de pago ──
-  const [izipaySessionId, setIzipaySessionId] = useState<string | null>(null);
-  const [izipayStep, setIzipayStep] = useState<'idle' | 'popup' | 'waiting' | 'done' | 'locked'>('idle');
-  const [izipayLoading, setIzipayLoading] = useState(false);
-  const [izipayOrderId, setIzipayOrderId] = useState<string | null>(null);
-  // true cuando el POPUP ya confirmó el pago (IZIPAY_SUCCESS recibido)
-  // Una vez true, el estado nunca retrocede a idle — solo avanza a éxito
-  const [izipayPopupConfirmed, setIzipayPopupConfirmed] = useState(false);
+  // ── IziPay: estado del flujo de pago (modo redirección) ──
+  const [izipayStep, setIzipayStep] = useState<'idle' | 'locked'>('idle');
+  // true mientras se hacen las llamadas API y se redirige a IziPay
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0);
-  const popupRef = useRef<Window | null>(null);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -237,6 +231,25 @@ export function RechargeModal({
   // Wrapper que empaqueta el form state actual al llamar al hook
   const handleSubmit = useCallback(() => {
     if (!user) return;
+
+    // Guard de seguridad: si el padre intenta enviar un voucher manual con un
+    // método que el admin desactivó globalmente, lo bloqueamos aquí (frontend).
+    // El backend (trigger BD) es la segunda barrera que no se puede bypassear.
+    if (selectedMethod && selectedMethod !== 'izipay') {
+      const globalKey = (
+        selectedMethod === 'yape' ? 'yape_active' :
+        selectedMethod === 'plin' ? 'plin_active' : 'transferencia_active'
+      ) as 'yape_active' | 'plin_active' | 'transferencia_active';
+      if (!isMethodGloballyAllowed(globalKey)) {
+        toast({
+          title: 'Metodo no disponible',
+          description: 'Este metodo de pago esta desactivado. Elige otro metodo o contacta a la administracion.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     doSubmit({
       userId: user.id,
       amount,
@@ -246,7 +259,7 @@ export function RechargeModal({
       notes,
       selectedMethod,
     });
-  }, [user, doSubmit, amount, referenceCode, voucherFile, extraVouchers, notes, selectedMethod]);
+  }, [user, doSubmit, amount, referenceCode, voucherFile, extraVouchers, notes, selectedMethod, isMethodGloballyAllowed, toast]);
 
   useEffect(() => {
     if (isOpen && studentId) {
@@ -259,6 +272,7 @@ export function RechargeModal({
       setExtraVouchers([]);
 
       setCollapsedExtras(new Set());
+      setSelectedMethod(null);
       if (skipAmountStep) {
         // Si hay saldo de billetera, el voucher es por la diferencia
         const voucherAmt = walletAmountToUse > 0
@@ -301,18 +315,7 @@ export function RechargeModal({
 
       setPaymentConfig(config || null);
 
-      // Auto-seleccionar el primer método disponible
-      if (config) {
-        if (config.yape_enabled !== false && config.yape_number) {
-          setSelectedMethod('yape');
-        } else if (config.plin_enabled !== false && config.plin_number) {
-          setSelectedMethod('plin');
-        } else if (config.transferencia_enabled !== false && (config.bank_account_number || config.bank_cci || config.bank_account_info)) {
-          setSelectedMethod('transferencia');
-        } else {
-          setSelectedMethod(null);
-        }
-      }
+      setSelectedMethod(null);
     } catch (err) {
       console.error('Error al cargar config de pagos:', err);
     } finally {
@@ -320,13 +323,17 @@ export function RechargeModal({
     }
   };
 
-  // ── IziPay: iniciar pago en línea ─────────────────────────────────────────
+  // ── IziPay: iniciar pago en línea (modo redirección) ─────────────────────
   // REGLA DE SEGURIDAD: el frontend NO envía el monto a cobrar.
   // Envía los IDs de deuda + el excedente de recarga del carrito.
   // El servidor (Edge Function) recalcula el total desde la DB.
+  //
+  // FLUJO:
+  //   Click → overlay → API calls → localStorage → window.location.href
+  //   IziPay → pago → redirect a /pago/retorno → GatewayPaymentWaiting
   const handleInitIziPay = async () => {
     if (!user) return;
-    if (izipayLoading) return;
+    if (isRedirecting) return;
 
     // SEGURIDAD: un administrador en modo "Ver como padre" NO puede iniciar
     // pagos reales. Solo el padre autenticado puede tocar su dinero.
@@ -353,22 +360,26 @@ export function RechargeModal({
       return;
     }
 
-    // Calcular qué parte es recarga pura (excedente del carrito):
-    // - Si hay deudas (paidTransactionIds), el servidor las suma desde la DB.
-    //   El recharge_surplus es lo que queda (monto de la recarga del carrito).
-    // - Si no hay deudas (recarga pura), todo el monto es recharge_surplus.
+    // Calcular qué parte es recarga pura (excedente del carrito).
     const hasTxIds = Array.isArray(paidTransactionIds) && paidTransactionIds.length > 0;
-    // rechargeCartAmount: prop explícita si viene de PaymentsTab; si no, el numAmount completo
+    const isDebtOrLunchFlow = requestType === 'debt_payment' || requestType === 'lunch_payment';
+    if (isDebtOrLunchFlow && !hasTxIds) {
+      toast({
+        title: 'No se encontraron deudas para pagar',
+        description: 'Por seguridad, no se puede continuar si no hay tickets/deudas vinculados al pago.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const surplusToSend = hasTxIds
-      ? (rechargeCartAmount ?? 0)    // solo el excedente de recarga (deudas se calculan en servidor)
-      : numAmount;                   // sin deudas → todo es recarga
+      ? (rechargeCartAmount ?? 0)
+      : numAmount;
 
-    setIzipayLoading(true);
+    // Mostrar overlay ANTES de cualquier await — el padre ve respuesta inmediata
+    setIsRedirecting(true);
+
     try {
-
       // ── AUTORIDAD ÚNICA: fetch directo (no supabase.functions.invoke) ─
-      // Usamos fetch directo para poder leer el body en errores HTTP (400/500).
-      // supabase.functions.invoke devuelve fnData=null en non-2xx, ocultando el mensaje real.
       const { data: { session } } = await supabase!.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error('No hay sesión activa. Inicia sesión e intenta de nuevo.');
@@ -378,9 +389,8 @@ export function RechargeModal({
         studentId:        studentId,
         paid_tx_ids:      paidTransactionIds ?? [],
         recharge_surplus: surplusToSend,
+        request_type:     requestType ?? 'recharge',
       };
-
-      console.log('[IziPay] Enviando a Edge Function:', edgeFnUrl, requestBody);
 
       const httpResponse = await fetch(edgeFnUrl, {
         method:  'POST',
@@ -394,38 +404,29 @@ export function RechargeModal({
 
       const fnData = await httpResponse.json().catch(() => ({} as Record<string, unknown>));
 
-      console.log('[IziPay] Respuesta HTTP:', httpResponse.status, fnData);
-
       // 409 = sesión activa del mismo alumno → mostrar cuenta regresiva
       if (httpResponse.status === 409 && (fnData as any)?.error_code === 'SESSION_ACTIVE') {
         const secs = Math.max(5, Number((fnData as any)?.expires_in_seconds ?? 60));
         setLockSecondsLeft(secs);
         setIzipayStep('locked');
+        setIsRedirecting(false);
         return;
       }
 
       if (!httpResponse.ok || !fnData?.paymentUrl) {
         const serverMsg = (fnData as { error?: string } | null)?.error;
-        const displayMsg = serverMsg
-          || `Error ${httpResponse.status} al crear la orden. Intenta nuevamente.`;
-        console.error('[IziPay] Error:', httpResponse.status, fnData);
-        throw new Error(displayMsg);
+        throw new Error(serverMsg || `Error ${httpResponse.status} al crear la orden. Intenta nuevamente.`);
       }
 
       const serverAmount: number = Number(fnData.server_amount ?? numAmount);
       const responseOrderId = String(fnData.orderId ?? '');
-      // Añadir el origen de la app como parámetro para que el popup pueda
-      // restringir su postMessage solo a este origen (Fix V-3).
       const rawPaymentUrl = String(fnData.paymentUrl ?? '');
-      const paymentUrl = rawPaymentUrl
-        ? `${rawPaymentUrl}&origin=${encodeURIComponent(window.location.origin)}`
-        : '';
 
-      if (!paymentUrl || !responseOrderId) {
+      if (!rawPaymentUrl || !responseOrderId) {
         throw new Error('Respuesta incompleta de la pasarela. Falta paymentUrl u orderId.');
       }
 
-      // Crear payment_session
+      // ── Crear payment_session ──────────────────────────────────────────
       const { data: studentData } = await supabase!
         .from('students').select('school_id').eq('id', studentId).single();
 
@@ -435,7 +436,9 @@ export function RechargeModal({
           parent_id:         user.id,
           student_id:        studentId,
           school_id:         studentData?.school_id,
+          request_type:      requestType ?? 'recharge',
           debt_tx_ids:       paidTransactionIds ?? [],
+          lunch_order_ids:   lunchOrderIds ?? [],
           gateway_amount:    serverAmount,
           total_debt_amount: serverAmount,
           wallet_amount:     0,
@@ -448,67 +451,49 @@ export function RechargeModal({
         .select('id').single();
 
       if (sessionError) {
-        // Constraint único: el alumno ya tiene una sesión activa
-        // (la Edge Function no la detectó porque expiró justo en el margen)
         if ((sessionError as any)?.message?.includes('idx_ps_student_one_active_izipay')) {
           setLockSecondsLeft(60);
           setIzipayStep('locked');
+          setIsRedirecting(false);
           return;
         }
         throw sessionError;
       }
 
-      // ── Abrir popup de pago ──────────────────────────────────────────
-      const popup = window.open(
-        paymentUrl,
-        'izipay_payment',
-        'width=520,height=700,scrollbars=yes,resizable=yes,location=no,toolbar=no,menubar=no'
-      );
+      // ── Guardar sesión en localStorage ANTES de redirigir ─────────────
+      // El componente PaymentReturn leerá estos datos al regresar.
+      const returnUrl = `${window.location.origin}/pago/retorno`;
+      localStorage.setItem('izipay_redirect_pending', JSON.stringify({
+        sessionId:   paymentSession.id,
+        amount:      parseFloat(amount),
+        studentName,
+        studentId,
+        savedAt:     Date.now(),
+      }));
 
-      if (!popup) {
-        // Bloqueador de popups activo — abrir en pestaña nueva como fallback
-        window.open(paymentUrl, '_blank');
-        toast({
-          title: 'Ventana de pago abierta',
-          description: 'Se abrió una nueva pestaña con el formulario de pago.',
-        });
-      } else {
-        popupRef.current = popup;
-      }
+      // ── Construir URL final con return_url y sid ───────────────────────
+      // return_url: a dónde redirige izipay-frame.html al completar el pago.
+      // sid: ID de sesión para que la página de retorno sepa qué sondear.
+      const finalUrl =
+        `${rawPaymentUrl}` +
+        `&return_url=${encodeURIComponent(returnUrl)}` +
+        `&sid=${encodeURIComponent(paymentSession.id)}`;
 
-      setIzipaySessionId(paymentSession.id);
-      setIzipayStep('popup');
+      // ── Redirigir (la página completa navega a IziPay) ─────────────────
+      // No hay más lógica aquí: el componente se desmonta con la navegación.
+      window.location.href = finalUrl;
+
     } catch (err: any) {
+      setIsRedirecting(false);
       toast({
         title: 'Error al iniciar el pago',
         description: err.message || 'Intenta nuevamente en unos segundos.',
         variant: 'destructive',
       });
-    } finally {
-      setIzipayLoading(false);
     }
+    // Sin finally: en caso de éxito la página navega y el componente desaparece.
   };
 
-  // ── Detector de cierre inesperado del popup (Escenario "Pánico de Red") ──
-  // Si la ventana del padre se cae, el popup cierra sin enviar postMessage.
-  // Este efecto lo detecta y mueve automáticamente a 'waiting' para que
-  // GatewayPaymentWaiting pueda verificar el estado real en la BD.
-  useEffect(() => {
-    if (izipayStep !== 'popup') return;
-
-    const CHECK_MS = 1_500;
-    const timer = setInterval(() => {
-      if (popupRef.current?.closed) {
-        clearInterval(timer);
-        // El popup se cerró sin enviarnos IZIPAY_SUCCESS/ERROR.
-        // Podría ser porque el padre pagó y la red falló, o porque cerró manualmente.
-        // Pasamos a 'waiting' para que la BD sea el árbitro.
-        setIzipayStep('waiting');
-      }
-    }, CHECK_MS);
-
-    return () => clearInterval(timer);
-  }, [izipayStep]);
 
   // ── Cuenta regresiva cuando la sesión está bloqueada ────────────────────
   // Cuando el padre intenta pagar pero ya hay una sesión activa (doble click /
@@ -529,46 +514,6 @@ export function RechargeModal({
     return () => clearInterval(timer);
   }, [izipayStep, lockSecondsLeft]);
 
-  // ── Escuchar mensajes del popup IziPay ───────────────────────────────────
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      // SEGURIDAD V-2: solo aceptar mensajes de nuestro propio origen.
-      // El popup (izipay-frame.html) abre desde el mismo dominio, por lo que
-      // event.origin debe coincidir con window.location.origin.
-      if (event.origin !== window.location.origin) return;
-      if (!event.data?.type) return;
-      switch (event.data.type) {
-        case 'IZIPAY_SUCCESS':
-          popupRef.current?.close();
-          if (event.data.orderId) setIzipayOrderId(event.data.orderId);
-          // El popup confirmó el pago → marcar como confirmado y mostrar
-          // pantalla de éxito INMEDIATAMENTE. La BD valida en segundo plano.
-          setIzipayPopupConfirmed(true);
-          setIzipayStep('waiting');
-          break;
-        case 'IZIPAY_ERROR':
-          toast({
-            title: 'Error en el pago',
-            description: event.data.message || 'Revisa los datos de tu tarjeta.',
-            variant: 'destructive',
-          });
-          break;
-        case 'IZIPAY_LOAD_ERROR':
-          popupRef.current?.close();
-          toast({
-            title: 'Error al cargar el formulario',
-            description: event.data.message || 'Intenta nuevamente.',
-            variant: 'destructive',
-          });
-          setIzipayStep('idle');
-          break;
-        default:
-          break;
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [toast]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -576,8 +521,8 @@ export function RechargeModal({
 
     if (file.size > 5 * 1024 * 1024) {
       toast({ title: 'Imagen muy grande', description: 'Máximo 5 MB', variant: 'destructive' });
-      return;
-    }
+        return;
+      }
 
     setVoucherFile(file);
     const reader = new FileReader();
@@ -757,11 +702,10 @@ export function RechargeModal({
   const renderStepMethod = () => {
     const numericAmount = parseFloat(amount || '0');
     const canUseIzipay = numericAmount >= IZIPAY_MIN_AMOUNT;
-    const hasAnyMethod = !!(
-      (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
-      (paymentConfig?.plin_enabled !== false && paymentConfig?.plin_number) ||
-      (paymentConfig?.transferencia_enabled !== false && (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info)) ||
-      methodInfo.izipay.enabled
+    // methodInfo.X.enabled ya incorpora isMethodGloballyAllowed, por lo que
+    // hasAnyMethod refleja exactamente lo que el padre PUEDE ver y usar.
+    const hasAnyMethod = (Object.values(methodInfo) as Array<typeof methodInfo[keyof typeof methodInfo]>).some(
+      info => info.enabled && !!info.number
     );
 
     return (
@@ -796,17 +740,26 @@ export function RechargeModal({
               <div className="grid grid-cols-4 gap-2">
                 {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
                   const info = methodInfo[m];
-                  // IziPay deshabilitado por sede: botón gris, no clickeable
                   const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
                   const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
                   const isSelected = selectedMethod === m;
+
+                  // Si el switch global del método está OFF (y no es usuario puente),
+                  // no renderizar el botón. Menos opciones = menos confusión.
+                  const globalKey = (
+                    m === 'yape' ? 'yape_active' :
+                    m === 'plin' ? 'plin_active' :
+                    m === 'transferencia' ? 'transferencia_active' : 'izipay_active'
+                  ) as 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active';
+                  if (!isMethodGloballyAllowed(globalKey)) return null;
+
                   return (
                     <button
                       key={m}
                       type="button"
                       onClick={() => isAvailable && setSelectedMethod(m)}
                       disabled={!isAvailable}
-                      title={isDisabledBySede ? 'Método no disponible para esta sede' : undefined}
+                      title={isDisabledBySede ? 'Metodo no disponible para esta sede' : undefined}
                       className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all
                         ${isSelected && isAvailable
                           ? m === 'izipay'
@@ -1382,11 +1335,8 @@ export function RechargeModal({
 
     const numericAmount = parseFloat(amount || '0');
     const canUseIzipay = numericAmount >= IZIPAY_MIN_AMOUNT;
-    const hasAnyMethod = !!(
-      (paymentConfig?.yape_enabled !== false && paymentConfig?.yape_number) ||
-      (paymentConfig?.plin_enabled !== false && paymentConfig?.plin_number) ||
-      (paymentConfig?.transferencia_enabled !== false && (paymentConfig?.bank_account_number || paymentConfig?.bank_cci || paymentConfig?.bank_account_info)) ||
-      methodInfo.izipay.enabled
+    const hasAnyMethod = (Object.values(methodInfo) as Array<typeof methodInfo[keyof typeof methodInfo]>).some(
+      info => info.enabled && !!info.number
     );
 
     const isIziPayMethod = selectedMethod === 'izipay';
@@ -1493,26 +1443,35 @@ export function RechargeModal({
                   const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
                   const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
                   const isSelected = selectedMethod === m;
+
+                  // Switch global OFF -> ocultar totalmente el boton
+                  const globalKey = (
+                    m === 'yape' ? 'yape_active' :
+                    m === 'plin' ? 'plin_active' :
+                    m === 'transferencia' ? 'transferencia_active' : 'izipay_active'
+                  ) as 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active';
+                  if (!isMethodGloballyAllowed(globalKey)) return null;
+
                   return (
                     <button
                       key={m}
                       type="button"
                       onClick={() => isAvailable && setSelectedMethod(m)}
                       disabled={!isAvailable}
-                      title={isDisabledBySede ? 'Método no disponible para esta sede' : undefined}
+                      title={isDisabledBySede ? 'Metodo no disponible para esta sede' : undefined}
                       className={cn(
-                        "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all",
+                        "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all duration-150",
                         isSelected && isAvailable
                           ? m === 'izipay'
-                            ? "border-red-600 bg-red-50 shadow-sm"
-                            : "border-blue-500 bg-blue-50 shadow-sm"
+                            ? "border-red-600 bg-red-50 shadow-md ring-2 ring-red-300 scale-[1.05]"
+                            : "border-blue-600 bg-blue-100 shadow-md ring-2 ring-blue-300 scale-[1.05]"
                           : "border-gray-200 bg-white",
                         !isAvailable && (isDisabledBySede ? "opacity-40 cursor-not-allowed grayscale" : "opacity-30 cursor-not-allowed"),
-                        isAvailable && !isSelected && "hover:border-gray-300"
+                        isAvailable && !isSelected && "hover:border-blue-200 hover:bg-blue-50/40"
                       )}
                     >
                       <div className="h-8 w-8 flex items-center justify-center">{info.icon}</div>
-                      <span className={`text-[10px] font-bold ${isDisabledBySede ? 'text-gray-400' : 'text-gray-800'}`}>{info.label}</span>
+                      <span className={`text-[10px] font-bold ${isSelected && isAvailable ? (m === 'izipay' ? 'text-red-700' : 'text-blue-700') : isDisabledBySede ? 'text-gray-400' : 'text-gray-700'}`}>{info.label}</span>
                     </button>
                   );
                 })}
@@ -1523,6 +1482,17 @@ export function RechargeModal({
                 Monto mínimo para tarjeta: S/ 3.00. Agrega una pequeña recarga para continuar.
               </div>
             )}
+
+            {/* Hint cuando no se ha elegido método aún */}
+            {!selectedMethod && (
+              <p className="text-center text-xs text-gray-400 py-2 animate-in fade-in duration-200">
+                Selecciona un método de pago para continuar ↑
+              </p>
+            )}
+
+            {/* Divulgación progresiva: todo lo de abajo aparece con animación suave */}
+            {selectedMethod && (
+            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
 
             {/* Payment details card (solo para métodos manuales — no IziPay) */}
             {currentMethodInfo?.number && selectedMethod !== 'izipay' && (
@@ -1785,94 +1755,13 @@ export function RechargeModal({
             </button>
             )}
 
-            {/* ── BLOQUE IziPay: pago en ventana externa ── */}
+            {/* ── BLOQUE IziPay: pago por redirección ── */}
             {IZIPAY_ENABLED && selectedMethod === 'izipay' && (
               <div className="space-y-3">
-
-                {/* Confirmación de pago: GatewayPaymentWaiting sondea la BD */}
-                {izipayStep === 'waiting' && izipaySessionId && (
-                  <GatewayPaymentWaiting
-                    sessionId={izipaySessionId}
-                    amount={parseFloat(amount || '0')}
-                    studentName={studentName}
-                    confirmedByGateway={izipayPopupConfirmed}
-                    gatewayOrderId={izipayOrderId}
-                    onSuccess={() => { setIzipayStep('done'); setStep('success'); }}
-                    onFailure={() => {
-                      // Solo retroceder a idle si el popup NO confirmó el pago
-                      if (!izipayPopupConfirmed) {
-                        setIzipayStep('idle');
-                      } else {
-                        // El popup dijo que era exitoso — ir a éxito de todas formas
-                        setIzipayStep('done'); setStep('success');
-                      }
-                    }}
-                    onRetry={() => {
-                      if (!izipayPopupConfirmed) {
-                        setIzipayStep('idle'); setIzipaySessionId(null);
-                        setIzipayPopupConfirmed(false);
-                      }
-                    }}
-                    onClose={() => {
-                      if (izipayPopupConfirmed) {
-                        // Popup confirmó → cerrar GatewayPaymentWaiting y mostrar éxito
-                        setIzipayStep('done'); setStep('success');
-                      } else {
-                        setIzipayStep('idle'); setIzipaySessionId(null);
-                        setIzipayPopupConfirmed(false);
-                      }
-                    }}
-                  />
-                )}
-
-                {/* Ventana abierta — esperando que el usuario pague */}
-                {izipayStep === 'popup' && (
-                  <div className="rounded-xl border-2 border-blue-300 bg-blue-50 p-4 space-y-3 text-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-blue-500 mx-auto" />
-                    <p className="font-bold text-blue-800 text-sm">
-                      Se ha abierto una ventana segura de IziPay para completar tu pago
-                    </p>
-                    <p className="text-xs text-blue-600">
-                      Completa el pago en la ventana que se abrió. Esta pantalla se actualizará automáticamente cuando el pago sea confirmado.
-                    </p>
-                    <button
-                      onClick={() => { popupRef.current?.focus(); }}
-                      className="text-xs font-semibold text-blue-600 underline hover:text-blue-800"
-                    >
-                      ¿No ves la ventana? Haz clic aquí para abrirla
-                    </button>
-
-                    {/* BOTÓN "Ya pagué" — Escenario Pánico de Red
-                        Si el internet del padre se cayó justo después del pago,
-                        el popup no pudo enviar el postMessage. Este botón pasa
-                        directamente a GatewayPaymentWaiting para que verifique
-                        el estado real en la BD (el webhook ya debió actualizar). */}
-                    {izipaySessionId && (
-                      <button
-                        onClick={() => {
-                          popupRef.current?.close();
-                          setIzipayStep('waiting');
-                        }}
-                        className="flex items-center justify-center gap-1.5 w-full text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2 px-3 hover:bg-emerald-100 transition-colors"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        Ya pagué pero no aparece aquí — Verificar pago
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => { popupRef.current?.close(); setIzipayStep('idle'); setIzipaySessionId(null); }}
-                      className="block w-full text-center text-[11px] text-gray-400 hover:text-gray-600 underline pt-1"
-                    >
-                      Cancelar pago
-                    </button>
-                  </div>
-                )}
 
                 {/* ── Cuenta regresiva: sesión activa de intento anterior ── */}
                 {izipayStep === 'locked' && (
                   <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 space-y-3 text-center">
-                    {/* Icono animado */}
                     <div className="flex items-center justify-center gap-2">
                       <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
                         <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1884,13 +1773,11 @@ export function RechargeModal({
                       </p>
                     </div>
 
-                    {/* Explicación clara */}
                     <p className="text-xs text-amber-700 leading-relaxed">
                       Hay un intento de pago activo para este alumno.<br/>
-                      Puede ser una pestaña que quedó abierta.
+                      Puede ser una página que quedó abierta.
                     </p>
 
-                    {/* Número grande del countdown */}
                     <div className="flex flex-col items-center gap-1">
                       <div className="w-20 h-20 rounded-full bg-amber-100 border-4 border-amber-300 flex items-center justify-center">
                         <span className="text-3xl font-black text-amber-700 tabular-nums">
@@ -1906,26 +1793,22 @@ export function RechargeModal({
                       El botón se habilitará automáticamente cuando llegue a <strong>0</strong>.
                     </p>
 
-                    {/* Verificar si ya pagó */}
-                    <button
-                      onClick={() => {
-                        setIzipayStep('waiting');
-                        setLockSecondsLeft(0);
-                      }}
+                    {/* Si el padre ya pagó, lo enviamos a la página de estado */}
+                    <a
+                      href="/pago/retorno"
                       className="flex items-center justify-center gap-1.5 w-full text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2 px-3 hover:bg-emerald-100 transition-colors"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      ¿Ya pagaste en otra pestaña? — Verificar pago
-                    </button>
+                      ¿Ya pagaste? — Ver estado del pago
+                    </a>
                   </div>
                 )}
 
-                {/* Botón para iniciar pago en línea */}
-                {(izipayStep === 'idle' || izipayStep === 'done') && (
+                {/* Botón para iniciar pago */}
+                {izipayStep === 'idle' && (
                   <div className="space-y-2">
-                    {/* Aviso de impersonación — el admin no puede pagar por el padre */}
                     {isViewAsMode && (
                       <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 text-xs text-amber-800 font-semibold flex items-center gap-2">
                         <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
@@ -1939,15 +1822,15 @@ export function RechargeModal({
                       <p className="text-xs text-blue-600 mt-1">
                         Tarjeta Visa/Mastercard o Yape QR.
                         Tu saldo se acredita <strong>inmediatamente</strong>.
-                        Se abrirá una ventana segura de IziPay.
+                        Serás redirigido a la pasarela segura de IziPay.
                       </p>
                     </div>
                     <Button
                       onClick={handleInitIziPay}
-                      disabled={izipayLoading || !amount || parseFloat(amount) < IZIPAY_MIN_AMOUNT || isViewAsMode}
+                      disabled={isRedirecting || !amount || parseFloat(amount) < IZIPAY_MIN_AMOUNT || isViewAsMode}
                       className="w-full h-12 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 font-bold text-base gap-2 shadow-lg shadow-red-200 disabled:from-gray-300 disabled:to-gray-300"
                     >
-                      {izipayLoading
+                      {isRedirecting
                         ? <><Loader2 className="h-4 w-4 animate-spin" /> Preparando pago...</>
                         : <><CreditCard className="h-4 w-4" /> Pagar con Tarjeta / Yape — S/ {parseFloat(amount || '0').toFixed(2)}</>
                       }
@@ -2018,8 +1901,6 @@ export function RechargeModal({
             >
               {loading ? (
                 <><Loader2 className="h-4 w-4 animate-spin mr-2" />{uploadPhaseLabel || 'Enviando...'}</>
-              ) : !selectedMethod ? (
-                <>Selecciona el método de pago</>
               ) : !referenceCode.trim() ? (
                 <>Falta el N° de operación</>
               ) : !voucherFile ? (
@@ -2031,6 +1912,9 @@ export function RechargeModal({
               )}
             </Button>
             )}
+
+            </div>
+            )} {/* fin divulgación progresiva */}
 
             {onCancel && (
               <button type="button" onClick={onCancel} className="w-full text-center text-[10px] text-gray-400 hover:text-gray-600 underline py-0.5">
@@ -2045,100 +1929,65 @@ export function RechargeModal({
 
   // ─────────────────────── PASO 4: Éxito ───────────────────────
   const renderStepSuccess = () => {
-    const wasIzipay = izipayOrderId !== null || izipayStep === 'done';
-    const now = new Date();
-    const fechaStr = now.toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
-    const horaStr  = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    // El éxito de IziPay se muestra en /pago/retorno (modo redirección).
+    // Este paso solo aplica para pagos manuales (Yape, Plin, Transferencia).
+    const wasIzipay = false;
 
     return (
       <div className="text-center space-y-4 py-2">
-        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <CheckCircle2 className="h-12 w-12 text-green-600" />
-        </div>
+      <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+        <CheckCircle2 className="h-12 w-12 text-green-600" />
+      </div>
 
-        <div>
+      <div>
           <h3 className="text-xl font-bold text-gray-900">
             {wasIzipay ? '¡Pago confirmado!' : '¡Comprobante enviado!'}
           </h3>
           <p className="text-gray-500 mt-1 text-sm">
-            {requestType === 'lunch_payment'
+          {requestType === 'lunch_payment'
               ? <>Pago de almuerzo de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-              : requestType === 'debt_payment'
-              ? isCombinedPayment
+            : requestType === 'debt_payment'
+            ? isCombinedPayment
                 ? <>Pago combinado de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
                 : <>Pago de deuda de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
               : <>Recarga de <strong>S/ {parseFloat(amount).toFixed(2)}</strong> para <strong>{studentName}</strong>.</>
-            }
-          </p>
-        </div>
+          }
+        </p>
+      </div>
 
-        {/* Recibo digital — solo para pagos con IziPay */}
-        {wasIzipay && (
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 text-left space-y-3">
-            <p className="text-xs font-bold text-blue-800 uppercase tracking-wide flex items-center gap-1.5">
-              <CreditCard className="h-3.5 w-3.5" /> Recibo Digital · IziPay
-            </p>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
-                <span className="text-gray-500 text-xs">Monto pagado</span>
-                <span className="font-black text-green-700 text-base">S/ {parseFloat(amount).toFixed(2)}</span>
-              </div>
-              {izipayOrderId && (
-                <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
-                  <span className="text-gray-500 text-xs">N° de operación</span>
-                  <span className="font-mono font-bold text-gray-800 text-xs">{izipayOrderId}</span>
-                </div>
-              )}
-              <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
-                <span className="text-gray-500 text-xs">Fecha</span>
-                <span className="font-semibold text-gray-700 text-xs">{fechaStr}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500 text-xs">Hora</span>
-                <span className="font-semibold text-gray-700 text-xs">{horaStr}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-              <CheckCircle2 className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-              <p className="text-[11px] text-green-700 font-semibold">
-                Pago procesado. El saldo se acreditará automáticamente.
-              </p>
-            </div>
-          </div>
-        )}
 
-        {isCombinedPayment && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-left">
+      {isCombinedPayment && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-left">
             <p className="text-xs font-semibold text-emerald-800">
               Pago combinado para {combinedStudentIds?.length || 0} alumno(s)
-            </p>
-          </div>
-        )}
+          </p>
+        </div>
+      )}
 
         {/* Próximos pasos — solo para pagos manuales */}
         {!wasIzipay && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
-            <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
-              <Clock className="h-4 w-4" /> ¿Qué pasa ahora?
-            </p>
-            <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-              <li>Un administrador verificará tu comprobante</li>
-              {requestType === 'lunch_payment' ? (
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left space-y-2">
+        <p className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+          <Clock className="h-4 w-4" /> ¿Qué pasa ahora?
+        </p>
+        <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+          <li>Un administrador verificará tu comprobante</li>
+          {requestType === 'lunch_payment' ? (
                 <><li>Tu pedido quedará <strong>confirmado</strong> al aprobarse</li></>
-              ) : requestType === 'debt_payment' ? (
+          ) : requestType === 'debt_payment' ? (
                 <><li>Tus compras pendientes se marcarán como <strong>pagadas</strong></li></>
-              ) : (
+          ) : (
                 <><li>El saldo se acreditará en menos de 24 horas</li></>
-              )}
-            </ul>
-          </div>
+          )}
+        </ul>
+      </div>
         )}
 
-        <Button onClick={onClose} className="w-full h-11 bg-blue-600 hover:bg-blue-700 font-semibold">
-          Entendido
-        </Button>
-      </div>
-    );
+      <Button onClick={onClose} className="w-full h-11 bg-blue-600 hover:bg-blue-700 font-semibold">
+        Entendido
+      </Button>
+    </div>
+  );
   };
 
   if (RECHARGES_MAINTENANCE && requestType === 'recharge' && !izipayTestMode && !isIzipayPilotUser) {
@@ -2168,8 +2017,33 @@ export function RechargeModal({
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={isRedirecting ? undefined : onClose}>
       <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto" aria-describedby={undefined}>
+
+        {/* ── Overlay de redirección ───────────────────────────────────────────
+            Aparece mientras se prepara la orden y se redirige a IziPay.
+            Cubre toda la pantalla para que el padre no toque nada durante el proceso. */}
+        {isRedirecting && (
+          <div className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center gap-5 p-6">
+            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center animate-pulse">
+              <Loader2 className="h-9 w-9 animate-spin text-blue-600" />
+            </div>
+            <div className="text-center space-y-2 max-w-xs">
+              <p className="text-lg font-bold text-gray-900">Preparando pago seguro...</p>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                Conectando con IziPay. Serás redirigido en un momento.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+              <svg className="h-4 w-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m9 12 2 2 4-4"/>
+              </svg>
+              <p className="text-xs font-semibold text-blue-700">Conexión segura · TLS · PCI DSS</p>
+            </div>
+          </div>
+        )}
+
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
             <Wallet className="h-5 w-5 text-blue-600" />

@@ -1,4 +1,4 @@
--- ============================================================================
+﻿-- ============================================================================
 -- 2026-04-22 — Paridad lunch_orders ↔ transactions, vista de deuda, Storage RLS
 --
 -- 1) view_student_debts: tramo "almuerzo_virtual" sin filtrar por payment_method
@@ -76,7 +76,8 @@ BEGIN
     AND t.type          = 'purchase'
     AND t.payment_status IN ('pending', 'partial')
     AND t.metadata->>'lunch_order_id' IS NOT NULL
-    AND (t.metadata->>'lunch_order_id')::uuid = ANY(p_lunch_ids);
+    AND (t.metadata->>'lunch_order_id')::uuid = ANY(p_lunch_ids)
+    AND (t.student_id = p_student_id OR t.student_id IS NULL);
 
   -- 2) Insertar “espejo” solo si no queda NINGUNA transacción viva (no eliminada) con ese almuerzo
   FOR lo_rec IN

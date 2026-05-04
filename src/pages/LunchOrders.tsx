@@ -1101,7 +1101,14 @@ export default function LunchOrders() {
 
         if (transactionError) {
           console.error('⚠️ Error creando transacción:', transactionError);
-          // No lanzar error, el pedido ya se confirmó
+          // Revertir confirmación para no dejar pedido sin transacción vinculada
+          await supabase
+            .from('lunch_orders')
+            .update({ status: 'pending' })
+            .eq('id', order.id);
+          throw new Error(
+            'No se pudo registrar la deuda del almuerzo. El pedido volvió a pendiente para evitar inconsistencias.'
+          );
         } else {
           console.log('✅ Transacción creada para pedido confirmado');
         }

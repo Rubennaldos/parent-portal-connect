@@ -10,8 +10,12 @@ export interface TicketData {
   businessAddress?: string;
   businessPhone?: string;
   ticketCode: string;
+  ticketCorrelative?: string;
   date: string;
   clientName: string;
+  clientDocument?: string;
+  cashierLabel?: string;
+  documentType?: 'ticket' | 'boleta' | 'factura';
   items: Array<{
     name: string;
     quantity: number;
@@ -21,6 +25,7 @@ export interface TicketData {
   subtotal: number;
   tax?: number;
   total: number;
+  currency?: string;
   paymentMethod: string;
   headerText?: string;
   footerText?: string;
@@ -33,6 +38,15 @@ export interface TicketData {
   fontFamily?: string;
   showQr?: boolean;
   qrPrefix?: string;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export interface ComandaData {
@@ -60,11 +74,39 @@ function generateTicketHTML(data: TicketData): string {
   const paperWidth = data.paperWidth || 80;
   const fontSize = data.fontSize === 'small' ? '11px' : data.fontSize === 'large' ? '14px' : '12px';
   const fontFamily = data.fontFamily || 'Courier New, monospace';
-  
-  const itemsHTML = data.items.map(item => `
+  const currency = data.currency || 'S/';
+  const normalizedDocumentType = data.documentType || 'ticket';
+  const documentTitle =
+    normalizedDocumentType === 'boleta'
+      ? 'BOLETA DE VENTA'
+      : normalizedDocumentType === 'factura'
+        ? 'FACTURA DE VENTA'
+        : 'TICKET DE VENTA';
+  const fiscalBadge =
+    normalizedDocumentType === 'ticket'
+      ? 'Documento interno - no fiscal'
+      : 'Representacion impresa de comprobante electronico';
+  const subtotal =
+    typeof data.subtotal === 'number' && Number.isFinite(data.subtotal)
+      ? data.subtotal
+      : +(data.total / 1.18).toFixed(2);
+  const tax =
+    typeof data.tax === 'number' && Number.isFinite(data.tax)
+      ? data.tax
+      : +(data.total - subtotal).toFixed(2);
+  const rawCorrelative = data.ticketCorrelative || data.ticketCode;
+  const correlative = escapeHtml(rawCorrelative);
+  const sanitizedDate = escapeHtml(data.date);
+  const sanitizedClientName = escapeHtml(data.clientName);
+  const sanitizedCashier = data.cashierLabel ? escapeHtml(data.cashierLabel) : null;
+  const sanitizedClientDocument = data.clientDocument ? escapeHtml(data.clientDocument) : null;
+  const sanitizedPaymentMethod = escapeHtml(data.paymentMethod);
+  const itemsHTML = data.items.map((item) => `
     <tr>
-      <td style="padding: 4px 0;">${item.quantity}x ${item.name}</td>
-      <td style="padding: 4px 0; text-align: right;">S/ ${item.price.toFixed(2)}</td>
+      <td style="padding: 4px 0; width: 13%;">${item.quantity}</td>
+      <td style="padding: 4px 4px 4px 0; width: 45%;">${escapeHtml(item.name)}</td>
+      <td style="padding: 4px 0; width: 20%; text-align: right;">${currency} ${item.price.toFixed(2)}</td>
+      <td style="padding: 4px 0; width: 22%; text-align: right; font-weight: 700;">${currency} ${item.total.toFixed(2)}</td>
     </tr>
   `).join('');
 
@@ -83,7 +125,7 @@ function generateTicketHTML(data: TicketData): string {
         @media print {
           body {
             margin: 0;
-            padding: 10mm;
+            padding: 4mm;
           }
           
           .no-print {
@@ -103,7 +145,7 @@ function generateTicketHTML(data: TicketData): string {
           line-height: 1.4;
           max-width: ${paperWidth}mm;
           margin: 0 auto;
-          padding: 10px;
+          padding: 8px;
           background: white;
         }
         
@@ -113,15 +155,15 @@ function generateTicketHTML(data: TicketData): string {
         
         .header {
           text-align: center;
-          margin-bottom: 10px;
+          margin-bottom: 8px;
           border-bottom: 2px dashed #000;
-          padding-bottom: 10px;
+          padding-bottom: 8px;
         }
         
         .business-name {
-          font-size: 16px;
+          font-size: 17px;
           font-weight: bold;
-          margin-bottom: 5px;
+          margin-bottom: 4px;
         }
         
         .business-info {
@@ -131,11 +173,11 @@ function generateTicketHTML(data: TicketData): string {
         
         .separator {
           border-top: 1px dashed #000;
-          margin: 10px 0;
+          margin: 8px 0;
         }
         
         .info-section {
-          margin: 10px 0;
+          margin: 8px 0;
         }
         
         .info-row {
@@ -147,22 +189,31 @@ function generateTicketHTML(data: TicketData): string {
         
         .items-table {
           width: 100%;
-          margin: 10px 0;
+          margin: 8px 0;
           font-size: 11px;
+          border-collapse: collapse;
         }
         
         .items-table td {
-          padding: 4px 0;
+          padding: 3px 0;
         }
         
-        .items-table td:last-child {
+        .items-table th {
+          padding-bottom: 5px;
+          border-bottom: 1px solid #000;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+        }
+
+        .items-table td:last-child, .items-table th:last-child {
           text-align: right;
         }
         
         .totals {
-          margin-top: 10px;
+          margin-top: 8px;
           border-top: 1px dashed #000;
-          padding-top: 10px;
+          padding-top: 8px;
         }
         
         .total-row {
@@ -175,15 +226,15 @@ function generateTicketHTML(data: TicketData): string {
         .total-row.main {
           font-size: 16px;
           font-weight: bold;
-          margin-top: 10px;
+          margin-top: 8px;
           padding-top: 5px;
           border-top: 2px solid #000;
         }
         
         .footer {
           text-align: center;
-          margin-top: 15px;
-          padding-top: 10px;
+          margin-top: 12px;
+          padding-top: 8px;
           border-top: 2px dashed #000;
           font-size: 10px;
         }
@@ -197,6 +248,21 @@ function generateTicketHTML(data: TicketData): string {
           margin: 20px 0 10px 0;
           font-size: 10px;
           color: #666;
+        }
+
+        .document-title {
+          font-weight: 800;
+          text-align: center;
+          border: 1px solid #000;
+          padding: 6px;
+          margin: 8px 0;
+          letter-spacing: 0.4px;
+        }
+
+        .fiscal-badge {
+          text-align: center;
+          font-size: 10px;
+          margin-top: 5px;
         }
         
         .print-button {
@@ -248,31 +314,45 @@ function generateTicketHTML(data: TicketData): string {
         
         <!-- Header -->
         <div class="header">
-          <div class="business-name">${data.businessName}</div>
-          ${data.businessRuc ? `<div class="business-info">RUC: ${data.businessRuc}</div>` : ''}
-          ${data.businessAddress ? `<div class="business-info">${data.businessAddress}</div>` : ''}
-          ${data.businessPhone ? `<div class="business-info">Tel: ${data.businessPhone}</div>` : ''}
+          <div class="business-name">${escapeHtml(data.businessName)}</div>
+          ${data.businessRuc ? `<div class="business-info">RUC: ${escapeHtml(data.businessRuc)}</div>` : ''}
+          ${data.businessAddress ? `<div class="business-info">${escapeHtml(data.businessAddress)}</div>` : ''}
+          ${data.businessPhone ? `<div class="business-info">Tel: ${escapeHtml(data.businessPhone)}</div>` : ''}
         </div>
         
-        ${data.headerText ? `<div style="text-align: center; margin: 10px 0; font-weight: bold;">${data.headerText}</div>` : ''}
+        <div class="document-title">${documentTitle}</div>
+        <div class="fiscal-badge">${fiscalBadge}</div>
+        ${data.headerText ? `<div style="text-align: center; margin: 8px 0; font-weight: bold;">${escapeHtml(data.headerText)}</div>` : ''}
         
         <!-- Info -->
         <div class="info-section">
           <div class="info-row">
-            <span>Ticket:</span>
-            <span><strong>${data.ticketCode}</strong></span>
+            <span>Correlativo:</span>
+            <span><strong>${correlative}</strong></span>
           </div>
           <div class="info-row">
             <span>Fecha:</span>
-            <span>${data.date}</span>
+            <span>${sanitizedDate}</span>
           </div>
           <div class="info-row">
             <span>Cliente:</span>
-            <span>${data.clientName}</span>
+            <span>${sanitizedClientName}</span>
           </div>
+          ${sanitizedClientDocument ? `
+            <div class="info-row">
+              <span>Documento:</span>
+              <span>${sanitizedClientDocument}</span>
+            </div>
+          ` : ''}
+          ${sanitizedCashier ? `
+            <div class="info-row">
+              <span>Cajero:</span>
+              <span>${sanitizedCashier}</span>
+            </div>
+          ` : ''}
           <div class="info-row">
             <span>Pago:</span>
-            <span>${data.paymentMethod}</span>
+            <span>${sanitizedPaymentMethod}</span>
           </div>
         </div>
         
@@ -280,6 +360,14 @@ function generateTicketHTML(data: TicketData): string {
         
         <!-- Items -->
         <table class="items-table">
+          <thead>
+            <tr>
+              <th style="text-align: left;">Cant</th>
+              <th style="text-align: left;">Producto</th>
+              <th style="text-align: right;">P.U.</th>
+              <th style="text-align: right;">Importe</th>
+            </tr>
+          </thead>
           <tbody>
             ${itemsHTML}
           </tbody>
@@ -289,31 +377,31 @@ function generateTicketHTML(data: TicketData): string {
         <div class="totals">
           <div class="total-row">
             <span>Subtotal:</span>
-            <span>S/ ${data.subtotal.toFixed(2)}</span>
+            <span>${currency} ${subtotal.toFixed(2)}</span>
           </div>
-          ${data.tax ? `
+          ${tax ? `
             <div class="total-row">
               <span>IGV (18%):</span>
-              <span>S/ ${data.tax.toFixed(2)}</span>
+              <span>${currency} ${tax.toFixed(2)}</span>
             </div>
           ` : ''}
           <div class="total-row main">
             <span>TOTAL:</span>
-            <span>S/ ${data.total.toFixed(2)}</span>
+            <span>${currency} ${data.total.toFixed(2)}</span>
           </div>
         </div>
         
         <!-- QR Code -->
         ${data.showQr ? `
           <div style="text-align: center; border: 2px solid #000; padding: 10px; margin: 10px 0;">
-            <div style="font-weight: bold; font-family: monospace;">QR: ${data.ticketCode}</div>
+            <div style="font-weight: bold; font-family: monospace;">QR: ${escapeHtml(data.ticketCode)}</div>
             <div style="font-size: 10px; color: #666;">Código para validación</div>
           </div>
         ` : ''}
         
         <!-- Footer -->
         <div class="footer">
-          ${data.footerText ? `<div class="footer-text">${data.footerText}</div>` : ''}
+          ${data.footerText ? `<div class="footer-text">${escapeHtml(data.footerText)}</div>` : ''}
           <div class="footer-text">¡Gracias por su compra!</div>
           <div class="footer-text">${new Date().toLocaleString('es-PE')}</div>
         </div>
@@ -333,34 +421,15 @@ function generateTicketHTML(data: TicketData): string {
           ✖️ Cerrar
         </button>
         <p style="color: #666; font-size: 12px; margin-top: 10px;">
-          Después de imprimir, corta el papel en la línea indicada ✂️
+          Si el cuadro no aparece, usa este botón para abrir impresión
         </p>
       </div>
       
       <script>
-        // 🚀 Imprimir INMEDIATAMENTE cuando la ventana carga
         window.addEventListener('load', function() {
-          console.log('🚀 Ventana cargada - Abriendo diálogo de impresión...');
-          // Pequeño delay para asegurar que todo esté renderizado
           setTimeout(function() {
             window.print();
-          }, 100);
-        });
-        
-        // Auto-cerrar ventana después de imprimir
-        window.addEventListener('afterprint', function() {
-          console.log('✅ Impresión completada - Cerrando ventana...');
-          setTimeout(function() {
-            window.close();
-          }, 500);
-        });
-        
-        // Cerrar si el usuario cancela
-        let printCancelled = false;
-        window.addEventListener('focus', function() {
-          if (!printCancelled) {
-            printCancelled = true;
-          }
+          }, 250);
         });
       </script>
     </body>

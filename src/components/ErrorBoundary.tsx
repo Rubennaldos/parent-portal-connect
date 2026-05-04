@@ -7,7 +7,7 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, Home, RefreshCw } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { logSystemErrorAsync } from '@/lib/systemErrorLogger';
 
 interface Props {
   children: ReactNode;
@@ -20,6 +20,9 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
+  private onWindowError?: (event: ErrorEvent) => void;
+  private onUnhandledRejection?: (event: PromiseRejectionEvent) => void;
+
   constructor(props: Props) {
     super(props);
     this.state = {
@@ -49,46 +52,79 @@ export class ErrorBoundary extends Component<Props, State> {
     this.logError(error, errorInfo);
   }
 
-  async logError(error: Error, errorInfo: ErrorInfo) {
-    try {
-      // Obtener usuario actual
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: profile } = user ? await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single() : { data: null };
+  componentDidMount() {
+    this.onWindowError = (event: ErrorEvent) => {
+      const err = event.error instanceof Error ? event.error : null;
+      logSystemErrorAsync({
+        errorMessage: err?.message || event.message || 'WindowError sin mensaje',
+        stackTrace: err?.stack ?? null,
+        componentName: 'window.onerror',
+        metadata: {
+          source: event.filename,
+          line: event.lineno,
+          column: event.colno,
+        },
+      });
+    };
 
-      // Determinar el componente que falló
-      const componentStack = errorInfo.componentStack || '';
-      const componentMatch = componentStack.match(/at (\w+)/);
-      const component = componentMatch ? componentMatch[1] : 'Unknown';
+    this.onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string'
+            ? reason
+            : 'Unhandled promise rejection';
+      let reasonText = 'unknown';
+      if (reason instanceof Error) {
+        reasonText = reason.message;
+      } else if (typeof reason === 'string') {
+        reasonText = reason;
+      } else {
+        try {
+          reasonText = JSON.stringify(reason ?? null);
+        } catch {
+          reasonText = String(reason);
+        }
+      }
 
-      // Insertar error en BD
-      await supabase
-        .from('error_logs')
-        .insert({
-          user_id: user?.id || null,
-          user_email: user?.email || 'Anónimo',
-          user_role: profile?.role || 'unknown',
-          error_type: 'unknown', // React crashes son difíciles de categorizar
-          error_message: error.toString(),
-          error_translated: `Error en componente ${component}: ${error.message}`,
-          error_stack: error.stack || '',
-          page_url: window.location.pathname,
-          component,
-          action: 'component_render',
-          browser_info: {
-            userAgent: navigator.userAgent,
-            language: navigator.language,
-            componentStack: errorInfo.componentStack,
-          },
-        });
+      logSystemErrorAsync({
+        errorMessage: message,
+        stackTrace: reason instanceof Error ? reason.stack : null,
+        componentName: 'window.unhandledrejection',
+        metadata: {
+          reasonText,
+        },
+      });
+    };
 
-      console.log('📝 Error registrado en BD desde ErrorBoundary');
-    } catch (e) {
-      console.error('❌ Error al registrar en BD:', e);
+    window.addEventListener('error', this.onWindowError);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection);
+  }
+
+  componentWillUnmount() {
+    if (this.onWindowError) {
+      window.removeEventListener('error', this.onWindowError);
     }
+    if (this.onUnhandledRejection) {
+      window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
+    }
+  }
+
+  async logError(error: Error, errorInfo: ErrorInfo) {
+    const componentStack = errorInfo.componentStack || '';
+    const componentMatch = componentStack.match(/at (\w+)/);
+    const component = componentMatch ? componentMatch[1] : 'UnknownComponent';
+
+    logSystemErrorAsync({
+      errorMessage: error.message || String(error),
+      stackTrace: error.stack ?? null,
+      componentName: component,
+      metadata: {
+        source: 'react_error_boundary',
+        componentStack,
+      },
+    });
   }
 
   handleReset = () => {

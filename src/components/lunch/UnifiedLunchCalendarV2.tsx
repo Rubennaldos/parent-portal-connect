@@ -1366,7 +1366,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
         .select('id')
         .single();
 
-      if (txError) console.error('❌ Error creating transaction:', txError);
+      if (txError) {
+        console.error('❌ Error creating transaction — revertiendo pedido para evitar huérfano:', txError);
+        // Cancelar el pedido recién creado: sin transacción no puede quedar "activo"
+        await supabase
+          .from('lunch_orders')
+          .update({ is_cancelled: true, status: 'cancelled' })
+          .eq('id', insertedOrder.id);
+        throw new Error(
+          'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Por favor intenta de nuevo.'
+        );
+      }
 
       const newCount = ordersCreated + 1;
       setOrdersCreated(newCount);

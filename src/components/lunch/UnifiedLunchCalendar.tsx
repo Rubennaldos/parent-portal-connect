@@ -555,7 +555,18 @@ export function UnifiedLunchCalendar({ userType, userId, userSchoolId }: Unified
 
           if (txError) {
             console.error('❌ Error creando transaction:', txError);
-            // Don't throw - the order was created, just log the error
+            // Cancelar pedido recién creado para evitar huérfanos
+            await supabase
+              .from('lunch_orders')
+              .update({
+                is_cancelled: true,
+                status: 'cancelled',
+                cancellation_reason: 'AUTO: transacción de almuerzo fallida en UnifiedLunchCalendar'
+              })
+              .eq('id', insertedOrder.id);
+            throw new Error(
+              'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Intenta nuevamente.'
+            );
           }
 
           totalOrders++;

@@ -255,3 +255,52 @@ v_today_start := date_trunc('day', v_now_lima) AT TIME ZONE 'America/Lima';
 □ ¿Hay cálculos que dependen del tiempo (períodos, vencimientos, reinicios)?
   → usan now() AT TIME ZONE 'America/Lima' en PostgreSQL, no new Date() en JS
 ```
+
+---
+
+## REGLA #12 — PATRÓN DE REGISTRO (REGISTRY): CONFIGURACIÓN ≠ INTERFAZ
+
+**La regla de oro de las pantallas complejas:** desacoplar la **configuración** (qué existe, en qué orden, con qué props/datos) de la **interfaz** (cómo se renderiza un ítem).
+
+```
+❌ MAL: una página gigante con 20 if/else encadenados
+❌ MAL: 20 componentes sueltos copiados en un grid sin estructura común
+❌ MAL: mezclar "lista de cosas a mostrar" con JSX repetido por cada caso
+
+✅ BIEN: un mapa o arreglo de definiciones (config) + un renderizador genérico
+✅ BIEN: Registry: registrar tipos/claves → componente o panel según clave
+✅ BIEN: cada variante en su propio archivo; la página solo orquesta y pasa datos
+```
+
+**Objetivo:** que agregar un bloque nuevo sea **añadir una entrada al registro** (o al array de secciones), no abrir un archivo de 800 líneas y duplicar otro `if`.
+
+**Patrón mental:** *"¿Esto es dato de negocio / layout, o es código de presentación duplicado?"* → si se repite, va a configuración + un solo lugar que renderiza según la clave.
+
+---
+
+## REGLA #13 — DEUDA Y CATÁLOGO: NUNCA SE PISAN
+
+**Lo que ya generó deuda no vive en el mismo plano que “¿se vende hoy?”.** Cambios de disponibilidad por sede, precios por sede, pausa de producto o retiro del catálogo **no** deben borrar, anular ni ocultar obligaciones ya constituidas.
+
+### 13.A — Nada de lo ya debido se borra por mover disponibilidad o precio
+
+```
+❌ MAL: que al desmarcar una sede o cambiar precios por sede desaparezca o se anule una deuda ya generada
+✅ BIEN: la deuda registrada sigue intacta; solo cambia si hay un cobro, compensación o proceso explícito de negocio (siempre auditado)
+```
+
+### 13.B — Cobro y deuda muestran el producto (nombre/monto) aunque ya no se venda
+
+```
+❌ MAL: pantallas de cobro/deuda que solo listan productos “activos” o “disponibles en sede” y por eso la línea de la galleta desaparece
+✅ BIEN: cobro y deuda siguen mostrando nombre y monto del ítem debido, independiente del catálogo actual para venta futura
+```
+
+### 13.C — Si el producto ya no existe en catálogo, etiqueta clara y mismo monto
+
+```
+❌ MAL: dejar la línea en blanco, un guion, o un monto que cambie porque el join al producto falló
+✅ BIEN: mostrar etiqueta tipo "Producto retirado" (o equivalente claro) y conservar el mismo monto debido; idealmente respaldado por snapshot o referencia al hecho que originó la deuda
+```
+
+**Criterio de oro:** catálogo y precios gobiernan **ventas futuras**; deuda y cobro gobiernan **hechos pasados** — y el usuario nunca debe perder la pista de **qué** debe y **cuánto**.
