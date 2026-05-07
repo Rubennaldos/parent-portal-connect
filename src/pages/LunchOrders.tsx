@@ -39,6 +39,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
 import { LunchDeliveryDashboard } from '@/components/lunch/LunchDeliveryDashboard';
+import { fetchLunchOrderPurchaseTxSummary } from '@/services/lunchOrderPurchaseTxSummary';
 
 interface LunchOrder {
   id: string;
@@ -426,87 +427,51 @@ export default function LunchOrders() {
           }
         }
         
-        // 🎫💰 Batch: obtener ticket_codes + payment_status + amount para modo rango
-        // Filtrar por person IDs de los pedidos (no traer toda la escuela)
+        // 🎫💰 Resumen de pago por pedido (RPC + índice metadata.lunch_order_id)
         if (data && data.length > 0) {
           try {
-            const orderIds = data.map(o => o.id);
-            const orderIdSet = new Set(orderIds);
-            const studentIds = [...new Set(data.filter((o: any) => o.student_id).map((o: any) => o.student_id))] as string[];
-            const teacherIds = [...new Set(data.filter((o: any) => o.teacher_id).map((o: any) => o.teacher_id))] as string[];
-
-            let allTxData: any[] = [];
-
-            if (studentIds.length > 0) {
-              const { data: studentTxs } = await supabase
-                .from('transactions')
-                .select('metadata, ticket_code, payment_status, payment_method, amount')
-                .eq('type', 'purchase')
-                .eq('is_deleted', false)
-                .neq('payment_status', 'cancelled')
-                .not('metadata', 'is', null)
-                .in('student_id', studentIds)
-                .order('created_at', { ascending: false });
-              if (studentTxs) allTxData = allTxData.concat(studentTxs);
-            }
-            if (teacherIds.length > 0) {
-              const { data: teacherTxs } = await supabase
-                .from('transactions')
-                .select('metadata, ticket_code, payment_status, payment_method, amount')
-                .eq('type', 'purchase')
-                .eq('is_deleted', false)
-                .neq('payment_status', 'cancelled')
-                .not('metadata', 'is', null)
-                .in('teacher_id', teacherIds)
-                .order('created_at', { ascending: false });
-              if (teacherTxs) allTxData = allTxData.concat(teacherTxs);
-            }
-
-            if (allTxData.length > 0) {
-              const ticketMap = new Map<string, string>();
-              const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
-              const amountMap = new Map<string, number>();
-              const sourceMap = new Map<string, string>();
-              allTxData.forEach((tx: any) => {
-                const lunchOrderId = tx.metadata?.lunch_order_id;
-                if (lunchOrderId && orderIdSet.has(lunchOrderId)) {
-                  if (tx.ticket_code) {
-                    ticketMap.set(lunchOrderId, tx.ticket_code);
-                  }
-                  const existing = paymentStatusMap.get(lunchOrderId);
-                  if (!existing || tx.payment_status === 'paid') {
-                    paymentStatusMap.set(lunchOrderId, { 
-                      status: tx.payment_status, 
-                      method: tx.payment_method 
-                    });
-                  }
-                  if (tx.amount) {
-                    amountMap.set(lunchOrderId, Math.abs(tx.amount));
-                  }
-                  if (tx.metadata?.source) {
-                    sourceMap.set(lunchOrderId, tx.metadata.source);
-                  }
-                }
+            const orderIds = data.map((o: any) => o.id);
+            const txSchoolFilter =
+              adminSchoolId && !canViewAllSchools ? adminSchoolId : null;
+            const rows = await fetchLunchOrderPurchaseTxSummary(
+              supabase,
+              orderIds,
+              txSchoolFilter
+            );
+            const ticketMap = new Map<string, string>();
+            const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
+            const amountMap = new Map<string, number>();
+            const sourceMap = new Map<string, string>();
+            for (const r of rows) {
+              if (r.ticket_code) ticketMap.set(r.lunch_order_id, r.ticket_code);
+              paymentStatusMap.set(r.lunch_order_id, {
+                status: r.payment_status || 'pending',
+                method: r.payment_method,
               });
-              
-              data.forEach((order: any) => {
-                if (ticketMap.has(order.id)) {
-                  order._ticket_code = ticketMap.get(order.id);
-                }
-                if (paymentStatusMap.has(order.id)) {
-                  order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
-                  order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
-                }
-                if (sourceMap.has(order.id)) {
-                  order._tx_source = sourceMap.get(order.id);
-                }
-                if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
-                  order.final_price = amountMap.get(order.id);
-                }
-              });
+              if (r.amount_abs != null) {
+                amountMap.set(r.lunch_order_id, Number(r.amount_abs));
+              }
+              if (r.tx_metadata_source) {
+                sourceMap.set(r.lunch_order_id, r.tx_metadata_source);
+              }
             }
+            data.forEach((order: any) => {
+              if (ticketMap.has(order.id)) {
+                order._ticket_code = ticketMap.get(order.id);
+              }
+              if (paymentStatusMap.has(order.id)) {
+                order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
+                order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+              }
+              if (sourceMap.has(order.id)) {
+                order._tx_source = sourceMap.get(order.id);
+              }
+              if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
+                order.final_price = amountMap.get(order.id);
+              }
+            });
           } catch (err) {
-            console.log('⚠️ No se pudieron obtener ticket_codes/payment_status batch (rango)');
+            console.log('⚠️ No se pudieron obtener resúmenes de transacciones (rango)', err);
           }
         }
         
@@ -596,90 +561,51 @@ export default function LunchOrders() {
         }
       }
       
-      // 🎫💰 Batch: obtener ticket_codes + payment_status + amount de transacciones asociadas a estos pedidos
-      // Filtrar por person IDs de los pedidos (no traer toda la escuela)
+      // 🎫💰 Resumen de pago por pedido (RPC; admin sede filtra por school_id de la transacción)
       if (data && data.length > 0) {
         try {
-          const orderIds = data.map(o => o.id);
-          const orderIdSet = new Set(orderIds);
-          const studentIds = [...new Set(data.filter((o: any) => o.student_id).map((o: any) => o.student_id))] as string[];
-          const teacherIds = [...new Set(data.filter((o: any) => o.teacher_id).map((o: any) => o.teacher_id))] as string[];
-
-          let allTxData: any[] = [];
-
-          if (studentIds.length > 0) {
-            let q = supabase
-              .from('transactions')
-              .select('metadata, ticket_code, payment_status, payment_method, amount')
-              .eq('type', 'purchase')
-              .eq('is_deleted', false)
-              .neq('payment_status', 'cancelled')
-              .not('metadata', 'is', null)
-              .in('student_id', studentIds)
-              .order('created_at', { ascending: false });
-            if (adminSchoolId) q = q.eq('school_id', adminSchoolId);
-            const { data: studentTxs } = await q;
-            if (studentTxs) allTxData = allTxData.concat(studentTxs);
-          }
-          if (teacherIds.length > 0) {
-            let q = supabase
-              .from('transactions')
-              .select('metadata, ticket_code, payment_status, payment_method, amount')
-              .eq('type', 'purchase')
-              .eq('is_deleted', false)
-              .neq('payment_status', 'cancelled')
-              .not('metadata', 'is', null)
-              .in('teacher_id', teacherIds)
-              .order('created_at', { ascending: false });
-            if (adminSchoolId) q = q.eq('school_id', adminSchoolId);
-            const { data: teacherTxs } = await q;
-            if (teacherTxs) allTxData = allTxData.concat(teacherTxs);
-          }
-
-          if (allTxData.length > 0) {
-            const ticketMap = new Map<string, string>();
-            const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
-            const amountMap = new Map<string, number>();
-            const sourceMap = new Map<string, string>();
-            allTxData.forEach((tx: any) => {
-              const lunchOrderId = tx.metadata?.lunch_order_id;
-              if (lunchOrderId && orderIdSet.has(lunchOrderId)) {
-                if (tx.ticket_code) {
-                  ticketMap.set(lunchOrderId, tx.ticket_code);
-                }
-                if (!paymentStatusMap.has(lunchOrderId)) {
-                  paymentStatusMap.set(lunchOrderId, { 
-                    status: tx.payment_status, 
-                    method: tx.payment_method 
-                  });
-                }
-                if (tx.amount) {
-                  amountMap.set(lunchOrderId, Math.abs(tx.amount));
-                }
-                if (tx.metadata?.source) {
-                  sourceMap.set(lunchOrderId, tx.metadata.source);
-                }
-              }
+          const orderIds = data.map((o: any) => o.id);
+          const txSchoolFilter =
+            adminSchoolId && !canViewAllSchools ? adminSchoolId : null;
+          const rows = await fetchLunchOrderPurchaseTxSummary(
+            supabase,
+            orderIds,
+            txSchoolFilter
+          );
+          const ticketMap = new Map<string, string>();
+          const paymentStatusMap = new Map<string, { status: string; method: string | null }>();
+          const amountMap = new Map<string, number>();
+          const sourceMap = new Map<string, string>();
+          for (const r of rows) {
+            if (r.ticket_code) ticketMap.set(r.lunch_order_id, r.ticket_code);
+            paymentStatusMap.set(r.lunch_order_id, {
+              status: r.payment_status || 'pending',
+              method: r.payment_method,
             });
-            
-            data.forEach((order: any) => {
-              if (ticketMap.has(order.id)) {
-                order._ticket_code = ticketMap.get(order.id);
-              }
-              if (paymentStatusMap.has(order.id)) {
-                order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
-                order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
-              }
-              if (sourceMap.has(order.id)) {
-                order._tx_source = sourceMap.get(order.id);
-              }
-              if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
-                order.final_price = amountMap.get(order.id);
-              }
-            });
+            if (r.amount_abs != null) {
+              amountMap.set(r.lunch_order_id, Number(r.amount_abs));
+            }
+            if (r.tx_metadata_source) {
+              sourceMap.set(r.lunch_order_id, r.tx_metadata_source);
+            }
           }
+          data.forEach((order: any) => {
+            if (ticketMap.has(order.id)) {
+              order._ticket_code = ticketMap.get(order.id);
+            }
+            if (paymentStatusMap.has(order.id)) {
+              order._tx_payment_status = paymentStatusMap.get(order.id)!.status;
+              order._tx_payment_method = paymentStatusMap.get(order.id)!.method;
+            }
+            if (sourceMap.has(order.id)) {
+              order._tx_source = sourceMap.get(order.id);
+            }
+            if ((!order.final_price || order.final_price === 0) && amountMap.has(order.id)) {
+              order.final_price = amountMap.get(order.id);
+            }
+          });
         } catch (err) {
-          console.log('⚠️ No se pudieron obtener ticket_codes/payment_status batch');
+          console.log('⚠️ No se pudieron obtener resúmenes de transacciones (día)', err);
         }
       }
 

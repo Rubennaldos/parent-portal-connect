@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { fetchLunchOrderPurchaseTxSummary } from '@/services/lunchOrderPurchaseTxSummary';
 import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -464,24 +465,22 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
         }));
 
         if (orders.length > 0) {
-          const { data: txData } = await supabase
-            .from('transactions')
-            .select('payment_status, metadata')
-            .eq(personField, personId)
-            .eq('is_deleted', false)
-            .in('payment_status', ['pending', 'paid', 'cancelled', 'partial']);
-
-          if (txData && txData.length > 0) {
-            const txPaymentMap = new Map<string, string>();
-            txData.forEach(tx => {
-              if (tx.metadata?.lunch_order_id) {
-                txPaymentMap.set(tx.metadata.lunch_order_id, tx.payment_status);
-              }
-            });
-            orders.forEach(o => {
-              o.transaction_payment_status = txPaymentMap.get(o.id) ?? null;
-            });
+          const orderIds = orders.map(o => o.id);
+          const rows = await fetchLunchOrderPurchaseTxSummary(
+            supabase,
+            orderIds,
+            effectiveSchoolId,
+            { includeCancelled: true }
+          );
+          const txPaymentMap = new Map<string, string>();
+          for (const r of rows) {
+            if (r.payment_status) {
+              txPaymentMap.set(r.lunch_order_id, r.payment_status);
+            }
           }
+          orders.forEach(o => {
+            o.transaction_payment_status = txPaymentMap.get(o.id) ?? null;
+          });
         }
         setExistingOrders(orders);
       }

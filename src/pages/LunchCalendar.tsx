@@ -153,6 +153,8 @@ const LunchCalendar = () => {
   const [isCreateAnotherMenuOpen, setIsCreateAnotherMenuOpen] = useState(false); // Nuevo modal
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
+  /** Solo montar Gestión de pedidos al abrir la pestaña (evita queries pesadas en background). */
+  const [calendarMainTab, setCalendarMainTab] = useState('calendar');
   
   // Estado del wizard
   const [wizardCategoryId, setWizardCategoryId] = useState<string | null>(null);
@@ -575,7 +577,7 @@ const LunchCalendar = () => {
       </header>
 
       <main className="container mx-auto px-2 sm:px-4 py-4 sm:py-8">
-        <Tabs defaultValue="calendar" className="w-full">
+        <Tabs value={calendarMainTab} onValueChange={setCalendarMainTab} className="w-full">
           {/* Tabs responsive */}
           <TabsList className={`grid w-full mb-4 sm:mb-6 h-auto ${canViewAllSchools ? 'grid-cols-4' : 'grid-cols-3'}`}>
             <TabsTrigger value="calendar" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
@@ -1010,7 +1012,7 @@ const LunchCalendar = () => {
 
           {/* Tab: Pedidos */}
           <TabsContent value="orders">
-            <LunchOrders />
+            {calendarMainTab === 'orders' ? <LunchOrders /> : null}
           </TabsContent>
 
           {/* Tab: Analytics */}
