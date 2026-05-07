@@ -123,11 +123,14 @@ export default function LunchOrders() {
   
   // Fecha por defecto: basada en configuración de entrega
   const [selectedDate, setSelectedDate] = useState<string>('');
+  const [draftSelectedDate, setDraftSelectedDate] = useState<string>('');
   const [defaultDeliveryDate, setDefaultDeliveryDate] = useState<string>('');
   
   // Filtros de rango de fechas para auditoría
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [draftStartDate, setDraftStartDate] = useState<string>('');
+  const [draftEndDate, setDraftEndDate] = useState<string>('');
   const [isDateRangeMode, setIsDateRangeMode] = useState(false);
   
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -201,10 +204,10 @@ export default function LunchOrders() {
   }, [role, roleLoading, user]);
 
   useEffect(() => {
-    if (selectedDate && !isDateRangeMode) {
+    if (!isDateRangeMode && selectedDate) {
       fetchOrders();
     }
-  }, [selectedDate]);
+  }, [selectedDate, isDateRangeMode]);
 
   useEffect(() => {
     if (isDateRangeMode && startDate && endDate) {
@@ -290,6 +293,7 @@ export default function LunchOrders() {
         
         setDefaultDeliveryDate(formattedDate);
         setSelectedDate(formattedDate);
+        setDraftSelectedDate(formattedDate);
       } else {
         // Si no tiene school_id (admin general), usar mañana por defecto
         const tomorrow = new Date();
@@ -297,6 +301,7 @@ export default function LunchOrders() {
         const formattedDate = format(tomorrow, 'yyyy-MM-dd');
         setDefaultDeliveryDate(formattedDate);
         setSelectedDate(formattedDate);
+        setDraftSelectedDate(formattedDate);
       }
 
       await fetchSchools();
@@ -308,8 +313,20 @@ export default function LunchOrders() {
       const formattedDate = format(tomorrow, 'yyyy-MM-dd');
       setDefaultDeliveryDate(formattedDate);
       setSelectedDate(formattedDate);
+      setDraftSelectedDate(formattedDate);
       setLoading(false);
     }
+  };
+
+  const applySingleDateFilter = () => {
+    if (!draftSelectedDate) return;
+    setSelectedDate(draftSelectedDate);
+  };
+
+  const applyRangeDateFilter = () => {
+    if (!draftStartDate || !draftEndDate) return;
+    setStartDate(draftStartDate);
+    setEndDate(draftEndDate);
   };
 
   const fetchSchools = async () => {
@@ -1799,15 +1816,26 @@ export default function LunchOrders() {
                 <div className="flex gap-2">
                   <Input
                     type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
+                    value={draftSelectedDate}
+                    onChange={(e) => setDraftSelectedDate(e.target.value)}
                     className="w-full"
                   />
-                  {selectedDate !== defaultDeliveryDate && (
+                  <Button
+                    size="sm"
+                    onClick={applySingleDateFilter}
+                    disabled={!draftSelectedDate || draftSelectedDate === selectedDate}
+                    className="whitespace-nowrap"
+                  >
+                    Buscar
+                  </Button>
+                  {draftSelectedDate !== defaultDeliveryDate && (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setSelectedDate(defaultDeliveryDate)}
+                      onClick={() => {
+                        setDraftSelectedDate(defaultDeliveryDate);
+                        setSelectedDate(defaultDeliveryDate);
+                      }}
                       className="whitespace-nowrap"
                       title="Volver a fecha de entrega configurada"
                     >
@@ -1821,8 +1849,8 @@ export default function LunchOrders() {
                     <label className="text-xs text-gray-500 mb-1 block">Desde</label>
                     <Input
                       type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      value={draftStartDate}
+                      onChange={(e) => setDraftStartDate(e.target.value)}
                       className="w-full"
                     />
                   </div>
@@ -1830,10 +1858,24 @@ export default function LunchOrders() {
                     <label className="text-xs text-gray-500 mb-1 block">Hasta</label>
                     <Input
                       type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
+                      value={draftEndDate}
+                      onChange={(e) => setDraftEndDate(e.target.value)}
                       className="w-full"
                     />
+                  </div>
+                  <div className="self-end">
+                    <Button
+                      size="sm"
+                      onClick={applyRangeDateFilter}
+                      disabled={
+                        !draftStartDate ||
+                        !draftEndDate ||
+                        (draftStartDate === startDate && draftEndDate === endDate)
+                      }
+                      className="whitespace-nowrap"
+                    >
+                      Buscar
+                    </Button>
                   </div>
                 </div>
               )}
