@@ -319,6 +319,7 @@ const POS = () => {
   const [productSearch, setProductSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [filteredCombos, setFilteredCombos] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('todos');
   const [combos, setCombos] = useState<any[]>([]); // Combos activos
 
@@ -460,7 +461,6 @@ const POS = () => {
   // Cargar productos al inicio
   useEffect(() => {
     fetchProducts();
-    fetchCombos();
   }, []);
 
   // ── Real-time: sincronización automática de cambios en productos ──
@@ -596,10 +596,17 @@ const POS = () => {
   // Filtrar productos
   useEffect(() => {
     let filtered = products;
+    let filteredComboList = combos;
 
     // Si se selecciona la categoría de combos
     if (selectedCategory === 'combos') {
+      if (productSearch.trim()) {
+        filteredComboList = filteredComboList.filter(c =>
+          (c.name || '').toLowerCase().includes(productSearch.toLowerCase())
+        );
+      }
       setFilteredProducts([]); // No mostramos productos normales, solo combos
+      setFilteredCombos(filteredComboList);
       return;
     }
 
@@ -611,10 +618,14 @@ const POS = () => {
       filtered = filtered.filter(p => 
         p.name.toLowerCase().includes(productSearch.toLowerCase())
       );
+      filteredComboList = filteredComboList.filter(c =>
+        (c.name || '').toLowerCase().includes(productSearch.toLowerCase())
+      );
     }
 
     setFilteredProducts(filtered);
-  }, [productSearch, selectedCategory, products]);
+    setFilteredCombos(filteredComboList);
+  }, [productSearch, selectedCategory, products, combos]);
 
   // Buscar estudiantes — debounce 350ms para evitar una query por cada letra
   useEffect(() => {
@@ -869,6 +880,7 @@ const POS = () => {
       if (schoolId) {
         cacheProducts(productsData, schoolId).catch(() => {});
       }
+      await fetchCombos(schoolId);
       console.log('✅ POS - Productos cargados correctamente con precios de sede');
     } catch (error: any) {
       console.error('💥 POS - Error cargando productos, intentando caché offline...');
@@ -898,69 +910,26 @@ const POS = () => {
     }
   };
 
-  const fetchCombos = async () => {
+  const fetchCombos = async (schoolIdOverride?: string | null) => {
     try {
-      // Obtener la sede del usuario actual para filtrar combos vendibles.
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('school_id')
-        .eq('id', user?.id)
-        .single();
-
-      if (profileError || !profile?.school_id) {
-        console.warn('⚠️ POS - No se pudo obtener school_id para filtrar combos');
+      const schoolId = schoolIdOverride ?? userSchoolId;
+      if (!schoolId) {
+        setCombos([]);
+        setFilteredCombos([]);
+        console.warn('⚠️ POS - Sin school_id, no se cargarán combos');
         return;
       }
-
-      // Camino principal (Fase 6): BD decide vigencia con hora Lima + archivado + sede.
-      const { data: rpcData, error: rpcError } = await supabase.rpc('get_active_combos_for_school', {
-        p_school_id: profile.school_id,
-      });
-
-      if (!rpcError && Array.isArray(rpcData)) {
-        const rpcCombos = rpcData.map((row: any) => ({
-          id: row.combo_id,
-          name: row.combo_name,
-          description: row.combo_description,
-          combo_price: row.combo_price,
-          image_url: row.combo_image_url,
-          runtime_status: row.runtime_status,
-          combo_items: Array.isArray(row.products)
-            ? row.products.map((productRow: any) => ({
-                quantity: Number(productRow.quantity) || 1,
-                product: {
-                  id: productRow.product_id,
-                  name: productRow.product_name,
-                  price_sale: productRow.price,
-                  has_stock: productRow.has_stock,
-                },
-              }))
-            : [],
-        }));
-
-        setCombos(rpcCombos);
-
-        if (rpcCombos.length > 0) {
-          setOrderedCategories(prev => {
-            const hasComboCategory = prev.some(c => c.id === 'combos');
-            if (!hasComboCategory) {
-              return [...prev, { id: 'combos', label: 'Combos', icon: Gift }];
-            }
-            return prev;
-          });
-        }
-        return;
-      }
-
-      // Fallback temporal: mantiene compatibilidad mientras la migración no esté aplicada.
-      if (rpcError) {
-        console.warn('⚠️ POS - RPC get_active_combos_for_school no disponible, usando fallback legacy:', rpcError.message);
-      }
+      const todayLima = todayLimaDateString();
 
       const { data, error } = await supabase
         .from('combos')
         .select('*')
         .eq('active', true)
+        .eq('is_active', true)
+        .eq('is_archived', false)
+        .or(`school_id.eq.${schoolId},school_ids.cs.{${schoolId}}`)
+        .or(`valid_from.is.null,valid_from.lte.${todayLima}`)
+        .or(`valid_until.is.null,valid_until.gte.${todayLima}`)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -968,31 +937,9 @@ const POS = () => {
         return;
       }
 
-      const nowLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
-
-      const legacyScoped = (data || []).filter((combo: any) => {
-        const archived = combo.is_archived === true;
-        if (archived) return false;
-
-        // Compatibilidad dual: combos antiguos con school_id + nuevos con school_ids.
-        const inSchoolIdScope = !combo.school_id || combo.school_id === profile.school_id;
-        const inSchoolIdsScope = !combo.school_ids
-          || combo.school_ids.length === 0
-          || combo.school_ids.includes(profile.school_id);
-        if (!(inSchoolIdScope || inSchoolIdsScope)) return false;
-
-        // Vigencia local solo como fallback hasta que el RPC esté disponible.
-        const validFrom = combo.valid_from ? new Date(`${combo.valid_from}T00:00:00`) : null;
-        const validUntil = combo.valid_until ? new Date(`${combo.valid_until}T23:59:59`) : null;
-
-        if (validFrom && nowLima < validFrom) return false;
-        if (validUntil && nowLima > validUntil) return false;
-        return true;
-      });
-
       // Cargar items de cada combo
       const combosWithItems = await Promise.all(
-        legacyScoped.map(async (combo: any) => {
+        (data || []).map(async (combo: any) => {
           const { data: items } = await supabase
             .from('combo_items')
             .select('quantity, product_id')
@@ -1020,6 +967,7 @@ const POS = () => {
       );
 
       setCombos(combosWithItems);
+      setFilteredCombos(combosWithItems);
 
       if (combosWithItems.length > 0) {
         setOrderedCategories(prev => {
@@ -2175,13 +2123,18 @@ const POS = () => {
       // ══════════════════════════════════════════════════════════════════
 
       // Construir líneas del carrito (solo lo mínimo necesario; precios los calcula el RPC)
-      const rpcLines = cart.map(item => ({
-        ...(item.is_custom ? {} : { product_id: item.product.id }),
-        quantity: item.quantity,
-        is_custom: item.is_custom ?? false,
-        custom_name: item.is_custom ? item.product.name : undefined,
-        custom_price: item.is_custom ? item.product.price : undefined,
-      }));
+      const rpcLines = cart.map(item => {
+        const isComboItem = item.product.id.startsWith('combo_');
+        const lineIsCustom = (item.is_custom ?? false) || isComboItem;
+        return {
+          ...(lineIsCustom ? {} : { product_id: item.product.id }),
+          quantity: item.quantity,
+          // Los combos no tienen stock directo en product_stock; se envían como venta custom.
+          is_custom: lineIsCustom,
+          custom_name: lineIsCustom ? item.product.name : undefined,
+          custom_price: lineIsCustom ? item.product.price : undefined,
+        };
+      });
 
       // Metadata de pago (no monetaria — solo auditoría)
       const paymentMeta: Record<string, any> = {};
@@ -3239,7 +3192,7 @@ const POS = () => {
                 </div>
               ) : selectedCategory === 'combos' ? (
                 <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
-                  {combos.map((combo) => (
+                  {filteredCombos.map((combo) => (
                     <button
                       key={combo.id}
                       onClick={() => addComboToCart(combo)}
