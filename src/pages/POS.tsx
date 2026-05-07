@@ -927,9 +927,6 @@ const POS = () => {
         .eq('active', true)
         .eq('is_active', true)
         .eq('is_archived', false)
-        .or(`school_id.eq.${schoolId},school_ids.cs.{${schoolId}}`)
-        .or(`valid_from.is.null,valid_from.lte.${todayLima}`)
-        .or(`valid_until.is.null,valid_until.gte.${todayLima}`)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -937,9 +934,22 @@ const POS = () => {
         return;
       }
 
+      // Filtro estricto en app para evitar falsos negativos por sintaxis OR/JSON en PostgREST.
+      const scopedCombos = (data || []).filter((combo: any) => {
+        const schoolIds = Array.isArray(combo.school_ids) ? combo.school_ids : [];
+        const inSchoolScope =
+          combo.school_id === schoolId ||
+          schoolIds.includes(schoolId);
+        if (!inSchoolScope) return false;
+
+        if (combo.valid_from && String(combo.valid_from) > todayLima) return false;
+        if (combo.valid_until && String(combo.valid_until) < todayLima) return false;
+        return true;
+      });
+
       // Cargar items de cada combo
       const combosWithItems = await Promise.all(
-        (data || []).map(async (combo: any) => {
+        scopedCombos.map(async (combo: any) => {
           const { data: items } = await supabase
             .from('combo_items')
             .select('quantity, product_id')
@@ -3185,12 +3195,7 @@ const POS = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-1 sm:p-2">
-              {filteredProducts.length === 0 && combos.length === 0 && selectedCategory !== 'combos' ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <Search className="h-8 w-8 sm:h-16 sm:w-16 mb-2 sm:mb-4 opacity-30" />
-                  <p className="text-xs sm:text-lg font-semibold">No hay productos disponibles</p>
-                </div>
-              ) : selectedCategory === 'combos' ? (
+              {selectedCategory === 'combos' ? (
                 <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
                   {filteredCombos.map((combo) => (
                     <button
@@ -3213,49 +3218,81 @@ const POS = () => {
                     </button>
                   ))}
                 </div>
+              ) : filteredProducts.length === 0 && filteredCombos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                  <Search className="h-8 w-8 sm:h-16 sm:w-16 mb-2 sm:mb-4 opacity-30" />
+                  <p className="text-xs sm:text-lg font-semibold">No hay productos disponibles</p>
+                </div>
               ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => {
-                    const hasStockControl = product.stock_control_enabled && product.current_stock !== null && product.current_stock !== undefined;
-                    const isOutOfStock    = hasStockControl && (product.current_stock ?? 0) === 0;
-                    const isLowStock      = hasStockControl && !isOutOfStock && (product.current_stock ?? 0) <= 5;
+                <div className="space-y-2 sm:space-y-3">
+                  {selectedCategory === 'todos' && productSearch.trim() && filteredCombos.length > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
+                      {filteredCombos.map((combo) => (
+                        <button
+                          key={`search_combo_${combo.id}`}
+                          onClick={() => addComboToCart(combo)}
+                          className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center"
+                        >
+                          <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
+                            <Gift className="h-2.5 w-2.5 sm:h-4 sm:w-4 text-purple-600 flex-shrink-0" />
+                            <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
+                              {combo.name}
+                            </h3>
+                          </div>
+                          <p className="text-[10px] sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
+                            S/ {combo.combo_price.toFixed(2)}
+                          </p>
+                          <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
+                            {combo.combo_items?.length || 0} productos
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-                    return (
-                    <button
-                      key={product.id}
-                      onClick={() => !isOutOfStock && addToCart(product)}
-                      disabled={isOutOfStock}
-                      className={`group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between
+                  <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => {
+                      const hasStockControl = product.stock_control_enabled && product.current_stock !== null && product.current_stock !== undefined;
+                      const isOutOfStock    = hasStockControl && (product.current_stock ?? 0) === 0;
+                      const isLowStock      = hasStockControl && !isOutOfStock && (product.current_stock ?? 0) <= 5;
+
+                      return (
+                      <button
+                        key={product.id}
+                        onClick={() => !isOutOfStock && addToCart(product)}
+                        disabled={isOutOfStock}
+                        className={`group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between
                         ${isOutOfStock
                           ? 'opacity-50 cursor-not-allowed border-red-200 bg-red-50'
                           : 'hover:shadow-xl hover:border-emerald-500 active:scale-95'}`}
-                    >
-                      <div>
-                        <h3 className="font-bold text-[8px] sm:text-base mb-0.5 sm:mb-1 line-clamp-2 leading-tight">
-                          {product.name}
-                        </h3>
-                        {product.description && (
-                          <p className="text-[7px] sm:text-xs text-gray-500 mb-0.5 sm:mb-2 line-clamp-1">
-                            {product.description}
+                      >
+                        <div>
+                          <h3 className="font-bold text-[8px] sm:text-base mb-0.5 sm:mb-1 line-clamp-2 leading-tight">
+                            {product.name}
+                          </h3>
+                          {product.description && (
+                            <p className="text-[7px] sm:text-xs text-gray-500 mb-0.5 sm:mb-2 line-clamp-1">
+                              {product.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-end justify-between gap-0.5">
+                          <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
+                            S/ {product.price.toFixed(2)}
                           </p>
-                        )}
-                      </div>
-                      <div className="flex items-end justify-between gap-0.5">
-                        <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
-                          S/ {product.price.toFixed(2)}
-                        </p>
-                        {hasStockControl && (
-                          <span className={`text-[7px] sm:text-[9px] font-bold px-1 py-0.5 rounded leading-none ${
-                            isOutOfStock  ? 'bg-red-100 text-red-700'    :
-                            isLowStock    ? 'bg-amber-100 text-amber-700' :
-                                            'bg-slate-100 text-slate-500'
-                          }`}>
-                            {isOutOfStock ? '✖ Agotado' : `📦 ${product.current_stock}`}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                    );
-                  })}
+                          {hasStockControl && (
+                            <span className={`text-[7px] sm:text-[9px] font-bold px-1 py-0.5 rounded leading-none ${
+                              isOutOfStock  ? 'bg-red-100 text-red-700'    :
+                              isLowStock    ? 'bg-amber-100 text-amber-700' :
+                                              'bg-slate-100 text-slate-500'
+                            }`}>
+                              {isOutOfStock ? '✖ Agotado' : `📦 ${product.current_stock}`}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
