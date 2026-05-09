@@ -42,6 +42,8 @@ interface StudentDebt {
   student_photo: string | null;
   student_balance: number;
   wallet_balance: number;
+  /** Saldo REC aprobado no consumido (RPC get_student_recharge_ledger). */
+  rec_ledger_remaining: number;
   school_id: string;
   /** Deuda bruta del alumno — proviene de summary_student_total (DB v2.2) */
   total_debt: number;
@@ -267,6 +269,29 @@ export const PaymentsTab = ({
       // Construir StudentDebt[] manteniendo el mismo shape que usa el render
       const debtsData: StudentDebt[] = [];
 
+      const ledgerByStudent = new Map<string, number>();
+      const studentIdsForLedger = students
+        .map((s) => s.id)
+        .filter((id) => (rowsByStudent.get(id) ?? []).length > 0);
+
+      if (studentIdsForLedger.length > 0) {
+        const ledgerResults = await Promise.all(
+          studentIdsForLedger.map((id) =>
+            supabase.rpc('get_student_recharge_ledger', { p_student_id: id }),
+          ),
+        );
+        studentIdsForLedger.forEach((id, idx) => {
+          const res = ledgerResults[idx];
+          if (res.error) {
+            console.warn('[PaymentsTab] get_student_recharge_ledger:', id, res.error);
+            ledgerByStudent.set(id, 0);
+            return;
+          }
+          const raw = (res.data as { total_remaining?: unknown } | null)?.total_remaining;
+          ledgerByStudent.set(id, Number(raw ?? 0));
+        });
+      }
+
       for (const student of students) {
         const rows = rowsByStudent.get(student.id) ?? [];
         if (rows.length === 0) continue;
@@ -294,6 +319,7 @@ export const PaymentsTab = ({
           student_photo:     student.photo_url,
           student_balance:   student.balance         ?? 0,
           wallet_balance:    student.wallet_balance  ?? 0,
+          rec_ledger_remaining: ledgerByStudent.get(student.id) ?? 0,
           school_id:         student.school_id,
           total_debt:        Number(firstRow?.summary_student_total     ?? 0),
           student_payable:   Number(firstRow?.summary_student_payable   ?? 0),

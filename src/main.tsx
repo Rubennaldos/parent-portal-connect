@@ -53,23 +53,17 @@ createRoot(document.getElementById("root")!).render(
 );
 
 /**
- * 🧹 SERVICE WORKER — LIMPIEZA DE REGISTROS ANTERIORES
+ * 🧩 SERVICE WORKER — gestionado por VitePWA (Workbox)
  *
- * El archivo /sw.js no existe en este proyecto. Si quedaron Service Workers
- * registrados por deploys anteriores, los desregistramos para evitar que
- * el evento "controllerchange" fuerce recargas inesperadas que expulsan
- * a los usuarios de su sesión activa.
+ * El SW es generado automáticamente en cada build por VitePWA con
+ * skipWaiting: true y clientsClaim: true, por lo que se activa de
+ * inmediato sin requerir recarga manual.
  *
- * IMPORTANTE: No volver a registrar ningún SW hasta tener el archivo
- * sw.js correctamente implementado con lógica de caché y skipWaiting.
+ * Las reglas de caché de Supabase están en vite.config.ts:
+ *   - /rest/v1/products → NetworkOnly  (siempre datos frescos)
+ *   - resto de Supabase → NetworkFirst (red primero, caché de respaldo)
+ *
+ * NO desregistrar el SW aquí: hacerlo crearía un ciclo donde el SW
+ * se registra (VitePWA) y se mata (este bloque) en cada carga de página,
+ * dejando el caché anterior activo para las primeras peticiones.
  */
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      registrations.forEach(r => {
-        r.unregister();
-        console.log('[SW] Service Worker anterior desregistrado para evitar recargas forzadas');
-      });
-    }).catch(() => {});
-  });
-}

@@ -257,45 +257,69 @@ const Products = () => {
 
   const fetchProducts = async () => {
     setLoading(true);
+    try {
+      let productsData: Product[] = [];
 
-    let productsData: Product[] = [];
-
-    if (canViewAllSchools) {
-      // Admin general / supervisor ven TODOS (activos e inactivos) para poder reactivar
-      const { data } = await supabase.from('products').select('*').order('name');
-      productsData = (data || []) as Product[];
-    } else if (userSchoolId) {
-      // Incluir productos globales (school_ids IS NULL) + los específicos de esta sede
-      // Logística ve todos (activos e inactivos) para poder reactivar
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .or(`school_ids.is.null,school_ids.cs.{${userSchoolId}}`)
-        .order('name');
-      productsData = (data || []) as Product[];
-    } else {
-      productsData = [];
-    }
-
-    setProducts(productsData);
-    setFilteredProducts(productsData);
-    
-    // Cargar niveles de stock si hay una sede
-    if (userSchoolId) {
-      const productIds = productsData.map(p => p.id);
-      if (productIds.length > 0) {
-        const { data: stockData } = await supabase
-          .from('product_stock')
-          .select('product_id, current_stock')
-          .eq('school_id', userSchoolId)
-          .in('product_id', productIds);
-        const levels: Record<string, number> = {};
-        (stockData || []).forEach(s => { levels[s.product_id] = s.current_stock; });
-        setProductStockLevels(levels);
+      if (canViewAllSchools) {
+        // Admin general / supervisor ven TODOS (activos e inactivos) para poder reactivar
+        const { data, error } = await supabase.from('products').select('*').order('name');
+        if (error) throw error;
+        productsData = (data || []) as Product[];
+      } else if (userSchoolId) {
+        // Incluir productos globales (school_ids IS NULL) + los específicos de esta sede
+        // Logística ve todos (activos e inactivos) para poder reactivar
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .or(`school_ids.is.null,school_ids.cs.{${userSchoolId}}`)
+          .order('name');
+        if (error) throw error;
+        productsData = (data || []) as Product[];
+      } else {
+        productsData = [];
       }
-    }
 
-    setLoading(false);
+      setProducts(productsData);
+      setFilteredProducts(productsData);
+      
+      // Cargar niveles de stock si hay una sede
+      if (userSchoolId) {
+        const productIds = productsData.map(p => p.id);
+        if (productIds.length > 0) {
+          const { data: stockData, error: stockError } = await supabase
+            .from('product_stock')
+            .select('product_id, current_stock')
+            .eq('school_id', userSchoolId)
+            .in('product_id', productIds);
+          if (stockError) throw stockError;
+
+          const levels: Record<string, number> = {};
+          (stockData || []).forEach(s => { levels[s.product_id] = s.current_stock; });
+          setProductStockLevels(levels);
+        } else {
+          setProductStockLevels({});
+        }
+      }
+    } catch (error: unknown) {
+      const blob = getSupabaseErrorBlob(error);
+      toast({
+        variant: 'destructive',
+        title: 'Error al actualizar productos',
+        description: blob || 'No se pudo sincronizar la lista de productos.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const patchProductInState = (productId: string, patch: Partial<Product>) => {
+    setProducts(prev => prev.map(p => (p.id === productId ? { ...p, ...patch } : p)));
+    setFilteredProducts(prev => prev.map(p => (p.id === productId ? { ...p, ...patch } : p)));
+  };
+
+  const removeProductFromState = (productId: string) => {
+    setProducts(prev => prev.filter(p => p.id !== productId));
+    setFilteredProducts(prev => prev.filter(p => p.id !== productId));
   };
 
   const fetchSchools = async () => {
@@ -616,9 +640,35 @@ const Products = () => {
         toast({ title: '✅ Producto creado', description: 'El producto se ha guardado correctamente' });
       }
 
+      if (editingProductId) {
+        // Actualización local inmediata: el estado conocido es el que acaba de guardarse.
+        // No se llama fetchProducts() para evitar que un caché intermedio revierta el cambio.
+        patchProductInState(editingProductId, {
+          name: f.name,
+          description: f.description || undefined,
+          code: finalCode,
+          price_cost: parseFloat(f.price_cost),
+          price_sale: parseFloat(f.price_sale),
+          category: finalCategory,
+          has_stock: f.has_stock,
+          stock_initial: f.has_stock ? parseInt(f.stock_initial) : undefined,
+          stock_min: f.has_stock ? parseInt(f.stock_min) : undefined,
+          has_expiry: f.has_expiry,
+          expiry_days: f.has_expiry ? parseInt(f.expiry_days) : undefined,
+          has_igv: f.has_igv,
+          has_wholesale: f.has_wholesale,
+          wholesale_qty: f.has_wholesale ? parseInt(f.wholesale_qty) : undefined,
+          wholesale_price: f.has_wholesale ? parseFloat(f.wholesale_price) : undefined,
+          school_ids: selectedSchools,
+        });
+      } else {
+        // Producto nuevo: no tenemos el id asignado por la BD hasta después del insert,
+        // así que sí necesitamos re-fetch para que aparezca en la lista.
+        await fetchProducts();
+      }
+
       setShowProductModal(false);
       resetForm();
-      fetchProducts();
     } catch (error: unknown) {
       if (isPriceScopeRelatedError(error)) {
         const fb = getPriceScopeFriendlyToast();
@@ -1168,10 +1218,10 @@ const Products = () => {
 
   const handleDeleteProduct = async (id: string) => {
     if (!confirm('¿Está seguro de eliminar este producto?')) return;
-    
-    // Actualización optimista: marcar como inactivo en la UI al instante
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, active: false, is_active: false } : p));
-    setFilteredProducts(prev => prev.map(p => p.id === id ? { ...p, active: false, is_active: false } : p));
+
+    const previousProducts = products;
+    const previousFilteredProducts = filteredProducts;
+    removeProductFromState(id);
 
     try {
       const { error } = await supabase.from('products').delete().eq('id', id);
@@ -1181,7 +1231,8 @@ const Products = () => {
       await fetchProducts(); // refrescar desde la BD para sincronizar estado real
     } catch (error: any) {
       // Revertir actualización optimista si hubo error
-      await fetchProducts();
+      setProducts(previousProducts);
+      setFilteredProducts(previousFilteredProducts);
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };
@@ -1197,6 +1248,8 @@ const Products = () => {
   const handleSaveStockControl = async (enable: boolean) => {
     if (!stockControlTarget || !userSchoolId) return;
     setStockControlLoading(true);
+    const previousEnabled = stockControlTarget.stock_control_enabled;
+    const previousStock = productStockLevels[stockControlTarget.id] ?? 0;
     try {
       // 1. Actualizar flag en products
       const { error: err1 } = await supabase
@@ -1215,7 +1268,10 @@ const Products = () => {
             { onConflict: 'product_id,school_id' }
           );
         if (err2) throw err2;
+        setProductStockLevels(prev => ({ ...prev, [stockControlTarget.id]: qty }));
       }
+
+      patchProductInState(stockControlTarget.id, { stock_control_enabled: enable });
 
       toast({
         title: enable ? '✅ Control de stock activado' : '✅ Control de stock desactivado',
@@ -1225,8 +1281,10 @@ const Products = () => {
       });
       setShowStockControlModal(false);
       setStockControlTarget(null);
-      fetchProducts();
+      // No re-fetch: el nuevo estado ya está en patchProductInState y productStockLevels.
     } catch (error: any) {
+      patchProductInState(stockControlTarget.id, { stock_control_enabled: previousEnabled });
+      setProductStockLevels(prev => ({ ...prev, [stockControlTarget.id]: previousStock }));
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     } finally {
       setStockControlLoading(false);
@@ -1241,6 +1299,7 @@ const Products = () => {
     const action = newValue ? 'habilitar' : 'deshabilitar';
     if (!confirm(`¿Confirmas ${action} el producto "${product.name}"?`)) return;
     setTogglingActiveId(product.id);
+    patchProductInState(product.id, { active: newValue });
     try {
       const { error } = await supabase
         .from('products')
@@ -1253,8 +1312,9 @@ const Products = () => {
           ? `"${product.name}" vuelve a estar disponible en el POS`
           : `"${product.name}" ya no aparece en el POS`,
       });
-      fetchProducts();
+      // No re-fetch: el nuevo estado ya está aplicado por patchProductInState.
     } catch (error: any) {
+      patchProductInState(product.id, { active: product.active });
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     } finally {
       setTogglingActiveId(null);
@@ -1263,6 +1323,7 @@ const Products = () => {
 
   const handleToggleVerified = async (product: Product) => {
     const newValue = !product.is_verified;
+    patchProductInState(product.id, { is_verified: newValue });
     try {
       const { error } = await supabase
         .from('products')
@@ -1275,8 +1336,9 @@ const Products = () => {
           ? `"${product.name}" ahora es un artículo oficial verificado`
           : `"${product.name}" ya no está marcado como verificado`,
       });
-      fetchProducts();
+      // No re-fetch: el nuevo estado ya está aplicado por patchProductInState.
     } catch (error: any) {
+      patchProductInState(product.id, { is_verified: product.is_verified });
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };

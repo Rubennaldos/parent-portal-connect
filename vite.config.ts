@@ -103,6 +103,13 @@ export default defineConfig(({ mode }) => ({
             handler: "NetworkOnly",
           },
           {
+            // ⚡ Toda petición REST a la tabla products va SIEMPRE a la red.
+            // Cubre: /rest/v1/products, /rest/v1/products?select=...
+            // y el patrón con parámetros complejos que genera el cliente JS de Supabase.
+            urlPattern: /supabase\.co\/rest\/v1\/products/i,
+            handler: "NetworkOnly",
+          },
+          {
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: "NetworkFirst",
             options: {

@@ -2162,7 +2162,7 @@ export default function LunchOrders() {
                       </Button>
                     )}
 
-                    {/* Pago en revisión: bloquear para todos */}
+                    {/* Pago en revisión (informativo). El botón Anular sigue oculto por pago pendiente salvo admin_general (override correcciones). */}
                     {!order.is_cancelled && (order as any)._tx_payment_status === 'pending' && (
                       <div className="flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-700">
                         <Clock className="h-3 w-3 flex-shrink-0" />
@@ -2170,8 +2170,10 @@ export default function LunchOrders() {
                       </div>
                     )}
 
-                    {/* Botón Anular — solo admin_sede / admin_general / superadmin; admin_general puede tras el corte */}
-                    {!order.is_cancelled && (order as any)._tx_payment_status !== 'pending' && (() => {
+                    {/* Botón Anular — admin_sede / admin_general / superadmin; admin_general ignora corte y pago "pending" en UI */}
+                    {!order.is_cancelled &&
+                      ((order as any)._tx_payment_status !== 'pending' || role === 'admin_general') &&
+                      (() => {
                       const canAdminCancel = ['admin_sede', 'admin_general', 'superadmin'].includes(role || '');
                       if (!canAdminCancel) return null;
                       if (!canPerformDeadlineLimitedActions()) {
