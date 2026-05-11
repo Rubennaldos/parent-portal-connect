@@ -34,6 +34,26 @@ Si hay RIESGO de que algo afecte dinero real de padres o alumnos:
 
 ---
 
+## REGLA #0.A — INMOVILIDAD DE IZIPAY, PASARELA Y WEBHOOKS
+
+**Toda la lógica del pago por Izipay, la pasarela y los webhooks no se debe mover ni refactorizar “de paso”.**
+
+```
+❌ MAL: tocar Edge Functions de Izipay, webhooks, HMAC, idempotencia, logs_pasarela,
+       apply_gateway_credit, payment_sessions o el flujo de retorno sin un plan explícito
+✅ BIEN: dejar esa capa intacta; cambiar solo UI, textos o rutas que no ejecuten cobro
+```
+
+**Si de verdad hace falta cambiar algo de esa lógica (obligatorio):**
+
+1. **Advertencia previa completa** al dueño: qué puede romperse (pagos duplicados, cobros fallidos, saldos mal aplicados, auditoría rota).
+2. **Doble aprobación explícita del dueño:** dos confirmaciones separadas en el chat (por ejemplo: “sí, autorizo el cambio” y luego “confirmo, adelante con el código”), después de leer el riesgo.
+3. Sin esas dos confirmaciones → **no se modifica** ese código.
+
+Esta regla tiene **prioridad** sobre cualquier pedido de “limpieza rápida” o refactor en archivos de pasarela.
+
+---
+
 ## REGLA #1 — SALDO FINANCIERO: FUENTE REAL
 
 **La verdad financiera del sistema es `alumnos.saldo_actual`.**
