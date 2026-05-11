@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useSystemStatus } from '@/hooks/useSystemStatus';
 import {
   ChevronLeft,
   ChevronRight,
@@ -60,7 +61,13 @@ const WEEKDAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalendarProps) {
   const { toast } = useToast();
-  
+
+  // Deadline GLOBAL (system_status id=1) con Realtime.
+  // Fallback defensivo: 09:15 / 0 días si el campo no existe o falla la lectura.
+  const { status: sysStatus } = useSystemStatus();
+  const globalDeadlineTime = sysStatus.global_lunch_deadline_time || '09:15:00';
+  const globalDeadlineDays = sysStatus.global_lunch_deadline_days ?? 0;
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [menus, setMenus] = useState<Map<string, LunchMenu>>(new Map());
@@ -200,46 +207,34 @@ export function TeacherLunchCalendar({ teacherId, schoolId }: TeacherLunchCalend
     setSelectedMenuDate(dateStr);
   };
 
-  // ⏰ Validar si se puede hacer pedido según la hora límite
+  // ⏰ Validar si se puede hacer pedido según el deadline GLOBAL (system_status id=1).
+  // Fallback defensivo: si el valor es vacío, se permite pedir (nunca bloquear por error).
   const canOrderForDate = (targetDate: string): { canOrder: boolean; message?: string; isWarning?: boolean } => {
-    if (!config || !config.order_deadline_time || config.order_deadline_days === undefined) {
-      return { canOrder: true };
-    }
+    if (!config) return { canOrder: true };
 
-    const now = new Date();
-    const target = new Date(targetDate + 'T00:00:00-05:00'); // Zona horaria Perú
-    
-    // Calcular el deadline
-    const deadlineDate = new Date(target);
-    deadlineDate.setDate(deadlineDate.getDate() - config.order_deadline_days);
-    
-    // Parsear la hora límite (formato "HH:MM:SS")
-    const [hours, minutes] = config.order_deadline_time.split(':').map(Number);
-    deadlineDate.setHours(hours, minutes, 0, 0);
+    const deadlineTimeStr = globalDeadlineTime || '09:15:00';
+    const [hours, minutes] = deadlineTimeStr.split(':').map(Number);
+    const deadlineDays = globalDeadlineDays;
 
-    console.log('⏰ Validación de hora límite:', {
-      now: now.toLocaleString('es-PE', { timeZone: 'America/Lima' }),
-      deadline: deadlineDate.toLocaleString('es-PE', { timeZone: 'America/Lima' }),
-      canOrder: now <= deadlineDate
-    });
+    // Construir fecha límite con reloj de Lima (UTC-5 fijo)
+    const nowLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+    const [year, month, day] = targetDate.split('-').map(Number);
+    const deadlineDate = new Date(year, month - 1, day - deadlineDays, hours, minutes, 0, 0);
 
-    // Si ya pasó el deadline
-    if (now > deadlineDate) {
+    if (nowLima > deadlineDate) {
       return {
         canOrder: false,
-        message: `Ya no puedes hacer pedidos. La hora límite era ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+        message: `Ya no puedes hacer pedidos. La hora límite fue ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} (límite global del sistema).`,
       };
     }
 
-    // Si faltan menos de 30 minutos para el deadline (advertencia)
-    const timeUntilDeadline = deadlineDate.getTime() - now.getTime();
-    const minutesUntilDeadline = Math.floor(timeUntilDeadline / (1000 * 60));
-
+    // Advertencia si faltan ≤ 30 minutos
+    const minutesUntilDeadline = Math.floor((deadlineDate.getTime() - nowLima.getTime()) / 60_000);
     if (minutesUntilDeadline <= 30 && minutesUntilDeadline > 0) {
       return {
         canOrder: true,
         isWarning: true,
-        message: `¡Apúrate! Solo quedan ${minutesUntilDeadline} minutos para hacer tu pedido hasta las ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}.`
+        message: `¡Apúrate! Solo quedan ${minutesUntilDeadline} minutos para hacer tu pedido hasta las ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}.`,
       };
     }
 

@@ -7,6 +7,7 @@ import { fetchLunchOrderPurchaseTxSummary } from '@/services/lunchOrderPurchaseT
 import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useSystemStatus } from '@/hooks/useSystemStatus';
 import {
   ChevronLeft,
   ChevronRight,
@@ -103,6 +104,8 @@ interface LunchConfig {
   order_deadline_days: number;
   cancellation_deadline_time: string;  // FIXED: was "cancel_deadline_time"
   cancellation_deadline_days: number;  // FIXED: was "cancel_deadline_days"
+  /** Fase 1 prepago: si TRUE los pedidos de padres nacen como frozen_pending_payment */
+  force_prepayment?: boolean;
 }
 
 interface Student {
@@ -128,6 +131,8 @@ interface ExistingOrder {
   cancelled_by: string | null;
   /** payment_status de la transacción vinculada (null si no tiene transacción) */
   transaction_payment_status?: string | null;
+  /** Estado del flujo de prepago (Fase 1). null = pedido pre-migración (tratar como confirmed_paid) */
+  payment_flow_state?: string | null;
   // Selecciones del plato armado
   configurable_selections?: Array<{ group_name: string; selected?: string; selected_name?: string }> | null;
   selected_garnishes?: string[] | null;
@@ -187,11 +192,28 @@ const getPeruTodayStr = (): string => {
   return `${y}-${m}-${d}`;
 };
 
+/** Centra el botón del día en el strip horizontal (equiv. a scrollIntoView inline center; evita desajustes con scroll-snap). */
+function centerCarouselDayButton(container: HTMLElement, dayButton: HTMLElement) {
+  const c = container.getBoundingClientRect();
+  const b = dayButton.getBoundingClientRect();
+  const delta = b.left + b.width / 2 - (c.left + c.width / 2);
+  const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth);
+  const nextLeft = Math.max(0, Math.min(maxScroll, container.scrollLeft + delta));
+  container.scrollTo({ left: nextLeft, behavior: 'smooth' });
+}
+
 // ==========================================
 // COMPONENT
 // ==========================================
 export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToCart }: UnifiedLunchCalendarV2Props) {
   const { toast } = useToast();
+
+  // Deadline global (system_status id=1) — manda sobre lunch_configuration por sede.
+  // Realtime: si el admin_general cambia la hora, se propaga en < 1 seg a todos los usuarios.
+  const { status: sysStatus } = useSystemStatus();
+  // Fallback defensivo: si el campo es null/vacío nunca se bloquea el pedido.
+  const globalDeadlineTime = sysStatus.global_lunch_deadline_time || '09:15:00';
+  const globalDeadlineDays = sysStatus.global_lunch_deadline_days ?? 0;
 
   // Navigation
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -291,6 +313,15 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const [showNotesField, setShowNotesField] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
   const expandedSectionRef = useRef<HTMLDivElement>(null);
+
+  // ── Fase 2 Prepago ────────────────────────────────────────────────────────
+  /** Popup de aviso antes del wizard cuando force_prepayment = TRUE */
+  const [showPrepayWarning, setShowPrepayWarning] = useState(false);
+  /** Fechas pendientes de entrar al wizard después de que el padre confirme el popup */
+  const [pendingWizardDates, setPendingWizardDates] = useState<string[]>([]);
+  const [pendingPreselectedCat, setPendingPreselectedCat] = useState<LunchCategory | null>(null);
+  /** TRUE si el último pedido confirmado quedó en estado frozen_pending_payment */
+  const [lastOrderWasFrozen, setLastOrderWasFrozen] = useState(false);
   // Prevents stale fetch responses from overwriting newer data (race condition guard)
   const fetchGenerationRef = useRef(0);
   // Prevents stale configurable-options responses from overwriting current category options
@@ -359,7 +390,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       const [configResult, categoriesResult, specialResult, ordersResult] = await Promise.all([
         supabase
           .from('lunch_configuration')
-          .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days, cancellation_deadline_time, cancellation_deadline_days')
+          .select('lunch_price, orders_enabled, order_deadline_time, order_deadline_days, cancellation_deadline_time, cancellation_deadline_days, force_prepayment')
           .eq('school_id', effectiveSchoolId)
           .maybeSingle(),
         supabase
@@ -376,7 +407,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
         personId
           ? supabase
               .from('lunch_orders')
-              .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by, configurable_selections, selected_garnishes, selected_modifiers, parent_notes')
+              .select('id, order_date, status, category_id, quantity, is_cancelled, created_at, created_by, delivered_by, cancelled_by, configurable_selections, selected_garnishes, selected_modifiers, parent_notes, payment_flow_state')
               .eq(personField, personId)
               .gte('order_date', startStr)
               .lte('order_date', endStr)
@@ -458,6 +489,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           delivered_by: o.delivered_by,
           cancelled_by: o.cancelled_by,
           transaction_payment_status: null,
+          payment_flow_state: o.payment_flow_state ?? null,
           configurable_selections: o.configurable_selections || null,
           selected_garnishes: o.selected_garnishes || null,
           selected_modifiers: o.selected_modifiers || null,
@@ -505,33 +537,34 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const canOrderForDate = useCallback((dateStr: string): { canOrder: boolean; reason?: string } => {
     if (!config) return { canOrder: true };
     if (!config.orders_enabled) return { canOrder: false, reason: 'Pedidos deshabilitados' };
-    if (!config.order_deadline_time) return { canOrder: true };
+
+    // ── Deadline GLOBAL (system_status id=1) — manda sobre lunch_configuration por sede.
+    // Fallback defensivo: si el valor global es vacío/nulo no bloqueamos.
+    const deadlineTimeStr = globalDeadlineTime || '09:15:00';
+    if (!deadlineTimeStr) return { canOrder: true };
 
     const peruNow = getPeruNow();
     const [year, month, day] = dateStr.split('-').map(Number);
-    const [hours, minutes] = config.order_deadline_time.split(':').map(Number);
-    const deadlineDays = config.order_deadline_days ?? 0;
+    const [hours, minutes]   = deadlineTimeStr.split(':').map(Number);
+    const deadlineDays       = globalDeadlineDays;
 
     // Deadline: (target day - deadlineDays) at HH:MM
-    // Example: target = Feb 12, deadlineDays = 0, time = 10:30
-    //   → deadline = Feb 12 at 10:30
-    // Example: target = Feb 12, deadlineDays = 1, time = 20:00
-    //   → deadline = Feb 11 at 20:00
+    // Ej: target = 12 May, deadlineDays = 0, time = 09:15
+    //   → deadline = 12 May a las 09:15
     const deadlineDate = new Date(year, month - 1, day - deadlineDays, hours, minutes, 0, 0);
 
     const canOrder = peruNow <= deadlineDate;
 
     if (!canOrder) {
-      // Show user-friendly message with the exact deadline
       const deadlineDateFormatted = format(deadlineDate, "EEEE d 'de' MMMM 'a las' HH:mm", { locale: es });
       return {
         canOrder: false,
-        reason: `El plazo venció el ${deadlineDateFormatted}. Config: ${deadlineDays}d antes a las ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+        reason: `El plazo venció el ${deadlineDateFormatted}. Límite global: ${deadlineDays}d antes a las ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
       };
     }
 
     return { canOrder: true };
-  }, [config]);
+  }, [config, globalDeadlineTime, globalDeadlineDays]);
 
   /**
    * Checks if cancellation is allowed for a given date.
@@ -613,15 +646,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     setWizardStep('idle');
   }, [currentDate]);
 
-  // Scroll carousel to selected day
+  // Scroll carousel to selected day (centrado en el viewport del strip)
   useEffect(() => {
-    if (selectedDay && carouselRef.current) {
-      const el = carouselRef.current.querySelector(`[data-date="${selectedDay}"]`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
-    }
-  }, [selectedDay]);
+    if (!selectedDay || !carouselRef.current) return;
+    const container = carouselRef.current;
+    const el = container.querySelector<HTMLElement>(`[data-date="${selectedDay}"]`);
+    if (!el) return;
+
+    const run = () => centerCarouselDayButton(container, el);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(run);
+    });
+  }, [selectedDay, currentDate, loading, carouselDays.length]);
 
   // Auto-scroll when a category expands (only on expand, not on every wizardStep change)
   useEffect(() => {
@@ -694,6 +731,18 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       return;
     }
 
+    // ── COMPUERTA PREPAGO (mismo guard que startWizard) ──────────────────────
+    if (userType === 'parent' && !config) {
+      toast({ variant: 'destructive', title: 'Configuración en carga', description: 'Espera un momento antes de pedir.' });
+      return;
+    }
+    if (userType === 'parent' && config?.force_prepayment) {
+      setPendingWizardDates([dayToOrder]);
+      setPendingPreselectedCat(null);
+      setShowPrepayWarning(true);
+      return;
+    }
+
     // Check for existing orders
     const dayOrders = existingOrders.filter(o => o.date === dayToOrder && !o.is_cancelled);
     const hasOrderForCategory = dayOrders.some(o => o.categoryId === category.id);
@@ -744,6 +793,18 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       setExpandedCategoryId(null);
       setIsInlineOrdering(false);
       setWizardStep('idle');
+      return;
+    }
+
+    // ── COMPUERTA PREPAGO (mismo guard que startWizard) ──────────────────────
+    if (userType === 'parent' && !config) {
+      toast({ variant: 'destructive', title: 'Configuración en carga', description: 'Espera un momento antes de pedir.' });
+      return;
+    }
+    if (userType === 'parent' && config?.force_prepayment) {
+      setPendingWizardDates([selectedDay]);
+      setPendingPreselectedCat(null);
+      setShowPrepayWarning(true);
       return;
     }
 
@@ -864,10 +925,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   // WIZARD FLOW (MULTI-DAY SEQUENTIAL)
   // ==========================================
 
-  const startWizard = (dates?: string[], preselectedCategory?: LunchCategory | null) => {
-    const datesToProcess = dates || Array.from(selectedDates).sort();
-    if (datesToProcess.length === 0) return;
-
+  const openWizardFlow = (datesToProcess: string[], preselectedCategory?: LunchCategory | null) => {
+    setLastOrderWasFrozen(false);
     setWizardDates(datesToProcess);
     setWizardCurrentIndex(0);
     setCreatedOrderIds([]);
@@ -891,6 +950,32 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       setSelectedCategory(null);
       setWizardStep('category');
     }
+  };
+
+  const startWizard = (dates?: string[], preselectedCategory?: LunchCategory | null) => {
+    const datesToProcess = dates || Array.from(selectedDates).sort();
+    if (datesToProcess.length === 0) return;
+
+    // REGLA DE ORO PREPAGO:
+    // Para padres, no dejamos avanzar al wizard hasta tener config cargada y evaluar force_prepayment.
+    if (userType === 'parent' && !config) {
+      toast({
+        variant: 'destructive',
+        title: 'Configuración en carga',
+        description: 'Espera un momento. Estamos cargando la configuración de prepago de tu sede.',
+      });
+      return;
+    }
+
+    // Primera compuerta real del flujo: si la sede exige prepago, popup obligatorio y STOP total.
+    if (userType === 'parent' && config?.force_prepayment) {
+      setPendingWizardDates(datesToProcess);
+      setPendingPreselectedCat(preselectedCategory ?? null);
+      setShowPrepayWarning(true);
+      return;
+    }
+
+    openWizardFlow(datesToProcess, preselectedCategory);
   };
 
   // ── Auto-seleccionar categoría cuando hay bulk pre-seleccionada ──
@@ -1201,15 +1286,39 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
     const currentDateStr = wizardDates[wizardCurrentIndex];
 
-    // Re-validate deadline at submit time (user may have left form open past the cutoff)
-    const deadlineCheck = canOrderForDate(currentDateStr);
-    if (!deadlineCheck.canOrder) {
-      toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: deadlineCheck.reason || 'Ya no es posible pedir para este día.' });
-      setExpandedCategoryId(null);
-      setIsInlineOrdering(false);
-      setWizardStep('idle');
-      isSubmittingRef.current = false;
-      return;
+    // ── Validación server-side antes del INSERT ───────────────────────────────
+    // Se llama a check_order_eligibility (RPC) que usa el reloj del SERVIDOR Lima.
+    // Esto es invulnerable: cambiar la hora del navegador no puede engañar al sistema.
+    // La validación UI (canOrderForDate) sigue existiendo para UX rápida en el carrusel.
+    try {
+      const { data: eligibility, error: eligibilityError } = await supabase.rpc(
+        'check_order_eligibility',
+        { p_target_date: currentDateStr, p_school_id: effectiveSchoolId || null }
+      );
+
+      if (eligibilityError) {
+        // Si la RPC falla (p.ej. migración no aplicada), caer en validación local
+        console.warn('check_order_eligibility RPC error — usando validación local:', eligibilityError.message);
+        const localCheck = canOrderForDate(currentDateStr);
+        if (!localCheck.canOrder) {
+          toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: localCheck.reason || 'Ya no es posible pedir para este día.' });
+          setExpandedCategoryId(null);
+          setIsInlineOrdering(false);
+          setWizardStep('idle');
+          isSubmittingRef.current = false;
+          return;
+        }
+      } else if (eligibility && !eligibility.can_order) {
+        toast({ variant: 'destructive', title: '🔒 Plazo vencido', description: eligibility.reason || 'Ya no es posible pedir para este día.' });
+        setExpandedCategoryId(null);
+        setIsInlineOrdering(false);
+        setWizardStep('idle');
+        isSubmittingRef.current = false;
+        return;
+      }
+    } catch {
+      // Fallback: no bloquear el pedido si la RPC falla inesperadamente
+      console.warn('check_order_eligibility: fallo inesperado, continuando con validación local');
     }
 
     setSubmitting(true);
@@ -1275,10 +1384,11 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       let insertedOrder: { id: string } | null = null;
 
       // Intentar insertar con columnas opcionales
+      // Incluimos payment_flow_state para detectar si quedó congelado (Fase 2 Prepago)
       const { data: orderData, error: orderError } = await supabase
         .from('lunch_orders')
         .insert([orderPayload])
-        .select('id')
+        .select('id, payment_flow_state')
         .single();
 
       if (orderError) {
@@ -1324,6 +1434,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       }
 
       if (!insertedOrder) throw new Error('No se pudo crear el pedido');
+
+      // ── Fase 2 Prepago: registrar si el pedido quedó congelado ───────────────
+      const orderWasFrozen = (insertedOrder as any).payment_flow_state === 'frozen_pending_payment';
+      if (orderWasFrozen) setLastOrderWasFrozen(true);
 
       // 2. Create transaction (pending)
       const dateFormatted = format(getPeruDateOnly(currentDateStr), "d 'de' MMMM", { locale: es });
@@ -2393,12 +2507,29 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
             <>
               <DialogHeader>
                 <DialogTitle className="text-xl font-bold text-center">
-                  🎉 ¡Pedidos completados!
+                  {lastOrderWasFrozen ? '❄️ Pedido en espera de pago' : '🎉 ¡Pedidos completados!'}
                 </DialogTitle>
                 <DialogDescription className="text-center text-lg">
-                  Se registraron <strong>{ordersCreated}</strong> pedido(s) correctamente
+                  {lastOrderWasFrozen
+                    ? 'Tu pedido fue registrado pero está congelado hasta que realices el pago'
+                    : <>Se registraron <strong>{ordersCreated}</strong> pedido(s) correctamente</>}
                 </DialogDescription>
               </DialogHeader>
+
+              {/* ── Fase 2 Prepago: banner de alerta si el pedido quedó congelado ── */}
+              {lastOrderWasFrozen && (
+                <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-amber-800">⚠️ Sin pago, no hay plato</p>
+                    <p className="text-xs text-amber-700">
+                      Esta sede opera al contado. Tu pedido está reservado pero{' '}
+                      <strong>no llegará a cocina</strong> hasta que completes el pago.
+                      Tienes hasta las <strong>08:00 AM</strong> del día del menú para pagar.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Resumen de pedidos para padres */}
               {userType === 'parent' && totalOrderAmount > 0 && (
@@ -2430,34 +2561,69 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
               <div className="flex flex-col justify-center gap-3 mt-6">
                 {userType === 'parent' && totalOrderAmount > 0 ? (
                   <>
-                    <Button
-                      onClick={closeWizard}
-                      size="lg"
-                      className="bg-green-600 hover:bg-green-700 text-white font-bold w-full"
-                    >
-                      <UtensilsCrossed className="h-5 w-5 mr-2" />
-                      Seguir pidiendo
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        closeWizard();
-                        if (onGoToCart) {
-                          setTotalOrderAmount(0);
-                          setCreatedOrderIds([]);
-                          setCreatedTransactionIds([]);
-                          setOrderDescriptions([]);
-                          totalOrderAmountRef.current = 0;
-                          setTimeout(() => onGoToCart(), 300);
-                        }
-                      }}
-                      variant="outline"
-                      size="lg"
-                      className="border-purple-300 text-purple-700 hover:bg-purple-50 w-full"
-                      disabled={!onGoToCart}
-                    >
-                      <CreditCardIcon className="h-5 w-5 mr-2" />
-                      Ir al Carrito
-                    </Button>
+                    {/* Fase 2 Prepago: CTA de pago prioritario si el pedido quedó congelado */}
+                    {lastOrderWasFrozen ? (
+                      <>
+                        <Button
+                          onClick={() => {
+                            closeWizard();
+                            if (onGoToCart) {
+                              setTotalOrderAmount(0);
+                              setCreatedOrderIds([]);
+                              setCreatedTransactionIds([]);
+                              setOrderDescriptions([]);
+                              totalOrderAmountRef.current = 0;
+                              setTimeout(() => onGoToCart(), 300);
+                            }
+                          }}
+                          size="lg"
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold w-full"
+                          disabled={!onGoToCart}
+                        >
+                          <CreditCardIcon className="h-5 w-5 mr-2" />
+                          Pagar ahora · S/ {totalOrderAmount.toFixed(2)}
+                        </Button>
+                        <Button
+                          onClick={closeWizard}
+                          variant="ghost"
+                          size="sm"
+                          className="text-slate-500 hover:text-slate-700 w-full"
+                        >
+                          Pagar más tarde
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          onClick={closeWizard}
+                          size="lg"
+                          className="bg-green-600 hover:bg-green-700 text-white font-bold w-full"
+                        >
+                          <UtensilsCrossed className="h-5 w-5 mr-2" />
+                          Seguir pidiendo
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            closeWizard();
+                            if (onGoToCart) {
+                              setTotalOrderAmount(0);
+                              setCreatedOrderIds([]);
+                              setCreatedTransactionIds([]);
+                              setOrderDescriptions([]);
+                              totalOrderAmountRef.current = 0;
+                              setTimeout(() => onGoToCart(), 300);
+                            }
+                          }}
+                          variant="outline"
+                          size="lg"
+                          className="border-purple-300 text-purple-700 hover:bg-purple-50 w-full"
+                          disabled={!onGoToCart}
+                        >
+                          <CreditCardIcon className="h-5 w-5 mr-2" />
+                          Ir al Carrito
+                        </Button>
+                      </>
+                    )}
                   </>
                 ) : (
                   <Button 
@@ -3303,9 +3469,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                   startWizard([viewOrdersDate!]);
                 }}
                 className="bg-purple-600 hover:bg-purple-700"
+                disabled={isOrderingConfigLoading}
               >
                 <Plus className="h-4 w-4 mr-2" />
-                Agregar Pedido
+                {isOrderingConfigLoading ? 'Cargando config...' : 'Agregar Pedido'}
               </Button>
             )}
           </DialogFooter>
@@ -3317,6 +3484,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   // ==========================================
   // MAIN RENDER
   // ==========================================
+  const isOrderingConfigLoading = userType === 'parent' && (loading || !config);
 
   if (loading && !config) {
     return (
@@ -3569,18 +3737,17 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       {selectedDay && !multiSelectMode && renderMenuCards()}
 
       {/* Deadline info (compact) */}
-      {config?.order_deadline_time && (
-        <div className="flex items-center gap-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 rounded-2xl px-3 py-2.5 border border-amber-200">
-          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>
-            Límite: <strong>{config.order_deadline_time.substring(0, 5)}</strong>
-            {(config.order_deadline_days ?? 0) > 0
-              ? <>, {config.order_deadline_days}d antes</>
-              : <> mismo día</>
-            }
-          </span>
-        </div>
-      )}
+      {/* Banner de límite — siempre usa el deadline GLOBAL de system_status */}
+      <div className="flex items-center gap-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 rounded-2xl px-3 py-2.5 border border-amber-200">
+        <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+        <span>
+          Límite: <strong>{globalDeadlineTime.substring(0, 5)}</strong>
+          {globalDeadlineDays > 0
+            ? <>, {globalDeadlineDays}d antes</>
+            : <> mismo día</>
+          }
+        </span>
+      </div>
 
       {/* FLOATING ACTION BAR (multi-select mode) */}
       {multiSelectMode && (
@@ -3623,8 +3790,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                         setMultiSelectMode(false);
                         startWizard();
                       }}
+                      disabled={isOrderingConfigLoading}
                     >
-                      🍽️ Hacer Pedido
+                      {isOrderingConfigLoading ? '⏳ Cargando config...' : '🍽️ Hacer Pedido'}
                     </Button>
                   </div>
                 </div>
@@ -3633,6 +3801,93 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           </div>
         </div>
       )}
+
+      {/* ── Fase 2 Prepago: Sección de rescate — pedidos congelados pendientes de pago ── */}
+      {userType === 'parent' && (() => {
+        const frozen = existingOrders.filter(
+          o => !o.is_cancelled && o.payment_flow_state === 'frozen_pending_payment'
+        );
+        if (frozen.length === 0) return null;
+        return (
+          <div className="rounded-[1.25rem] border-2 border-amber-400 bg-amber-50 px-4 py-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+              <p className="text-sm font-bold text-amber-800">
+                ❄️ {frozen.length} pedido{frozen.length > 1 ? 's' : ''} congelado{frozen.length > 1 ? 's' : ''} — Sin pago, no hay plato
+              </p>
+            </div>
+            <p className="text-xs text-amber-700">
+              Tienes pedidos reservados que aún no han sido pagados. No llegarán a cocina hasta que completes el pago.
+            </p>
+            <Button
+              size="sm"
+              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold w-full"
+              onClick={() => onGoToCart && onGoToCart()}
+              disabled={!onGoToCart}
+            >
+              <CreditCardIcon className="h-3.5 w-3.5 mr-2" />
+              Pagar pedidos pendientes
+            </Button>
+          </div>
+        );
+      })()}
+
+      {/* ── Fase 2 Prepago: Popup BLOQUEANTE antes de iniciar wizard ── */}
+      {/* onOpenChange: solo se puede cerrar con los botones internos (no con X ni clic fuera) */}
+      <Dialog open={showPrepayWarning} onOpenChange={() => {}}>
+        <DialogContent
+          className="max-w-sm"
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          hideCloseButton
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700 text-base">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              Esta sede opera en modo prepago
+            </DialogTitle>
+            <DialogDescription className="text-sm text-slate-600 mt-1 leading-relaxed">
+              Tu pedido quedará <strong>reservado</strong> pero{' '}
+              <strong className="text-rose-600">no llegará a cocina</strong> hasta que
+              confirmes el pago. Debes pagar antes del día del menú.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-xl bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-900 font-semibold flex items-center gap-2">
+            <span className="text-lg">⚠️</span>
+            Sin pago confirmado, no hay plato.
+          </div>
+
+          <div className="flex flex-col gap-2 mt-1">
+            <Button
+              className="bg-amber-500 hover:bg-amber-600 text-white font-bold w-full py-5 text-sm"
+              onClick={() => {
+                setShowPrepayWarning(false);
+                const dates = pendingWizardDates;
+                const cat   = pendingPreselectedCat;
+                setPendingWizardDates([]);
+                setPendingPreselectedCat(null);
+                openWizardFlow(dates, cat);
+              }}
+            >
+              <UtensilsCrossed className="h-4 w-4 mr-2" />
+              Entendido, acepto pagar al contado
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-400 hover:text-slate-600 w-full"
+              onClick={() => {
+                setShowPrepayWarning(false);
+                setPendingWizardDates([]);
+                setPendingPreselectedCat(null);
+              }}
+            >
+              Cancelar pedido
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* WIZARD DIALOG */}
       {renderWizardDialog()}

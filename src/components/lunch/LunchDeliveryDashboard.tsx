@@ -1656,6 +1656,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
         .eq('order_date', todayStr)
         .eq('is_cancelled', false)
         .eq('school_id', schoolId)
+        .neq('payment_flow_state', 'frozen_pending_payment')
         .order('created_at', { ascending: true });
 
       if (error) throw error;

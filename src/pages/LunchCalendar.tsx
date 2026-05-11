@@ -578,28 +578,38 @@ const LunchCalendar = () => {
 
       <main className="container mx-auto px-2 sm:px-4 py-4 sm:py-8">
         <Tabs value={calendarMainTab} onValueChange={setCalendarMainTab} className="w-full">
-          {/* Tabs responsive */}
-          <TabsList className={`grid w-full mb-4 sm:mb-6 h-auto ${canViewAllSchools ? 'grid-cols-4' : 'grid-cols-3'}`}>
-            <TabsTrigger value="calendar" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
-              <span className="hidden sm:inline">📅 Calendario</span>
-              <span className="sm:hidden">📅</span>
-            </TabsTrigger>
-            <TabsTrigger value="orders" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
-              <span className="hidden sm:inline">🍽️ Pedidos</span>
-              <span className="sm:hidden">🍽️</span>
-            </TabsTrigger>
-            {/* Analytics: solo superadmin y admin_general (canViewAllSchools) */}
-            {canViewAllSchools && (
-              <TabsTrigger value="analytics" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
-                <span className="hidden sm:inline">📊 Analytics</span>
-                <span className="sm:hidden">📊</span>
-              </TabsTrigger>
-            )}
-            <TabsTrigger value="config" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
-              <span className="hidden sm:inline">⚙️ Config</span>
-              <span className="sm:hidden">⚙️</span>
-            </TabsTrigger>
-          </TabsList>
+          {/* Tabs responsive.
+              Config es exclusiva para admin_general: controla el deadline global que aplica a todas las sedes. */}
+          {(() => {
+            const showConfig = userRole === 'admin_general';
+            const tabCount = 2 + (canViewAllSchools ? 1 : 0) + (showConfig ? 1 : 0);
+            return (
+              <TabsList className={`grid w-full mb-4 sm:mb-6 h-auto grid-cols-${tabCount}`}>
+                <TabsTrigger value="calendar" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
+                  <span className="hidden sm:inline">📅 Calendario</span>
+                  <span className="sm:hidden">📅</span>
+                </TabsTrigger>
+                <TabsTrigger value="orders" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
+                  <span className="hidden sm:inline">🍽️ Pedidos</span>
+                  <span className="sm:hidden">🍽️</span>
+                </TabsTrigger>
+                {/* Analytics: solo superadmin y admin_general (canViewAllSchools) */}
+                {canViewAllSchools && (
+                  <TabsTrigger value="analytics" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
+                    <span className="hidden sm:inline">📊 Analytics</span>
+                    <span className="sm:hidden">📊</span>
+                  </TabsTrigger>
+                )}
+                {/* Config: SOLO admin_general (control global de deadline de pedidos) */}
+                {showConfig && (
+                  <TabsTrigger value="config" className="text-[10px] sm:text-sm py-2 sm:py-3 px-1 sm:px-3">
+                    <span className="hidden sm:inline">⚙️ Config</span>
+                    <span className="sm:hidden">⚙️</span>
+                  </TabsTrigger>
+                )}
+              </TabsList>
+            );
+          })()}
 
           {/* Tab: Calendario */}
           <TabsContent value="calendar">
@@ -1023,13 +1033,15 @@ const LunchCalendar = () => {
             />
           </TabsContent>
 
-          {/* Tab: Configuración */}
-          <TabsContent value="config">
-            <LunchConfiguration
-              schoolId={userSchoolId || selectedSchools[0] || null}
-              canEdit={canEdit || canCreate}
-            />
-          </TabsContent>
+          {/* Tab: Configuración — SOLO admin_general (deadline global de todas las sedes) */}
+          {userRole === 'admin_general' && (
+            <TabsContent value="config">
+              <LunchConfiguration
+                schoolId={null}
+                canEdit={canEdit || canCreate}
+              />
+            </TabsContent>
+          )}
         </Tabs>
       </main>
 

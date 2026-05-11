@@ -143,6 +143,9 @@ export const PaymentsTab = ({
   const [walletHistoryOpen, setWalletHistoryOpen] = useState(false);
   const [loadingWallet, setLoadingWallet] = useState(false);
 
+  // ── Pedidos congelados (prepago): IDs de lunch_orders con frozen_pending_payment ──
+  const [frozenLunchOrderIds, setFrozenLunchOrderIds] = useState<Set<string>>(new Set());
+
   // ── UI: acordeón por hijo + info hub ──
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [infoHubOpen, setInfoHubOpen] = useState(false);
@@ -329,6 +332,30 @@ export const PaymentsTab = ({
       }
 
       setDebts(debtsData);
+
+      // ── Pedidos congelados (prepago): identificar lunch_orders frozen ─────
+      // Recolecta todos los lunch_order_id de las transacciones pendientes
+      // y consulta cuáles tienen payment_flow_state = 'frozen_pending_payment'.
+      {
+        const lunchIds: string[] = [];
+        for (const debt of debtsData) {
+          for (const tx of debt.pending_transactions) {
+            const lid = tx.metadata?.lunch_order_id;
+            if (lid) lunchIds.push(lid);
+          }
+        }
+        if (lunchIds.length > 0) {
+          const { data: frozenRows } = await supabase
+            .from('lunch_orders')
+            .select('id')
+            .in('id', lunchIds)
+            .eq('payment_flow_state', 'frozen_pending_payment')
+            .eq('is_cancelled', false);
+          setFrozenLunchOrderIds(new Set((frozenRows ?? []).map((r: any) => r.id as string)));
+        } else {
+          setFrozenLunchOrderIds(new Set());
+        }
+      }
 
       // ── Resumen del servidor (v2.1): leer de la primera fila ─────────────
       // Si la DB todavía no tiene la migración v2.1, se hace fallback a 0
@@ -903,16 +930,19 @@ export const PaymentsTab = ({
 
       {/* ── SmartInfoCard — Hub de información colapsable ── */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <button
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setInfoHubOpen(p => !p)}
-          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors"
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setInfoHubOpen(p => !p); } }}
+          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50/60 active:bg-slate-100/60 transition-colors cursor-pointer"
         >
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-100 to-indigo-100 flex items-center justify-center shrink-0">
             <Info className="w-4 h-4 text-violet-500" />
           </div>
           <span className="flex-1 text-sm font-semibold text-slate-700">💡 Lo que necesitas saber</span>
           <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${infoHubOpen ? 'rotate-180' : ''}`} />
-        </button>
+        </div>
 
         {infoHubOpen && (
           <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
@@ -1303,15 +1333,23 @@ export const PaymentsTab = ({
                             <ShoppingBag className="h-4 w-4 text-rose-400" />
                           </div>
                         ) : !isCoveredByPending ? (
-                          <button
-                            type="button"
+                          <div
+                            role="button"
+                            aria-pressed={isSelected}
                             data-no-row-click="true"
+                            tabIndex={0}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
                             }}
-                            className="shrink-0 -m-1 p-1 rounded-md hover:bg-emerald-50 active:scale-95 transition-all"
+                            onKeyDown={(e) => {
+                              if (e.key === ' ' || e.key === 'Enter') {
+                                e.preventDefault();
+                                toggleTransaction(debt.student_id, transaction.id, payableTxIds.length > 0 ? payableTxIds : allTxIds);
+                              }
+                            }}
+                            className="shrink-0 -m-1 p-1 rounded-md hover:bg-emerald-50 active:scale-95 transition-all cursor-pointer"
                             aria-label={isSelected ? 'Deseleccionar compra' : 'Seleccionar compra'}
                           >
                             <Checkbox
@@ -1319,7 +1357,7 @@ export const PaymentsTab = ({
                               onCheckedChange={() => {}}
                               className="shrink-0 pointer-events-none"
                             />
-                          </button>
+                          </div>
                         ) : (
                           <div className="h-4 w-4 shrink-0 flex items-center justify-center">
                             <Send className="h-3.5 w-3.5 text-blue-400" />
@@ -1355,6 +1393,10 @@ export const PaymentsTab = ({
                             <Badge variant="outline" className="text-[9px] border-blue-200 text-blue-600 mt-0.5">
                               <Send className="h-2.5 w-2.5 mr-0.5" />En revisión
                             </Badge>
+                          ) : frozenLunchOrderIds.has(transaction.metadata?.lunch_order_id ?? '') ? (
+                            <Badge className="text-[9px] bg-amber-500 text-white border-amber-600 mt-0.5 font-bold">
+                              ❄️ CONGELADO · SIN PAGO
+                            </Badge>
                           ) : (
                             <Badge variant="outline" className="text-[9px] border-amber-200 text-amber-600 mt-0.5">
                               <Clock className="h-2.5 w-2.5 mr-0.5" />Pendiente
@@ -1363,7 +1405,15 @@ export const PaymentsTab = ({
                         </div>
                       </div>
 
-                      {isLunch && !vStatus && (
+                      {isLunch && !vStatus && frozenLunchOrderIds.has(transaction.metadata?.lunch_order_id ?? '') && (
+                        <div className="mt-2 flex items-start gap-1.5 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5">
+                          <span className="text-sm shrink-0">❄️</span>
+                          <p className="text-[10px] text-amber-800 leading-tight font-semibold">
+                            Pedido <strong>congelado</strong>. No llegará a cocina hasta que confirmes el pago.
+                          </p>
+                        </div>
+                      )}
+                      {isLunch && !vStatus && !frozenLunchOrderIds.has(transaction.metadata?.lunch_order_id ?? '') && (
                         <div className="mt-2 flex items-start gap-1.5 bg-orange-50 border border-orange-100 rounded-lg px-2 py-1.5">
                           <UtensilsCrossed className="h-3 w-3 text-orange-400 mt-0.5 shrink-0" />
                           <p className="text-[10px] text-orange-700 leading-tight">

@@ -56,19 +56,39 @@ export interface SystemStatus {
    * Si el campo falta → todos activos (regla defensiva, nunca bloquear por error).
    */
   payment_methods_config: PaymentMethodsConfig;
+  /** Configuración global del flujo Yape Manual (portal padres) */
+  yape_manual_active: boolean;
+  yape_manual_phone: string;
+  yape_manual_template: string;
+  /**
+   * Hora de cierre global para realizar pedidos de almuerzo (todas las sedes).
+   * Formato "HH:MM:SS". Fallback defensivo: '09:15:00'.
+   */
+  global_lunch_deadline_time: string;
+  /**
+   * Días de anticipación globales para el cierre de pedidos de almuerzo.
+   * 0 = mismo día, 1 = día anterior. Fallback defensivo: 0.
+   */
+  global_lunch_deadline_days: number;
 }
 
 const DEFAULTS: SystemStatus = {
-  is_parent_portal_enabled: true,
-  is_admin_panel_enabled:   true,
-  parent_maintenance_msg:   'Estamos realizando mejoras para ti. Volvemos pronto.',
-  admin_maintenance_msg:    'Sistema en mantenimiento programado.',
-  parent_bypass_emails:     [],
-  admin_bypass_emails:      [],
-  payment_methods_config:   PAYMENT_METHOD_DEFAULTS,
+  is_parent_portal_enabled:    true,
+  is_admin_panel_enabled:      true,
+  parent_maintenance_msg:      'Estamos realizando mejoras para ti. Volvemos pronto.',
+  admin_maintenance_msg:       'Sistema en mantenimiento programado.',
+  parent_bypass_emails:        [],
+  admin_bypass_emails:         [],
+  payment_methods_config:      PAYMENT_METHOD_DEFAULTS,
+  yape_manual_active:          false,
+  yape_manual_phone:           '',
+  yape_manual_template:        'Hola, ya realicé mi pago manual de S/ {monto} para {estudiante}. Código de aprobación: ',
+  // Fallback defensivo: nunca bloquear pedidos por error de lectura.
+  global_lunch_deadline_time:  '09:15:00',
+  global_lunch_deadline_days:  0,
 };
 
-const SELECT_COLS = 'is_parent_portal_enabled,is_admin_panel_enabled,parent_maintenance_msg,admin_maintenance_msg,parent_bypass_emails,admin_bypass_emails,payment_methods_config';
+const SELECT_COLS = 'is_parent_portal_enabled,is_admin_panel_enabled,parent_maintenance_msg,admin_maintenance_msg,parent_bypass_emails,admin_bypass_emails,payment_methods_config,yape_manual_active,yape_manual_phone,yape_manual_template,global_lunch_deadline_time,global_lunch_deadline_days';
 
 export function useSystemStatus() {
   const [status, setStatus]           = useState<SystemStatus>(DEFAULTS);

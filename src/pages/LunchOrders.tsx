@@ -391,6 +391,7 @@ export default function LunchOrders() {
           .gte('order_date', startDate)
           .lte('order_date', endDate)
           .eq('is_cancelled', false)
+          .neq('payment_flow_state', 'frozen_pending_payment')
           .order('order_date', { ascending: false })
           .order('created_at', { ascending: false });
 
@@ -539,6 +540,7 @@ export default function LunchOrders() {
         `)
         .eq('order_date', selectedDate)
         .eq('is_cancelled', false)
+        .neq('payment_flow_state', 'frozen_pending_payment')
         .order('created_at', { ascending: false });
 
       if (adminSchoolId && !canViewAllSchools) {

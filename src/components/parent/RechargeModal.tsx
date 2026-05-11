@@ -45,6 +45,34 @@ interface BreakdownItem {
   amount: number;
 }
 
+interface ManualDebtSummaryRow {
+  key: string;
+  detail: string;
+  dateLabel: string;
+  amount: number;
+  ticketCode?: string;
+}
+
+function formatManualDate(rawDate?: string | null): string {
+  if (!rawDate) return '—';
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleDateString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+/** Dígitos para wa.me: quita + y espacios; móvil Perú 9 dígitos (9…) → antepone 51 */
+function normalizeWhatsappDigitsForPeru(raw: string): string {
+  const d = raw.replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('51') && d.length >= 11) return d;
+  if (d.length === 9 && d.startsWith('9')) return `51${d}`;
+  return d;
+}
+
 interface RechargeModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -169,6 +197,9 @@ export function RechargeModal({
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [manualDebtRows, setManualDebtRows] = useState<ManualDebtSummaryRow[]>([]);
+  const [manualDebtLoading, setManualDebtLoading] = useState(false);
+  const [showYapeManualWarning, setShowYapeManualWarning] = useState(false);
   // IziPay habilitado según la configuración de la sede (billing_config.izipay_enabled).
   // El admin puede activar/desactivar por sede desde Facturación → Configuración SUNAT.
   const isIzipayPilotUser = false; // Mantenido por compatibilidad con izipayTestMode
@@ -180,6 +211,9 @@ export function RechargeModal({
   // Regla defensiva: si falla la lectura → todos los métodos activos.
   const { status: systemStatus } = useSystemStatus();
   const globalPm = systemStatus.payment_methods_config ?? PAYMENT_METHOD_DEFAULTS;
+  const yapeManualActive = systemStatus.yape_manual_active ?? false;
+  const yapeManualPhone = (systemStatus.yape_manual_phone ?? '').trim();
+  const yapeManualTemplate = (systemStatus.yape_manual_template ?? '').trim();
   /**
    * Puente: si el correo del padre logueado está en parent_bypass_emails,
    * ve TODOS los métodos aunque estén desactivados globalmente.
@@ -192,6 +226,29 @@ export function RechargeModal({
   /** Devuelve true si el método puede mostrarse a este usuario. */
   const isMethodGloballyAllowed = (key: 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active') =>
     isBridgeUser || (globalPm[key] ?? true);
+
+  const parentName =
+    String((user as any)?.user_metadata?.full_name || (user as any)?.user_metadata?.name || user?.email?.split('@')[0] || 'padre de familia');
+  const manualTotalAmount = parseFloat(amount || '0').toFixed(2);
+  const manualTicketCode = manualDebtRows.find((row) => row.ticketCode)?.ticketCode || 'N/A';
+  const manualDateForMessage = manualDebtRows.find((row) => row.dateLabel && row.dateLabel !== '—')?.dateLabel
+    || formatManualDate(new Date().toISOString());
+  const yapeManualMessageTemplate =
+    yapeManualTemplate
+    || 'Hola, soy {parent_name} y estoy pagando un total de S/ {total_amount} por el comprobante #{ticket_code} de la fecha {date}. Adjunto el comprobante, por favor confirmen mi abono. Muchas gracias.';
+  const yapeManualWhatsappMessage = yapeManualMessageTemplate
+    .replaceAll('{parent_name}', parentName)
+    .replaceAll('{total_amount}', manualTotalAmount)
+    .replaceAll('{ticket_code}', manualTicketCode)
+    .replaceAll('{date}', manualDateForMessage)
+    // Compatibilidad con plantillas previas
+    .replaceAll('{monto}', manualTotalAmount)
+    .replaceAll('{estudiante}', studentName);
+  const yapeManualPhoneDigits = normalizeWhatsappDigitsForPeru(yapeManualPhone);
+  const yapeManualCanOpenWhatsapp = yapeManualPhoneDigits.length > 0;
+  const yapeManualWhatsappLink = yapeManualCanOpenWhatsapp
+    ? `https://wa.me/${yapeManualPhoneDigits}?text=${encodeURIComponent(yapeManualWhatsappMessage)}`
+    : '';
   // ── Comprobantes adicionales (pago en partes) ──
   const [extraVouchers, setExtraVouchers] = useState<ExtraVoucher[]>([]);
   const extraFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -606,6 +663,97 @@ export function RechargeModal({
   };
 
   const currentMethodInfo = selectedMethod ? methodInfo[selectedMethod] : null;
+
+  useEffect(() => {
+    let isMounted = true;
+    const isDebtManualView = isOpen && requestType === 'debt_payment' && selectedMethod === 'yape';
+    if (!isDebtManualView) {
+      setManualDebtRows([]);
+      setManualDebtLoading(false);
+      return;
+    }
+
+    const loadManualDebtRows = async () => {
+      setManualDebtLoading(true);
+      try {
+        const txIds = (paidTransactionIds ?? []).filter((id) => id && !id.startsWith('lunch_') && !id.startsWith('kiosk_balance_'));
+        const rowsFromDb = new Map<string, ManualDebtSummaryRow>();
+
+        if (txIds.length > 0) {
+          const { data } = await supabase
+            .from('transactions')
+            .select('id, description, amount, created_at, metadata, ticket_code')
+            .in('id', txIds);
+
+          (data ?? []).forEach((tx: any) => {
+            const orderDate = tx?.metadata?.order_date as string | undefined;
+            const createdAt = tx?.created_at as string | undefined;
+            rowsFromDb.set(String(tx.id), {
+              key: String(tx.id),
+              detail: String(tx?.description || 'Concepto pendiente'),
+              dateLabel: formatManualDate(orderDate || createdAt),
+              amount: Math.abs(Number(tx?.amount || 0)),
+              ticketCode: tx?.ticket_code ? String(tx.ticket_code) : undefined,
+            });
+          });
+        }
+
+        const composedRows: ManualDebtSummaryRow[] = [];
+        const usedSyntheticKeys = new Set<string>();
+
+        (breakdownItems ?? []).forEach((item, idx) => {
+          const byId = (paidTransactionIds ?? [])[idx];
+          const txRow = byId ? rowsFromDb.get(byId) : undefined;
+          if (txRow) {
+            composedRows.push(txRow);
+            return;
+          }
+
+          const syntheticKey = `${item.description}_${item.amount}_${idx}`;
+          if (usedSyntheticKeys.has(syntheticKey)) return;
+          usedSyntheticKeys.add(syntheticKey);
+          composedRows.push({
+            key: syntheticKey,
+            detail: item.description,
+            dateLabel: '—',
+            amount: Number(item.amount || 0),
+          });
+        });
+
+        if (isMounted) {
+          setManualDebtRows(composedRows);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setManualDebtRows(
+            (breakdownItems ?? []).map((item, idx) => ({
+              key: `${item.description}_${idx}`,
+              detail: item.description,
+              dateLabel: '—',
+              amount: Number(item.amount || 0),
+            }))
+          );
+        }
+      } finally {
+        if (isMounted) setManualDebtLoading(false);
+      }
+    };
+
+    loadManualDebtRows();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, requestType, selectedMethod, paidTransactionIds, breakdownItems]);
+
+  useEffect(() => {
+    if (requestType === 'debt_payment' && selectedMethod === 'yape' && !yapeManualActive) {
+      setSelectedMethod(null);
+    }
+  }, [requestType, selectedMethod, yapeManualActive]);
+
+  useEffect(() => {
+    if (!isOpen) setShowYapeManualWarning(false);
+  }, [isOpen]);
 
   // Determinar pasos visibles
   const visibleSteps = skipAmountStep 
@@ -1434,64 +1582,275 @@ export function RechargeModal({
           </div>
         ) : (
           <>
-            {/* Method tabs â€” horizontal */}
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1.5">Método de pago</p>
-              <div className="grid grid-cols-4 gap-2">
-                {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
-                  const info = methodInfo[m];
-                  const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
-                  const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
-                  const isSelected = selectedMethod === m;
+            {requestType === 'debt_payment' ? (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-gray-600">Método de pago</p>
 
-                  // Switch global OFF -> ocultar totalmente el boton
-                  const globalKey = (
-                    m === 'yape' ? 'yape_active' :
-                    m === 'plin' ? 'plin_active' :
-                    m === 'transferencia' ? 'transferencia_active' : 'izipay_active'
-                  ) as 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active';
-                  if (!isMethodGloballyAllowed(globalKey)) return null;
+                {/* Opción GANADORA: Izipay */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active') && canUseIzipay) {
+                      setSelectedMethod('izipay');
+                    }
+                  }}
+                  disabled={!(IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active') && canUseIzipay)}
+                  className={cn(
+                    "relative w-full rounded-2xl border-[3px] p-4 sm:p-6 text-left transition-all duration-200",
+                    "bg-gradient-to-b from-white to-emerald-50/70",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300",
+                    selectedMethod === 'izipay'
+                      ? "border-emerald-500 shadow-[0_12px_30px_-10px_rgba(16,185,129,0.55)]"
+                      : "border-emerald-400 shadow-[0_10px_24px_-12px_rgba(16,185,129,0.50)] hover:border-emerald-500 hover:shadow-[0_14px_32px_-10px_rgba(16,185,129,0.62)] hover:brightness-[1.01] cursor-pointer",
+                    !(IZIPAY_ENABLED && isMethodGloballyAllowed('izipay_active') && canUseIzipay) && "opacity-60 cursor-not-allowed"
+                  )}
+                >
+                  <span className="absolute right-3 top-3 rounded-full bg-emerald-700 px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-white">
+                    RECOMENDADO
+                  </span>
+                  <div className="flex items-start gap-3 pr-20">
+                    <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-emerald-200 bg-white p-1 sm:h-12 sm:w-12">
+                      <img
+                        src={`${import.meta.env.BASE_URL}izipay-official-logo.png`}
+                        alt="Logo de Izipay"
+                        className="h-full w-full object-contain"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-base sm:text-lg font-black text-gray-900 leading-snug">
+                        Tarjeta / Yape con Código (Izipay)
+                      </p>
+                      <p className="text-sm text-emerald-900 font-medium">
+                        🚀 Confirmación Instantánea.
+                      </p>
+                      <p className="text-xs sm:text-sm text-emerald-900">
+                        Validación al momento.
+                      </p>
+                      <p className="text-xs sm:text-sm text-emerald-900">
+                        Boleta y Factura inmediata.
+                      </p>
+                      <p className="text-xs sm:text-sm text-emerald-900">
+                        Sin esperas.
+                      </p>
+                    </div>
+                  </div>
+                </button>
 
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => isAvailable && setSelectedMethod(m)}
-                      disabled={!isAvailable}
-                      title={isDisabledBySede ? 'Metodo no disponible para esta sede' : undefined}
-                      className={cn(
-                        "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all duration-150",
-                        isSelected && isAvailable
-                          ? m === 'izipay'
-                            ? "border-red-600 bg-red-50 shadow-md ring-2 ring-red-300 scale-[1.05]"
-                            : "border-blue-600 bg-blue-100 shadow-md ring-2 ring-blue-300 scale-[1.05]"
-                          : "border-gray-200 bg-white",
-                        !isAvailable && (isDisabledBySede ? "opacity-40 cursor-not-allowed grayscale" : "opacity-30 cursor-not-allowed"),
-                        isAvailable && !isSelected && "hover:border-blue-200 hover:bg-blue-50/40"
-                      )}
+                {/* Opción DISUASORA: Yape manual (solo estética, sin acción) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (yapeManualActive) setSelectedMethod('yape');
+                  }}
+                  disabled={!yapeManualActive}
+                  className={cn(
+                    "mx-auto w-[95%] rounded-xl border p-3 sm:p-4 text-left transition-all duration-200 cursor-pointer",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300",
+                    !yapeManualActive && "cursor-not-allowed border-gray-200 bg-gray-100",
+                    selectedMethod === 'yape'
+                      ? "border-sky-400 bg-sky-50 shadow-[0_8px_20px_-14px_rgba(14,165,233,0.7)]"
+                      : yapeManualActive
+                        ? "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                        : "border-gray-200 bg-gray-100"
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-white p-0.5 sm:h-14 sm:w-14"
+                      aria-hidden
                     >
-                      <div className="h-8 w-8 flex items-center justify-center">{info.icon}</div>
-                      <span className={`text-[10px] font-bold ${isSelected && isAvailable ? (m === 'izipay' ? 'text-red-700' : 'text-blue-700') : isDisabledBySede ? 'text-gray-400' : 'text-gray-700'}`}>{info.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            {IZIPAY_ENABLED && !canUseIzipay && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-700">
-                Monto mínimo para tarjeta: S/ 3.00. Agrega una pequeña recarga para continuar.
-              </div>
-            )}
+                      <img
+                        src={`${import.meta.env.BASE_URL}yape-official-logo.png`}
+                        alt=""
+                        className="h-full w-full object-contain"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1.5">
+                      <p className="text-sm font-semibold text-gray-800 leading-snug">
+                        Yape Manual (Verificación externa)
+                      </p>
+                      {!yapeManualActive && (
+                        <p className="text-xs font-medium text-gray-500">
+                          Temporalmente no disponible
+                        </p>
+                      )}
+                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                        <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <span>Validación dura 4 horas.</span>
+                      </p>
+                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <span>Solo disponible hasta las 8:00 AM.</span>
+                      </p>
+                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                        <span>
+                          <strong>Advertencia:</strong> solo se admiten transferencias por Yape. Plin no se admite.
+                          Requiere <strong>código de aprobación</strong>.
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                </button>
 
-            {/* Hint cuando no se ha elegido método aún */}
-            {!selectedMethod && (
-              <p className="text-center text-xs text-gray-400 py-2 animate-in fade-in duration-200">
-                Selecciona un método de pago para continuar ↑
-              </p>
+                {selectedMethod === 'yape' && yapeManualActive && (
+                  <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
+                    <p className="text-sm text-gray-700">
+                      Estimado padre, usted está pagando los siguientes conceptos:
+                    </p>
+
+                    <div className="overflow-hidden rounded-lg border border-gray-200">
+                      <div className="hidden grid-cols-12 gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-600 sm:grid">
+                        <span className="col-span-6">Detalle</span>
+                        <span className="col-span-3">Fecha</span>
+                        <span className="col-span-3 text-right">Monto</span>
+                      </div>
+
+                      {manualDebtLoading ? (
+                        <div className="px-3 py-4 text-xs text-gray-500">Cargando conceptos...</div>
+                      ) : manualDebtRows.length === 0 ? (
+                        <div className="px-3 py-4 text-xs text-gray-500">No hay conceptos para mostrar.</div>
+                      ) : (
+                        <div className="divide-y divide-gray-100">
+                          {manualDebtRows.map((row) => (
+                            <div key={row.key} className="px-3 py-2">
+                              <div className="flex items-start justify-between gap-3 sm:grid sm:grid-cols-12 sm:items-center">
+                                <div className="min-w-0 sm:col-span-6">
+                                  <p className="text-[11px] text-gray-400 sm:hidden">Detalle</p>
+                                  <p className="text-sm text-gray-700">{row.detail}</p>
+                                </div>
+                                <div className="sm:col-span-3">
+                                  <p className="text-[11px] text-gray-400 sm:hidden">Fecha</p>
+                                  <p className="text-xs text-gray-500">{row.dateLabel}</p>
+                                </div>
+                                <div className="text-right sm:col-span-3">
+                                  <p className="text-[11px] text-gray-400 sm:hidden">Monto</p>
+                                  <p className="text-sm font-semibold text-gray-700">S/ {Number(row.amount || 0).toFixed(2)}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <span className="text-sm font-semibold text-emerald-800">Total a Pagar</span>
+                      <span className="text-base font-bold text-emerald-800">S/ {parseFloat(amount || '0').toFixed(2)}</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Button
+                        type="button"
+                        disabled={!yapeManualCanOpenWhatsapp}
+                        onClick={() => {
+                          if (!yapeManualCanOpenWhatsapp) {
+                            toast({
+                              title: 'Falta número de WhatsApp',
+                              description:
+                                'En SuperAdmin → Status → Gestión de Pago Manual, guarda un número válido (ej. 51912345678 o 912345678).',
+                              variant: 'destructive',
+                            });
+                            return;
+                          }
+                          setShowYapeManualWarning(true);
+                        }}
+                        className={cn(
+                          'h-11 w-full text-sm font-semibold shadow-md shadow-emerald-200/60 transition-colors',
+                          yapeManualCanOpenWhatsapp
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-[0.99]'
+                            : 'bg-emerald-600/45 text-white cursor-not-allowed hover:bg-emerald-600/45',
+                        )}
+                      >
+                        ¡Ya pagué! — Continuar con WhatsApp
+                      </Button>
+                      {!yapeManualCanOpenWhatsapp && (
+                        <p className="text-center text-[11px] text-amber-800">
+                          Falta número de WhatsApp en la configuración global. El administrador debe guardarlo en Status.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {IZIPAY_ENABLED && !canUseIzipay && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-700">
+                    Monto mínimo para tarjeta: S/ 3.00. Agrega una pequeña recarga para continuar.
+                  </div>
+                )}
+
+                {!selectedMethod && (
+                  <p className="text-center text-xs text-gray-400 py-1 animate-in fade-in duration-200">
+                    Selecciona Izipay para continuar con el pago instantáneo.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                {/* Method tabs â€” horizontal */}
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">Método de pago</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(Object.keys(methodInfo) as PaymentMethod[]).map((m) => {
+                      const info = methodInfo[m];
+                      const isDisabledBySede = m === 'izipay' && !IZIPAY_ENABLED;
+                      const isAvailable = !!info.number && info.enabled && !isDisabledBySede && (m !== 'izipay' || canUseIzipay);
+                      const isSelected = selectedMethod === m;
+
+                      // Switch global OFF -> ocultar totalmente el boton
+                      const globalKey = (
+                        m === 'yape' ? 'yape_active' :
+                        m === 'plin' ? 'plin_active' :
+                        m === 'transferencia' ? 'transferencia_active' : 'izipay_active'
+                      ) as 'yape_active' | 'plin_active' | 'transferencia_active' | 'izipay_active';
+                      if (!isMethodGloballyAllowed(globalKey)) return null;
+
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => isAvailable && setSelectedMethod(m)}
+                          disabled={!isAvailable}
+                          title={isDisabledBySede ? 'Metodo no disponible para esta sede' : undefined}
+                          className={cn(
+                            "p-2 rounded-xl border-2 flex flex-col items-center gap-0.5 transition-all duration-150",
+                            isSelected && isAvailable
+                              ? m === 'izipay'
+                                ? "border-red-600 bg-red-50 shadow-md ring-2 ring-red-300 scale-[1.05]"
+                                : "border-blue-600 bg-blue-100 shadow-md ring-2 ring-blue-300 scale-[1.05]"
+                              : "border-gray-200 bg-white",
+                            !isAvailable && (isDisabledBySede ? "opacity-40 cursor-not-allowed grayscale" : "opacity-30 cursor-not-allowed"),
+                            isAvailable && !isSelected && "hover:border-blue-200 hover:bg-blue-50/40"
+                          )}
+                        >
+                          <div className="h-8 w-8 flex items-center justify-center">{info.icon}</div>
+                          <span className={`text-[10px] font-bold ${isSelected && isAvailable ? (m === 'izipay' ? 'text-red-700' : 'text-blue-700') : isDisabledBySede ? 'text-gray-400' : 'text-gray-700'}`}>{info.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {IZIPAY_ENABLED && !canUseIzipay && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-700">
+                    Monto mínimo para tarjeta: S/ 3.00. Agrega una pequeña recarga para continuar.
+                  </div>
+                )}
+
+                {/* Hint cuando no se ha elegido método aún */}
+                {!selectedMethod && (
+                  <p className="text-center text-xs text-gray-400 py-2 animate-in fade-in duration-200">
+                    Selecciona un método de pago para continuar ↑
+                  </p>
+                )}
+              </>
             )}
 
             {/* Divulgación progresiva: todo lo de abajo aparece con animación suave */}
-            {selectedMethod && (
+            {selectedMethod && !(requestType === 'debt_payment' && selectedMethod === 'yape') && (
             <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
 
             {/* Payment details card (solo para métodos manuales — no IziPay) */}
@@ -2017,6 +2376,46 @@ export function RechargeModal({
   }
 
   return (
+    <>
+    <Dialog open={showYapeManualWarning} onOpenChange={setShowYapeManualWarning}>
+      <DialogContent className="w-[92vw] max-w-sm rounded-2xl p-0 overflow-hidden" aria-describedby={undefined}>
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200 px-4 py-3">
+          <DialogTitle className="text-base font-bold text-amber-900">
+            ¡Un momento! 📸
+          </DialogTitle>
+        </div>
+        <div className="px-4 py-4 space-y-4">
+          <p className="text-sm leading-relaxed text-gray-700">
+            Recuerda adjuntar la captura de tu pago en el chat de WhatsApp que se abrirá a continuación.
+            Sin el comprobante adjunto, nuestro equipo no podrá validar tu pedido.
+            ¡Gracias por tu comprensión!
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowYapeManualWarning(false)}
+              className="h-10"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (yapeManualWhatsappLink) {
+                  window.open(yapeManualWhatsappLink, '_blank', 'noopener,noreferrer');
+                }
+                setShowYapeManualWarning(false);
+              }}
+              className="h-10 bg-emerald-600 hover:bg-emerald-700"
+            >
+              Entendido, continuar
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
     <Dialog open={isOpen} onOpenChange={isRedirecting ? undefined : onClose}>
       <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto" aria-describedby={undefined}>
 
@@ -2084,6 +2483,7 @@ export function RechargeModal({
         )}
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 

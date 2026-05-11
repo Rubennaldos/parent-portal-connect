@@ -5,7 +5,7 @@
  * Usa Realtime: el cambio se propaga a todos los usuarios conectados en < 1s.
  * El superadmin NUNCA es bloqueado por estos flags (guard de rutas lo excluye).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -34,7 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Users, ShieldCheck, AlertTriangle, Wifi, FlaskConical, X, Plus, CreditCard } from 'lucide-react';
+import { Users, ShieldCheck, AlertTriangle, Wifi, FlaskConical, X, Plus, CreditCard, MessageCircle } from 'lucide-react';
 
 type FlagKey = 'is_parent_portal_enabled' | 'is_admin_panel_enabled';
 
@@ -63,8 +63,34 @@ export function SystemStatusControl() {
   const [savingBypass, setSavingBypass]     = useState(false);
   // Métodos de pago
   const [savingMethod, setSavingMethod]     = useState<PaymentMethodKey | null>(null);
+  // Config Yape Manual
+  const [savingYapeManual, setSavingYapeManual] = useState(false);
+  const [yapeManualDraft, setYapeManualDraft] = useState({
+    active: false,
+    phone: '',
+    template: '',
+  });
 
   const effectiveStatus = localOverride ? { ...status, ...localOverride } : status;
+
+  const currentYapeManualConfig = {
+    active: effectiveStatus.yape_manual_active ?? false,
+    phone: effectiveStatus.yape_manual_phone ?? '',
+    template: effectiveStatus.yape_manual_template ?? '',
+  };
+
+  useEffect(() => {
+    setYapeManualDraft({
+      active: currentYapeManualConfig.active,
+      phone: currentYapeManualConfig.phone,
+      template: currentYapeManualConfig.template,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    currentYapeManualConfig.active,
+    currentYapeManualConfig.phone,
+    currentYapeManualConfig.template,
+  ]);
 
   const handleToggle = (flag: FlagKey, newValue: boolean) => {
     const labels: Record<FlagKey, string> = {
@@ -218,6 +244,45 @@ export function SystemStatusControl() {
       toast({ title: 'Error al guardar', description: err.message, variant: 'destructive' });
     } finally {
       setSavingMethod(null);
+    }
+  };
+
+  const saveYapeManualConfig = async () => {
+    setSavingYapeManual(true);
+    // Optimismo local para reflejar inmediatamente en el panel
+    setLocalOverride(prev => ({
+      ...prev,
+      yape_manual_active: yapeManualDraft.active,
+      yape_manual_phone: yapeManualDraft.phone.trim(),
+      yape_manual_template: yapeManualDraft.template.trim(),
+    }));
+    try {
+      const { error } = await supabase
+        .from('system_status')
+        .update({
+          yape_manual_active: yapeManualDraft.active,
+          yape_manual_phone: yapeManualDraft.phone.trim(),
+          yape_manual_template: yapeManualDraft.template.trim(),
+          updated_by: user?.id,
+        })
+        .eq('id', 1);
+      if (error) throw error;
+      toast({
+        title: '✅ Configuración guardada',
+        description: 'Yape Manual fue actualizado correctamente para el portal de padres.',
+      });
+      refresh();
+    } catch (err: any) {
+      // Revertir optimismo con estado actual de DB
+      setLocalOverride(prev => ({
+        ...prev,
+        yape_manual_active: currentYapeManualConfig.active,
+        yape_manual_phone: currentYapeManualConfig.phone,
+        yape_manual_template: currentYapeManualConfig.template,
+      }));
+      toast({ title: 'Error al guardar', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingYapeManual(false);
     }
   };
 
@@ -532,6 +597,75 @@ export function SystemStatusControl() {
               💡 Desactivar un método lo oculta visualmente para todos los padres.
               No afecta pagos ya realizados ni la configuración por sede (Facturación → Config SUNAT).
             </p>
+          </div>
+
+          <div className="border-t" />
+
+          {/* — Configuración de Yape Manual (global) — */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+                <MessageCircle className="h-4 w-4 text-emerald-700" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Gestión de Pago Manual</p>
+                <p className="text-xs text-muted-foreground">
+                  Configuración global para la opción Yape Manual en el portal de padres.
+                </p>
+              </div>
+            </div>
+
+            <div className="pl-10 space-y-3">
+              <div className="flex items-center justify-between rounded-xl border bg-card p-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Activar Yape Manual</p>
+                  <p className="text-xs text-muted-foreground">
+                    Si está desactivado, el botón aparece en gris y no se puede seleccionar.
+                  </p>
+                </div>
+                <Switch
+                  checked={yapeManualDraft.active}
+                  onCheckedChange={(v) => setYapeManualDraft(prev => ({ ...prev, active: v }))}
+                  disabled={savingYapeManual}
+                  className="data-[state=checked]:bg-emerald-600"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Número WhatsApp de destino</Label>
+                <Input
+                  value={yapeManualDraft.phone}
+                  onChange={(e) => setYapeManualDraft(prev => ({ ...prev, phone: e.target.value }))}
+                  placeholder="Ej: 51991234567"
+                  className="h-9 text-sm"
+                  disabled={savingYapeManual}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Plantilla de mensaje</Label>
+                <Textarea
+                  value={yapeManualDraft.template}
+                  onChange={(e) => setYapeManualDraft(prev => ({ ...prev, template: e.target.value }))}
+                  placeholder="Hola, soy {parent_name} y estoy pagando un total de S/ {total_amount} por el comprobante #{ticket_code} de la fecha {date}. Adjunto el comprobante, por favor confirmen mi abono. Muchas gracias."
+                  className="text-sm resize-y min-h-[96px]"
+                  disabled={savingYapeManual}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Puedes usar placeholders: <code className="bg-muted px-1 rounded">{'{parent_name}'}</code>, <code className="bg-muted px-1 rounded">{'{total_amount}'}</code>, <code className="bg-muted px-1 rounded">{'{ticket_code}'}</code> y <code className="bg-muted px-1 rounded">{'{date}'}</code>.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={saveYapeManualConfig}
+                  disabled={savingYapeManual}
+                  className="h-9"
+                >
+                  {savingYapeManual ? 'Guardando...' : 'Guardar configuración'}
+                </Button>
+              </div>
+            </div>
           </div>
 
           <div className="border-t" />
