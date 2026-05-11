@@ -9,10 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Plus, Edit, Trash2, Download, Search, Baby, UserCircle } from "lucide-react";
+import { Users, Plus, Download, Search, Baby, AlertCircle, Loader2 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { ParentCard } from '@/components/admin/ParentCard';
+import { useParentsSearch, type ParentSearchItem, type ParentChildLite } from '@/hooks/useParentsSearch';
 
 interface School {
   id: string;
@@ -20,45 +22,15 @@ interface School {
   code: string;
 }
 
-interface Student {
-  id: string;
-  full_name: string;
-  grade: string;
-  section: string;
-}
-
-interface ParentProfile {
-  id: string;
-  user_id: string;
-  full_name: string;
-  nickname?: string;
-  dni: string;
-  phone_1: string;
-  phone_2?: string;
-  email?: string;
-  address: string;
-  school_id: string;
-  school: School | null;
-  children?: Student[];
-  created_at: string;
-}
-
-interface Transaction {
-  id: string;
-  amount: number;
-  type: string;
-  created_at: string;
-}
-
 export default function ParentsManagement() {
   const { user } = useAuth();
   const { role } = useRole();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
-  const [parents, setParents] = useState<ParentProfile[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
+  const [page, setPage] = useState(1);
   
   // Permisos y alcance
   const [canViewAllSchools, setCanViewAllSchools] = useState(false);
@@ -77,12 +49,10 @@ export default function ParentsManagement() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showChildrenModal, setShowChildrenModal] = useState(false);
-  const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   
   // Datos seleccionados
-  const [selectedParent, setSelectedParent] = useState<ParentProfile | null>(null);
-  const [parentChildren, setParentChildren] = useState<Student[]>([]);
-  const [parentTransactions, setParentTransactions] = useState<Transaction[]>([]);
+  const [selectedParent, setSelectedParent] = useState<ParentSearchItem | null>(null);
+  const [parentChildren, setParentChildren] = useState<ParentChildLite[]>([]);
   
   // Formulario
   const [formData, setFormData] = useState({
@@ -97,15 +67,38 @@ export default function ParentsManagement() {
     password: '',
   });
 
+  const effectiveSchoolId = canViewAllSchools
+    ? (selectedSchool === 'all' ? null : selectedSchool)
+    : userSchoolId;
+
+  const {
+    parents,
+    loading: searchingParents,
+    error: searchError,
+    minLengthError,
+    totalCount,
+    totalPages,
+    refresh: refreshParents,
+  } = useParentsSearch({
+    searchTerm,
+    schoolId: effectiveSchoolId,
+    page,
+    pageSize: 30,
+  });
+
   useEffect(() => {
     checkPermissions();
   }, [user, role]);
 
   useEffect(() => {
     if (!loading && (canViewAllSchools || userSchoolId)) {
-      fetchData();
+      fetchSchools();
     }
-  }, [canViewAllSchools, userSchoolId]);
+  }, [loading, canViewAllSchools, userSchoolId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, selectedSchool]);
 
   const checkPermissions = async () => {
     if (!user || !role) return;
@@ -202,10 +195,8 @@ export default function ParentsManagement() {
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchSchools = async () => {
     try {
-      // Obtener escuelas
       const { data: schoolsData, error: schoolsError } = await supabase
         .from('schools')
         .select('*')
@@ -213,70 +204,13 @@ export default function ParentsManagement() {
       
       if (schoolsError) throw schoolsError;
       setSchools(schoolsData || []);
-
-      // Construir query de padres con filtro de sede
-      let query = supabase
-        .from('parent_profiles')
-        .select(`
-          *,
-          school:schools(id, name, code)
-        `);
-
-      // Aplicar filtro de sede según permisos
-      if (!canViewAllSchools && userSchoolId) {
-        console.log('🔒 Filtrando por sede:', userSchoolId);
-        query = query.eq('school_id', userSchoolId);
-      } else {
-        console.log('🌍 Viendo todas las sedes');
-      }
-
-      const { data: parentsData, error: parentsError } = await query.order('full_name');
-      
-      if (parentsError) throw parentsError;
-      
-      if (!parentsData || parentsData.length === 0) {
-        setParents([]);
-        setLoading(false);
-        return;
-      }
-      
-      // Obtener todos los hijos en una sola consulta
-      const userIds = parentsData.map(p => p.user_id).filter(Boolean); // Filtrar nulls
-      
-      console.log('🔍 User IDs de padres:', userIds);
-      
-      let studentsData = [];
-      if (userIds.length > 0) {
-        const { data, error: studentsError } = await supabase
-          .from('students')
-          .select('id, full_name, grade, section, parent_id')
-          .in('parent_id', userIds);
-        
-        if (studentsError) {
-          console.error('❌ Error al cargar estudiantes:', studentsError);
-        } else {
-          studentsData = data || [];
-          console.log('✅ Estudiantes cargados:', studentsData.length);
-        }
-      }
-      
-      // Mapear hijos a sus padres
-      const parentsWithChildren = parentsData.map(parent => ({
-        ...parent,
-        children: studentsData.filter(s => s.parent_id === parent.user_id)
-      }));
-      
-      console.log('✅ Padres con hijos:', parentsWithChildren);
-      setParents(parentsWithChildren);
     } catch (error) {
-      console.error('Error al cargar datos:', error);
+      console.error('Error al cargar sedes:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'No se pudieron cargar los datos de padres.',
+        description: 'No se pudieron cargar las sedes.',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -336,7 +270,7 @@ export default function ParentsManagement() {
 
       setShowCreateModal(false);
       resetForm();
-      fetchData();
+      await refreshParents();
     } catch (error: any) {
       console.error('Error al crear padre:', error);
       toast({
@@ -374,7 +308,7 @@ export default function ParentsManagement() {
 
       setShowEditModal(false);
       resetForm();
-      fetchData();
+      await refreshParents();
     } catch (error: any) {
       console.error('Error al editar padre:', error);
       toast({
@@ -403,7 +337,7 @@ export default function ParentsManagement() {
 
       setShowDeleteModal(false);
       setSelectedParent(null);
-      fetchData();
+      await refreshParents();
     } catch (error: any) {
       console.error('Error al eliminar padre:', error);
       toast({
@@ -414,45 +348,14 @@ export default function ParentsManagement() {
     }
   };
 
-  const handleViewChildren = async (parent: ParentProfile) => {
+  const handleViewChildren = async (parent: ParentSearchItem) => {
     setSelectedParent(parent);
     setParentChildren(parent.children || []);
     setShowChildrenModal(true);
   };
 
-  const handleViewTransactions = async (parent: ParentProfile) => {
-    setSelectedParent(parent);
-    setShowTransactionsModal(true);
-
-    try {
-      // Obtener todas las transacciones de los hijos del padre
-      if (!parent.children || parent.children.length === 0) {
-        setParentTransactions([]);
-        return;
-      }
-
-      const studentIds = parent.children.map(child => child.id);
-      
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .in('student_id', studentIds)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setParentTransactions(data || []);
-    } catch (error) {
-      console.error('Error al cargar transacciones:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudieron cargar las transacciones.',
-      });
-    }
-  };
-
   const exportToExcel = () => {
-    const data = filteredParents.map(parent => ({
+    const data = parents.map(parent => ({
       'Nombre Completo': parent.full_name,
       'Sobrenombre': parent.nickname || '-',
       'DNI': parent.dni,
@@ -460,8 +363,8 @@ export default function ParentsManagement() {
       'Teléfono 2': parent.phone_2 || '-',
       'Email': parent.email || '-',
       'Dirección': parent.address,
-      'Sede': parent.school?.name || 'Sin asignar',
-      'Cantidad de Hijos': parent.children?.length || 0,
+      'Sede': parent.school_name || 'Sin asignar',
+      'Cantidad de Hijos': parent.children_count || 0,
       'Hijos': parent.children?.map(c => c.full_name).join(', ') || '-',
     }));
 
@@ -490,13 +393,13 @@ export default function ParentsManagement() {
     doc.setFontSize(10);
     doc.text(`Fecha: ${new Date().toLocaleDateString()}`, 15, 38);
 
-    const tableData = filteredParents.map(parent => [
+    const tableData = parents.map(parent => [
       parent.full_name,
       parent.nickname || '-',
       parent.dni,
       parent.phone_1,
-      parent.school?.name || 'Sin asignar',
-      parent.children?.length || 0,
+      parent.school_name || 'Sin asignar',
+      parent.children_count || 0,
     ]);
 
     autoTable(doc, {
@@ -530,7 +433,7 @@ export default function ParentsManagement() {
     setSelectedParent(null);
   };
 
-  const openEditModal = (parent: ParentProfile) => {
+  const openEditModal = (parent: ParentSearchItem) => {
     setSelectedParent(parent);
     setFormData({
       full_name: parent.full_name,
@@ -545,14 +448,6 @@ export default function ParentsManagement() {
     });
     setShowEditModal(true);
   };
-
-  const filteredParents = parents.filter(parent => {
-    const matchesSearch = parent.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         parent.dni.includes(searchTerm) ||
-                         (parent.nickname && parent.nickname.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesSchool = selectedSchool === 'all' || parent.school_id === selectedSchool;
-    return matchesSearch && matchesSchool;
-  });
 
   if (loading) {
     return (
@@ -583,14 +478,26 @@ export default function ParentsManagement() {
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por nombre, DNI o sobrenombre..."
+                placeholder="Buscar por padre, DNI, correo, apodo o nombre del alumno..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setPage(1);
+                }}
+                className="pl-10 pr-10"
               />
+              {searchingParents && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+              )}
             </div>
             {canViewAllSchools && (
-              <Select value={selectedSchool} onValueChange={setSelectedSchool}>
+              <Select
+                value={selectedSchool}
+                onValueChange={(value) => {
+                  setSelectedSchool(value);
+                  setPage(1);
+                }}
+              >
                 <SelectTrigger className="w-full sm:w-[200px]">
                   <SelectValue placeholder="Todas las sedes" />
                 </SelectTrigger>
@@ -620,63 +527,68 @@ export default function ParentsManagement() {
             </Button>
           </div>
 
-          {/* Lista de padres */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredParents.map(parent => (
-              <Card key={parent.id} className="border-l-4 border-blue-500">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg">{parent.full_name}</CardTitle>
-                      {parent.nickname && (
-                        <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
-                          <UserCircle className="h-3 w-3" />
-                          "{parent.nickname}"
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div className="text-sm">
-                    <p><strong>DNI:</strong> {parent.dni}</p>
-                    <p><strong>Teléfono:</strong> {parent.phone_1}</p>
-                    <p><strong>Sede:</strong> {parent.school?.name || 'Sin asignar'}</p>
-                    <p className="flex items-center gap-1">
-                      <Baby className="h-4 w-4" />
-                      <strong>Hijos:</strong> {parent.children?.length || 0}
-                    </p>
-                  </div>
-                  
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleViewChildren(parent)}
-                      className="flex-1"
-                    >
-                      <Baby className="h-4 w-4 mr-1" />
-                      Ver Hijos
-                    </Button>
-                    {permissions.canEditParent && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEditModal(parent)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          {minLengthError && (
+            <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              {minLengthError}
+            </div>
+          )}
 
-          {filteredParents.length === 0 && (
+          {searchError && (
+            <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {searchError}
+            </div>
+          )}
+
+          {searchingParents ? (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto"></div>
+              <p className="mt-4 text-muted-foreground">Consultando padres...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {parents.map(parent => (
+                <ParentCard
+                  key={parent.id}
+                  parent={parent}
+                  canEditParent={permissions.canEditParent}
+                  onViewChildren={handleViewChildren}
+                  onEditParent={openEditModal}
+                />
+              ))}
+            </div>
+          )}
+
+          {parents.length === 0 && !searchingParents && !searchError && !minLengthError && (
             <div className="text-center py-12">
               <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground">No se encontraron padres.</p>
+            </div>
+          )}
+
+          {!minLengthError && !searchError && totalCount > 0 && (
+            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Mostrando página {page} de {totalPages} ({totalCount} resultados)
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || searchingParents}
+                  onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages || searchingParents}
+                  onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                >
+                  Siguiente
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

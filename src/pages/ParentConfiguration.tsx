@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, GitMerge, Bell } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, GitMerge, Bell, Loader2 } from 'lucide-react';
 import { ResetUserPasswordModal } from '@/components/admin/ResetUserPasswordModal';
 import { MergeParentsModal } from '@/components/admin/MergeParentsModal';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
@@ -89,7 +89,33 @@ interface TeacherProfile {
   created_at: string;
 }
 
+interface SearchParentsV3Row {
+  id: string;
+  user_id: string;
+  full_name: string;
+  nickname: string | null;
+  dni: string | null;
+  phone_1: string | null;
+  phone_2: string | null;
+  email: string | null;
+  address: string | null;
+  responsible_2_full_name: string | null;
+  responsible_2_dni: string | null;
+  responsible_2_document_type: string | null;
+  responsible_2_phone_1: string | null;
+  responsible_2_email: string | null;
+  responsible_2_address: string | null;
+  school_id: string;
+  school_name: string | null;
+  children: Student[] | null;
+  created_at: string;
+  score: number;
+  total_count: number;
+}
+
 const PARENTS_PAGE_SIZE = 50;
+const PARENTS_SEARCH_DEBOUNCE_MS = 700;
+const PARENTS_MIN_SEARCH_CHARS = 3;
 
 const ParentConfiguration = () => {
   const { toast } = useToast();
@@ -109,8 +135,11 @@ const ParentConfiguration = () => {
   const [selectedSchoolAnalytics, setSelectedSchoolAnalytics] = useState<string>('all');
   const [parentsPage, setParentsPage] = useState(0);
   const [parentsTotalCount, setParentsTotalCount] = useState(0);
-  const allParentsListRef = useRef<ParentProfile[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [parentsLoading, setParentsLoading] = useState(false);
+  const [parentsLoadError, setParentsLoadError] = useState<string | null>(null);
+  const parentsAbortRef = useRef<AbortController | null>(null);
+  const parentsRequestSeqRef = useRef(0);
 
   // Control de pestañas y carga diferida de profesores
   const [activeTab, setActiveTab] = useState('parents');
@@ -175,18 +204,20 @@ const ParentConfiguration = () => {
     }
   }, [canViewAllSchools, userSchoolId]);
 
-  // Debounce de búsqueda: espera 500ms antes de disparar fetchData
+  // Debounce real: solo disparamos query al terminar de escribir.
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchTerm);
       setParentsPage(0);
-    }, 500);
+    }, PARENTS_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
   useEffect(() => {
-    setParentsPage(0);
-  }, [selectedSchool]);
+    if (parentsPage !== 0) {
+      setParentsPage(0);
+    }
+  }, [selectedSchool, parentsPage]);
 
   useEffect(() => {
     if (canViewAllSchools === true || (canViewAllSchools === false && userSchoolId)) {
@@ -196,7 +227,13 @@ const ParentConfiguration = () => {
       console.log('⏳ Esperando permisos... canViewAllSchools:', canViewAllSchools, 'userSchoolId:', userSchoolId);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canViewAllSchools, userSchoolId, parentsPage, debouncedSearch]);
+  }, [canViewAllSchools, userSchoolId, parentsPage, debouncedSearch, selectedSchool]);
+
+  useEffect(() => {
+    return () => {
+      parentsAbortRef.current?.abort();
+    };
+  }, []);
 
   const checkPermissions = async () => {
     if (!user || !role) return;
@@ -336,262 +373,99 @@ const ParentConfiguration = () => {
   };
 
   const fetchData = async () => {
-    setLoading(true);
+    const requestSeq = ++parentsRequestSeqRef.current;
+    const isFirstLoad = parents.length === 0;
+    if (isFirstLoad) {
+      setLoading(true);
+    } else {
+      setParentsLoading(true);
+    }
+    setParentsLoadError(null);
+
     try {
-      // Obtener escuelas
-      const { data: schoolsData, error: schoolsError } = await supabase
-        .from('schools')
-        .select('*')
-        .order('name');
-      
-      if (schoolsError) throw schoolsError;
-      setSchools(schoolsData || []);
-
-      // ==================== CARGAR PADRES ====================
-      console.log('👨‍👩‍👧 Cargando padres...');
-      
-      let parentsData = [];
-      
-      if (!canViewAllSchools && userSchoolId) {
-        console.log('🔒 Filtrando padres por sede (a través de sus hijos):', userSchoolId);
-        console.log('📊 Estado actual:', { canViewAllSchools, userSchoolId });
-        
-        // PASO 1: Obtener estudiantes de la sede
-        console.log('🔍 PASO 1: Buscando estudiantes en sede:', userSchoolId);
-        const { data: studentsInSchool, error: studentsError } = await supabase
-          .from('students')
-          .select('parent_id')
-          .eq('school_id', userSchoolId);
-        
-        if (studentsError) {
-          console.error('❌ Error al obtener estudiantes:', studentsError);
-          toast({
-            variant: 'destructive',
-            title: 'Error',
-            description: `Error al obtener estudiantes: ${studentsError.message}`,
-          });
-        } else {
-          console.log('✅ Estudiantes encontrados:', studentsInSchool?.length || 0);
-          console.log('📋 Datos de estudiantes:', studentsInSchool);
-          
-          // PASO 2: Extraer los parent_id únicos
-          const parentIds = [...new Set(studentsInSchool?.map(s => s.parent_id).filter(Boolean))];
-          console.log('📋 Parent IDs únicos encontrados:', parentIds.length);
-          console.log('📋 Lista de parent_ids:', parentIds);
-          
-          if (parentIds.length > 0) {
-            const pageStart = parentsPage * PARENTS_PAGE_SIZE;
-            const pageEnd = pageStart + PARENTS_PAGE_SIZE;
-
-            if (allParentsListRef.current.length > 0) {
-              // Gestor sede: los datos están en memoria → aplicar búsqueda antes de paginar
-              const term = debouncedSearch.trim().toLowerCase();
-              const visibleList = term
-                ? allParentsListRef.current.filter(p =>
-                    p.full_name?.toLowerCase().includes(term) ||
-                    p.email?.toLowerCase().includes(term) ||
-                    p.dni?.includes(term)
-                  )
-                : allParentsListRef.current;
-              setParentsTotalCount(visibleList.length);
-              parentsData = visibleList.slice(pageStart, pageEnd);
-            } else {
-              const BATCH = 100;
-              const allFilteredParents: any[] = [];
-              for (let i = 0; i < parentIds.length; i += BATCH) {
-                const chunk = parentIds.slice(i, i + BATCH);
-                const { data: batchParents, error: parentsError } = await supabase
-                  .from('parent_profiles')
-                  .select(`
-                    *,
-                    school:schools(id, name, code),
-                    responsible_2_full_name,
-                    responsible_2_dni,
-                    responsible_2_document_type,
-                    responsible_2_phone_1,
-                    responsible_2_email,
-                    responsible_2_address
-                  `)
-                  .in('user_id', chunk)
-                  .order('full_name');
-                if (parentsError) {
-                  console.error('❌ Error al cargar padres (lote):', parentsError);
-                  toast({
-                    variant: 'destructive',
-                    title: 'Error',
-                    description: `Error al cargar padres: ${parentsError.message}`,
-                  });
-                  break;
-                }
-                if (batchParents) allFilteredParents.push(...batchParents);
-              }
-              const filteredParents = allFilteredParents;
-              console.log('✅ Padres encontrados (sede):', filteredParents?.length || 0);
-
-              if (filteredParents.length > 0) {
-                const userIdsForProfiles = filteredParents.map(p => p.user_id).filter(Boolean);
-                const allProfiles: any[] = [];
-                for (let i = 0; i < userIdsForProfiles.length; i += BATCH) {
-                  const chunk = userIdsForProfiles.slice(i, i + BATCH);
-                  const { data: profilesData } = await supabase.from('profiles').select('id, email').in('id', chunk);
-                  if (profilesData) allProfiles.push(...profilesData);
-                }
-                const fullList = filteredParents.map(parent => ({
-                  ...parent,
-                  profile: allProfiles.find((p: any) => p.id === parent.user_id) || null
-                }));
-                allParentsListRef.current = fullList;
-                setParentsTotalCount(fullList.length);
-                parentsData = fullList.slice(pageStart, pageEnd);
-              }
-            }
-          } else {
-            console.warn('⚠️ No se encontraron parent_ids en los estudiantes');
-            allParentsListRef.current = [];
-            setParentsTotalCount(0);
-          }
-        }
-      } else {
-        // Admin general: paginación server-side para evitar 400 (URL demasiado larga con miles de IDs)
-        allParentsListRef.current = [];
-        console.log('🌍 Viendo todos los padres (página)', parentsPage + 1, '| búsqueda:', debouncedSearch || '(sin filtro)');
-        const from = parentsPage * PARENTS_PAGE_SIZE;
-        const to = from + PARENTS_PAGE_SIZE - 1;
-
-        let query = supabase
-          .from('parent_profiles')
-          .select(`
-            *,
-            school:schools(id, name, code),
-            responsible_2_full_name,
-            responsible_2_dni,
-            responsible_2_document_type,
-            responsible_2_phone_1,
-            responsible_2_email,
-            responsible_2_address
-          `, { count: 'exact' })
-          .order('full_name');
-
-        // Filtro de búsqueda server-side (busca en nombre, email y DNI)
-        if (debouncedSearch.trim()) {
-          const term = debouncedSearch.trim();
-          query = query.or(`full_name.ilike.%${term}%,email.ilike.%${term}%,dni.ilike.%${term}%`);
-        }
-
-        const { data: pageParents, error: parentsError, count } = await query.range(from, to);
-
-        if (parentsError) {
-          console.error('❌ Error al cargar padres:', parentsError);
-          toast({
-            variant: 'destructive',
-            title: 'Error',
-            description: `Error al cargar padres: ${parentsError.message}`,
-          });
-        } else {
-          setParentsTotalCount(count ?? 0);
-        }
-
-        if (pageParents && pageParents.length > 0) {
-          // Paso 1: buscar profiles por user_id (los que lo tienen)
-          const userIdsForProfiles = pageParents.map((p: any) => p.user_id).filter(Boolean);
-          let profilesById: any[] = [];
-          if (userIdsForProfiles.length > 0) {
-            const { data } = await supabase
-              .from('profiles')
-              .select('id, email, full_name')
-              .in('id', userIdsForProfiles);
-            profilesById = data || [];
-          }
-
-          // Paso 2: para los padres sin user_id, buscar su profile por email
-          const parentsWithoutUserId = pageParents.filter((p: any) => !p.user_id && p.email);
-          let profilesByEmail: any[] = [];
-          if (parentsWithoutUserId.length > 0) {
-            const emails = parentsWithoutUserId.map((p: any) => p.email).filter(Boolean);
-            const EBATCH = 50;
-            for (let i = 0; i < emails.length; i += EBATCH) {
-              const chunk = emails.slice(i, i + EBATCH);
-              const { data } = await supabase
-                .from('profiles')
-                .select('id, email, full_name')
-                .in('email', chunk);
-              if (data) profilesByEmail.push(...data);
-            }
-          }
-
-          // Paso 3: construir mapa email → profile
-          const emailToProfile = new Map(profilesByEmail.map((p: any) => [p.email?.toLowerCase(), p]));
-
-          // Paso 4: enriquecer cada padre con su profile y user_id resuelto
-          parentsData = pageParents.map((parent: any) => {
-            const profileById = profilesById.find((p: any) => p.id === parent.user_id);
-            const profileByEmail = emailToProfile.get(parent.email?.toLowerCase());
-            const resolvedProfile = profileById || profileByEmail || null;
-            return {
-              ...parent,
-              user_id: parent.user_id || resolvedProfile?.id || null,
-              profile: resolvedProfile,
-            };
-          });
-        } else {
-          parentsData = [];
-        }
-      }
-      
-      console.log('📊 Padres encontrados:', parentsData?.length || 0);
-      
-      if (!parentsData || parentsData.length === 0) {
-        console.log('⚠️ No hay padres en la base de datos para esta sede');
-        setParents([]);
-        // NO hacer return aquí para que siga cargando profesores
-      } else {
-        // Obtener todos los hijos en lotes para evitar URLs largas y problemas de RLS
-        const userIds = parentsData.map((p: any) => p.user_id).filter(Boolean);
-        console.log('👶 Cargando hijos para', userIds.length, 'padres...');
-        
-        let studentsData: any[] = [];
-        if (userIds.length > 0) {
-          // Cargar en lotes de 50 para evitar límites de URL
-          const STUDENT_BATCH = 50;
-          for (let i = 0; i < userIds.length; i += STUDENT_BATCH) {
-            const chunk = userIds.slice(i, i + STUDENT_BATCH);
-            const { data, error: studentsError } = await supabase
-              .from('students')
-              .select('id, full_name, grade, section, parent_id, photo_url, free_account, limit_type, daily_limit, weekly_limit, monthly_limit, balance, school_id')
-              .in('parent_id', chunk)
-              .eq('is_active', true);
-            
-            if (studentsError) {
-              console.error('❌ Error al cargar estudiantes (lote):', studentsError.message);
-            } else if (data) {
-              studentsData.push(...data);
-            }
-          }
-          console.log('✅ Hijos encontrados:', studentsData.length);
-        } else {
-          console.warn('⚠️ No hay user_ids válidos en los padres cargados');
-        }
-        
-        // Mapear hijos a sus padres
-        const parentsWithChildren = parentsData.map((parent: any) => ({
-          ...parent,
-          children: studentsData.filter((s: any) => s.parent_id === parent.user_id)
-        }));
-        
-        setParents(parentsWithChildren);
+      if (schools.length === 0) {
+        const { data: schoolsData, error: schoolsError } = await supabase
+          .from('schools')
+          .select('*')
+          .order('name');
+        if (schoolsError) throw schoolsError;
+        setSchools(schoolsData || []);
       }
 
-      // ── Profesores se cargan diferido al abrir su pestaña ──
-      // (fetchTeachers se llama en handleTabChange)
+      const normalizedSearch = debouncedSearch.trim();
+      if (normalizedSearch.length > 0 && normalizedSearch.length < PARENTS_MIN_SEARCH_CHARS) {
+        return;
+      }
+      const selectedSchoolId = canViewAllSchools
+        ? (selectedSchool === 'all' ? null : selectedSchool)
+        : userSchoolId;
 
-    } catch (error) {
-      console.error('Error al cargar datos:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudieron cargar los datos de padres.',
-      });
+      parentsAbortRef.current?.abort();
+      const abortController = new AbortController();
+      parentsAbortRef.current = abortController;
+
+      const rpcPromise = supabase
+        .rpc('search_parents_v3', {
+        p_query: normalizedSearch,
+        p_school_id: selectedSchoolId,
+        p_limit: PARENTS_PAGE_SIZE,
+        p_offset: parentsPage * PARENTS_PAGE_SIZE,
+        })
+        .abortSignal(abortController.signal);
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT_DB_QUERY')), 5000),
+      );
+
+      const { data, error } = await Promise.race([rpcPromise, timeoutPromise]) as {
+        data: SearchParentsV3Row[] | null;
+        error: Error | null;
+      };
+
+      if (requestSeq !== parentsRequestSeqRef.current) return;
+      if (error) throw error;
+
+      const mappedParents: ParentProfile[] = (data || []).map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        full_name: row.full_name || '',
+        nickname: row.nickname || undefined,
+        dni: row.dni || '',
+        phone_1: row.phone_1 || '',
+        phone_2: row.phone_2 || undefined,
+        email: row.email || undefined,
+        address: row.address || '',
+        responsible_2_full_name: row.responsible_2_full_name || undefined,
+        responsible_2_dni: row.responsible_2_dni || undefined,
+        responsible_2_document_type: row.responsible_2_document_type || undefined,
+        responsible_2_phone_1: row.responsible_2_phone_1 || undefined,
+        responsible_2_email: row.responsible_2_email || undefined,
+        responsible_2_address: row.responsible_2_address || undefined,
+        school_id: row.school_id,
+        school: row.school_id
+          ? { id: row.school_id, name: row.school_name || 'Sin asignar', code: '' }
+          : null,
+        profile: row.email ? { email: row.email } : null,
+        children: row.children || [],
+        created_at: row.created_at,
+      }));
+
+      setParents(mappedParents);
+      setParentsTotalCount(data?.[0]?.total_count ?? 0);
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
+      if (requestSeq !== parentsRequestSeqRef.current) return;
+      const message = error?.message === 'TIMEOUT_DB_QUERY'
+        ? 'La búsqueda tardó más de 5 segundos. Mantuvimos resultados previos; intenta de nuevo.'
+        : 'No se pudo completar la búsqueda de padres.';
+
+      console.error('Error al cargar datos de padres:', error);
+      setParentsLoadError(message);
     } finally {
+      if (requestSeq !== parentsRequestSeqRef.current) return;
+      setParentsLoading(false);
       setLoading(false);
     }
   };
@@ -912,18 +786,7 @@ const ParentConfiguration = () => {
     setShowEditModal(true);
   };
 
-  const filteredParents = parents.filter(parent => {
-    const term = searchTerm.toLowerCase();
-    const matchesSearch = !searchTerm ||
-                         (parent.full_name?.toLowerCase().includes(term)) ||
-                         (parent.dni?.includes(searchTerm)) ||
-                         (parent.nickname?.toLowerCase().includes(term));
-    
-    const matchesSchool = selectedSchool === 'all' || 
-                         (parent.children && parent.children.some((child: any) => child.school_id === selectedSchool));
-    
-    return matchesSearch && matchesSchool;
-  });
+  const filteredParents = parents;
 
   const filteredTeachers = teachers.filter(teacher => {
     const term = searchTermTeacher.toLowerCase();
@@ -1049,11 +912,14 @@ const ParentConfiguration = () => {
                   <div className="flex-1 relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-500" />
                     <Input
-                      placeholder="Buscar por nombre, DNI o sobrenombre..."
+                      placeholder="Buscar global por padre, DNI, correo, apodo o alumno..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 border-emerald-300 focus:border-emerald-500 focus:ring-emerald-500"
+                      className="pl-10 pr-10 border-emerald-300 focus:border-emerald-500 focus:ring-emerald-500"
                     />
+                    {parentsLoading && (
+                      <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-500 animate-spin" />
+                    )}
                   </div>
                   {canViewAllSchools && (
                     <Select value={selectedSchool} onValueChange={setSelectedSchool}>
@@ -1086,8 +952,18 @@ const ParentConfiguration = () => {
                   </Button>
                 </div>
 
+                {parentsLoadError && (
+                  <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {parentsLoadError}
+                  </div>
+                )}
+
                 {/* Lista de padres - DISEÑO RENOVADO */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div
+                  className={`grid grid-cols-1 lg:grid-cols-2 gap-6 transition-opacity duration-200 ${
+                    parentsLoading ? 'opacity-50' : 'opacity-100'
+                  }`}
+                >
                   {filteredParents.map(parent => (
                     <Card key={parent.id} className="border-l-4 border-l-emerald-400 bg-gradient-to-br from-emerald-50/50 to-teal-50/30 hover:shadow-xl transition-all duration-300">
                       <CardHeader className="pb-4 bg-gradient-to-r from-emerald-100/60 to-teal-100/40 border-b border-emerald-200">
@@ -1267,6 +1143,12 @@ const ParentConfiguration = () => {
                     </Card>
                   ))}
                 </div>
+
+                {parentsLoading && (
+                  <div className="mt-4 text-center text-sm text-emerald-700">
+                    Actualizando resultados...
+                  </div>
+                )}
 
                 {parentsTotalCount > PARENTS_PAGE_SIZE && (
                   <div className="flex items-center justify-center gap-4 mt-6 py-4 border-t border-emerald-200">
@@ -1934,7 +1816,6 @@ const ParentConfiguration = () => {
           onMergeComplete={() => {
             setShowMergeModal(false);
             setMergeSourceParent(null);
-            allParentsListRef.current = [];
             fetchData();
           }}
         />
