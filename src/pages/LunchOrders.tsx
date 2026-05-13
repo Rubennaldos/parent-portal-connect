@@ -40,6 +40,62 @@ import { Label } from '@/components/ui/label';
 import { LunchOrderActionsModal } from '@/components/lunch/LunchOrderActionsModal';
 import { LunchDeliveryDashboard } from '@/components/lunch/LunchDeliveryDashboard';
 import { fetchLunchOrderPurchaseTxSummary } from '@/services/lunchOrderPurchaseTxSummary';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Marca pedidos con comprobante en cola de aprobación (recharge_requests pending).
+ * NO confundir con payment_status 'pending' en transactions = deuda / crédito sin pagar.
+ */
+async function attachLunchOrderPendingVoucherFlags(
+  client: SupabaseClient,
+  orders: Array<Record<string, unknown>>,
+  schoolIdFilter: string | null,
+) {
+  if (!orders?.length) return;
+  const orderIdSet = new Set(orders.map((o) => o.id as string));
+
+  let q = client
+    .from('recharge_requests')
+    .select('lunch_order_ids')
+    .in('request_type', ['lunch_payment', 'debt_payment'])
+    .eq('status', 'pending')
+    .not('lunch_order_ids', 'is', null);
+
+  if (schoolIdFilter) {
+    q = q.eq('school_id', schoolIdFilter);
+  }
+
+  const { data: rrData, error } = await q;
+  if (error) {
+    console.warn('[LunchOrders] attachLunchOrderPendingVoucherFlags:', error);
+    return;
+  }
+
+  const pendingOrderIds = new Set<string>();
+  (rrData || []).forEach((rr: { lunch_order_ids?: string[] }) => {
+    if (Array.isArray(rr.lunch_order_ids)) {
+      rr.lunch_order_ids.forEach((id) => {
+        if (orderIdSet.has(id)) pendingOrderIds.add(id);
+      });
+    }
+  });
+
+  orders.forEach((order) => {
+    (order as { _has_pending_voucher?: boolean })._has_pending_voucher = pendingOrderIds.has(
+      order.id as string,
+    );
+  });
+}
+
+const MIN_LUNCH_ORDER_SEARCH_CHARS = 2;
+const MAX_LUNCH_ORDER_SEARCH_IDS = 3000;
+
+function sanitizeLunchOrderSearchTerm(rawSearch: string): string {
+  return rawSearch
+    .replace(/[%_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 interface LunchOrder {
   id: string;
@@ -134,7 +190,10 @@ export default function LunchOrders() {
   const [isDateRangeMode, setIsDateRangeMode] = useState(false);
   
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedPersonType, setSelectedPersonType] = useState<'all' | 'students' | 'teachers'>('all');
+  const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   
   const [selectedOrderForAction, setSelectedOrderForAction] = useState<LunchOrder | null>(null);
   const [showActionsModal, setShowActionsModal] = useState(false);
@@ -207,17 +266,20 @@ export default function LunchOrders() {
     if (!isDateRangeMode && selectedDate) {
       fetchOrders();
     }
-  }, [selectedDate, isDateRangeMode]);
+  }, [selectedDate, isDateRangeMode, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, debouncedSearchTerm, adminSchoolId]);
 
   useEffect(() => {
     if (isDateRangeMode && startDate && endDate) {
       fetchOrders();
     }
-  }, [isDateRangeMode, startDate, endDate]);
+  }, [isDateRangeMode, startDate, endDate, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, debouncedSearchTerm, adminSchoolId]);
 
   useEffect(() => {
-    filterOrders();
-  }, [orders, selectedSchool, selectedStatus, searchTerm]);
+    const handle = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [searchTerm]);
 
   const fetchConfigAndInitialize = async () => {
     try {
@@ -260,7 +322,15 @@ export default function LunchOrders() {
 
         console.log('🕐 Configuración de entrega:', config);
 
-        // Calcular fecha por defecto basada en la hora de CORTE (delivery_end_time)
+        // Calcular fecha base desde DB (reloj Lima de Postgres)
+        const { data: limaDateData } = await supabase.rpc('get_lima_today_date');
+        const limaTodayStr = typeof limaDateData === 'string'
+          ? limaDateData
+          : Array.isArray(limaDateData) && limaDateData.length > 0
+            ? limaDateData[0]?.today_lima
+            : null;
+        const baseDate = limaTodayStr ? new Date(`${limaTodayStr}T12:00:00`) : new Date();
+
         const now = new Date();
         const peruTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Lima' }));
         const currentHour = peruTime.getHours();
@@ -276,7 +346,7 @@ export default function LunchOrders() {
 
         // Si ya pasó la hora de corte, mostrar pedidos de mañana
         // Si no ha pasado, mostrar pedidos de hoy
-        let defaultDate = new Date(peruTime);
+        let defaultDate = new Date(baseDate);
         const currentTotalMinutes = currentHour * 60 + currentMinute;
         const cutoffTotalMinutes = deliveryEndHour * 60 + deliveryEndMinute;
         
@@ -343,13 +413,60 @@ export default function LunchOrders() {
     }
   };
 
+  const fetchSearchOrderIds = async (params: {
+    searchTerm: string;
+    startDate: string;
+    endDate: string;
+  }): Promise<string[] | null> => {
+    const normalizedSearch = sanitizeLunchOrderSearchTerm(params.searchTerm);
+    if (normalizedSearch.length < MIN_LUNCH_ORDER_SEARCH_CHARS) {
+      return null;
+    }
+
+    const schoolFilter =
+      adminSchoolId && !canViewAllSchools
+        ? adminSchoolId
+        : canViewAllSchools && selectedSchool !== 'all'
+          ? selectedSchool
+          : null;
+
+    const { data, error } = await supabase.rpc('search_lunch_order_ids', {
+      p_search: normalizedSearch,
+      p_start_date: params.startDate,
+      p_end_date: params.endDate,
+      p_school_id: schoolFilter,
+      p_status: selectedStatus !== 'all' ? selectedStatus : null,
+      p_person_type: selectedPersonType,
+      p_limit: MAX_LUNCH_ORDER_SEARCH_IDS,
+      p_offset: 0,
+    });
+
+    if (error) throw error;
+
+    return (data || [])
+      .map((row: { order_id?: string | null }) => row.order_id)
+      .filter((id): id is string => Boolean(id));
+  };
+
   const fetchOrders = async () => {
     try {
       setLoading(true);
+      const safeSearch = sanitizeLunchOrderSearchTerm(debouncedSearchTerm);
       
       // Si está en modo de rango de fechas, obtener pedidos en ese rango
       if (isDateRangeMode && startDate && endDate) {
         console.log('📅 Cargando pedidos de almuerzo desde:', startDate, 'hasta:', endDate);
+        const searchOrderIds = await fetchSearchOrderIds({
+          searchTerm: safeSearch,
+          startDate,
+          endDate,
+        });
+        if (searchOrderIds && searchOrderIds.length === 0) {
+          setOrders([]);
+          setFilteredOrders([]);
+          setLoading(false);
+          return;
+        }
         
         let query = supabase
           .from('lunch_orders')
@@ -391,12 +508,30 @@ export default function LunchOrders() {
           .gte('order_date', startDate)
           .lte('order_date', endDate)
           .eq('is_cancelled', false)
-          .neq('payment_flow_state', 'frozen_pending_payment')
+          // Mostrar profesores aunque no pasen por pasarela:
+          // frozen_pending_payment solo se oculta para pedidos sin teacher_id.
+          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment,teacher_id.not.is.null')
           .order('order_date', { ascending: false })
           .order('created_at', { ascending: false });
 
         if (adminSchoolId && !canViewAllSchools) {
           query = query.eq('school_id', adminSchoolId);
+        } else if (canViewAllSchools && selectedSchool !== 'all') {
+          query = query.eq('school_id', selectedSchool);
+        }
+
+        if (selectedStatus !== 'all') {
+          query = query.eq('status', selectedStatus);
+        }
+
+        if (selectedPersonType === 'students') {
+          query = query.not('student_id', 'is', null);
+        } else if (selectedPersonType === 'teachers') {
+          query = query.not('teacher_id', 'is', null);
+        }
+
+        if (searchOrderIds) {
+          query = query.in('id', searchOrderIds);
         }
 
         // Paginación para superar el límite de 1000 filas de Supabase
@@ -488,18 +623,44 @@ export default function LunchOrders() {
                 order.final_price = amountMap.get(order.id);
               }
             });
+            await attachLunchOrderPendingVoucherFlags(
+              supabase,
+              data,
+              adminSchoolId && !canViewAllSchools ? adminSchoolId : null,
+            );
           } catch (err) {
             console.log('⚠️ No se pudieron obtener resúmenes de transacciones (rango)', err);
           }
         }
         
-        // ✅ Mostrar TODOS los pedidos (pagados y sin pagar) — el admin necesita verlos todos
-        setOrders(data || []);
+        const resultRows = (data || []).filter((order: any) => {
+          if (selectedPaymentFilter === 'all') return true;
+          const txStatus = order._tx_payment_status;
+          const isPaid =
+            txStatus === 'paid' ||
+            (!txStatus && order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') ||
+            (!txStatus && ['saldo', 'balance'].includes(order.payment_method || ''));
+          return selectedPaymentFilter === 'paid' ? isPaid : !isPaid;
+        });
+
+        setOrders(resultRows);
+        setFilteredOrders(resultRows);
         setLoading(false);
         return;
       }
       
       // Modo normal: una sola fecha
+      const searchOrderIds = await fetchSearchOrderIds({
+        searchTerm: safeSearch,
+        startDate: selectedDate,
+        endDate: selectedDate,
+      });
+      if (searchOrderIds && searchOrderIds.length === 0) {
+        setOrders([]);
+        setFilteredOrders([]);
+        setLoading(false);
+        return;
+      }
 
       let query = supabase
         .from('lunch_orders')
@@ -540,11 +701,29 @@ export default function LunchOrders() {
         `)
         .eq('order_date', selectedDate)
         .eq('is_cancelled', false)
-        .neq('payment_flow_state', 'frozen_pending_payment')
+        // Mostrar profesores aunque no pasen por pasarela:
+        // frozen_pending_payment solo se oculta para pedidos sin teacher_id.
+        .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment,teacher_id.not.is.null')
         .order('created_at', { ascending: false });
 
       if (adminSchoolId && !canViewAllSchools) {
         query = query.eq('school_id', adminSchoolId);
+      } else if (canViewAllSchools && selectedSchool !== 'all') {
+        query = query.eq('school_id', selectedSchool);
+      }
+
+      if (selectedStatus !== 'all') {
+        query = query.eq('status', selectedStatus);
+      }
+
+      if (selectedPersonType === 'students') {
+        query = query.not('student_id', 'is', null);
+      } else if (selectedPersonType === 'teachers') {
+        query = query.not('teacher_id', 'is', null);
+      }
+
+      if (searchOrderIds) {
+        query = query.in('id', searchOrderIds);
       }
 
       const { data, error } = await query;
@@ -623,13 +802,28 @@ export default function LunchOrders() {
               order.final_price = amountMap.get(order.id);
             }
           });
+          await attachLunchOrderPendingVoucherFlags(
+            supabase,
+            data,
+            adminSchoolId && !canViewAllSchools ? adminSchoolId : null,
+          );
         } catch (err) {
           console.log('⚠️ No se pudieron obtener resúmenes de transacciones (día)', err);
         }
       }
 
-      // ✅ Mostrar TODOS los pedidos (pagados y sin pagar) — el admin necesita verlos todos
-      setOrders(data || []);
+      const resultRows = (data || []).filter((order: any) => {
+        if (selectedPaymentFilter === 'all') return true;
+        const txStatus = order._tx_payment_status;
+        const isPaid =
+          txStatus === 'paid' ||
+          (!txStatus && order.manual_name && order.payment_method && order.payment_method !== 'pagar_luego') ||
+          (!txStatus && ['saldo', 'balance'].includes(order.payment_method || ''));
+        return selectedPaymentFilter === 'paid' ? isPaid : !isPaid;
+      });
+
+      setOrders(resultRows);
+      setFilteredOrders(resultRows);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
       toast({
@@ -640,50 +834,6 @@ export default function LunchOrders() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const filterOrders = () => {
-    let filtered = [...orders];
-
-    // Ya no es necesario filtrar por is_cancelled aquí porque lo hacemos en la query SQL
-    // Los pedidos anulados nunca llegan a este punto
-
-    // Filtrar por sede
-    if (selectedSchool !== 'all') {
-      filtered = filtered.filter(order => {
-        // Incluir pedidos de estudiantes de la sede seleccionada
-        if (order.student?.school_id === selectedSchool) return true;
-        // Incluir pedidos de profesores de la sede seleccionada
-        if (order.teacher?.school_id_1 === selectedSchool) return true;
-        // ✅ Incluir pedidos manuales (sin crédito) de la sede seleccionada
-        if (order.manual_name && order.school_id === selectedSchool) return true;
-        // ✅ Fallback: usar school_id directo del pedido (cubre casos donde el join falla)
-        if (order.school_id === selectedSchool) return true;
-        return false;
-      });
-    }
-
-    // Filtrar por estado
-    if (selectedStatus !== 'all') {
-      filtered = filtered.filter(order => order.status === selectedStatus);
-    }
-
-    // Filtrar por búsqueda
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(order => {
-        if (order.student?.full_name?.toLowerCase().includes(term)) return true;
-        if (order.teacher?.full_name?.toLowerCase().includes(term)) return true;
-        if (order.manual_name?.toLowerCase().includes(term)) return true;
-        if (order.student?.temporary_classroom_name?.toLowerCase().includes(term)) return true;
-        // Fallback: buscar en nombre_estudiante guardado directamente en el pedido
-        if ((order as any).student_name?.toLowerCase().includes(term)) return true;
-        if ((order as any).client_name?.toLowerCase().includes(term)) return true;
-        return false;
-      });
-    }
-
-    setFilteredOrders(filtered);
   };
 
   const canModifyOrder = () => {
@@ -1632,6 +1782,12 @@ export default function LunchOrders() {
         const sl: Record<string, string> = { confirmed:'Confirmado', delivered:'Entregado', cancelled:'Anulado', postponed:'Postergado', pending_payment:'Pend. Pago' };
         filterText += `  |  Estado: ${sl[selectedStatus] || selectedStatus}`;
       }
+      if (selectedPersonType !== 'all') {
+        filterText += `  |  Tipo: ${selectedPersonType === 'students' ? 'Alumnos' : 'Profesores'}`;
+      }
+      if (selectedPaymentFilter !== 'all') {
+        filterText += `  |  Pago: ${selectedPaymentFilter === 'paid' ? 'Pagados' : 'Sin pagar'}`;
+      }
       doc.text(filterText, pageW / 2, 17, { align: 'center' });
 
       // Fila de metadatos
@@ -1921,13 +2077,49 @@ export default function LunchOrders() {
               </Select>
             </div>
 
+            {/* Tipo */}
+            <div className="md:col-span-1">
+              <label className="text-sm font-medium mb-2 block">Tipo</label>
+              <Select
+                value={selectedPersonType}
+                onValueChange={(value: 'all' | 'students' | 'teachers') => setSelectedPersonType(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="students">Alumnos</SelectItem>
+                  <SelectItem value="teachers">Profesores</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Pago */}
+            <div className="md:col-span-1">
+              <label className="text-sm font-medium mb-2 block">Pago</label>
+              <Select
+                value={selectedPaymentFilter}
+                onValueChange={(value: 'all' | 'paid' | 'unpaid') => setSelectedPaymentFilter(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="paid">Pagados</SelectItem>
+                  <SelectItem value="unpaid">Sin pagar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Búsqueda */}
             <div className="md:col-span-2">
               <label className="text-sm font-medium mb-2 block">Buscar</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
-                  placeholder="Nombre del estudiante..."
+                  placeholder="Nombre (manual / guardado en pedido)..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10"
@@ -2164,11 +2356,11 @@ export default function LunchOrders() {
                       </Button>
                     )}
 
-                    {/* Pago en revisión (informativo). El botón Anular sigue oculto por pago pendiente salvo admin_general (override correcciones). */}
-                    {!order.is_cancelled && (order as any)._tx_payment_status === 'pending' && (
+                    {/* Comprobante en cola de aprobación (recharge_requests). NO usar solo _tx_payment_status=pending: eso es deuda/crédito, no “revisión”. */}
+                    {!order.is_cancelled && (order as any)._has_pending_voucher === true && (
                       <div className="flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-700">
                         <Clock className="h-3 w-3 flex-shrink-0" />
-                        <span>Pago en revisión</span>
+                        <span>Comprobante en revisión</span>
                       </div>
                     )}
 
@@ -2892,7 +3084,7 @@ export default function LunchOrders() {
                     </span>
                     <p className="text-xs text-gray-500">
                       Exporta solo lo que se ve en pantalla
-                      {(searchTerm || selectedStatus !== 'all' || selectedSchool !== 'all') && (
+                      {(searchTerm || selectedStatus !== 'all' || selectedSchool !== 'all' || selectedPersonType !== 'all' || selectedPaymentFilter !== 'all') && (
                         <span className="ml-1 text-amber-700 font-semibold">⚠️ Tienes filtros activos</span>
                       )}
                     </p>
