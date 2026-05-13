@@ -468,9 +468,7 @@ export default function LunchOrders() {
           return;
         }
         
-        let query = supabase
-          .from('lunch_orders')
-          .select(`
+        const listSelect = `
             *,
             school:schools!lunch_orders_school_id_fkey (
               name,
@@ -504,49 +502,114 @@ export default function LunchOrders() {
               addon_price,
               quantity
             )
-          `)
-          .gte('order_date', startDate)
-          .lte('order_date', endDate)
-          .eq('is_cancelled', false)
-          // Mostrar profesores aunque no pasen por pasarela:
-          // frozen_pending_payment solo se oculta para pedidos sin teacher_id.
-          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment,teacher_id.not.is.null')
-          .order('order_date', { ascending: false })
-          .order('created_at', { ascending: false });
+          `;
 
-        if (adminSchoolId && !canViewAllSchools) {
-          query = query.eq('school_id', adminSchoolId);
-        } else if (canViewAllSchools && selectedSchool !== 'all') {
-          query = query.eq('school_id', selectedSchool);
-        }
+        const applyCommonRangeFilters = (q: any) => {
+          let x = q
+            .gte('order_date', startDate)
+            .lte('order_date', endDate)
+            .eq('is_cancelled', false);
+          if (adminSchoolId && !canViewAllSchools) {
+            x = x.eq('school_id', adminSchoolId);
+          } else if (canViewAllSchools && selectedSchool !== 'all') {
+            x = x.eq('school_id', selectedSchool);
+          }
+          if (selectedStatus !== 'all') {
+            x = x.eq('status', selectedStatus);
+          }
+          if (searchOrderIds) {
+            x = x.in('id', searchOrderIds);
+          }
+          return x;
+        };
 
-        if (selectedStatus !== 'all') {
-          query = query.eq('status', selectedStatus);
-        }
+        /** Pedidos de profesor: sin filtrar por pasarela (pueden quedar frozen). */
+        const fetchRangeTeacherBranch = async () => {
+          let allData: any[] = [];
+          let from = 0;
+          const PAGE_SIZE = 1000;
+          while (true) {
+            let q = supabase.from('lunch_orders').select(listSelect);
+            q = applyCommonRangeFilters(q);
+            q = q.not('teacher_id', 'is', null);
+            q = q
+              .order('order_date', { ascending: false })
+              .order('created_at', { ascending: false })
+              .range(from, from + PAGE_SIZE - 1);
+            const { data: page, error: pageError } = await q;
+            if (pageError) throw pageError;
+            if (!page || page.length === 0) break;
+            allData = allData.concat(page);
+            if (page.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+          }
+          return allData;
+        };
 
-        if (selectedPersonType === 'students') {
-          query = query.not('student_id', 'is', null);
-        } else if (selectedPersonType === 'teachers') {
-          query = query.not('teacher_id', 'is', null);
-        }
+        /** Pedidos no-profesor: ocultar frozen (prepago padres), permitir NULL en payment_flow_state. */
+        const fetchRangeNonTeacherBranch = async () => {
+          let allData: any[] = [];
+          let from = 0;
+          const PAGE_SIZE = 1000;
+          while (true) {
+            let q = supabase.from('lunch_orders').select(listSelect);
+            q = applyCommonRangeFilters(q);
+            q = q
+              .is('teacher_id', null)
+              .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment');
+            q = q
+              .order('order_date', { ascending: false })
+              .order('created_at', { ascending: false })
+              .range(from, from + PAGE_SIZE - 1);
+            const { data: page, error: pageError } = await q;
+            if (pageError) throw pageError;
+            if (!page || page.length === 0) break;
+            allData = allData.concat(page);
+            if (page.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+          }
+          return allData;
+        };
 
-        if (searchOrderIds) {
-          query = query.in('id', searchOrderIds);
+        let data: any[];
+        if (selectedPersonType === 'teachers') {
+          data = await fetchRangeTeacherBranch();
+        } else if (selectedPersonType === 'students') {
+          let allData: any[] = [];
+          let from = 0;
+          const PAGE_SIZE = 1000;
+          while (true) {
+            let q = supabase.from('lunch_orders').select(listSelect);
+            q = applyCommonRangeFilters(q);
+            q = q
+              .not('student_id', 'is', null)
+              .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment');
+            q = q
+              .order('order_date', { ascending: false })
+              .order('created_at', { ascending: false })
+              .range(from, from + PAGE_SIZE - 1);
+            const { data: page, error: pageError } = await q;
+            if (pageError) throw pageError;
+            if (!page || page.length === 0) break;
+            allData = allData.concat(page);
+            if (page.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+          }
+          data = allData;
+        } else {
+          const [teacherRows, nonTeacherRows] = await Promise.all([
+            fetchRangeTeacherBranch(),
+            fetchRangeNonTeacherBranch(),
+          ]);
+          const byId = new Map<string, any>();
+          for (const row of teacherRows) byId.set(row.id, row);
+          for (const row of nonTeacherRows) byId.set(row.id, row);
+          data = Array.from(byId.values()).sort((a, b) => {
+            const da = String(b.order_date || '').localeCompare(String(a.order_date || ''));
+            if (da !== 0) return da;
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          });
         }
-
-        // Paginación para superar el límite de 1000 filas de Supabase
-        let allData: any[] = [];
-        let from = 0;
-        const PAGE_SIZE = 1000;
-        while (true) {
-          const { data: page, error: pageError } = await query.range(from, from + PAGE_SIZE - 1);
-          if (pageError) throw pageError;
-          if (!page || page.length === 0) break;
-          allData = allData.concat(page);
-          if (page.length < PAGE_SIZE) break;
-          from += PAGE_SIZE;
-        }
-        const data = allData;
         
         console.log('✅ Pedidos cargados (rango):', data?.length || 0);
         // Debug: verificar si llegan todos los pedidos y si tienen student
@@ -662,9 +725,7 @@ export default function LunchOrders() {
         return;
       }
 
-      let query = supabase
-        .from('lunch_orders')
-        .select(`
+      const listSelectSingle = `
           *,
           school:schools!lunch_orders_school_id_fkey (
             name,
@@ -698,39 +759,79 @@ export default function LunchOrders() {
             addon_price,
             quantity
           )
-        `)
-        .eq('order_date', selectedDate)
-        .eq('is_cancelled', false)
-        // Mostrar profesores aunque no pasen por pasarela:
-        // frozen_pending_payment solo se oculta para pedidos sin teacher_id.
-        .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment,teacher_id.not.is.null')
-        .order('created_at', { ascending: false });
+        `;
 
-      if (adminSchoolId && !canViewAllSchools) {
-        query = query.eq('school_id', adminSchoolId);
-      } else if (canViewAllSchools && selectedSchool !== 'all') {
-        query = query.eq('school_id', selectedSchool);
-      }
+      const applyCommonSingleFilters = (q: any) => {
+        let x = q.eq('order_date', selectedDate).eq('is_cancelled', false);
+        if (adminSchoolId && !canViewAllSchools) {
+          x = x.eq('school_id', adminSchoolId);
+        } else if (canViewAllSchools && selectedSchool !== 'all') {
+          x = x.eq('school_id', selectedSchool);
+        }
+        if (selectedStatus !== 'all') {
+          x = x.eq('status', selectedStatus);
+        }
+        if (searchOrderIds) {
+          x = x.in('id', searchOrderIds);
+        }
+        return x;
+      };
 
-      if (selectedStatus !== 'all') {
-        query = query.eq('status', selectedStatus);
-      }
+      let data: any[];
 
-      if (selectedPersonType === 'students') {
-        query = query.not('student_id', 'is', null);
-      } else if (selectedPersonType === 'teachers') {
-        query = query.not('teacher_id', 'is', null);
-      }
+      if (selectedPersonType === 'teachers') {
+        let q = supabase.from('lunch_orders').select(listSelectSingle);
+        q = applyCommonSingleFilters(q);
+        q = q.not('teacher_id', 'is', null).order('created_at', { ascending: false });
+        const { data: d, error } = await q;
+        if (error) {
+          console.error('❌ ERROR EN QUERY (profesores):', error);
+          throw error;
+        }
+        data = d ?? [];
+      } else if (selectedPersonType === 'students') {
+        let q = supabase.from('lunch_orders').select(listSelectSingle);
+        q = applyCommonSingleFilters(q);
+        q = q
+          .not('student_id', 'is', null)
+          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment')
+          .order('created_at', { ascending: false });
+        const { data: d, error } = await q;
+        if (error) {
+          console.error('❌ ERROR EN QUERY (alumnos):', error);
+          throw error;
+        }
+        data = d ?? [];
+      } else {
+        let qT = supabase.from('lunch_orders').select(listSelectSingle);
+        qT = applyCommonSingleFilters(qT);
+        qT = qT.not('teacher_id', 'is', null).order('created_at', { ascending: false });
 
-      if (searchOrderIds) {
-        query = query.in('id', searchOrderIds);
-      }
+        let qN = supabase.from('lunch_orders').select(listSelectSingle);
+        qN = applyCommonSingleFilters(qN);
+        qN = qN
+          .is('teacher_id', null)
+          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment')
+          .order('created_at', { ascending: false });
 
-      const { data, error } = await query;
-      
-      if (error) {
-        console.error('❌ ERROR EN QUERY:', error);
-        throw error;
+        const [{ data: teacherData, error: errT }, { data: nonTeacherData, error: errN }] = await Promise.all([
+          qT,
+          qN,
+        ]);
+        if (errT) {
+          console.error('❌ ERROR EN QUERY (rama profesores):', errT);
+          throw errT;
+        }
+        if (errN) {
+          console.error('❌ ERROR EN QUERY (rama no profesor):', errN);
+          throw errN;
+        }
+        const byId = new Map<string, any>();
+        for (const row of teacherData || []) byId.set(row.id, row);
+        for (const row of nonTeacherData || []) byId.set(row.id, row);
+        data = Array.from(byId.values()).sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
       }
       
       // Cargar categorías para los menús que tengan category_id
