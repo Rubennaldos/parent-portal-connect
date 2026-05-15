@@ -40,6 +40,21 @@ const MAX_TX_PER_BOLETA = 900;
 // de transacción (~S/ 14 promedio) produce totales orgánicamente distintos por boleta.
 const SUNAT_AMOUNT_LIMIT = 650;
 
+/** RUC/nombre de clientes del panel de pruebas Nubefact — nunca van al Excel contable. */
+const SUNAT_TEST_CLIENT_RUC = '20100130492';
+
+function isTestClientInvoice(inv: {
+  client_name: string | null;
+  client_document_number: string | null;
+}): boolean {
+  const doc = (inv.client_document_number ?? '').trim();
+  if (doc === SUNAT_TEST_CLIENT_RUC) return true;
+  const name = (inv.client_name ?? '').trim().toLowerCase();
+  if (name === 'cliente de prueba') return true;
+  if (name.includes('empresa de prueba')) return true;
+  return false;
+}
+
 // Divide transacciones en sub-lotes donde la suma de cada lote <= maxSoles.
 // Usa aritmética entera (centavos) para evitar errores de redondeo IEEE 754.
 function splitByAmountLimit(
@@ -984,7 +999,7 @@ export const CierreMensual = () => {
           .eq('sunat_status', 'accepted')    // solo los que sí figuraron en SUNAT
           .gte('emission_date', emissionStart)
           .lte('emission_date', emissionEnd)
-          .neq('client_document_number', '20100130492') // RUC demo SUNAT (EMPRESA DE PRUEBA)
+          .neq('client_document_number', SUNAT_TEST_CLIENT_RUC)
           .order('emission_date', { ascending: true })
           .order('full_number',   { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
@@ -994,10 +1009,13 @@ export const CierreMensual = () => {
         from += PAGE_SIZE;
       }
 
+      // Red de seguridad si en BD quedó is_demo=false en filas de panel de pruebas
+      allInvoices = allInvoices.filter(inv => !isTestClientInvoice(inv));
+
       if (allInvoices.length === 0) {
         toast({
           title: 'Sin comprobantes',
-          description: `No hay boletas emitidas entre el 01/${m}/${y} y el ${lastDay}/${m}/${y} para esta sede.`,
+          description: `No hay boletas ACEPTADAS por SUNAT entre el 01/${m}/${y} y el ${lastDay}/${m}/${y} para esta sede.`,
         });
         return;
       }
