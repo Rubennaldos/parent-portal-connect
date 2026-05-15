@@ -43,16 +43,40 @@ const SUNAT_AMOUNT_LIMIT = 650;
 /** RUC/nombre de clientes del panel de pruebas Nubefact — nunca van al Excel contable. */
 const SUNAT_TEST_CLIENT_RUC = '20100130492';
 
+/** Exclusiones manuales solicitadas por contabilidad (DNI + nombre exacto). */
+const MANUAL_EXCLUDED_CLIENTS = new Set([
+  '41304637|godino arellano katy amalia',
+  '40447207|castro arrieta viviann alicia',
+  '74610379|rimari espinoza jheremy andree',
+  '42268364|fiascunari cornejo nuria karina',
+]);
+
+function normalizeForCompare(value: string | null | undefined): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
 function isTestClientInvoice(inv: {
   client_name: string | null;
   client_document_number: string | null;
 }): boolean {
   const doc = (inv.client_document_number ?? '').trim();
   if (doc === SUNAT_TEST_CLIENT_RUC) return true;
-  const name = (inv.client_name ?? '').trim().toLowerCase();
+  const name = normalizeForCompare(inv.client_name);
   if (name === 'cliente de prueba') return true;
   if (name.includes('empresa de prueba')) return true;
   return false;
+}
+
+function isManuallyExcludedInvoice(inv: {
+  client_name: string | null;
+  client_document_number: string | null;
+}): boolean {
+  const key = `${(inv.client_document_number ?? '').trim()}|${normalizeForCompare(inv.client_name)}`;
+  return MANUAL_EXCLUDED_CLIENTS.has(key);
 }
 
 // Divide transacciones en sub-lotes donde la suma de cada lote <= maxSoles.
@@ -967,8 +991,8 @@ export const CierreMensual = () => {
       const schoolName = schools.find(s => s.id === schoolId)?.name ?? 'Sede';
 
       // ── 1. Fuente de verdad: tabla invoices filtrada por emission_date del mes ──
-      // Solo comprobantes ACEPTADOS por SUNAT (registro contable real).
-      // Excluye rechazados (ej. cuenta Nubefact suspendida), demo, anulados y RUC de prueba.
+      // Comprobantes emitidos del mes (excepto anulados), excluyendo pruebas
+      // y exclusiones manuales pedidas por contabilidad.
       // emission_date es un campo DATE (sin hora) → rango directo sin conversión UTC.
       const [y, m] = selectedMonth.split('-');
       const emissionStart = `${y}-${m}-01`;
@@ -996,9 +1020,9 @@ export const CierreMensual = () => {
           .select('id, emission_date, full_number, invoice_type, client_name, client_document_number, total_amount, sunat_status')
           .eq('school_id', schoolId)
           .eq('is_demo', false)              // excluir comprobantes de prueba / panel Nubefact
-          .eq('sunat_status', 'accepted')    // solo los que sí figuraron en SUNAT
           .gte('emission_date', emissionStart)
           .lte('emission_date', emissionEnd)
+          .neq('sunat_status', 'cancelled')  // excluir anuladas
           .neq('client_document_number', SUNAT_TEST_CLIENT_RUC)
           .order('emission_date', { ascending: true })
           .order('full_number',   { ascending: true })
@@ -1011,11 +1035,12 @@ export const CierreMensual = () => {
 
       // Red de seguridad si en BD quedó is_demo=false en filas de panel de pruebas
       allInvoices = allInvoices.filter(inv => !isTestClientInvoice(inv));
+      allInvoices = allInvoices.filter(inv => !isManuallyExcludedInvoice(inv));
 
       if (allInvoices.length === 0) {
         toast({
           title: 'Sin comprobantes',
-          description: `No hay boletas ACEPTADAS por SUNAT entre el 01/${m}/${y} y el ${lastDay}/${m}/${y} para esta sede.`,
+          description: `No hay boletas emitidas entre el 01/${m}/${y} y el ${lastDay}/${m}/${y} para esta sede.`,
         });
         return;
       }
@@ -1095,7 +1120,7 @@ export const CierreMensual = () => {
       const nombreMes = format(new Date(repYear, repMonth - 1, 1), 'MMMM yyyy', { locale: es }).toUpperCase();
       const aoa: (string | number)[][] = [
         [`REGISTRO DE VENTAS — ${schoolName.toUpperCase()} — ${nombreMes}`],
-        [`Filtro: boletas ACEPTADAS por SUNAT entre 01/${m}/${y} y ${lastDay}/${m}/${y} | IGV ${IGV_PCT}%`],
+        [`Filtro: boletas emitidas entre 01/${m}/${y} y ${lastDay}/${m}/${y} | IGV ${IGV_PCT}%`],
         [`Generado: ${format(new Date(), "dd/MM/yyyy HH:mm", { locale: es })} | ${rows.length} comprobantes`],
         [],
         headers as string[],
