@@ -952,8 +952,8 @@ export const CierreMensual = () => {
       const schoolName = schools.find(s => s.id === schoolId)?.name ?? 'Sede';
 
       // ── 1. Fuente de verdad: tabla invoices filtrada por emission_date del mes ──
-      // Esta es la lógica correcta para declaraciones SUNAT: solo lo emitido en el período,
-      // independientemente de cuándo ocurrió el consumo.
+      // Solo comprobantes ACEPTADOS por SUNAT (registro contable real).
+      // Excluye rechazados (ej. cuenta Nubefact suspendida), demo, anulados y RUC de prueba.
       // emission_date es un campo DATE (sin hora) → rango directo sin conversión UTC.
       const [y, m] = selectedMonth.split('-');
       const emissionStart = `${y}-${m}-01`;
@@ -980,9 +980,11 @@ export const CierreMensual = () => {
           .from('invoices')
           .select('id, emission_date, full_number, invoice_type, client_name, client_document_number, total_amount, sunat_status')
           .eq('school_id', schoolId)
+          .eq('is_demo', false)              // excluir comprobantes de prueba / panel Nubefact
+          .eq('sunat_status', 'accepted')    // solo los que sí figuraron en SUNAT
           .gte('emission_date', emissionStart)
           .lte('emission_date', emissionEnd)
-          .neq('sunat_status', 'cancelled')  // excluir anuladas
+          .neq('client_document_number', '20100130492') // RUC demo SUNAT (EMPRESA DE PRUEBA)
           .order('emission_date', { ascending: true })
           .order('full_number',   { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
@@ -1075,7 +1077,7 @@ export const CierreMensual = () => {
       const nombreMes = format(new Date(repYear, repMonth - 1, 1), 'MMMM yyyy', { locale: es }).toUpperCase();
       const aoa: (string | number)[][] = [
         [`REGISTRO DE VENTAS — ${schoolName.toUpperCase()} — ${nombreMes}`],
-        [`Filtro: boletas emitidas entre 01/${m}/${y} y ${lastDay}/${m}/${y} | IGV ${IGV_PCT}%`],
+        [`Filtro: boletas ACEPTADAS por SUNAT entre 01/${m}/${y} y ${lastDay}/${m}/${y} | IGV ${IGV_PCT}%`],
         [`Generado: ${format(new Date(), "dd/MM/yyyy HH:mm", { locale: es })} | ${rows.length} comprobantes`],
         [],
         headers as string[],
