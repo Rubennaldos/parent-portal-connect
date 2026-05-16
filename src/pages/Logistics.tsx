@@ -2,17 +2,17 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, ArrowLeft, Building2, ClipboardList, Merge, BadgeCheck, LayoutGrid, Package, BarChart3, CalendarRange } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Merge, BadgeCheck, Package, BarChart3, CalendarRange, Activity, TruckIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
-import { SuppliersTab } from '@/components/logistics/SuppliersTab';
-import { PurchaseEntriesTab } from '@/components/logistics/PurchaseEntriesTab';
 import { ProductMergeTab } from '@/components/logistics/ProductMergeTab';
 import { ItemMasterTab } from '@/components/logistics/ItemMasterTab';
-import InventoryMatrixView from '@/components/logistics/InventoryMatrixView';
+// InventoryMatrixView se conserva en código pero queda fuera de navegación de usuario.
 import LogisticsDashboard from '@/components/logistics/LogisticsDashboard';
 import LogisticsMovementReport from '@/components/logistics/LogisticsMovementReport';
+import { MovementsHubTab } from '@/components/logistics/MovementsHubTab';
+import StockRealtimeTab from '@/components/logistics/StockRealtimeTab';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
 const BROWN = '#8B4513';
@@ -66,7 +66,7 @@ const Logistics = () => {
                 Logística y Almacén
               </h1>
               <p className="text-xs text-slate-400 hidden sm:block">
-                Proveedores · Entradas · Match · Maestro · Inventario Sedes
+                Dashboard · Stock en Tiempo Real · Ingresos y Salidas · Match · Maestro · Reportes
               </p>
             </div>
           </div>
@@ -82,12 +82,11 @@ const Logistics = () => {
           </Button>
         </div>
 
-        {/* ── Tabs: solo las 5 pestañas activas ── */}
+          {/* ── Tabs ── */}
         <Tabs defaultValue="dashboard" className="w-full">
 
-          {/* TabsList: scrollable en móvil, flex con wrap en desktop */}
           <div className="overflow-x-auto pb-1">
-            <TabsList className="flex w-max sm:grid sm:w-full sm:grid-cols-7 bg-white border rounded-xl p-1 gap-0.5 min-w-full">
+            <TabsList className="flex w-max sm:grid sm:w-full sm:grid-cols-6 bg-white border rounded-xl p-1 gap-0.5 min-w-full">
 
               <TabsTrigger
                 value="dashboard"
@@ -98,29 +97,19 @@ const Logistics = () => {
               </TabsTrigger>
 
               <TabsTrigger
-                value="inv-sedes"
+                value="stock-live"
                 className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:bg-emerald-700 data-[state=active]:text-white"
               >
-                <LayoutGrid className="h-3.5 w-3.5 shrink-0" />
-                <span>Inv. Sedes</span>
+                <Activity className="h-3.5 w-3.5 shrink-0" />
+                <span>Stock Live</span>
               </TabsTrigger>
 
               <TabsTrigger
-                value="entries"
-                className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:text-white"
-                style={{ '--tw-bg-opacity': 1 } as React.CSSProperties}
-                data-brown
+                value="movimientos"
+                className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:bg-teal-700 data-[state=active]:text-white"
               >
-                <ClipboardList className="h-3.5 w-3.5 shrink-0" />
-                <span>Entradas</span>
-              </TabsTrigger>
-
-              <TabsTrigger
-                value="suppliers"
-                className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:text-white"
-              >
-                <Building2 className="h-3.5 w-3.5 shrink-0" />
-                <span>Proveedores</span>
+                <TruckIcon className="h-3.5 w-3.5 shrink-0" />
+                <span>Ingresos y Salidas</span>
               </TabsTrigger>
 
               <TabsTrigger
@@ -161,19 +150,18 @@ const Logistics = () => {
             </div>
           </TabsContent>
 
-          <TabsContent value="inv-sedes" className="mt-3">
+          <TabsContent value="stock-live" className="mt-3">
             <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-5">
-              <InventoryMatrixView />
+              <StockRealtimeTab />
             </div>
           </TabsContent>
 
-          <TabsContent value="entries" className="mt-3">
-            <PurchaseEntriesTab schoolId={userSchoolId} />
+          <TabsContent value="movimientos" className="mt-3">
+            <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-5">
+              <MovementsHubTab schoolId={userSchoolId} />
+            </div>
           </TabsContent>
 
-          <TabsContent value="suppliers" className="mt-3">
-            <SuppliersTab />
-          </TabsContent>
 
           <TabsContent value="merge" className="mt-3">
             <ProductMergeTab />
