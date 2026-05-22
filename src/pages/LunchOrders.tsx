@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { supabase } from '@/lib/supabase';
@@ -87,16 +87,6 @@ async function attachLunchOrderPendingVoucherFlags(
   });
 }
 
-const MIN_LUNCH_ORDER_SEARCH_CHARS = 2;
-const MAX_LUNCH_ORDER_SEARCH_IDS = 3000;
-
-function sanitizeLunchOrderSearchTerm(rawSearch: string): string {
-  return rawSearch
-    .replace(/[%_]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 interface LunchOrder {
   id: string;
   order_date: string;
@@ -172,8 +162,7 @@ export default function LunchOrders() {
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
-  const [orders, setOrders] = useState<LunchOrder[]>([]);
-  const [filteredOrders, setFilteredOrders] = useState<LunchOrder[]>([]);
+  const [allOrders, setAllOrders] = useState<LunchOrder[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<string>('all');
   
@@ -181,6 +170,7 @@ export default function LunchOrders() {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [draftSelectedDate, setDraftSelectedDate] = useState<string>('');
   const [defaultDeliveryDate, setDefaultDeliveryDate] = useState<string>('');
+  const [isAutoShiftedByCutoff, setIsAutoShiftedByCutoff] = useState(false);
   
   // Filtros de rango de fechas para auditoría
   const [startDate, setStartDate] = useState<string>('');
@@ -193,7 +183,6 @@ export default function LunchOrders() {
   const [selectedPersonType, setSelectedPersonType] = useState<'all' | 'students' | 'teachers'>('all');
   const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   
   const [selectedOrderForAction, setSelectedOrderForAction] = useState<LunchOrder | null>(null);
   const [showActionsModal, setShowActionsModal] = useState(false);
@@ -266,20 +255,34 @@ export default function LunchOrders() {
     if (!isDateRangeMode && selectedDate) {
       fetchOrders();
     }
-  }, [selectedDate, isDateRangeMode, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, debouncedSearchTerm, adminSchoolId]);
+  }, [selectedDate, isDateRangeMode, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, adminSchoolId]);
 
   useEffect(() => {
     if (isDateRangeMode && startDate && endDate) {
       fetchOrders();
     }
-  }, [isDateRangeMode, startDate, endDate, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, debouncedSearchTerm, adminSchoolId]);
+  }, [isDateRangeMode, startDate, endDate, selectedSchool, selectedStatus, selectedPersonType, selectedPaymentFilter, adminSchoolId]);
 
-  useEffect(() => {
-    const handle = window.setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm.trim());
-    }, 350);
-    return () => window.clearTimeout(handle);
-  }, [searchTerm]);
+  const visibleOrders = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return allOrders;
+
+    return allOrders.filter((order) => {
+      const studentName = order.student?.full_name?.toLowerCase() ?? '';
+      const manualName = order.manual_name?.toLowerCase() ?? '';
+      const teacherName = order.teacher?.full_name?.toLowerCase() ?? '';
+      const orderNumber = String(
+        (order as any).order_number ?? (order as any)._ticket_code ?? '',
+      ).toLowerCase();
+
+      return (
+        studentName.includes(normalizedSearch) ||
+        manualName.includes(normalizedSearch) ||
+        teacherName.includes(normalizedSearch) ||
+        orderNumber.includes(normalizedSearch)
+      );
+    });
+  }, [searchTerm, allOrders]);
 
   const fetchConfigAndInitialize = async () => {
     try {
@@ -346,14 +349,16 @@ export default function LunchOrders() {
 
         // Si ya pasó la hora de corte, mostrar pedidos de mañana
         // Si no ha pasado, mostrar pedidos de hoy
-        let defaultDate = new Date(baseDate);
+        const defaultDate = new Date(baseDate);
         const currentTotalMinutes = currentHour * 60 + currentMinute;
         const cutoffTotalMinutes = deliveryEndHour * 60 + deliveryEndMinute;
         
         if (currentTotalMinutes >= cutoffTotalMinutes) {
           defaultDate.setDate(defaultDate.getDate() + 1);
+          setIsAutoShiftedByCutoff(true);
           console.log('⏰ Ya pasó la hora de corte, mostrando pedidos del día siguiente');
         } else {
+          setIsAutoShiftedByCutoff(false);
           console.log('⏰ Aún no es hora de corte, mostrando pedidos de hoy');
         }
 
@@ -369,6 +374,7 @@ export default function LunchOrders() {
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const formattedDate = format(tomorrow, 'yyyy-MM-dd');
+        setIsAutoShiftedByCutoff(false);
         setDefaultDeliveryDate(formattedDate);
         setSelectedDate(formattedDate);
         setDraftSelectedDate(formattedDate);
@@ -381,6 +387,7 @@ export default function LunchOrders() {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const formattedDate = format(tomorrow, 'yyyy-MM-dd');
+      setIsAutoShiftedByCutoff(false);
       setDefaultDeliveryDate(formattedDate);
       setSelectedDate(formattedDate);
       setDraftSelectedDate(formattedDate);
@@ -390,7 +397,9 @@ export default function LunchOrders() {
 
   const applySingleDateFilter = () => {
     if (!draftSelectedDate) return;
+    const keepAutoCutoffBanner = isAutoShiftedByCutoff && draftSelectedDate === defaultDeliveryDate;
     setSelectedDate(draftSelectedDate);
+    setIsAutoShiftedByCutoff(keepAutoCutoffBanner);
   };
 
   const applyRangeDateFilter = () => {
@@ -413,60 +422,13 @@ export default function LunchOrders() {
     }
   };
 
-  const fetchSearchOrderIds = async (params: {
-    searchTerm: string;
-    startDate: string;
-    endDate: string;
-  }): Promise<string[] | null> => {
-    const normalizedSearch = sanitizeLunchOrderSearchTerm(params.searchTerm);
-    if (normalizedSearch.length < MIN_LUNCH_ORDER_SEARCH_CHARS) {
-      return null;
-    }
-
-    const schoolFilter =
-      adminSchoolId && !canViewAllSchools
-        ? adminSchoolId
-        : canViewAllSchools && selectedSchool !== 'all'
-          ? selectedSchool
-          : null;
-
-    const { data, error } = await supabase.rpc('search_lunch_order_ids', {
-      p_search: normalizedSearch,
-      p_start_date: params.startDate,
-      p_end_date: params.endDate,
-      p_school_id: schoolFilter,
-      p_status: selectedStatus !== 'all' ? selectedStatus : null,
-      p_person_type: selectedPersonType,
-      p_limit: MAX_LUNCH_ORDER_SEARCH_IDS,
-      p_offset: 0,
-    });
-
-    if (error) throw error;
-
-    return (data || [])
-      .map((row: { order_id?: string | null }) => row.order_id)
-      .filter((id): id is string => Boolean(id));
-  };
-
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      const safeSearch = sanitizeLunchOrderSearchTerm(debouncedSearchTerm);
       
       // Si está en modo de rango de fechas, obtener pedidos en ese rango
       if (isDateRangeMode && startDate && endDate) {
         console.log('📅 Cargando pedidos de almuerzo desde:', startDate, 'hasta:', endDate);
-        const searchOrderIds = await fetchSearchOrderIds({
-          searchTerm: safeSearch,
-          startDate,
-          endDate,
-        });
-        if (searchOrderIds && searchOrderIds.length === 0) {
-          setOrders([]);
-          setFilteredOrders([]);
-          setLoading(false);
-          return;
-        }
         
         const listSelect = `
             *,
@@ -505,20 +467,23 @@ export default function LunchOrders() {
           `;
 
         const applyCommonRangeFilters = (q: any) => {
+          const rangeStartLima = `${startDate}T00:00:00-05:00`;
+          const rangeEndLima = `${endDate}T23:59:59-05:00`;
           let x = q
-            .gte('order_date', startDate)
-            .lte('order_date', endDate)
-            .eq('is_cancelled', false);
+            .gte('order_date', rangeStartLima)
+            .lte('order_date', rangeEndLima);
           if (adminSchoolId && !canViewAllSchools) {
             x = x.eq('school_id', adminSchoolId);
           } else if (canViewAllSchools && selectedSchool !== 'all') {
             x = x.eq('school_id', selectedSchool);
           }
+          if (selectedStatus === 'cancelled') {
+            x = x.eq('is_cancelled', true);
+          } else if (selectedStatus !== 'all') {
+            x = x.eq('is_cancelled', false);
+          }
           if (selectedStatus !== 'all') {
             x = x.eq('status', selectedStatus);
-          }
-          if (searchOrderIds) {
-            x = x.in('id', searchOrderIds);
           }
           return x;
         };
@@ -706,25 +671,11 @@ export default function LunchOrders() {
           return selectedPaymentFilter === 'paid' ? isPaid : !isPaid;
         });
 
-        setOrders(resultRows);
-        setFilteredOrders(resultRows);
-        setLoading(false);
+        setAllOrders(resultRows);
         return;
       }
       
       // Modo normal: una sola fecha
-      const searchOrderIds = await fetchSearchOrderIds({
-        searchTerm: safeSearch,
-        startDate: selectedDate,
-        endDate: selectedDate,
-      });
-      if (searchOrderIds && searchOrderIds.length === 0) {
-        setOrders([]);
-        setFilteredOrders([]);
-        setLoading(false);
-        return;
-      }
-
       const listSelectSingle = `
           *,
           school:schools!lunch_orders_school_id_fkey (
@@ -762,17 +713,19 @@ export default function LunchOrders() {
         `;
 
       const applyCommonSingleFilters = (q: any) => {
-        let x = q.eq('order_date', selectedDate).eq('is_cancelled', false);
+        let x = q.eq('order_date', selectedDate);
         if (adminSchoolId && !canViewAllSchools) {
           x = x.eq('school_id', adminSchoolId);
         } else if (canViewAllSchools && selectedSchool !== 'all') {
           x = x.eq('school_id', selectedSchool);
         }
+        if (selectedStatus === 'cancelled') {
+          x = x.eq('is_cancelled', true);
+        } else if (selectedStatus !== 'all') {
+          x = x.eq('is_cancelled', false);
+        }
         if (selectedStatus !== 'all') {
           x = x.eq('status', selectedStatus);
-        }
-        if (searchOrderIds) {
-          x = x.in('id', searchOrderIds);
         }
         return x;
       };
@@ -923,8 +876,7 @@ export default function LunchOrders() {
         return selectedPaymentFilter === 'paid' ? isPaid : !isPaid;
       });
 
-      setOrders(resultRows);
-      setFilteredOrders(resultRows);
+      setAllOrders(resultRows);
     } catch (error: any) {
       console.error('❌ Error cargando pedidos:', error);
       toast({
@@ -1754,7 +1706,7 @@ export default function LunchOrders() {
   const exportToExcel = () => {
     try {
       // ✅ FIX: usar todos los pedidos cargados si "exportIgnoreFilters" está activo
-      const exportData = exportIgnoreFilters ? orders : filteredOrders;
+      const exportData = exportIgnoreFilters ? allOrders : visibleOrders;
 
       // Cabeceras activas
       const headers: string[] = [];
@@ -1854,7 +1806,7 @@ export default function LunchOrders() {
   const exportToPDF = () => {
     try {
       // ✅ FIX: usar todos los pedidos cargados si "exportIgnoreFilters" está activo
-      const exportData = exportIgnoreFilters ? orders : filteredOrders;
+      const exportData = exportIgnoreFilters ? allOrders : visibleOrders;
 
       const doc = new jsPDF('l', 'mm', 'a4');
       const pageW = doc.internal.pageSize.width;
@@ -1993,6 +1945,7 @@ export default function LunchOrders() {
         userId={user.id}
         userName={user.email?.split('@')[0] || 'Admin'}
         selectedDate={selectedDate || undefined}
+        showCutoffAutoDateBanner={!isDateRangeMode && isAutoShiftedByCutoff && selectedDate === defaultDeliveryDate}
         onClose={() => { setShowDelivery(false); fetchOrders(); }}
       />
     );
@@ -2023,7 +1976,7 @@ export default function LunchOrders() {
           <Button
             variant="outline"
             onClick={() => setShowExportModal(true)}
-            disabled={filteredOrders.length === 0}
+            disabled={visibleOrders.length === 0}
             className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
           >
             <Download className="h-4 w-4" />
@@ -2033,6 +1986,11 @@ export default function LunchOrders() {
       </div>
 
       {/* Filters */}
+      {!isDateRangeMode && isAutoShiftedByCutoff && selectedDate === defaultDeliveryDate && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          Mostrando pedidos del día de mañana debido a la hora de corte. Cambia la fecha para ver el histórico de hoy.
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
@@ -2238,7 +2196,7 @@ export default function LunchOrders() {
             <div>
               <CardTitle>Pedidos del día</CardTitle>
               <CardDescription>
-                {filteredOrders.length} pedido{filteredOrders.length !== 1 ? 's' : ''} encontrado{filteredOrders.length !== 1 ? 's' : ''}
+                {visibleOrders.length} pedido{visibleOrders.length !== 1 ? 's' : ''} encontrado{visibleOrders.length !== 1 ? 's' : ''}
               </CardDescription>
             </div>
             {!canModifyOrder() && !canBypassDeadlineAsGeneralAdmin && (
@@ -2256,7 +2214,7 @@ export default function LunchOrders() {
           </div>
         </CardHeader>
         <CardContent>
-          {filteredOrders.length === 0 ? (
+          {visibleOrders.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <UtensilsCrossed className="h-16 w-16 mx-auto mb-4 opacity-30" />
               <p className="text-lg font-semibold mb-2">No hay pedidos</p>
@@ -2266,7 +2224,7 @@ export default function LunchOrders() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredOrders.map((order) => (
+              {visibleOrders.map((order) => (
                 <div
                   key={order.id}
                   onClick={() => order.lunch_menus && handleViewMenu(order)}
@@ -3143,7 +3101,7 @@ export default function LunchOrders() {
             <DialogDescription>
               Elige el formato y las columnas que deseas exportar.
               <span className="font-semibold text-blue-700 ml-1">
-                ({exportIgnoreFilters ? orders.length : filteredOrders.length} pedidos)
+                ({exportIgnoreFilters ? allOrders.length : visibleOrders.length} pedidos)
               </span>
             </DialogDescription>
           </DialogHeader>
@@ -3165,7 +3123,7 @@ export default function LunchOrders() {
                   <div>
                     <span className="text-sm font-semibold text-gray-800">
                       Todos los pedidos del día
-                      <span className="ml-2 text-blue-700 font-bold">({orders.length})</span>
+                      <span className="ml-2 text-blue-700 font-bold">({allOrders.length})</span>
                     </span>
                     <p className="text-xs text-gray-500">Ignora los filtros activos en pantalla. Recomendado para cocina.</p>
                   </div>
@@ -3181,7 +3139,7 @@ export default function LunchOrders() {
                   <div>
                     <span className="text-sm font-semibold text-gray-800">
                       Solo vista actual (con filtros)
-                      <span className="ml-2 text-gray-600 font-bold">({filteredOrders.length})</span>
+                      <span className="ml-2 text-gray-600 font-bold">({visibleOrders.length})</span>
                     </span>
                     <p className="text-xs text-gray-500">
                       Exporta solo lo que se ve en pantalla

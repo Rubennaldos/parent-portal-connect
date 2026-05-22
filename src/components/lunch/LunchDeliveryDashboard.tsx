@@ -74,6 +74,7 @@ interface LunchDeliveryDashboardProps {
   userId: string;
   userName?: string;
   selectedDate?: string; // yyyy-MM-dd — si no se pasa, usa la fecha de hoy (hora Perú)
+  showCutoffAutoDateBanner?: boolean;
   onClose: () => void;
 }
 
@@ -136,9 +137,19 @@ interface DeliveryOrder {
   selected_modifiers: Array<{ group_name: string; selected_name: string }> | null;
   configurable_selections: Array<{ group_name: string; selected_name: string }> | null;
   selected_garnishes: string[] | null;
+  manual_name: string | null;
 }
 
 type PaymentFilter = 'all' | 'paid' | 'unpaid';
+const DIRECT_SALES_BUCKET = 'Ventas Directas en Caja';
+
+const isDirectCashSaleOrder = (order: DeliveryOrder) =>
+  !order.student_id && !order.teacher_id && Boolean(order.manual_name?.trim());
+
+const getStudentGroupingLabel = (order: DeliveryOrder) =>
+  isDirectCashSaleOrder(order)
+    ? DIRECT_SALES_BUCKET
+    : `${order.student_grade || ''} ${order.student_section || ''}`.trim() || 'Sin aula';
 
 interface AvailableMenu {
   id: string;
@@ -211,13 +222,13 @@ function DeliveryPanel({
   // (mostramos todos los grupos de una vez, sin paginación)
   const currentListOrders = useMemo(() => {
     let filtered = personType === 'students'
-      ? orders.filter(o => o.student_id)
+      ? orders.filter(o => o.student_id || isDirectCashSaleOrder(o))
       : orders.filter(o => o.teacher_id);
 
     if (mode === 'alphabetical' || mode === 'all') {
       filtered.sort((a, b) => {
-        const nameA = (a.student_name || a.teacher_name || '').toLowerCase();
-        const nameB = (b.student_name || b.teacher_name || '').toLowerCase();
+        const nameA = (a.student_name || a.teacher_name || a.manual_name || '').toLowerCase();
+        const nameB = (b.student_name || b.teacher_name || b.manual_name || '').toLowerCase();
         return nameA.localeCompare(nameB);
       });
     }
@@ -225,7 +236,7 @@ function DeliveryPanel({
     if (searchTerm.trim()) {
       const q = normalize(searchTerm.trim());
       filtered = filtered.filter(o => {
-        const name = normalize(o.student_name || o.teacher_name || '');
+        const name = normalize(o.student_name || o.teacher_name || o.manual_name || '');
         const ticket = (o.ticket_code || '').toLowerCase();
         return name.includes(q) || ticket.includes(q);
       });
@@ -248,9 +259,11 @@ function DeliveryPanel({
     return availableLists.map(listName => {
       let items: DeliveryOrder[];
       if (mode === 'by_classroom' || mode === 'by_grade_classroom') {
-        items = currentListOrders.filter(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim() === listName);
+        items = currentListOrders.filter(o => getStudentGroupingLabel(o) === listName);
       } else if (mode === 'by_grade') {
-        items = currentListOrders.filter(o => o.student_grade === listName);
+        items = listName === DIRECT_SALES_BUCKET
+          ? currentListOrders.filter(isDirectCashSaleOrder)
+          : currentListOrders.filter(o => o.student_grade === listName);
       } else {
         items = currentListOrders;
       }
@@ -262,7 +275,7 @@ function DeliveryPanel({
   // Progreso GLOBAL (todos los pedidos, sin filtrar por salón)
   const listProgress = useMemo(() => {
     const base = personType === 'students'
-      ? orders.filter(o => o.student_id)
+      ? orders.filter(o => o.student_id || isDirectCashSaleOrder(o))
       : orders.filter(o => o.teacher_id);
     const total     = base.length;
     const delivered = base.filter(o => o.status === 'delivered').length;
@@ -285,7 +298,7 @@ function DeliveryPanel({
               <h2 className={cn("font-bold truncate", compact ? "text-xs" : "text-sm")}>
                 {personType === 'students' ? '👦' : '👨‍🏫'}
                 {availableLists.length > 1 && availableLists[0] !== 'Todos'
-                  ? ` Todos los salones (${availableLists.length})`
+                  ? ` Listas de entrega (${availableLists.length})`
                   : ` ${personType === 'students' ? 'Alumnos' : 'Profesores'}`}
               </h2>
             </div>
@@ -380,7 +393,7 @@ function DeliveryPanel({
                 </div>
               )}
               {group.items.map(order => {
-            const name = order.student_name || order.teacher_name || 'Sin nombre';
+            const name = order.student_name || order.teacher_name || order.manual_name || 'Sin nombre';
             const isDelivered = order.status === 'delivered';
             const isToggling = togglingId === order.id;
             const isExpanded = expandedOrderId === order.id;
@@ -1024,7 +1037,14 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
 // MAIN COMPONENT
 // ==========================================
 
-export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDate: propDate, onClose }: LunchDeliveryDashboardProps) {
+export function LunchDeliveryDashboard({
+  schoolId,
+  userId,
+  userName,
+  selectedDate: propDate,
+  showCutoffAutoDateBanner = false,
+  onClose,
+}: LunchDeliveryDashboardProps) {
   const { toast } = useToast();
 
   // SessionStorage key
@@ -1376,7 +1396,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
         if (o.selected_garnishes?.length) selParts.push(o.selected_garnishes.join(', '));
         const plateDetail = [o.menu_main_course, selParts.length > 0 ? `(${selParts.join(' | ')})` : ''].filter(Boolean).join(' ');
         return {
-          name: o.student_name || o.teacher_name || 'N/A',
+          name: o.student_name || o.teacher_name || o.manual_name || 'N/A',
           category: o.category_name || '',
           plate: plateDetail || '',
           time: o.delivered_at ? format(new Date(o.delivered_at), 'HH:mm') : '',
@@ -1389,13 +1409,13 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
         if (o.selected_garnishes?.length) selParts.push(o.selected_garnishes.join(', '));
         const plateDetail = [o.menu_main_course, selParts.length > 0 ? `(${selParts.join(' | ')})` : ''].filter(Boolean).join(' ');
         return {
-          name: o.student_name || o.teacher_name || 'N/A',
+          name: o.student_name || o.teacher_name || o.manual_name || 'N/A',
           category: o.category_name || '',
           plate: plateDetail || '',
         };
       }),
       addedWithoutOrderList: addedNoOrder.map(o => ({
-        name: o.student_name || o.teacher_name || 'N/A',
+        name: o.student_name || o.teacher_name || o.manual_name || 'N/A',
         category: o.category_name || '',
         plate: o.menu_main_course || '',
       })),
@@ -1638,7 +1658,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
           id, order_date, status, is_cancelled, created_at,
           delivered_at, delivered_by, menu_id, category_id,
           quantity, base_price, final_price, is_no_order_delivery,
-          student_id, teacher_id, parent_notes,
+          student_id, teacher_id, parent_notes, manual_name,
           selected_modifiers, configurable_selections, selected_garnishes,
           student:students (
             full_name, photo_url, grade, section
@@ -1752,6 +1772,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
           selected_modifiers: o.selected_modifiers || null,
           configurable_selections: o.configurable_selections || null,
           selected_garnishes: o.selected_garnishes || null,
+          manual_name: o.manual_name || null,
         };
       });
 
@@ -1859,32 +1880,40 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
   const buildLists = (pType: PersonType, dMode: DeliveryMode, sourceOrders?: DeliveryOrder[], gradeFilter?: string): string[] => {
     const base = sourceOrders ?? deliveryOrders;
     const typeOrders = pType === 'students'
-      ? base.filter(o => o.student_id)
+      ? base.filter(o => o.student_id || isDirectCashSaleOrder(o))
       : base.filter(o => o.teacher_id);
+    const directBucket = typeOrders.some(isDirectCashSaleOrder) ? [DIRECT_SALES_BUCKET] : [];
+    const sortWithDirectLast = (a: string, b: string) => {
+      if (a === DIRECT_SALES_BUCKET) return 1;
+      if (b === DIRECT_SALES_BUCKET) return -1;
+      return a.localeCompare(b);
+    };
 
     if (dMode === 'by_classroom') {
-      const cls = [...new Set(typeOrders.map(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim()).filter(Boolean))].sort();
+      const cls = [...new Set(typeOrders.map(getStudentGroupingLabel).filter(Boolean))].sort(sortWithDirectLast);
       return cls.length > 0 ? cls : ['Todos'];
     } else if (dMode === 'by_grade') {
       const allGr = [...new Set(typeOrders.map(o => o.student_grade).filter(Boolean) as string[])].sort();
       // Si hay grados seleccionados, filtrar; si no, mostrar todos
       const gr = selectedGrades.size > 0 ? allGr.filter(g => selectedGrades.has(g)) : allGr;
-      return gr.length > 0 ? gr : ['Todos'];
+      const lists = [...gr, ...directBucket];
+      return lists.length > 0 ? lists : ['Todos'];
     } else if (dMode === 'by_grade_classroom') {
       // Filtrar solo aulas del grado seleccionado
       const gf = gradeFilter || selectedGradeFilter;
       if (!gf) {
         // Sin grado seleccionado, mostrar todas las aulas agrupadas por grado
-        const cls = [...new Set(typeOrders.map(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim()).filter(Boolean))].sort();
+        const cls = [...new Set(typeOrders.map(getStudentGroupingLabel).filter(Boolean))].sort(sortWithDirectLast);
         return cls.length > 0 ? cls : ['Todos'];
       }
       const cls = [...new Set(
         typeOrders
           .filter(o => o.student_grade === gf)
-          .map(o => `${o.student_grade || ''} ${o.student_section || ''}`.trim())
+          .map(getStudentGroupingLabel)
           .filter(Boolean)
-      )].sort();
-      return cls.length > 0 ? cls : ['Todos'];
+      )].sort(sortWithDirectLast);
+      const lists = [...cls, ...directBucket];
+      return lists.length > 0 ? lists : ['Todos'];
     }
     return ['Todos'];
   };
@@ -1893,7 +1922,7 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
     if (!mode) return;
 
     const typeOrders = personType === 'students'
-      ? deliveryOrders.filter(o => o.student_id)
+      ? deliveryOrders.filter(o => o.student_id || isDirectCashSaleOrder(o))
       : deliveryOrders.filter(o => o.teacher_id);
 
     if (typeOrders.length === 0) {
@@ -1947,6 +1976,15 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
               </p>
             </div>
           </div>
+          {showCutoffAutoDateBanner && (
+            <Card className="mb-4 border border-amber-300 bg-amber-50">
+              <CardContent className="py-3">
+                <p className="text-xs sm:text-sm font-medium text-amber-800">
+                  Mostrando pedidos del día de mañana debido a la hora de corte. Cambia la fecha para ver el histórico de hoy.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {loading ? (
             <Card>
@@ -2268,8 +2306,12 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
                       <SelectContent>
                         {previewLists.map((list, idx) => {
                           const count = mode === 'by_grade'
-                            ? deliveryOrders.filter(o => o.student_id && o.student_grade === list).length
-                            : deliveryOrders.filter(o => o.student_id && `${o.student_grade || ''} ${o.student_section || ''}`.trim() === list).length;
+                            ? (
+                              list === DIRECT_SALES_BUCKET
+                                ? deliveryOrders.filter(isDirectCashSaleOrder).length
+                                : deliveryOrders.filter(o => o.student_id && o.student_grade === list).length
+                            )
+                            : deliveryOrders.filter(o => o.student_id && getStudentGroupingLabel(o) === list).length;
                           return (
                             <SelectItem key={list} value={String(idx)}>
                               {list} — {count} pedido{count !== 1 ? 's' : ''}
@@ -2434,6 +2476,13 @@ export function LunchDeliveryDashboard({ schoolId, userId, userName, selectedDat
           <RotateCcw className="h-4 w-4" />
         </Button>
       </div>
+      {showCutoffAutoDateBanner && (
+        <div className="px-3 py-2 bg-amber-50 border-b border-amber-200">
+          <p className="text-[11px] sm:text-xs font-medium text-amber-800">
+            Mostrando pedidos del día de mañana debido a la hora de corte. Cambia la fecha para ver el histórico de hoy.
+          </p>
+        </div>
+      )}
 
       {/* PANELS */}
       <div className={cn("flex-1 flex overflow-hidden", splitMode ? "gap-0.5" : "")}>
