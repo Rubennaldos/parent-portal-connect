@@ -917,6 +917,47 @@ export default function LunchOrders() {
   const canPerformDeadlineLimitedActions = () =>
     canModifyOrder() || canBypassDeadlineAsGeneralAdmin;
 
+  /**
+   * Evalúa si se puede anular UN pedido específico según su fecha (lógica por fila).
+   *
+   * Reglas para admin_sede / superadmin:
+   *   order_date > hoy Lima → permitir siempre (aún no se cocinó)
+   *   order_date = hoy Lima → aplicar candado de hora de corte
+   *   order_date < hoy Lima → ocultar botón (histórico, no anulable desde UI)
+   *
+   * admin_general → bypass absoluto sin importar fecha ni hora.
+   *
+   * Retorna:
+   *   allowed: true   → mostrar botón Anular habilitado
+   *   blocked: true   → mostrar badge "Bloqueado · HH:MM" (corte de hoy ya pasó)
+   *   allowed + blocked false → no mostrar nada (histórico)
+   */
+  const canCancelThisOrder = (order: LunchOrder): { allowed: boolean; blocked: boolean } => {
+    // admin_general: bypass total
+    if (canBypassDeadlineAsGeneralAdmin) return { allowed: true, blocked: false };
+
+    // Fecha de hoy en Lima (formato YYYY-MM-DD, usando toLocaleDateString en-CA)
+    const nowLima = new Date();
+    const todayLimaStr = nowLima.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+
+    // Extraer solo la parte de fecha del pedido (puede venir como "2026-05-22T00:00:00-05:00")
+    const orderDateStr = (order.order_date ?? '').substring(0, 10);
+
+    if (orderDateStr > todayLimaStr) {
+      // Fecha futura: siempre permitir (el almuerzo aún no se ha preparado)
+      return { allowed: true, blocked: false };
+    }
+
+    if (orderDateStr < todayLimaStr) {
+      // Fecha pasada: ocultar botón completamente
+      return { allowed: false, blocked: false };
+    }
+
+    // Fecha de hoy: aplicar candado de hora de corte
+    const withinDeadline = canModifyOrder();
+    return { allowed: withinDeadline, blocked: !withinDeadline };
+  };
+
   const getDeadlineTime = () => {
     if (!lunchConfig || !lunchConfig.cancellation_deadline_time) {
       return '9:00 AM';
@@ -2200,9 +2241,9 @@ export default function LunchOrders() {
               </CardDescription>
             </div>
             {!canModifyOrder() && !canBypassDeadlineAsGeneralAdmin && (
-              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300">
+              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">
                 <AlertCircle className="h-3 w-3 mr-1" />
-                Después de las {getDeadlineTime()} - Solo lectura
+                Corte {getDeadlineTime()} activo · Pedidos futuros sí se pueden gestionar
               </Badge>
             )}
             {!canModifyOrder() && canBypassDeadlineAsGeneralAdmin && (
@@ -2423,13 +2464,25 @@ export default function LunchOrders() {
                       </div>
                     )}
 
-                    {/* Botón Anular — admin_sede / admin_general / superadmin; admin_general ignora corte y pago "pending" en UI */}
+                    {/* Botón Anular — admin_sede / admin_general / superadmin
+                        - admin_general: bypass absoluto (cualquier fecha/hora)
+                        - admin_sede / superadmin: por fecha del pedido (canCancelThisOrder)
+                          · fecha futura → siempre habilitado
+                          · fecha de hoy → solo antes del corte
+                          · fecha pasada → oculto (histórico)
+                        - pago "pending": admin_sede lo ve igual; solo admin_general puede si el corte pasó
+                    */}
                     {!order.is_cancelled &&
                       ((order as any)._tx_payment_status !== 'pending' || role === 'admin_general') &&
                       (() => {
                       const canAdminCancel = ['admin_sede', 'admin_general', 'superadmin'].includes(role || '');
                       if (!canAdminCancel) return null;
-                      if (!canPerformDeadlineLimitedActions()) {
+                      const cancelability = canCancelThisOrder(order);
+                      if (!cancelability.allowed && !cancelability.blocked) {
+                        // Fecha pasada: no mostrar nada
+                        return null;
+                      }
+                      if (cancelability.blocked) {
                         return (
                           <div className="flex items-center gap-1 text-xs bg-amber-50 border border-amber-200 rounded px-2 py-1 text-amber-700">
                             <Clock className="h-3 w-3 flex-shrink-0" />
