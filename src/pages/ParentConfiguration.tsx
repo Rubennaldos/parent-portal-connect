@@ -8,13 +8,15 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Edit, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, GitMerge, Bell, Loader2 } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, Bell, Loader2 } from 'lucide-react';
 import { ResetUserPasswordModal } from '@/components/admin/ResetUserPasswordModal';
 import { MergeParentsModal } from '@/components/admin/MergeParentsModal';
+import { ParentListAccordion, type AccordionParentRow } from '@/components/admin/ParentListAccordion';
 import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDashboard';
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
 import { ComunicadosPanel } from '@/components/admin/ComunicadosPanel';
+import { ExpressEnrollmentModal } from '@/features/express-enrollment/components/ExpressEnrollmentModal';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,6 +39,7 @@ interface Student {
   section: string;
   photo_url?: string;
   free_account?: boolean; // true = cuenta libre, false = con recarga
+  kiosk_disabled?: boolean;
   limit_type?: 'none' | 'daily' | 'weekly' | 'monthly';
   daily_limit?: number;
   weekly_limit?: number;
@@ -69,10 +72,15 @@ interface ParentProfile {
   profile?: { email: string } | null;
   children?: Student[];
   created_at: string;
+  // Mini-CRM v6
+  behavior_profile?: string;
+  behavior_notes?: string | null;
+  is_suspended?: boolean;
 }
 
 interface TeacherProfile {
   id: string;
+  user_id?: string;
   full_name: string;
   dni: string;
   document_type?: string;
@@ -109,6 +117,12 @@ interface SearchParentsV3Row {
   school_name: string | null;
   children: Student[] | null;
   created_at: string;
+  // Mini-CRM v6
+  behavior_profile: string | null;
+  behavior_notes: string | null;
+  is_suspended: boolean | null;
+  is_deleted: boolean | null;
+  deleted_at: string | null;
   score: number;
   total_count: number;
 }
@@ -168,6 +182,7 @@ const ParentConfiguration = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showChildrenModal, setShowChildrenModal] = useState(false);
+  const [showExpressEnrollmentModal, setShowExpressEnrollmentModal] = useState(false);
   
   // Datos seleccionados
   const [selectedParent, setSelectedParent] = useState<ParentProfile | null>(null);
@@ -176,6 +191,8 @@ const ParentConfiguration = () => {
   // Modal de restablecer contraseña
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetPasswordParent, setResetPasswordParent] = useState<ParentProfile | null>(null);
+  const [showTeacherResetPassword, setShowTeacherResetPassword] = useState(false);
+  const [resetPasswordTeacher, setResetPasswordTeacher] = useState<TeacherProfile | null>(null);
 
   // Modal de unir padres (resolver duplicados)
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -448,6 +465,9 @@ const ParentConfiguration = () => {
         profile: row.email ? { email: row.email } : null,
         children: row.children || [],
         created_at: row.created_at,
+        behavior_profile: row.behavior_profile ?? 'neutro',
+        behavior_notes: row.behavior_notes ?? null,
+        is_suspended: row.is_suspended ?? false,
       }));
 
       setParents(mappedParents);
@@ -494,6 +514,8 @@ const ParentConfiguration = () => {
       const currentSchools = schools.length > 0 ? schools : [];
       const teachersWithSchools = (teachersData || []).map((teacher: any) => ({
         ...teacher,
+        // teacher_profiles.id referencia auth.users/profiles.id
+        user_id: teacher.user_id || teacher.id,
         school_1_data: currentSchools.find((s) => s.id === teacher.school_id_1) || null,
         school_2_data: currentSchools.find((s) => s.id === teacher.school_id_2) || null,
       }));
@@ -803,6 +825,21 @@ const ParentConfiguration = () => {
     return matchesSearch && matchesSchool;
   });
 
+  const openTeacherResetModal = (teacher: TeacherProfile) => {
+    const targetUserId = teacher.user_id || teacher.id;
+    if (!targetUserId) {
+      console.warn('[Teacher Reset] Profesor sin user_id/id vinculado:', teacher);
+      toast({
+        variant: 'destructive',
+        title: 'Profesor sin identidad vinculada',
+        description: 'Este profesor no tiene user_id asociado a profiles/auth. No se puede restablecer contraseña.',
+      });
+      return;
+    }
+    setResetPasswordTeacher({ ...teacher, user_id: targetUserId });
+    setShowTeacherResetPassword(true);
+  };
+
   if (maintenance.blocked) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -942,6 +979,15 @@ const ParentConfiguration = () => {
                       Nuevo Padre
                     </Button>
                   )}
+                  {permissions.canCreateStudent && (
+                    <Button
+                      onClick={() => setShowExpressEnrollmentModal(true)}
+                      className="gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-md"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Matriculación Express
+                    </Button>
+                  )}
                   <Button onClick={exportToExcel} variant="outline" className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
                     <Download className="h-4 w-4" />
                     Excel
@@ -958,190 +1004,22 @@ const ParentConfiguration = () => {
                   </div>
                 )}
 
-                {/* Lista de padres - DISEÑO RENOVADO */}
-                <div
-                  className={`grid grid-cols-1 lg:grid-cols-2 gap-6 transition-opacity duration-200 ${
-                    parentsLoading ? 'opacity-50' : 'opacity-100'
-                  }`}
-                >
-                  {filteredParents.map(parent => (
-                    <Card key={parent.id} className="border-l-4 border-l-emerald-400 bg-gradient-to-br from-emerald-50/50 to-teal-50/30 hover:shadow-xl transition-all duration-300">
-                      <CardHeader className="pb-4 bg-gradient-to-r from-emerald-100/60 to-teal-100/40 border-b border-emerald-200">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <CardTitle className="text-xl text-emerald-900 flex items-center gap-2">
-                              <UserCircle className="h-6 w-6 text-emerald-600" />
-                              {parent.full_name}
-                            </CardTitle>
-                            {parent.nickname && (
-                              <p className="text-sm text-emerald-700 mt-1 font-medium">
-                                "{parent.nickname}"
-                              </p>
-                            )}
-                          </div>
-                          {permissions.canEditParent && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => openEditModal(parent)}
-                              className="hover:bg-emerald-200"
-                            >
-                              <Edit className="h-4 w-4 text-emerald-700" />
-                            </Button>
-                          )}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="pt-4 space-y-4">
-                        {/* Sección: Responsable Principal */}
-                        <div className="bg-white/60 rounded-lg p-4 border border-emerald-200">
-                          <h3 className="text-sm font-bold text-emerald-800 mb-3 flex items-center gap-2">
-                            <User2 className="h-4 w-4" />
-                            Responsable Principal
-                          </h3>
-                          <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="flex items-start gap-2">
-                              <IdCard className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-emerald-600 text-xs font-medium">DNI</p>
-                                <p className="text-gray-800 font-semibold">{parent.dni}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <Phone className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-emerald-600 text-xs font-medium">Teléfono</p>
-                                <p className="text-gray-800 font-semibold">{parent.phone_1}</p>
-                              </div>
-                            </div>
-                            {parent.phone_2 && (
-                              <div className="flex items-start gap-2">
-                                <Phone className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                                <div>
-                                  <p className="text-emerald-600 text-xs font-medium">Teléfono 2</p>
-                                  <p className="text-gray-800 font-semibold">{parent.phone_2}</p>
-                                </div>
-                              </div>
-                            )}
-                            {(parent.email || parent.profile?.email) && (
-                              <div className="flex items-start gap-2 col-span-2">
-                                <Mail className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-emerald-600 text-xs font-medium">Email</p>
-                                  <p className="text-gray-800 font-semibold break-all">{parent.email || parent.profile?.email}</p>
-                                </div>
-                              </div>
-                            )}
-                            <div className="flex items-start gap-2 col-span-2">
-                              <MapPin className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-emerald-600 text-xs font-medium">Dirección</p>
-                                <p className="text-gray-800 font-semibold">{parent.address}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Sección: Segundo Responsable (si existe) */}
-                        {parent.responsible_2_full_name && (
-                          <div className="bg-teal-50/60 rounded-lg p-4 border border-teal-200">
-                            <h3 className="text-sm font-bold text-teal-800 mb-3 flex items-center gap-2">
-                              <User2 className="h-4 w-4" />
-                              Segundo Responsable
-                            </h3>
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                              <div className="col-span-2">
-                                <p className="text-teal-600 text-xs font-medium">Nombre</p>
-                                <p className="text-gray-800 font-semibold">{parent.responsible_2_full_name}</p>
-                              </div>
-                              {parent.responsible_2_dni && (
-                                <div className="flex items-start gap-2">
-                                  <IdCard className="h-4 w-4 text-teal-600 mt-0.5 flex-shrink-0" />
-                                  <div>
-                                    <p className="text-teal-600 text-xs font-medium">DNI</p>
-                                    <p className="text-gray-800 font-semibold">{parent.responsible_2_dni}</p>
-                                  </div>
-                                </div>
-                              )}
-                              {parent.responsible_2_phone_1 && (
-                                <div className="flex items-start gap-2">
-                                  <Phone className="h-4 w-4 text-teal-600 mt-0.5 flex-shrink-0" />
-                                  <div>
-                                    <p className="text-teal-600 text-xs font-medium">Teléfono</p>
-                                    <p className="text-gray-800 font-semibold">{parent.responsible_2_phone_1}</p>
-                                  </div>
-                                </div>
-                              )}
-                              {parent.responsible_2_email && (
-                                <div className="flex items-start gap-2 col-span-2">
-                                  <Mail className="h-4 w-4 text-teal-600 mt-0.5 flex-shrink-0" />
-                                  <div>
-                                    <p className="text-teal-600 text-xs font-medium">Email</p>
-                                    <p className="text-gray-800 font-semibold break-all">{parent.responsible_2_email}</p>
-                                  </div>
-                                </div>
-                              )}
-                              {parent.responsible_2_address && (
-                                <div className="flex items-start gap-2 col-span-2">
-                                  <MapPin className="h-4 w-4 text-teal-600 mt-0.5 flex-shrink-0" />
-                                  <div>
-                                    <p className="text-teal-600 text-xs font-medium">Dirección</p>
-                                    <p className="text-gray-800 font-semibold">{parent.responsible_2_address}</p>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Información de Sede e Hijos */}
-                        <div className="flex items-center justify-between bg-emerald-100/50 rounded-lg p-3 border border-emerald-200">
-                          <div className="flex items-center gap-2">
-                            <Baby className="h-5 w-5 text-emerald-700" />
-                            <div>
-                              <p className="text-xs text-emerald-600 font-medium">Hijos Registrados</p>
-                              <p className="text-lg font-bold text-emerald-900">{parent.children?.length || 0}</p>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => { setResetPasswordParent(parent); setShowResetPassword(true); }}
-                              className="border-red-300 text-red-600 hover:bg-red-50"
-                              title="Restablecer contraseña del padre"
-                            >
-                              <KeyRound className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => { setMergeSourceParent(parent); setShowMergeModal(true); }}
-                              className="border-orange-300 text-orange-600 hover:bg-orange-50"
-                              title="Unir con otro padre (resolver duplicado)"
-                            >
-                              <GitMerge className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => handleViewChildren(parent)}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                            >
-                              <Baby className="h-4 w-4 mr-2" />
-                              Ver Detalles
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Información de Sede */}
-                        <div className="text-center pt-2 border-t border-emerald-200">
-                          <p className="text-xs text-emerald-600 font-medium">Sede Asignada</p>
-                          <Badge variant="outline" className="mt-1 bg-emerald-100 text-emerald-800 border-emerald-300">
-                            {parent.school?.name || 'Sin asignar'}
-                          </Badge>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                {/* Lista de padres — Listado Limpio con Acordeón */}
+                <div className={`transition-opacity duration-200 ${parentsLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+                  <ParentListAccordion
+                    parents={filteredParents as unknown as AccordionParentRow[]}
+                    permissions={permissions}
+                    onResetPassword={(p) => {
+                      setResetPasswordParent(p as unknown as ParentProfile);
+                      setShowResetPassword(true);
+                    }}
+                    onMerge={(p) => {
+                      setMergeSourceParent(p as unknown as ParentProfile);
+                      setShowMergeModal(true);
+                    }}
+                    onEditParent={(p) => openEditModal(p as unknown as ParentProfile)}
+                    onRefresh={fetchData}
+                  />
                 </div>
 
                 {parentsLoading && (
@@ -1294,6 +1172,15 @@ const ParentConfiguration = () => {
                               <span className="font-semibold">{teacher.document_type || 'DNI'}: {teacher.dni}</span>
                             </div>
                           </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openTeacherResetModal(teacher)}
+                            className="border-red-300 text-red-600 hover:bg-red-50"
+                            title="Restablecer contraseña del profesor"
+                          >
+                            <KeyRound className="h-4 w-4" />
+                          </Button>
                         </div>
 
                         {/* Información de contacto */}
@@ -1727,13 +1614,17 @@ const ParentConfiguration = () => {
                             </div>
                             <Badge 
                               variant="secondary" 
-                              className="text-sm bg-emerald-100 text-emerald-800 border-emerald-300"
+                              className={`text-sm ${
+                                child.kiosk_disabled
+                                  ? 'bg-slate-100 text-slate-800 border-slate-300'
+                                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                              }`}
                             >
-                              🆓 Cuenta Libre
+                              {child.kiosk_disabled ? '🚫 Quiosco Bloqueado' : '🆓 Cuenta Libre'}
                             </Badge>
                             
                             {/* Mostrar tipo de límite si existe */}
-                            {child.limit_type && child.limit_type !== 'none' && (
+                            {!child.kiosk_disabled && child.limit_type && child.limit_type !== 'none' && (
                               <div className="mt-3 pt-3 border-t border-emerald-200">
                                 <p className="text-xs font-medium text-emerald-600 mb-1">Límite de Gasto</p>
                                 <p className="text-base font-bold text-emerald-900">
@@ -1750,8 +1641,21 @@ const ParentConfiguration = () => {
                             )}
                           </div>
 
-                          {/* Información de cuenta libre sin límite */}
-                          {(!child.limit_type || child.limit_type === 'none') && (
+                          {/* Modo solo almuerzos (kiosco bloqueado) */}
+                          {child.kiosk_disabled ? (
+                            <div className="bg-gradient-to-br from-slate-50 to-gray-100 rounded-lg p-4 border-2 border-slate-300">
+                              <div className="flex items-center gap-2 mb-2">
+                                <CreditCard className="h-5 w-5 text-slate-600" />
+                                <p className="text-sm font-bold text-slate-700">Solo Almuerzos</p>
+                              </div>
+                              <p className="text-base text-slate-900 font-semibold">
+                                🚫 Sin acceso al quiosco
+                              </p>
+                              <p className="text-xs text-slate-600 mt-1">
+                                Puede pedir almuerzos, pero no comprar en quiosco.
+                              </p>
+                            </div>
+                          ) : (!child.limit_type || child.limit_type === 'none') && (
                             <div className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-lg p-4 border-2 border-amber-300">
                               <div className="flex items-center gap-2 mb-2">
                                 <CreditCard className="h-5 w-5 text-amber-600" />
@@ -1807,6 +1711,35 @@ const ParentConfiguration = () => {
         />
       )}
 
+      {/* Modal restablecer contraseña del profesor */}
+      {resetPasswordTeacher && (
+        <ResetUserPasswordModal
+          open={showTeacherResetPassword}
+          onOpenChange={(open) => {
+            setShowTeacherResetPassword(open);
+            if (!open) setResetPasswordTeacher(null);
+          }}
+          userName={resetPasswordTeacher.full_name}
+          userEmail={resetPasswordTeacher.corporate_email || resetPasswordTeacher.personal_email || ''}
+          emails={(() => {
+            const raw = [
+              ...(resetPasswordTeacher.corporate_email ? [{ email: resetPasswordTeacher.corporate_email, label: 'corporativo' }] : []),
+              ...(resetPasswordTeacher.personal_email ? [{ email: resetPasswordTeacher.personal_email, label: 'personal' }] : []),
+            ];
+            const seen = new Set<string>();
+            return raw.filter((item) => {
+              const key = item.email.toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+          })()}
+          userId={resetPasswordTeacher.user_id || resetPasswordTeacher.id || undefined}
+          recipientKind="staff"
+          onSuccess={() => setShowTeacherResetPassword(false)}
+        />
+      )}
+
       {/* Modal unir padres / resolver duplicados */}
       {mergeSourceParent && (
         <MergeParentsModal
@@ -1820,6 +1753,14 @@ const ParentConfiguration = () => {
           }}
         />
       )}
+
+      <ExpressEnrollmentModal
+        open={showExpressEnrollmentModal}
+        onOpenChange={setShowExpressEnrollmentModal}
+        onSuccess={fetchData}
+        userRole={role}
+        userSchoolId={userSchoolId}
+      />
     </div>
   );
 };

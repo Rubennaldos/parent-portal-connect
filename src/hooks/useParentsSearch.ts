@@ -2,11 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useDebounce } from '@/hooks/useDebounce';
 
+export type ParentBehaviorProfile = 'amable' | 'neutro' | 'dificil';
+
 export interface ParentChildLite {
   id: string;
   full_name: string;
   grade: string;
   section: string;
+  photo_url?: string | null;
+  free_account?: boolean;
+  kiosk_disabled?: boolean;
+  limit_type?: string | null;
+  daily_limit?: number | null;
+  weekly_limit?: number | null;
+  monthly_limit?: number | null;
+  balance?: number | null;
+  school_id?: string;
 }
 
 export interface ParentSearchItem {
@@ -19,11 +30,26 @@ export interface ParentSearchItem {
   phone_2?: string;
   email?: string;
   address: string;
+  // Responsable 2
+  responsible_2_full_name?: string;
+  responsible_2_dni?: string;
+  responsible_2_document_type?: string;
+  responsible_2_phone_1?: string;
+  responsible_2_email?: string;
+  responsible_2_address?: string;
+  // Sede
   school_id: string;
   school_name?: string;
+  // Hijos
   children: ParentChildLite[];
   children_count: number;
   created_at: string;
+  // Mini-CRM (v6)
+  behavior_profile: ParentBehaviorProfile;
+  behavior_notes?: string | null;
+  is_suspended: boolean;
+  is_deleted: boolean;
+  deleted_at?: string | null;
 }
 
 interface SearchParentsRpcRow {
@@ -36,10 +62,25 @@ interface SearchParentsRpcRow {
   phone_2: string | null;
   email: string | null;
   address: string | null;
+  // Responsable 2
+  responsible_2_full_name: string | null;
+  responsible_2_dni: string | null;
+  responsible_2_document_type: string | null;
+  responsible_2_phone_1: string | null;
+  responsible_2_email: string | null;
+  responsible_2_address: string | null;
+  // Sede
   school_id: string;
   school_name: string | null;
+  // Hijos
   children: ParentChildLite[] | null;
   created_at: string;
+  // Mini-CRM (v6)
+  behavior_profile: string | null;
+  behavior_notes: string | null;
+  is_suspended: boolean | null;
+  is_deleted: boolean | null;
+  deleted_at: string | null;
   total_count: number;
 }
 
@@ -143,11 +184,22 @@ export function useParentsSearch({
         phone_2: row.phone_2 ?? undefined,
         email: row.email ?? undefined,
         address: row.address ?? '',
+        responsible_2_full_name: row.responsible_2_full_name ?? undefined,
+        responsible_2_dni: row.responsible_2_dni ?? undefined,
+        responsible_2_document_type: row.responsible_2_document_type ?? undefined,
+        responsible_2_phone_1: row.responsible_2_phone_1 ?? undefined,
+        responsible_2_email: row.responsible_2_email ?? undefined,
+        responsible_2_address: row.responsible_2_address ?? undefined,
         school_id: row.school_id,
         school_name: row.school_name ?? undefined,
         children: row.children ?? [],
         children_count: row.children?.length ?? 0,
         created_at: row.created_at,
+        behavior_profile: (row.behavior_profile as ParentBehaviorProfile) ?? 'neutro',
+        behavior_notes: row.behavior_notes ?? null,
+        is_suspended: row.is_suspended ?? false,
+        is_deleted: row.is_deleted ?? false,
+        deleted_at: row.deleted_at ?? null,
       }));
 
       setParents(mapped);
