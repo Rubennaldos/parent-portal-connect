@@ -29,7 +29,8 @@ const TODOS_LOS_METODOS = [
   'yape', 'yape_qr', 'yape_numero',
   'plin', 'plin_qr', 'plin_numero',
   'transferencia', 'transfer',
-  'tarjeta',       'card',
+  'tarjeta', 'card', 'CARD',
+  'mixto',
 ];
 
 // Máximo de transacciones por boleta resumen (límite Nubefact/SUNAT = 1000 ítems)
@@ -139,11 +140,12 @@ interface BillingGroup {
   total: number;
   totalCents: number;       // suma en centavos (entero) — inmune a IEEE 754
   transactionIds: string[];
-  amounts: number[];        // monto redondeado por transacción (paralelo a transactionIds)
+  amounts: number[];        // monto_boleteable por transacción (paralelo a transactionIds)
   negativeCount: number;
   count: number;
   estimatedBoletas: number; // ceil(total / SUNAT_AMOUNT_LIMIT) — para mostrar en UI
   schoolId: string;
+  isExtemporaneo: boolean;  // true si la fecha supera los 7 días permitidos por SUNAT
 }
 
 interface School {
@@ -168,10 +170,6 @@ function chunks<T>(arr: T[], size: number): T[][] {
 
 function toLimaDate(utcStr: string): Date {
   return new Date(new Date(utcStr).getTime() - 5 * 60 * 60 * 1000);
-}
-
-function toLimaDayString(utcStr: string): string {
-  return toLimaDate(utcStr).toISOString().split('T')[0];
 }
 
 function round2(n: number): number {
@@ -409,32 +407,24 @@ export const CierreMensual = () => {
       let allRows: {
         id: string; created_at: string; amount: number;
         payment_method: string | null; school_id: string;
+        monto_boleteable: number;  // calculado en DB: mixto = solo parte digital
+        dia_venta_lima: string;    // 'YYYY-MM-DD' en hora Lima, calculado en DB
+        es_extemporaneo: boolean;  // > 7 días según reloj de PostgreSQL Lima
         metadata?: { lunch_order_id?: string } | null;
       }[] = [];
       let from = 0, hasMore = true;
 
-      // ── DOBLE CHECK: traer lunch_orders cancelados del mes en paralelo ────────
-      // Si por algún error manual una transacción dice 'paid' pero su pedido
-      // de almuerzo dice 'cancelled', NO debe sumarse al total de la boleta.
-      const cancelledLunchOrdersPromise = supabase
-        .from('lunch_orders')
-        .select('id')
-        .eq('school_id', schoolId)
-        .eq('status', 'cancelled')
-        .gte('created_at', start.toISOString())
-        .lt('created_at', end.toISOString());
-
+      // Fuente de verdad: v_billing_masivo_pending (SSOT del boleteo).
+      // · Incluye 'mixto' (monto_boleteable = parte digital) y 'CARD' mayúscula (IziPay).
+      // · Excluye efectivo, saldo, almuerzos cancelados, transacciones en cero.
+      // · monto_boleteable y dia_venta_lima calculados en PostgreSQL (reglas #11.A y #11.C).
+      // · NO filtra es_extemporaneo aquí — se muestra todo con badge de advertencia;
+      //   el auto-cron sí filtra es_extemporaneo = false (candado automático).
       while (hasMore) {
         const { data: page, error } = await supabase
-          .from('transactions')
-          .select('id, created_at, amount, payment_method, school_id, metadata')
+          .from('v_billing_masivo_pending')
+          .select('id, created_at, amount, payment_method, school_id, monto_boleteable, dia_venta_lima, es_extemporaneo, metadata')
           .eq('school_id', schoolId)
-          .eq('is_taxable', true)
-          .eq('billing_status', 'pending')
-          .eq('document_type', 'ticket')
-          .eq('payment_status', 'paid')
-          .neq('amount', 0)                        // excluir transacciones en cero (compras negativas son válidas)
-          .in('payment_method', TODOS_LOS_METODOS)
           .gte('created_at', start.toISOString())
           .lt('created_at', end.toISOString())
           .order('created_at', { ascending: true })
@@ -447,23 +437,10 @@ export const CierreMensual = () => {
         from   += PAGE_SIZE;
       }
 
-      // Resolver la query paralela de cancelados y construir el Set de IDs
-      const { data: cancelledOrders } = await cancelledLunchOrdersPromise;
-      const cancelledLunchOrderIds = new Set<string>(
-        (cancelledOrders ?? []).map((o: { id: string }) => o.id)
-      );
-
       const map = new Map<string, BillingGroup>();
       allRows.forEach(row => {
-        const day = toLimaDayString(row.created_at);
-        if (!day.startsWith(selectedMonth)) return;
-        if (!TODOS_LOS_METODOS.includes(row.payment_method ?? '')) return;
-
-        // ── FILTRO DOBLE CHECK ─────────────────────────────────────────────
-        // Si la transacción tiene lunch_order_id y ese pedido está cancelado,
-        // excluirla aunque payment_status = 'paid' (inconsistencia de datos).
-        const lunchOrderId = (row.metadata as any)?.lunch_order_id;
-        if (lunchOrderId && cancelledLunchOrderIds.has(lunchOrderId)) return;
+        const day = row.dia_venta_lima as string;   // 'YYYY-MM-DD', ya en hora Lima desde DB
+        if (!day.startsWith(selectedMonth)) return; // guarda de seguridad (redundante con filtro de BD)
 
         if (!map.has(day)) {
           map.set(day, {
@@ -479,10 +456,14 @@ export const CierreMensual = () => {
             count:            0,
             estimatedBoletas: 0,
             schoolId:         row.school_id ?? schoolId,
+            isExtemporaneo:   Boolean(row.es_extemporaneo),
           });
         }
         const g = map.get(day)!;
-        const amtRounded = round2(Math.abs(row.amount));
+        // monto_boleteable viene de PostgreSQL (regla #11.A: cero cálculos financieros en cliente).
+        // Para mixto = abs(amount) - cash_amount (solo parte digital, efectivo excluido de SUNAT).
+        // Para el resto = abs(amount).
+        const amtRounded = row.monto_boleteable;
         g.transactionIds.push(row.id);
         g.amounts.push(amtRounded);
         g.totalCents += Math.round(amtRounded * 100);
@@ -1518,6 +1499,13 @@ export const CierreMensual = () => {
                           {isSent ? (
                             <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
                               <CheckCircle2 className="h-3 w-3 mr-1" /> Emitida
+                            </Badge>
+                          ) : group.isExtemporaneo ? (
+                            <Badge
+                              className="bg-red-100 text-red-800 border-red-300 text-xs cursor-help"
+                              title="Esta fecha supera los 7 días que SUNAT tolera para boletas resumen (RS 097-2012). Consulta con tu contadora antes de emitir — SUNAT puede rechazar o multar."
+                            >
+                              <AlertTriangle className="h-3 w-3 mr-1" /> Extemporáneo
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">

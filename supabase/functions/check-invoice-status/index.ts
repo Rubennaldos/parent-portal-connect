@@ -125,7 +125,7 @@ serve(async (req) => {
 
   const withRetryColumn = await supabase
     .from("invoices")
-    .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status, evidence_retry_count")
+    .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status, evidence_retry_count, pdf_url, xml_url, cdr_url, created_at")
     .eq("sunat_status", "processing")
     .order("created_at", { ascending: true })
     .limit(BATCH_SIZE);
@@ -134,7 +134,7 @@ serve(async (req) => {
     console.warn("[check-invoice-status] Columna evidence_retry_count no existe. Usando fallback compatible.");
     const fallback = await supabase
       .from("invoices")
-      .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status")
+      .select("id, school_id, serie, numero, document_type_code, nubefact_ticket, sunat_status, pdf_url, xml_url, cdr_url, created_at")
       .eq("sunat_status", "processing")
       .order("created_at", { ascending: true })
       .limit(BATCH_SIZE);
@@ -461,7 +461,114 @@ serve(async (req) => {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[check-invoice-status] Error procesando ${label}:`, errMsg);
 
-      // PFC-07: Log del error con trazabilidad completa
+      // ── EVIDENCIA SUNAT: Nubefact código 24 "Documento no existe" ────────────
+      // Cuando Nubefact responde código 24 pero la BD tiene PDF+XML del comprobante,
+      // el documento SÍ existe — la consulta falla por token vencido, endpoint
+      // incorrecto u otro motivo ajeno al comprobante en sí.
+      //
+      // JERARQUÍA DE EVIDENCIA (de mayor a menor certeza):
+      //   1. cdr_url presente → CDR = respuesta oficial SUNAT → accepted (definitivo)
+      //   2. pdf_url + xml_url + >48h → evidencia física del doc → EVIDENCE_ACCEPT
+      //      (decisión contable auditada; log visible para la contadora)
+      //   3. Código 24 sin evidencia suficiente → log CODE24_NO_EVIDENCE, sin cambio
+      //
+      // IMPORTANTE: NINGUNO de estos caminos re-emite ni crea comprobantes nuevos.
+      // Solo actualiza el estado interno de la BD para reflejar la realidad.
+      const isNubefactNotFound =
+        errMsg.includes('"24"') ||
+        errMsg.toLowerCase().includes("no existe") ||
+        errMsg.toLowerCase().includes("comprobante no existe");
+
+      if (isNubefactNotFound) {
+        const hasCdr     = Boolean(invoice.cdr_url);
+        const hasPdfXml  = Boolean(invoice.pdf_url) && Boolean(invoice.xml_url);
+        const createdAt  = invoice.created_at as string | null;
+        const ageHours   = createdAt
+          ? (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60)
+          : 0;
+        const isOld48h   = ageHours >= 48;
+
+        const canAccept  = hasCdr || (hasPdfXml && isOld48h);
+
+        if (canAccept) {
+          const evidType = hasCdr ? "CDR_IN_DB" : "EVIDENCE_ACCEPT";
+          const evidMsg  = hasCdr
+            ? `${label}: CDR ya existente en BD. Marcado accepted (Nubefact código 24 — consulta falló por otra causa).`
+            : `EVIDENCE_ACCEPT: ${label}: PDF+XML en BD y ${Math.floor(ageHours)}h de antigüedad. Marcado accepted. ` +
+              `Verificar con contadora que el PDF sea válido ante SUNAT.`;
+
+          // Actualizar invoices — guard: solo si SIGUE en processing (idempotencia)
+          const { error: evidErr } = await supabase
+            .from("invoices")
+            .update({ sunat_status: "accepted" })
+            .eq("id", invoice.id)
+            .eq("sunat_status", "processing");
+
+          if (!evidErr) {
+            // Propagar a billing_queue (misma lógica que aceptación normal)
+            await supabase
+              .from("billing_queue")
+              .update({
+                sunat_status: "accepted",
+                ...(invoice.pdf_url ? { pdf_url: invoice.pdf_url } : {}),
+              })
+              .eq("nubefact_ticket", label)
+              .eq("status", "emitted");
+
+            // Propagar billing_status a transactions vinculadas
+            await supabase
+              .from("transactions")
+              .update({ billing_status: "sent" })
+              .eq("invoice_id", invoice.id);
+
+            await safeInvoicingLog(supabase, {
+              invoice_id:    invoice.id,
+              event_type:    "accepted",
+              action:        "poll",
+              status:        "accepted",
+              event_message: evidMsg,
+              error_code:    evidType,
+              error_message: errMsg,
+              request_payload: {
+                invoice_id: invoice.id,
+                label,
+                age_hours: Math.floor(ageHours),
+                has_cdr: hasCdr,
+                has_pdf: Boolean(invoice.pdf_url),
+                has_xml: Boolean(invoice.xml_url),
+              },
+            });
+
+            console.log(`[check-invoice-status] ✅ ${evidType}: ${label} → accepted`);
+            results.push({ id: invoice.id, action: "updated", estado: "accepted" });
+            continue;
+          }
+        }
+
+        // Código 24 sin evidencia suficiente — no cambiar estado, log específico
+        await safeInvoicingLog(supabase, {
+          invoice_id:    invoice.id,
+          event_type:    "error",
+          action:        "poll",
+          status:        "code24_no_evidence",
+          event_message:
+            `${label}: Nubefact código 24. ` +
+            `PDF: ${Boolean(invoice.pdf_url)}, XML: ${Boolean(invoice.xml_url)}, ` +
+            `CDR: ${hasCdr}, Antigüedad: ${Math.floor(ageHours)}h. ` +
+            `Se requiere verificación manual o esperar 48h para activar EVIDENCE_ACCEPT.`,
+          error_code:    "CODE24_NO_EVIDENCE",
+          error_message: errMsg,
+          request_payload: {
+            invoice_id: invoice.id, label,
+            age_hours: Math.floor(ageHours), has_cdr: hasCdr,
+            has_pdf: Boolean(invoice.pdf_url), has_xml: Boolean(invoice.xml_url),
+          },
+        });
+        results.push({ id: invoice.id, action: "error", error: `CODE24_NO_EVIDENCE: ${errMsg}` });
+        continue;
+      }
+
+      // PFC-07: Log del error genérico con trazabilidad completa
       await safeInvoicingLog(supabase, {
         invoice_id:    invoice.id,
         event_type:    "error",

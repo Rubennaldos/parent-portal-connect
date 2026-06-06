@@ -27,7 +27,8 @@ const TODOS_LOS_METODOS = [
   'yape', 'yape_qr', 'yape_numero',
   'plin', 'plin_qr', 'plin_numero',
   'transferencia', 'transfer',
-  'tarjeta', 'card',
+  'tarjeta', 'card', 'CARD',
+  'mixto',
 ];
 const MAX_TX_PER_BOLETA  = 900;  // Límite SUNAT: 1000 ítems por comprobante
 const SUNAT_AMOUNT_LIMIT = 650;  // Límite boleta sin identificación: S/ 700 (margen 7%)
@@ -41,12 +42,6 @@ function chunks<T>(arr: T[], size: number): T[][] {
   const r: T[][] = [];
   for (let i = 0; i < arr.length; i += size) r.push(arr.slice(i, i + size));
   return r;
-}
-
-function toLimaDayString(utcStr: string): string {
-  // UTC-5 → Lima
-  const limaDate = new Date(new Date(utcStr).getTime() - 5 * 60 * 60 * 1000);
-  return limaDate.toISOString().split('T')[0];
 }
 
 // Divide en sub-lotes por monto (mismo algoritmo que CierreMensual)
@@ -249,23 +244,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single();
       const igvPct = Number(billingCfg?.igv_porcentaje ?? 18);
 
-      // ── Traer pedidos de almuerzo cancelados (para excluirlos) ─────────────
-      const { data: cancelledOrders } = await supabase
-        .from('lunch_orders')
-        .select('id')
-        .eq('school_id', schoolId)
-        .eq('status', 'cancelled')
-        .gte('created_at', rangeStart)
-        .lt('created_at', rangeEnd);
-      const cancelledLunchIds = new Set<string>(
-        (cancelledOrders ?? []).map((o: { id: string }) => o.id),
-      );
-
       // ── Obtener transacciones pendientes del mes (paginado) ─────────────────
+      // Fuente de verdad: v_billing_masivo_pending con candado es_extemporaneo = false.
+      // · Incluye mixto (monto_boleteable = parte digital) y CARD mayúscula (IziPay).
+      // · Excluye efectivo, saldo, almuerzos cancelados, transacciones en cero.
+      // · El candado es_extemporaneo = false evita boletear backlog >7 días (SUNAT RS 097-2012).
+      // · monto_boleteable y dia_venta_lima calculados en PostgreSQL (reglas #11.A y #11.C).
       const PAGE_SIZE = 1000;
       const allRows: {
         id: string; created_at: string; amount: number;
         payment_method: string | null; school_id: string;
+        monto_boleteable: number;  // calculado en DB (mixto = solo parte digital)
+        dia_venta_lima: string;    // 'YYYY-MM-DD' en hora Lima, calculado en DB
         metadata?: Record<string, unknown> | null;
       }[] = [];
       let from = 0;
@@ -273,15 +263,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       while (hasMore) {
         const { data: page, error: pageErr } = await supabase
-          .from('transactions')
-          .select('id, created_at, amount, payment_method, school_id, metadata')
+          .from('v_billing_masivo_pending')
+          .select('id, created_at, amount, payment_method, school_id, monto_boleteable, dia_venta_lima, metadata')
           .eq('school_id', schoolId)
-          .eq('is_taxable', true)
-          .eq('billing_status', 'pending')
-          .eq('document_type', 'ticket')
-          .eq('payment_status', 'paid')
-          .neq('amount', 0)
-          .in('payment_method', TODOS_LOS_METODOS)
+          .eq('es_extemporaneo', false)
           .gte('created_at', rangeStart)
           .lt('created_at', rangeEnd)
           .order('created_at', { ascending: true })
@@ -304,13 +289,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }>();
 
       for (const row of allRows) {
-        const day = toLimaDayString(row.created_at);
-        if (!day.startsWith(mesActual)) continue;
-        if (!TODOS_LOS_METODOS.includes(row.payment_method ?? '')) continue;
-
-        // Excluir si el lunch_order asociado está cancelado
-        const lunchOrderId = (row.metadata as any)?.lunch_order_id as string | undefined;
-        if (lunchOrderId && cancelledLunchIds.has(lunchOrderId)) continue;
+        const day = row.dia_venta_lima as string;  // 'YYYY-MM-DD', ya en hora Lima desde DB
+        if (!day.startsWith(mesActual)) continue;  // guarda de seguridad redundante con filtro BD
+        // No se necesita filtrar por TODOS_LOS_METODOS ni por cancelledLunchIds:
+        // la vista v_billing_masivo_pending ya los excluye correctamente en PostgreSQL.
 
         if (!map.has(day)) {
           map.set(day, {
@@ -319,7 +301,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
         const g   = map.get(day)!;
-        const amt = round2(Math.abs(row.amount));
+        // monto_boleteable: para mixto = abs(amount) - cash_amount; para el resto = abs(amount).
+        // Calculado en PostgreSQL (regla #11.A: cero cálculos financieros en cliente).
+        const amt = row.monto_boleteable;
         g.txIds.push(row.id);
         g.amounts.push(amt);
         g.totalCents += Math.round(amt * 100);
