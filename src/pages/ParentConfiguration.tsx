@@ -17,6 +17,7 @@ import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
 import { ComunicadosPanel } from '@/components/admin/ComunicadosPanel';
 import { ExpressEnrollmentModal } from '@/features/express-enrollment/components/ExpressEnrollmentModal';
+import { CreateTeacherModal } from '@/features/teacher-express/components/CreateTeacherModal';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -167,6 +168,7 @@ const ParentConfiguration = () => {
   const [permissions, setPermissions] = useState({
     canCreateParent: false,
     canEditParent: false,
+    canViewBehaviorNotes: false,
     canCreateStudent: false,
     canEditStudent: false,
     // Permisos de profesores
@@ -183,6 +185,7 @@ const ParentConfiguration = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showChildrenModal, setShowChildrenModal] = useState(false);
   const [showExpressEnrollmentModal, setShowExpressEnrollmentModal] = useState(false);
+  const [showCreateTeacherModal, setShowCreateTeacherModal] = useState(false);
   
   // Datos seleccionados
   const [selectedParent, setSelectedParent] = useState<ParentProfile | null>(null);
@@ -257,6 +260,7 @@ const ParentConfiguration = () => {
 
     try {
       console.log('🔍 Verificando permisos de Config Padres para rol:', role);
+      const canViewBehaviorNotesByRole = ['admin_general', 'admin', 'superadmin', 'gestor_unidad', 'admin_sede'].includes(role);
 
       // Admin General tiene acceso total
       if (role === 'admin_general') {
@@ -264,6 +268,7 @@ const ParentConfiguration = () => {
         setPermissions({
           canCreateParent: true,
           canEditParent: true,
+          canViewBehaviorNotes: true,
           canCreateStudent: true,
           canEditStudent: true,
           // Permisos de profesores
@@ -322,6 +327,7 @@ const ParentConfiguration = () => {
       let perms = {
         canCreateParent: false,
         canEditParent: false,
+        canViewBehaviorNotes: false,
         canCreateStudent: false,
         canEditStudent: false,
         // Permisos de profesores
@@ -376,6 +382,8 @@ const ParentConfiguration = () => {
           }
         }
       });
+
+      perms.canViewBehaviorNotes = canViewBehaviorNotesByRole;
 
       console.log('✅ Permisos finales de Config Padres:', perms);
       
@@ -490,42 +498,61 @@ const ParentConfiguration = () => {
     }
   };
 
+  const queryTeachersFromDb = async () => {
+    let query = supabase
+      .from('teacher_profiles')
+      .select('*', { count: 'exact' })
+      .order('full_name');
+
+    if (!canViewAllSchools && userSchoolId) {
+      query = query.or(`school_id_1.eq.${userSchoolId},school_id_2.eq.${userSchoolId}`);
+    }
+
+    const { data: teachersData, error, count } = await query;
+    if (error) throw error;
+
+    const currentSchools = schools.length > 0 ? schools : [];
+    const teachersWithSchools = (teachersData || []).map((teacher: TeacherProfile) => ({
+      ...teacher,
+      user_id: teacher.user_id || teacher.id,
+      school_1_data: currentSchools.find((s) => s.id === teacher.school_id_1) || null,
+      school_2_data: currentSchools.find((s) => s.id === teacher.school_id_2) || null,
+    }));
+
+    return {
+      teachers: teachersWithSchools,
+      totalCount: count ?? 0,
+    };
+  };
+
   // Carga diferida de profesores — solo cuando el usuario abre esa pestaña
-  // Elimina las ~600 queries separadas usando las sedes ya en memoria
   const fetchTeachers = async () => {
     if (teachersLoaded || teachersLoading) return;
     setTeachersLoading(true);
     try {
-      let query = supabase
-        .from('teacher_profiles')
-        .select('*', { count: 'exact' })
-        .order('full_name');
-
-      if (!canViewAllSchools && userSchoolId) {
-        query = query.or(`school_id_1.eq.${userSchoolId},school_id_2.eq.${userSchoolId}`);
-      }
-
-      const { data: teachersData, error, count } = await query;
-      if (error) throw error;
-
-      setTeachersTotalCount(count ?? 0);
-
-      // Enriquecer sedes usando el estado ya cargado — CERO queries extra
-      const currentSchools = schools.length > 0 ? schools : [];
-      const teachersWithSchools = (teachersData || []).map((teacher: any) => ({
-        ...teacher,
-        // teacher_profiles.id referencia auth.users/profiles.id
-        user_id: teacher.user_id || teacher.id,
-        school_1_data: currentSchools.find((s) => s.id === teacher.school_id_1) || null,
-        school_2_data: currentSchools.find((s) => s.id === teacher.school_id_2) || null,
-      }));
-
-      setTeachers(teachersWithSchools);
+      const { teachers, totalCount } = await queryTeachersFromDb();
+      setTeachers(teachers);
+      setTeachersTotalCount(totalCount);
       setTeachersLoaded(true);
-      console.log('👨‍🏫 Profesores cargados (diferido):', teachersWithSchools.length);
     } catch (error: any) {
       console.error('Error al cargar profesores:', error);
       toast({ variant: 'destructive', title: 'Error al cargar profesores', description: error.message });
+    } finally {
+      setTeachersLoading(false);
+    }
+  };
+
+  const refetchTeachers = async () => {
+    if (teachersLoading) return;
+    setTeachersLoading(true);
+    try {
+      const { teachers, totalCount } = await queryTeachersFromDb();
+      setTeachers(teachers);
+      setTeachersTotalCount(totalCount);
+      setTeachersLoaded(true);
+    } catch (error: any) {
+      console.error('Error al recargar profesores:', error);
+      toast({ variant: 'destructive', title: 'Error al recargar profesores', description: error.message });
     } finally {
       setTeachersLoading(false);
     }
@@ -1148,6 +1175,15 @@ const ParentConfiguration = () => {
                       </SelectContent>
                     </Select>
                   )}
+                  {permissions.canCreateTeacher && (
+                    <Button
+                      onClick={() => setShowCreateTeacherModal(true)}
+                      className="gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Agregar Profesor
+                    </Button>
+                  )}
                   <Button onClick={() => exportTeachersToExcel()} variant="outline" className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
                     <Download className="h-4 w-4" />
                     Excel
@@ -1760,6 +1796,15 @@ const ParentConfiguration = () => {
         onSuccess={fetchData}
         userRole={role}
         userSchoolId={userSchoolId}
+      />
+
+      <CreateTeacherModal
+        open={showCreateTeacherModal}
+        onOpenChange={setShowCreateTeacherModal}
+        onSuccess={refetchTeachers}
+        userRole={role}
+        userSchoolId={userSchoolId}
+        selectedSchoolFilter={selectedSchoolTeacher}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 # ARCHITECTURE MAP — parent-portal-connect
 
-Actualizado: 2026-04-23  
+Actualizado: 2026-06-07  
 Fuente: estructura real del repo (frontend + supabase)
 
 ## 1) Regla operativa de mantenimiento
@@ -83,6 +83,25 @@ Nota: aun no existe una migracion completa a `src/features/[modulo]/` en todo el
 
 ---
 
+## Profesores (registro express)
+
+### Frontend (UI/App)
+- `src/features/teacher-express/components/CreateTeacherModal.tsx`
+- `src/features/teacher-express/hooks/useTeacherExpressForm.ts`
+- `src/features/teacher-express/services/teacherExpressService.ts`
+- `src/pages/ParentConfiguration.tsx` (pestaña Lista de Profesores — orquestación)
+
+### Base de datos / SQL
+- `supabase/migrations/20260607_insert_teacher_express.sql`
+- RPC `insert_teacher_express`: ghost auth + `profiles` + `teacher_profiles` atómico
+
+### Estado del modulo
+- Registro express de 3 campos (nombre, DNI, teléfono).
+- Activación de credenciales en fase posterior (reset de contraseña).
+- Sin cálculos financieros; auditoría en `audit_logs`.
+
+---
+
 ## Alumnos
 
 ### Frontend (UI/App)
@@ -136,6 +155,7 @@ Para alinearse a la regla de dominio, objetivo gradual:
 - `src/features/pagos/`
 - `src/features/alumnos/`
 - `src/features/pedidos/`
+- `src/features/teacher-express/` (implementado)
 
 Estructura interna por modulo:
 - `components/`
