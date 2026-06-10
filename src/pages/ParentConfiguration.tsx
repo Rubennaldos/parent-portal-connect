@@ -16,7 +16,6 @@ import { ParentAnalyticsDashboard } from '@/components/admin/ParentAnalyticsDash
 import StudentsDirectory from '@/components/admin/StudentsDirectory';
 import { KioskWalletReport } from '@/components/admin/KioskWalletReport';
 import { ComunicadosPanel } from '@/components/admin/ComunicadosPanel';
-import { ExpressEnrollmentModal } from '@/features/express-enrollment/components/ExpressEnrollmentModal';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -182,7 +181,6 @@ const ParentConfiguration = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showChildrenModal, setShowChildrenModal] = useState(false);
-  const [showExpressEnrollmentModal, setShowExpressEnrollmentModal] = useState(false);
   
   // Datos seleccionados
   const [selectedParent, setSelectedParent] = useState<ParentProfile | null>(null);
@@ -979,15 +977,6 @@ const ParentConfiguration = () => {
                       Nuevo Padre
                     </Button>
                   )}
-                  {permissions.canCreateStudent && (
-                    <Button
-                      onClick={() => setShowExpressEnrollmentModal(true)}
-                      className="gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-md"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Matriculación Express
-                    </Button>
-                  )}
                   <Button onClick={exportToExcel} variant="outline" className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
                     <Download className="h-4 w-4" />
                     Excel
@@ -1753,14 +1742,6 @@ const ParentConfiguration = () => {
           }}
         />
       )}
-
-      <ExpressEnrollmentModal
-        open={showExpressEnrollmentModal}
-        onOpenChange={setShowExpressEnrollmentModal}
-        onSuccess={fetchData}
-        userRole={role}
-        userSchoolId={userSchoolId}
-      />
     </div>
   );
 };
