@@ -135,6 +135,7 @@ const Products = () => {
     newCategory: '',
     has_stock: false,
     stock_initial: '',
+    initial_stock_school_id: '',
     stock_min: '',
     has_expiry: false,
     expiry_days: '',
@@ -147,6 +148,7 @@ const Products = () => {
     // 'global' = disponible para todas las sedes (school_ids = null en BD)
     // 'specific' = solo para sedes seleccionadas
     productScope: 'global' as 'global' | 'specific',
+    stock_control_enabled: true,
   });
 
   const [, forceUpdate] = useState({});
@@ -448,6 +450,7 @@ const Products = () => {
       newCategory: '',
       has_stock: false,
       stock_initial: '',
+      initial_stock_school_id: '',
       stock_min: '',
       has_expiry: false,
       expiry_days: '',
@@ -458,6 +461,7 @@ const Products = () => {
       school_ids: [],
       applyToAllSchools: true,
       productScope: 'global' as 'global' | 'specific',
+      stock_control_enabled: true,
     };
     setCurrentCode('');
     setCodeStatus('none');
@@ -478,6 +482,7 @@ const Products = () => {
       newCategory: '',
       has_stock: product.has_stock,
       stock_initial: String(product.stock_initial || ''),
+      initial_stock_school_id: '',
       stock_min: String(product.stock_min || ''),
       has_expiry: product.has_expiry || false,
       expiry_days: String(product.expiry_days || ''),
@@ -489,6 +494,7 @@ const Products = () => {
       applyToAllSchools: (product.school_ids || []).length === schools.length,
       // Si school_ids es null o vacío → era global
       productScope: (!product.school_ids || product.school_ids.length === 0) ? 'global' : 'specific',
+      stock_control_enabled: product.stock_control_enabled,
     };
     setCurrentCode(product.code || '');
     setEditingProductId(product.id);
@@ -511,6 +517,7 @@ const Products = () => {
           if (isCheckingCode) return false;
         }
         if (f.has_stock && !f.stock_initial) return false;
+        if (!editingProductId && f.has_stock && !f.initial_stock_school_id) return false;
         if (f.has_stock && !f.stock_min) return false;
         if (f.has_expiry && !f.expiry_days) return false;
         return true;
@@ -577,6 +584,7 @@ const Products = () => {
         wholesale_qty: f.has_wholesale ? parseInt(f.wholesale_qty) : null,
         wholesale_price: f.has_wholesale ? parseFloat(f.wholesale_price) : null,
         school_ids: selectedSchools,
+        stock_control_enabled: f.stock_control_enabled,
       };
 
       /** Admin / supervisor al editar: alcance + precios por sede en un solo RPC tras guardar el resto (sin school_ids duplicado). */
@@ -635,9 +643,30 @@ const Products = () => {
         if (error) throw error;
         toast({ title: '✅ Producto actualizado', description: 'Los cambios se han guardado correctamente' });
       } else {
-        const { error } = await supabase.from('products').insert(productData);
+        const { data: createdProduct, error } = await supabase
+          .from('products')
+          .insert(productData)
+          .select('id')
+          .single();
         if (error) throw error;
-        toast({ title: '✅ Producto creado', description: 'El producto se ha guardado correctamente' });
+
+        // Flujo de creación: registrar stock inicial por sede como ajuste_inicial en Kardex.
+        if (f.has_stock && f.initial_stock_school_id && (parseInt(f.stock_initial) || 0) > 0) {
+          const { error: initStockErr } = await supabase.rpc('apply_initial_stock_adjustment', {
+            p_product_id: createdProduct.id,
+            p_school_id: f.initial_stock_school_id,
+            p_quantity: parseInt(f.stock_initial) || 0,
+            p_reason: 'Stock inicial al crear producto',
+          });
+          if (initStockErr) throw initStockErr;
+        }
+
+        toast({
+          title: '✅ Producto creado',
+          description: f.has_stock && f.initial_stock_school_id
+            ? 'Producto creado con stock inicial registrado en Kardex.'
+            : 'El producto se ha guardado correctamente',
+        });
       }
 
       if (editingProductId) {
@@ -660,6 +689,7 @@ const Products = () => {
           wholesale_qty: f.has_wholesale ? parseInt(f.wholesale_qty) : undefined,
           wholesale_price: f.has_wholesale ? parseFloat(f.wholesale_price) : undefined,
           school_ids: selectedSchools,
+          stock_control_enabled: f.stock_control_enabled,
         });
       } else {
         // Producto nuevo: no tenemos el id asignado por la BD hasta después del insert,
@@ -979,17 +1009,47 @@ const Products = () => {
             )}
             <div className="border rounded p-3">
               <div className="flex items-center gap-2 mb-3">
-                <Switch checked={f.has_stock} onCheckedChange={v => { f.has_stock = v; forceUpdate({}); }} />
+                <Switch
+                  checked={f.has_stock}
+                  disabled={!!editingProductId}
+                  onCheckedChange={v => { f.has_stock = v; forceUpdate({}); }}
+                />
                 <Label className="font-semibold">Controlar Stock</Label>
               </div>
               {f.has_stock && (
                 <div className="space-y-3">
+                  {!editingProductId && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Sede para Stock Inicial *</Label>
+                      <Select
+                        value={f.initial_stock_school_id || '__none__'}
+                        onValueChange={v => { f.initial_stock_school_id = v === '__none__' ? '' : v; forceUpdate({}); }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar sede..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Seleccionar sede</SelectItem>
+                          {schools.map(s => (
+                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-400">
+                        Al guardar, se registrará un movimiento <strong>ajuste_inicial</strong> en Kardex.
+                      </p>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label className="text-xs">Stock Inicial *</Label>
+                      <Label className="text-xs">
+                        Stock Inicial {editingProductId ? '(solo lectura)' : '*'}
+                      </Label>
                       <Input 
                         type="number" 
-                        defaultValue={f.stock_initial}
+                        value={f.stock_initial}
+                        readOnly={!!editingProductId}
+                        disabled={!!editingProductId}
                         onChange={e => { f.stock_initial = e.target.value; forceUpdate({}); }}
                         placeholder="100" 
                       />
@@ -1258,9 +1318,10 @@ const Products = () => {
         .eq('id', stockControlTarget.id);
       if (err1) throw err1;
 
-      // 2. Si se activa, crear/actualizar registro en product_stock
+      // 2. Si se activa, crear registro en product_stock SOLO con 0
+      //    (sin ajustes manuales de stock desde edición de producto).
       if (enable) {
-        const qty = parseInt(stockControlInitial) || 0;
+        const qty = previousStock > 0 ? previousStock : 0;
         const { error: err2 } = await supabase
           .from('product_stock')
           .upsert(
@@ -1276,7 +1337,7 @@ const Products = () => {
       toast({
         title: enable ? '✅ Control de stock activado' : '✅ Control de stock desactivado',
         description: enable
-          ? `Stock inicial registrado: ${stockControlInitial} unidades`
+          ? 'El control quedó activo. El stock solo puede variar por documentos o traslados.'
           : 'El producto vuelve a venderse libremente',
       });
       setShowStockControlModal(false);
@@ -1823,19 +1884,7 @@ const Products = () => {
                               Precios
                             </Button>
                           )}
-                          {/* Toggle Stock Control: solo admin_general puede modificar stock */}
-                          {isAdminGeneral && userSchoolId && (
-                            <Button
-                              size="sm"
-                              variant={product.stock_control_enabled ? 'default' : 'outline'}
-                              onClick={() => openStockControlModal(product)}
-                              className={product.stock_control_enabled ? 'bg-blue-600 hover:bg-blue-700' : ''}
-                              title="Controlar stock de este producto en tu sede"
-                            >
-                              <Package className="h-3 w-3 mr-1" />
-                              Stock
-                            </Button>
-                          )}
+                          {/* Toggle Stock Control eliminado: el switch global gobierna el bloqueo */}
                           {/* Botón Verificar (Sello Verde): solo admin_general y superadmin */}
                           {(isAdminGeneral || role === 'superadmin') && (
                             <Button
@@ -1997,23 +2046,13 @@ const Products = () => {
                   Este producto tiene control de stock activado.
                   Stock actual: <strong>{productStockLevels[stockControlTarget.id] ?? 0} unidades</strong>.
                 </p>
-                <div className="space-y-2">
-                  <Label>Ajustar stock a:</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={stockControlInitial}
-                    onChange={e => setStockControlInitial(e.target.value)}
-                    placeholder="Cantidad"
-                  />
-                </div>
                 <div className="flex gap-2">
                   <Button
                     className="flex-1 bg-blue-600 hover:bg-blue-700"
                     onClick={() => handleSaveStockControl(true)}
                     disabled={stockControlLoading}
                   >
-                    {stockControlLoading ? 'Guardando...' : 'Actualizar Stock'}
+                    {stockControlLoading ? 'Guardando...' : 'Mantener Activo'}
                   </Button>
                   <Button
                     variant="destructive"
@@ -2030,16 +2069,10 @@ const Products = () => {
                   Al activar el control de stock, el POS descontará unidades automáticamente 
                   cada vez que se venda este producto en tu sede.
                 </p>
-                <div className="space-y-2">
-                  <Label>Stock inicial (unidades disponibles ahora):</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={stockControlInitial}
-                    onChange={e => setStockControlInitial(e.target.value)}
-                    placeholder="Ej: 50"
-                  />
-                </div>
+                <p className="text-xs text-slate-500 bg-slate-50 border rounded-md p-2">
+                  El stock inicial de este producto debe registrarse desde creación de producto
+                  o por documento/traslado. Aquí no se permite ajuste manual de stock.
+                </p>
                 <Button
                   className="w-full bg-blue-600 hover:bg-blue-700"
                   onClick={() => handleSaveStockControl(true)}

@@ -82,7 +82,7 @@ interface Student {
   free_account?: boolean;
   recharge_enabled?: boolean;
   kiosk_disabled?: boolean;
-  school?: { id: string; name: string } | null;
+  school?: { id: string; name: string; admin_name?: string | null; admin_whatsapp?: string | null } | null;
 }
 
 interface Transaction {
@@ -499,7 +499,7 @@ const Index = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('students')
-        .select('*, school:schools(id, name)')
+        .select('*, school:schools(id, name, admin_name, admin_whatsapp)')
         .eq('parent_id', user.id)
         .eq('is_active', true)
         .order('full_name', { ascending: true});
@@ -1126,10 +1126,11 @@ const Index = () => {
       <SupportModal
         isOpen={showSupportModal}
         onClose={() => setShowSupportModal(false)}
-        parentId={user?.id || ''}
         parentName={parentName || 'Padre de familia'}
-        studentId={selectedStudent?.id ?? null}
         studentName={selectedStudent?.full_name ?? null}
+        schoolName={selectedStudent?.school?.name ?? null}
+        schoolAdminName={selectedStudent?.school?.admin_name ?? null}
+        schoolAdminWhatsApp={selectedStudent?.school?.admin_whatsapp ?? null}
       />
 
       {/* Modal: Detalle de Saldo del hijo activo */}

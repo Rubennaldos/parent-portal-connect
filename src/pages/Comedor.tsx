@@ -59,6 +59,8 @@ interface RawOrder {
   student_grade: string | null;
   student_section: string | null;
   teacher_name: string | null;
+  // Columna calculada por v_lunch_orders_unified
+  final_target_type: string;
 }
 
 interface PrepCategory {
@@ -124,13 +126,18 @@ function aggregateOrders(orders: RawOrder[]): PrepCategory[] {
     cat.total += qty;
 
     // ── Selecciones de plato configurable (PROTEÍNAS, GUARNICIONES, etc.) ──
-    const configSels = (o.configurable_selections || []).filter(
-      (sel: any) => sel.group_name && sel.selected && String(sel.selected).trim() !== ''
-    );
+    const configSels = (o.configurable_selections || []).filter((sel: any) => {
+      const selectedValue = sel?.selected ?? sel?.selected_name;
+      return sel?.group_name && selectedValue && String(selectedValue).trim() !== '';
+    });
     if (configSels.length > 0) {
       for (const sel of configSels) {
-        if (!sel.group_name || !sel.selected) continue;
-        const items = sel.selected.split(', ').filter(Boolean);
+        const selectedValue = sel?.selected ?? sel?.selected_name;
+        if (!sel?.group_name || !selectedValue) continue;
+        const items = String(selectedValue)
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean);
         for (const item of items) {
           let group = cat.plate_selections.find(g => g.group === sel.group_name);
           if (!group) {
@@ -179,7 +186,8 @@ function aggregateOrders(orders: RawOrder[]): PrepCategory[] {
 function MenuCard({ cat, idx }: { cat: PrepCategory; idx: number }) {
   // Descripción compacta de acompañamientos
   const sides = [cat.menu_starter, cat.menu_beverage, cat.menu_dessert].filter(Boolean);
-  const hasDetails = cat.variations.length > 0 || cat.garnishes.length > 0 || cat.special_notes.length > 0;
+  const hasConfigurableSelections = cat.plate_selections.length > 0;
+  const hasDetails = hasConfigurableSelections || cat.variations.length > 0 || cat.garnishes.length > 0 || cat.special_notes.length > 0;
 
   return (
     <div
@@ -358,6 +366,37 @@ const Comedor = () => {
     return allSchools.find(s => s.id === selectedSchoolFilter)?.name || '';
   }, [isAdminGeneral, selectedSchoolFilter, allSchools, schoolName]);
 
+  const filterOrdersWithSuspendedParents = useCallback(async (orders: any[]) => {
+    if (!orders || orders.length === 0) return orders;
+
+    const parentIds = Array.from(
+      new Set(
+        orders
+          .map((o: any) => o?.students?.parent_id)
+          .filter((id: string | null | undefined): id is string => Boolean(id))
+      )
+    );
+
+    if (parentIds.length === 0) return orders;
+
+    const { data: suspendedParents, error } = await supabase
+      .from('parent_profiles')
+      .select('user_id')
+      .in('user_id', parentIds)
+      .eq('is_suspended', true);
+
+    if (error) {
+      console.warn('[Comedor] No se pudo validar suspensión de padres:', error);
+      return orders;
+    }
+
+    const suspendedSet = new Set((suspendedParents || []).map((p: any) => p.user_id));
+    return orders.filter((o: any) => {
+      const parentId = o?.students?.parent_id;
+      return !parentId || !suspendedSet.has(parentId);
+    });
+  }, []);
+
   // ── Fetch orders (con fallback offline) ──
   const loadOrders = useCallback(async () => {
     if (!isAdminGeneral && !schoolId) return;
@@ -382,19 +421,23 @@ const Comedor = () => {
     let from = 0;
     const PAGE = 1000;
 
+    // Vista SSOT: is_active_unified filtra cancelados y frozen con mismo criterio
+    // que LunchOrders y LunchDeliveryDashboard. Categorías resueltas sin segunda query.
     while (true) {
       let q = supabase
-        .from('lunch_orders')
+        .from('v_lunch_orders_unified')
         .select(`
           id, order_date, status, quantity, is_cancelled,
           student_id, teacher_id, manual_name,
           category_id, menu_id, notes, parent_notes,
           selected_modifiers, configurable_selections, selected_garnishes,
-          students(full_name, grade, section), teacher_profiles(full_name),
+          final_target_type,
+          category_name_resolved, category_color_resolved, category_target_type,
+          students(full_name, grade, section, parent_id), teacher_profiles(full_name),
           lunch_menus(main_course, starter, beverage, dessert, notes, category_id)
         `)
         .eq('order_date', selectedDate)
-        .eq('is_cancelled', false)
+        .eq('is_active_unified', true)
         .range(from, from + PAGE - 1);
 
       if (isAdminGeneral && selectedSchoolFilter !== 'all') q = q.eq('school_id', selectedSchoolFilter);
@@ -408,31 +451,12 @@ const Comedor = () => {
       from += PAGE;
     }
 
-    const categoryIds = [
-      ...new Set(
-        allData
-          .map((o: any) => (o.lunch_menus as any)?.category_id || o.category_id)
-          .filter(Boolean) as string[]
-      ),
-    ];
+    const visibleData = await filterOrdersWithSuspendedParents(allData);
 
-    const categoriesMap = new Map<string, { name: string; color: string; target_type: string }>();
-    if (categoryIds.length > 0) {
-      const { data: cats } = await supabase
-        .from('lunch_categories')
-        .select('id, name, color, target_type')
-        .in('id', categoryIds);
-      if (cats) cats.forEach(c => categoriesMap.set(c.id, {
-        name: c.name,
-        color: c.color || '#6B7280',
-        target_type: c.target_type || 'both',
-      }));
-    }
-
-    const mapped: RawOrder[] = allData.map((o: any) => {
+    // La vista resuelve categorías — sin segunda query a lunch_categories
+    const mapped: RawOrder[] = visibleData.map((o: any) => {
       const resolvedCatId: string | null =
         (o.lunch_menus as any)?.category_id || o.category_id || null;
-      const cat = resolvedCatId ? categoriesMap.get(resolvedCatId) : null;
       return {
         id: o.id,
         order_date: o.order_date,
@@ -449,9 +473,10 @@ const Comedor = () => {
         selected_modifiers: o.selected_modifiers || [],
         configurable_selections: o.configurable_selections || [],
         selected_garnishes: o.selected_garnishes || [],
-        category_name: cat?.name || 'Sin categoría',
-        category_target_type: cat?.target_type || 'both',
-        category_color: cat?.color || '#6B7280',
+        category_name: o.category_name_resolved || 'Sin categoría',
+        category_target_type: o.category_target_type || 'both',
+        category_color: o.category_color_resolved || '#6B7280',
+        final_target_type: o.final_target_type || 'students',
         menu_main_course: (o.lunch_menus as any)?.main_course || '',
         menu_starter: (o.lunch_menus as any)?.starter || null,
         menu_beverage: (o.lunch_menus as any)?.beverage || null,
@@ -471,7 +496,7 @@ const Comedor = () => {
       localStorage.setItem(cacheKey, JSON.stringify(mapped));
       console.log(`💾 Cocina: ${mapped.length} pedidos cacheados para offline`);
     } catch {}
-  }, [schoolId, selectedDate, isAdminGeneral, selectedSchoolFilter]);
+  }, [schoolId, selectedDate, isAdminGeneral, selectedSchoolFilter, filterOrdersWithSuspendedParents]);
 
   const doRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -545,20 +570,20 @@ const Comedor = () => {
   // CORRIENTES SEPARADAS: Alumnos y Profesores
   // ══════════════════════════════════════
 
-  // Pedidos de ALUMNOS: filtrados por grado y aula
+  // Pedidos de ALUMNOS: filtrados por grado y aula usando final_target_type (DB-computed)
   const filteredStudentOrders = useMemo(() => {
     if (viewMode === 'teachers') return [];
     return rawOrders.filter(o => {
-      if (!o.student_id) return false; // excluir profesores
+      if (o.final_target_type !== 'students') return false;
       if (selectedGrade !== 'all' && o.student_grade !== selectedGrade) return false;
       if (selectedSection !== 'all' && o.student_section !== selectedSection) return false;
       return true;
     });
   }, [rawOrders, viewMode, selectedGrade, selectedSection]);
 
-  // Pedidos de PROFESORES: siempre completos, sin filtro de grado/aula
+  // Pedidos de PROFESORES: usando final_target_type (incluye manuales de caja con target teachers)
   const teacherOnlyOrders = useMemo(() => {
-    return rawOrders.filter(o => !o.student_id);
+    return rawOrders.filter(o => o.final_target_type === 'teachers');
   }, [rawOrders]);
 
   // Categorías agrupadas por separado

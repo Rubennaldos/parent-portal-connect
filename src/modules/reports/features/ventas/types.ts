@@ -44,6 +44,8 @@ export const PAYMENT_METHOD_OPTIONS = [
   { value: 'plin', label: 'Plin' },
   { value: 'transferencia', label: 'Transferencia' },
   { value: 'tarjeta', label: 'Tarjeta' },
+  { value: 'tarjeta_pos', label: 'Tarjeta P.O.S' },
+  { value: 'tarjeta_online', label: 'Tarjeta online' },
   { value: 'mixto', label: 'Mixto' },
 ] as const;
 

@@ -68,7 +68,7 @@ export type InvoiceType = 'boleta' | 'factura';
 export interface InvoiceClientData {
   tipo: InvoiceType;
   // Datos del cliente
-  doc_type: 'dni' | 'ruc' | 'sin_documento';
+  doc_type: 'dni' | 'ruc' | 'ce' | 'pasaporte' | 'sin_documento';
   doc_number: string;
   razon_social: string;
   direccion: string;
@@ -127,7 +127,7 @@ export const InvoiceClientModal = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [invoiceType, setInvoiceType] = useState<InvoiceType>(defaultType || 'boleta');
-  const [docType, setDocType] = useState<'dni' | 'ruc' | 'sin_documento'>('dni');
+  const [docType, setDocType] = useState<'dni' | 'ruc' | 'ce' | 'pasaporte' | 'sin_documento'>('dni');
   const [docNumber, setDocNumber] = useState('');
   const [razonSocial, setRazonSocial] = useState(defaultName);
   const [direccion, setDireccion] = useState('');
@@ -203,6 +203,7 @@ export const InvoiceClientModal = ({
       }
     } else {
       if (docType === 'ruc') setDocType('dni');
+      // CE y Pasaporte son válidos para boleta; no se resetean
       setRazonSocial(defaultName);
       setDireccion('');
     }
@@ -211,9 +212,9 @@ export const InvoiceClientModal = ({
     setDocNumber(invoiceType === 'factura' && savedProfileData?.ruc ? savedProfileData.ruc : '');
   }, [invoiceType]);
 
-  // Búsqueda automática al completar dígitos
+  // Búsqueda automática al completar dígitos (solo DNI y RUC)
   useEffect(() => {
-    if (docType === 'sin_documento') return;
+    if (docType === 'sin_documento' || docType === 'ce' || docType === 'pasaporte') return;
     const len = docNumber.replace(/\D/g, '').length;
     if ((docType === 'dni' && len === 8) || (docType === 'ruc' && len === 11)) {
       buscarEnSUNAT();
@@ -253,7 +254,10 @@ export const InvoiceClientModal = ({
   };
 
   const handleConfirm = async () => {
-    const cleanDoc = docNumber.replace(/\D/g, '');
+    // CE y Pasaporte son alfanuméricos; los demás tipos solo aceptan dígitos.
+    const cleanDoc = (docType === 'ce' || docType === 'pasaporte')
+      ? docNumber.trim().toUpperCase().replace(/\s+/g, '')
+      : docNumber.replace(/\D/g, '');
 
     // ── Validación de documento ──
     if (docType === 'dni') {
@@ -278,6 +282,26 @@ export const InvoiceClientModal = ({
       }
       if (!cleanDoc.startsWith('10') && !cleanDoc.startsWith('20')) {
         toast({ title: 'RUC inválido', description: 'El RUC debe comenzar con 10 (persona natural) o 20 (empresa).', variant: 'destructive' });
+        return;
+      }
+    }
+    if (docType === 'ce') {
+      if (cleanDoc.length < 4 || cleanDoc.length > 15) {
+        toast({ title: 'CE inválido', description: 'El Carnet de Extranjería debe tener entre 4 y 15 caracteres.', variant: 'destructive' });
+        return;
+      }
+      if (!razonSocial.trim()) {
+        toast({ title: 'Nombre requerido', description: 'Escribe tu nombre completo tal como figura en tu Carnet de Extranjería.', variant: 'destructive' });
+        return;
+      }
+    }
+    if (docType === 'pasaporte') {
+      if (cleanDoc.length < 4 || cleanDoc.length > 20) {
+        toast({ title: 'Pasaporte inválido', description: 'El número de pasaporte debe tener entre 4 y 20 caracteres.', variant: 'destructive' });
+        return;
+      }
+      if (!razonSocial.trim()) {
+        toast({ title: 'Nombre requerido', description: 'Escribe tu nombre completo tal como figura en tu Pasaporte.', variant: 'destructive' });
         return;
       }
     }
@@ -358,15 +382,24 @@ export const InvoiceClientModal = ({
   const isFactura = invoiceType === 'factura';
 
   // Documento siempre obligatorio:
-  //  · Boleta DNI  → 8 dígitos exactos
-  //  · Boleta RUC  → 11 dígitos + razón social
-  //  · Factura     → 11 dígitos + razón social + dirección
-  const cleanDocLen = docNumber.replace(/\D/g, '').length;
+  //  · Boleta DNI       → 8 dígitos exactos
+  //  · Boleta RUC       → 11 dígitos + razón social
+  //  · Boleta CE        → 4–15 chars alfanuméricos + nombre
+  //  · Boleta Pasaporte → 4–20 chars alfanuméricos + nombre
+  //  · Factura          → 11 dígitos + razón social + dirección (sin cambio)
+  const cleanDocLen = (docType === 'ce' || docType === 'pasaporte')
+    ? docNumber.trim().replace(/\s+/g, '').length
+    : docNumber.replace(/\D/g, '').length;
+
   const canConfirm = isFactura
     ? cleanDocLen === 11 && !!razonSocial.trim() && !!direccion.trim()
     : docType === 'ruc'
       ? cleanDocLen === 11 && !!razonSocial.trim()
-      : cleanDocLen === 8;  // boleta DNI: 8 dígitos (nombre validado al confirmar)
+      : docType === 'ce'
+        ? cleanDocLen >= 4 && cleanDocLen <= 15 && !!razonSocial.trim()
+        : docType === 'pasaporte'
+          ? cleanDocLen >= 4 && cleanDocLen <= 20 && !!razonSocial.trim()
+          : cleanDocLen === 8;  // dni: 8 dígitos (nombre validado al confirmar)
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -425,23 +458,26 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* ── Selector DNI / RUC (solo para boleta) ── */}
+          {/* ── Selector de tipo de documento (solo para boleta) ── */}
           {invoiceType === 'boleta' && (
             <div className="grid grid-cols-2 gap-2">
               {[
-                { value: 'dni', label: 'DNI' },
-                { value: 'ruc', label: 'RUC empresa' },
+                { value: 'dni',       label: 'DNI',        sub: 'Peruano' },
+                { value: 'ruc',       label: 'RUC',        sub: 'Empresa' },
+                { value: 'ce',        label: 'Carnet Ext.', sub: 'Extranjero' },
+                { value: 'pasaporte', label: 'Pasaporte',  sub: 'Internacional' },
               ].map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => { setDocType(opt.value as any); setDocNumber(''); setSunatResult(null); setSunatError(''); }}
-                  className={`py-1.5 px-2 rounded-lg border text-xs font-semibold transition-all ${
+                  className={`py-1.5 px-2 rounded-lg border text-xs font-semibold transition-all text-left ${
                     docType === opt.value
                       ? 'border-blue-500 bg-blue-50 text-blue-700'
                       : 'border-gray-200 text-gray-500 hover:border-blue-300'
                   }`}
                 >
-                  {opt.label}
+                  <span className="block">{opt.label}</span>
+                  <span className="block text-[10px] font-normal opacity-60">{opt.sub}</span>
                 </button>
               ))}
             </div>
@@ -450,20 +486,38 @@ export const InvoiceClientModal = ({
           {/* ── Campo documento + botón búsqueda en la misma fila ── */}
           <div className="space-y-1">
             <Label className="text-xs font-semibold text-gray-700">
-              {docType === 'ruc' ? 'RUC (11 dígitos)' : 'DNI (8 dígitos)'}
+              {docType === 'ruc'       ? 'RUC (11 dígitos)'
+               : docType === 'ce'     ? 'Nº Carnet de Extranjería'
+               : docType === 'pasaporte' ? 'Nº Pasaporte'
+               : 'DNI (8 dígitos)'}
               <span className="text-red-500 ml-1">*</span>
             </Label>
+            {(docType === 'ce' || docType === 'pasaporte') && (
+              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                Ingresa el número tal como aparece en tu documento. No se consultará RENIEC/SUNAT — escribe tu nombre manualmente.
+              </p>
+            )}
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Input
                   ref={inputRef}
                   type="text"
-                  inputMode="numeric"
-                  placeholder={docType === 'ruc' ? '20xxxxxxxxx' : '12345678'}
-                  maxLength={docType === 'ruc' ? 11 : 8}
+                  inputMode={docType === 'ce' || docType === 'pasaporte' ? 'text' : 'numeric'}
+                  placeholder={
+                    docType === 'ruc'       ? '20xxxxxxxxx'
+                    : docType === 'ce'      ? 'Ej: 001234567'
+                    : docType === 'pasaporte' ? 'Ej: PA1234567'
+                    : '12345678'
+                  }
+                  maxLength={docType === 'ruc' ? 11 : docType === 'pasaporte' ? 20 : docType === 'ce' ? 15 : 8}
                   value={docNumber}
                   onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '');
+                    // CE y Pasaporte: alfanumérico en mayúsculas, sin espacios
+                    // DNI y RUC: solo dígitos (comportamiento original intacto)
+                    const raw = e.target.value;
+                    const val = (docType === 'ce' || docType === 'pasaporte')
+                      ? raw.toUpperCase().replace(/[^A-Z0-9]/g, '')
+                      : raw.replace(/\D/g, '');
                     setDocNumber(val);
                     if (sunatResult) setSunatResult(null);
                     setSunatError('');
@@ -479,15 +533,18 @@ export const InvoiceClientModal = ({
                   {!searching && sunatError  && <AlertCircle  className="h-3.5 w-3.5 text-red-400" />}
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={buscarEnSUNAT}
-                disabled={searching || (docType === 'dni' ? docNumber.length < 8 : docNumber.length < 11)}
-                className="h-9 px-2.5 text-blue-600 border-blue-300 hover:bg-blue-50 shrink-0"
-              >
-                {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-              </Button>
+              {/* Botón de búsqueda: solo visible para DNI y RUC */}
+              {(docType === 'dni' || docType === 'ruc') && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={buscarEnSUNAT}
+                  disabled={searching || (docType === 'dni' ? docNumber.length < 8 : docNumber.length < 11)}
+                  className="h-9 px-2.5 text-blue-600 border-blue-300 hover:bg-blue-50 shrink-0"
+                >
+                  {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -506,8 +563,8 @@ export const InvoiceClientModal = ({
             </div>
           )}
 
-          {/* ── Error SUNAT compacto ── */}
-          {sunatError && (
+          {/* ── Error SUNAT compacto (solo para DNI/RUC) ── */}
+          {sunatError && docType !== 'ce' && docType !== 'pasaporte' && (
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
               <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-800">
@@ -521,16 +578,30 @@ export const InvoiceClientModal = ({
           {(docType !== 'sin_documento' || invoiceType === 'boleta') && (
             <div className="space-y-1">
               <Label className="text-xs font-semibold text-gray-700">
-                {isFactura ? 'Razón Social *' : 'Nombre del cliente'}
+                {isFactura
+                  ? 'Razón Social *'
+                  : (docType === 'ce' || docType === 'pasaporte')
+                    ? 'Nombre completo *'
+                    : 'Nombre del cliente'}
               </Label>
               <Input
-                placeholder={isFactura ? 'EMPRESA SAC' : 'Dejar vacío = Consumidor Final'}
+                placeholder={
+                  isFactura
+                    ? 'EMPRESA SAC'
+                    : (docType === 'ce' || docType === 'pasaporte')
+                      ? 'Tal como figura en tu documento'
+                      : 'Dejar vacío = Consumidor Final'
+                }
                 value={razonSocial}
                 onChange={(e) => setRazonSocial(e.target.value)}
-                className={`h-9 text-sm ${isFactura && !razonSocial.trim() ? 'border-red-300' : ''}`}
-                readOnly={!manualMode && !!sunatResult && !isFactura}
+                className={`h-9 text-sm ${
+                  (isFactura || docType === 'ce' || docType === 'pasaporte') && !razonSocial.trim()
+                    ? 'border-red-300'
+                    : ''
+                }`}
+                readOnly={!manualMode && !!sunatResult && !isFactura && docType !== 'ce' && docType !== 'pasaporte'}
               />
-              {!manualMode && !!sunatResult && (
+              {!manualMode && !!sunatResult && docType !== 'ce' && docType !== 'pasaporte' && (
                 <button onClick={() => setManualMode(true)} className="text-[11px] text-blue-500 underline">
                   Editar manualmente
                 </button>

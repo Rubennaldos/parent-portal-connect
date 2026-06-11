@@ -74,10 +74,24 @@ const Cobranzas = () => {
   const [reportSchools, setReportSchools] = useState<{ id: string; name: string }[]>([]);
   const [reportUserSchoolId, setReportUserSchoolId] = useState<string | null>(null);
   const canViewAllSchools = role === 'admin_general' || role === 'supervisor_red';
+  const isSupervisorRedDashboardOnly = role === 'supervisor_red';
+
+  useEffect(() => {
+    if (isSupervisorRedDashboardOnly && activeTab !== 'dashboard') {
+      setActiveTab('dashboard');
+    }
+  }, [isSupervisorRedDashboardOnly, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'reports') loadReportSchools();
   }, [activeTab]);
+
+  const handleTabChange = (tab: string) => {
+    if (isSupervisorRedDashboardOnly) return;
+    setActiveTab(tab);
+  };
+
+  const effectiveActiveTab = isSupervisorRedDashboardOnly ? 'dashboard' : activeTab;
 
   const loadReportSchools = async () => {
     if (!user) return;
@@ -102,23 +116,22 @@ const Cobranzas = () => {
       setLoading(true);
       console.log('🔍 Verificando permisos de Cobranzas para rol:', role);
 
-      // Supervisor Red: puede ver Cobrar + Vouchers + Reportes de todas las sedes
+      // Supervisor Red: solo Dashboard (restricción visual estricta)
       if (role === 'supervisor_red') {
         setPermissions({
-          dashboard: false,
-          collect: true,
-          reports: true,
+          dashboard: true,
+          collect: false,
+          reports: false,
           statistics: false,
           config: false,
-          vouchers: true,
+          vouchers: false,
           pagos_realizados: false,
           config_sede: false,
           comprobantes: false,
           config_sunat: false,
           historial_pagos: false,
         });
-        setActiveTab('collect');
-        fetchPendingVouchers();
+        setActiveTab('dashboard');
         setLoading(false);
         return;
       }
@@ -373,9 +386,9 @@ const Cobranzas = () => {
                 >
                   {permissions.dashboard && (
                     <button
-                      onClick={() => setActiveTab('dashboard')}
+                      onClick={() => handleTabChange('dashboard')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'dashboard'
+                        effectiveActiveTab === 'dashboard'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -386,9 +399,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.collect && (
                     <button
-                      onClick={() => setActiveTab('collect')}
+                      onClick={() => handleTabChange('collect')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-bold rounded-md transition-all ${
-                        activeTab === 'collect'
+                        effectiveActiveTab === 'collect'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -399,9 +412,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.historial_pagos && (
                     <button
-                      onClick={() => setActiveTab('historial_pagos')}
+                      onClick={() => handleTabChange('historial_pagos')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'historial_pagos'
+                        effectiveActiveTab === 'historial_pagos'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -412,9 +425,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.pagos_realizados && (
                     <button
-                      onClick={() => setActiveTab('pagos_realizados')}
+                      onClick={() => handleTabChange('pagos_realizados')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'pagos_realizados'
+                        effectiveActiveTab === 'pagos_realizados'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -425,9 +438,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config_sede && (
                     <button
-                      onClick={() => setActiveTab('config_sede')}
+                      onClick={() => handleTabChange('config_sede')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'config_sede'
+                        effectiveActiveTab === 'config_sede'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -438,9 +451,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.vouchers && (
                     <button
-                      onClick={() => setActiveTab('vouchers')}
+                      onClick={() => handleTabChange('vouchers')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all relative ${
-                        activeTab === 'vouchers'
+                        effectiveActiveTab === 'vouchers'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -456,9 +469,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.reports && (
                     <button
-                      onClick={() => setActiveTab('reports')}
+                      onClick={() => handleTabChange('reports')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'reports'
+                        effectiveActiveTab === 'reports'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -469,9 +482,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.comprobantes && (
                     <button
-                      onClick={() => setActiveTab('comprobantes')}
+                      onClick={() => handleTabChange('comprobantes')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'comprobantes'
+                        effectiveActiveTab === 'comprobantes'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -482,9 +495,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config && (
                     <button
-                      onClick={() => setActiveTab('config')}
+                      onClick={() => handleTabChange('config')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'config'
+                        effectiveActiveTab === 'config'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -495,9 +508,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config_sunat && (
                     <button
-                      onClick={() => setActiveTab('config_sunat')}
+                      onClick={() => handleTabChange('config_sunat')}
                       className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-md transition-all ${
-                        activeTab === 'config_sunat'
+                        effectiveActiveTab === 'config_sunat'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -512,9 +525,9 @@ const Cobranzas = () => {
                 <div className="flex sm:hidden gap-1 bg-muted p-1 rounded-lg w-max min-w-full">
                   {permissions.dashboard && (
                     <button
-                      onClick={() => setActiveTab('dashboard')}
+                      onClick={() => handleTabChange('dashboard')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'dashboard'
+                        effectiveActiveTab === 'dashboard'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -525,9 +538,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.collect && (
                     <button
-                      onClick={() => setActiveTab('collect')}
+                      onClick={() => handleTabChange('collect')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'collect'
+                        effectiveActiveTab === 'collect'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -538,9 +551,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.historial_pagos && (
                     <button
-                      onClick={() => setActiveTab('historial_pagos')}
+                      onClick={() => handleTabChange('historial_pagos')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'historial_pagos'
+                        effectiveActiveTab === 'historial_pagos'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -551,9 +564,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.pagos_realizados && (
                     <button
-                      onClick={() => setActiveTab('pagos_realizados')}
+                      onClick={() => handleTabChange('pagos_realizados')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'pagos_realizados'
+                        effectiveActiveTab === 'pagos_realizados'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -564,9 +577,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config_sede && (
                     <button
-                      onClick={() => setActiveTab('config_sede')}
+                      onClick={() => handleTabChange('config_sede')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'config_sede'
+                        effectiveActiveTab === 'config_sede'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -577,9 +590,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.vouchers && (
                     <button
-                      onClick={() => setActiveTab('vouchers')}
+                      onClick={() => handleTabChange('vouchers')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap relative ${
-                        activeTab === 'vouchers'
+                        effectiveActiveTab === 'vouchers'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -595,9 +608,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.reports && (
                     <button
-                      onClick={() => setActiveTab('reports')}
+                      onClick={() => handleTabChange('reports')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'reports'
+                        effectiveActiveTab === 'reports'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -608,9 +621,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.comprobantes && (
                     <button
-                      onClick={() => setActiveTab('comprobantes')}
+                      onClick={() => handleTabChange('comprobantes')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'comprobantes'
+                        effectiveActiveTab === 'comprobantes'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -621,9 +634,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config && (
                     <button
-                      onClick={() => setActiveTab('config')}
+                      onClick={() => handleTabChange('config')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'config'
+                        effectiveActiveTab === 'config'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -634,9 +647,9 @@ const Cobranzas = () => {
                   )}
                   {permissions.config_sunat && (
                     <button
-                      onClick={() => setActiveTab('config_sunat')}
+                      onClick={() => handleTabChange('config_sunat')}
                       className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
-                        activeTab === 'config_sunat'
+                        effectiveActiveTab === 'config_sunat'
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -649,7 +662,7 @@ const Cobranzas = () => {
               </div>
 
               {/* Dashboard Tab (Incluye Estadísticas) */}
-              {activeTab === 'dashboard' && permissions.dashboard && (
+              {effectiveActiveTab === 'dashboard' && permissions.dashboard && (
                 <div className="mt-4 sm:mt-6 space-y-4 sm:space-y-6">
                   <BillingDashboard />
                   
@@ -665,12 +678,12 @@ const Cobranzas = () => {
               )}
 
               {/* Cobrar / Pagos Realizados / Configuración Sede — misma instancia, distinta sección */}
-              {(activeTab === 'collect' || activeTab === 'pagos_realizados' || activeTab === 'config_sede') && permissions.collect && (
+              {(effectiveActiveTab === 'collect' || effectiveActiveTab === 'pagos_realizados' || effectiveActiveTab === 'config_sede') && permissions.collect && (
                 <div className="mt-4 sm:mt-6">
                   <BillingCollection
                     section={
-                      activeTab === 'pagos_realizados' ? 'pagos' :
-                      activeTab === 'config_sede' ? 'config' :
+                      effectiveActiveTab === 'pagos_realizados' ? 'pagos' :
+                      effectiveActiveTab === 'config_sede' ? 'config' :
                       'cobrar'
                     }
                   />
@@ -678,21 +691,21 @@ const Cobranzas = () => {
               )}
 
               {/* Historial de Pagos — solo Admin General */}
-              {activeTab === 'historial_pagos' && permissions.historial_pagos && (
+              {effectiveActiveTab === 'historial_pagos' && permissions.historial_pagos && (
                 <div className="mt-4 sm:mt-6">
                   <PaymentHistory />
                 </div>
               )}
 
               {/* Vouchers de Pago Tab */}
-              {activeTab === 'vouchers' && permissions.vouchers && (
+              {effectiveActiveTab === 'vouchers' && permissions.vouchers && (
                 <div className="mt-4 sm:mt-6">
                   <VoucherApproval />
                 </div>
               )}
 
               {/* Reportes Tab — con filtros + exportar Excel */}
-              {activeTab === 'reports' && permissions.reports && (
+              {effectiveActiveTab === 'reports' && permissions.reports && (
                 <div className="mt-4 sm:mt-6">
                   <BillingReportsTab
                     schools={reportSchools}
@@ -703,21 +716,21 @@ const Cobranzas = () => {
               )}
 
               {/* Configuración Tab */}
-              {activeTab === 'config' && permissions.config && (
+              {effectiveActiveTab === 'config' && permissions.config && (
                 <div className="mt-4 sm:mt-6">
                   <BillingConfig />
                 </div>
               )}
 
               {/* Comprobantes Electrónicos Tab */}
-              {activeTab === 'comprobantes' && permissions.comprobantes && (
+              {effectiveActiveTab === 'comprobantes' && permissions.comprobantes && (
                 <div className="mt-4 sm:mt-6">
                   <InvoicesList />
                 </div>
               )}
 
               {/* Configuración SUNAT / Nubefact Tab */}
-              {activeTab === 'config_sunat' && permissions.config_sunat && (
+              {effectiveActiveTab === 'config_sunat' && permissions.config_sunat && (
                 <div className="mt-4 sm:mt-6">
                   <BillingNubefactConfig />
                 </div>

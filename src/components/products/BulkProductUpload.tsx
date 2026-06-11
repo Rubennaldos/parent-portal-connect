@@ -270,7 +270,7 @@ export const BulkProductUpload = ({ isOpen, onClose, onSuccess, categories, scho
 
       const productsToInsert = products.map(p => ({
         name: p.name,
-        description: p.description || null, // NUEVO: Guardar descripción
+        description: p.description || null,
         code: p.has_code && p.code ? p.code : `PRD${Date.now()}${Math.random().toString(36).substr(2, 5)}`,
         price: parseFloat(p.price_sale),
         price_cost: parseFloat(p.price_cost) || 0,
@@ -282,6 +282,7 @@ export const BulkProductUpload = ({ isOpen, onClose, onSuccess, categories, scho
         has_igv: p.has_igv,
         active: p.active,
         school_ids: selectedSchools,
+        stock_control_enabled: p.has_stock,
       }));
 
       const { error } = await supabase.from('products').insert(productsToInsert);

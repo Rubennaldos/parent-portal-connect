@@ -139,44 +139,40 @@ serve(async (req) => {
   }
 
   // ── 5. Buscar al usuario objetivo por email ───────────────────────────────
-  // Usar paginación amplia para proyectos con muchos usuarios.
-  // listUsers tiene un máximo de 1000 por página; con más usuarios se recorre en páginas.
-  let targetAuthUser: any = null;
-  let page = 1;
-  const PER_PAGE = 1000;
+  // Estrategia directa: primero leer el UUID desde profiles (tabla propia, rápida),
+  // luego getUserById (1 llamada a Auth Admin sin escanear todos los usuarios).
+  // Esto evita el listUsers paginado que falla con >1000 usuarios.
+  const { data: targetProfile, error: targetProfileErr } = await adminClient
+    .from("profiles")
+    .select("id, role, full_name, is_active")
+    .eq("email", targetEmail)
+    .maybeSingle();
 
-  while (!targetAuthUser) {
-    const { data: usersResult, error: listErr } = await adminClient.auth.admin.listUsers({
-      page,
-      perPage: PER_PAGE,
-    });
-
-    if (listErr) {
-      return json({ success: false, error: "Error al buscar usuarios en el sistema" }, 500);
-    }
-
-    const users = usersResult?.users ?? [];
-    if (users.length === 0) break; // no hay más páginas
-
-    targetAuthUser = users.find((u: any) => u.email?.toLowerCase() === targetEmail) ?? null;
-
-    if (users.length < PER_PAGE) break; // última página
-    page++;
+  if (targetProfileErr) {
+    console.error("[admin-impersonate] Error buscando perfil objetivo:", targetProfileErr.message);
+    return json({ success: false, error: "Error al buscar el perfil del usuario" }, 500);
   }
 
-  if (!targetAuthUser) {
+  if (!targetProfile) {
     return json({
       success: false,
       error:   `No existe ningún usuario con el email '${targetEmail}' en el sistema`,
     }, 404);
   }
 
+  // Verificar que el usuario exista en Auth (por UUID, 1 llamada directa y segura)
+  const { data: targetAuthData, error: targetAuthErr } = await adminClient.auth.admin.getUserById(targetProfile.id);
+  if (targetAuthErr || !targetAuthData?.user) {
+    console.error("[admin-impersonate] Error obteniendo usuario Auth:", targetAuthErr?.message);
+    return json({
+      success: false,
+      error:   `El usuario '${targetEmail}' existe en el sistema pero no tiene cuenta de acceso activa`,
+    }, 404);
+  }
+
+  const targetAuthUser = targetAuthData.user;
+
   // ── 6. Protección cruzada: no impersonar otros administradores ────────────
-  const { data: targetProfile } = await adminClient
-    .from("profiles")
-    .select("role, full_name, is_active")
-    .eq("id", targetAuthUser.id)
-    .single();
 
   const targetRole = targetProfile?.role ?? "parent";
 

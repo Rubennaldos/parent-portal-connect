@@ -408,7 +408,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       
       let query = supabase
         .from(table)
-        .select('id, full_name');
+        .select(targetType === 'students' ? 'id, full_name, parent_id' : 'id, full_name');
       
       // Filtrar por escuela
       if (targetType === 'students') {
@@ -421,7 +421,37 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       const { data, error } = await query.order('full_name');
 
       if (error) throw error;
-      setPeople(data || []);
+
+      if (targetType === 'students') {
+        const students = data || [];
+        const parentIds = Array.from(
+          new Set(
+            students
+              .map((s: any) => s.parent_id)
+              .filter((id: string | null | undefined): id is string => Boolean(id))
+          )
+        );
+
+        let suspendedParentIds = new Set<string>();
+        if (parentIds.length > 0) {
+          const { data: suspendedParents, error: suspendedParentsError } = await supabase
+            .from('parent_profiles')
+            .select('user_id')
+            .in('user_id', parentIds)
+            .eq('is_suspended', true);
+
+          if (suspendedParentsError) {
+            console.warn('[PhysicalOrderWizard] No se pudo validar suspensión de padres:', suspendedParentsError);
+          } else {
+            suspendedParentIds = new Set((suspendedParents || []).map((p: any) => p.user_id));
+          }
+        }
+
+        const filteredStudents = students.filter((s: any) => !s.parent_id || !suspendedParentIds.has(s.parent_id));
+        setPeople(filteredStudents.map((s: any) => ({ id: s.id, full_name: s.full_name })));
+      } else {
+        setPeople(data || []);
+      }
     } catch (error) {
       console.error('Error fetching people:', error);
     } finally {

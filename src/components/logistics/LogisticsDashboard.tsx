@@ -166,12 +166,13 @@ export default function LogisticsDashboard({
         total_sales: p.total_sales ?? 0,
       }));
 
-      // Alertas stock ≤ 10 — filtrado por sede si corresponde
+      // Alertas: stock <= max(min_stock del producto, 10) — usa umbral real del producto
+      // Traemos stock ≤ 50 como red amplia y filtramos en JS usando products.min_stock
       let stockAlertQuery = supabase
         .from('product_stock')
         .select('product_id, school_id, current_stock')
         .eq('is_enabled', true)
-        .lte('current_stock', 10)
+        .lte('current_stock', 50)
         .order('current_stock');
       if (hasSchoolFilter) {
         stockAlertQuery = (stockAlertQuery as any).eq('school_id', userSchoolId);
@@ -183,20 +184,29 @@ export default function LogisticsDashboard({
       const schoolIds  = [...new Set((lowData || []).map(r => r.school_id))];
 
       const [pRes, sRes] = await Promise.all([
-        productIds.length ? supabase.from('products').select('id, name').in('id', productIds)
-                          : Promise.resolve({ data: [] as any[] }),
-        schoolIds.length  ? supabase.from('schools').select('id, name').in('id', schoolIds)
-                          : Promise.resolve({ data: [] as any[] }),
+        productIds.length
+          ? supabase.from('products').select('id, name, min_stock').in('id', productIds)
+          : Promise.resolve({ data: [] as any[] }),
+        schoolIds.length
+          ? supabase.from('schools').select('id, name').in('id', schoolIds)
+          : Promise.resolve({ data: [] as any[] }),
       ]);
 
-      const pMap = new Map(((pRes as any).data || []).map((p: any) => [p.id, p.name]));
-      const sMap = new Map(((sRes as any).data || []).map((s: any) => [s.id, s.name]));
+      const pMap     = new Map(((pRes as any).data || []).map((p: any) => [p.id, p]));
+      const sMap     = new Map(((sRes as any).data || []).map((s: any) => [s.id, s.name]));
 
-      const alertRows: AlertRow[] = (lowData || []).map(r => ({
-        productName: pMap.get(r.product_id) || '?',
-        schoolName:  sMap.get(r.school_id)  || '?',
-        stock:       r.current_stock,
-      }));
+      // Solo incluir filas donde current_stock <= min_stock del producto (o <= 10 si min_stock no está definido)
+      const alertRows: AlertRow[] = (lowData || [])
+        .filter(r => {
+          const prod     = pMap.get(r.product_id);
+          const minStock = prod?.min_stock ?? 10;
+          return r.current_stock <= minStock;
+        })
+        .map(r => ({
+          productName: pMap.get(r.product_id)?.name || '?',
+          schoolName:  sMap.get(r.school_id)         || '?',
+          stock:       r.current_stock,
+        }));
 
       setTop5(top5Rows);
       setAlerts(alertRows);
@@ -459,7 +469,7 @@ export default function LogisticsDashboard({
         }`}>
           <div className="flex items-center gap-1.5 mb-1.5">
             <AlertTriangle className={`h-4 w-4 ${lowStockAlerts.length > 0 ? 'text-amber-600' : 'text-slate-400'}`} />
-            <span className="text-[10px] sm:text-xs font-semibold text-slate-500">Stock Bajo (1–10)</span>
+            <span className="text-[10px] sm:text-xs font-semibold text-slate-500">Bajo mínimo</span>
           </div>
           {loadingStatic ? (
             <Loader2 className="h-5 w-5 animate-spin text-slate-300 mt-1" />

@@ -139,6 +139,13 @@ Cada modulo en `src/features/[modulo]/` debe separar:
 - Si se crea una ruta de alto impacto, actualizar `ARCHITECTURE.md` en el mismo cambio.
 - Si `ARCHITECTURE.md` no existe o esta desactualizado, reportarlo y proponer actualizacion.
 
+## #18 - DESPLIEGUE VERCEL (PREVIEW ANTES QUE PRODUCCION)
+
+- Flujo: rama → Preview Vercel → pruebas (padres, cobranzas, logistica) → merge a main solo si OK → Production.
+- Prohibido push/merge a main por cada cambio chico.
+- Al **cerrar** una integracion o bloque de codigo terminado, **preguntar** al dueno si quiere subir a Preview; no desplegar automaticamente en cada edicion.
+- Detalle completo: REGLA #14 en `reglas-de-oro.mdc`.
+
 ---
 
 ## REGLAS DE SOPORTE (COMPATIBILIDAD DEL SISTEMA)

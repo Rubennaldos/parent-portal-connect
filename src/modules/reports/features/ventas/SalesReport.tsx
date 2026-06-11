@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { Download, Loader2, SearchX, ChevronLeft, ChevronRight, CalendarDays, X } from 'lucide-react';
+import {
+  Download, Loader2, SearchX,
+  ChevronLeft, ChevronRight,
+  CalendarDays, X,
+  CheckCircle2, XCircle,
+  Maximize2, Info,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ReportFilters, ISODateString } from '@/modules/reports/types';
 import type { SalesRow, SalesColumnFilters } from './types';
 import { EMPTY_COLUMN_FILTERS, PAYMENT_METHOD_OPTIONS, PAYMENT_STATUS_OPTIONS, PAGE_SIZE } from './types';
@@ -31,13 +39,27 @@ const fmtTime = (iso: string) =>
     timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date(iso));
 
+// Fecha de pago: solo se muestra cuando hay pago real. Pendiente = sin fecha de pago.
+const fmtPaymentDate = (iso: string, status: string | null): string =>
+  status === 'pending' ? '—' : fmtDate(iso);
+
+const fmtPaymentTime = (iso: string, status: string | null): string =>
+  status === 'pending' ? '—' : fmtTime(iso);
+
 const toDateStr = (t: number): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date(t));
 
 const PAYMENT_METHOD_LABEL: Record<string, string> = {
   efectivo: 'Efectivo', yape: 'Yape', plin: 'Plin',
   transferencia: 'Transferencia', tarjeta: 'Tarjeta', card: 'Tarjeta',
-  mixto: 'Mixto', saldo: 'Saldo Cliente', saldo_billetera: 'Saldo Cliente', wallet: 'Saldo Cliente',
+  mixto: 'Mixto',
+  saldo: 'Crédito', saldo_billetera: 'Crédito', wallet: 'Crédito',
+  credito: 'Crédito', debt: 'Crédito',
+};
+
+const getMethodLabel = (method: string | null | undefined, status: string | null | undefined): string => {
+  if (!method) return status === 'pending' ? 'Crédito' : '—';
+  return PAYMENT_METHOD_LABEL[method.toLowerCase()] ?? method;
 };
 
 const PAYMENT_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -69,8 +91,7 @@ const parseError = (e: unknown): string => {
   return String(e);
 };
 
-// ── Semana operativa Beto (epoch: lunes 29/12/2025) ──────────────────────────
-// noon UTC para evitar problemas en bordes de zona horaria.
+// ── Semana operativa (epoch: lunes 29/12/2025) ────────────────────────────────
 const BETO_EPOCH_MS = new Date('2025-12-29T12:00:00Z').getTime();
 const MS_WEEK = 7 * 86_400_000;
 
@@ -102,9 +123,82 @@ function buildWeekOptions(): WeekOption[] {
 
 const WEEK_OPTIONS = buildWeekOptions();
 
+const SALES_HEADER_DEFINITIONS: Record<string, string> = {
+  'N° OP': 'Número de Operación interno del sistema (correlativo único).',
+  'Ticket': 'Código de comprobante impreso (ej. T-AN...).',
+  'S.': 'Semana operativa del sistema (S + número).',
+  'Cliente': 'Titular de la venta. VSC significa Venta Sin Crédito (al contado).',
+  'Vendedor': 'Usuario del sistema que registró la operación.',
+  'Monto': 'Valor total de la transacción en Soles (S/).',
+  'Método': 'Medio de pago utilizado (Yape, Efectivo, Saldo, etc.).',
+  'Ref. Pago': 'Código de confirmación digital (Yape, Plin, ID Pasarela).',
+  'Fecha': 'Fecha de pago de la operación en horario de Lima.',
+  'Hora': 'Hora de pago de la operación en horario de Lima.',
+  'Estado': 'Situación actual: Pagado (caja cerrada), Pendiente (deuda), Anulado.',
+  'Sede': 'Punto físico o virtual donde se realizó la venta.',
+};
+
+interface HeaderTooltipProps {
+  content: string;
+}
+
+function HeaderTooltip({ content }: HeaderTooltipProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+          aria-label="Información de la columna"
+        >
+          <Info className="h-3 w-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" className="max-w-64 text-xs leading-snug">
+        {content}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// ── ExpandableCell ────────────────────────────────────────────────────────────
+// Trunca visualmente. Si el texto supera maxChars, muestra un botón expandible.
+// El componente padre mantiene UN solo Dialog activo (no instancias por fila).
+interface ExpandableCellProps {
+  value: string;
+  label: string;
+  onExpand: (label: string, value: string) => void;
+  maxChars?: number;
+  className?: string;
+}
+
+function ExpandableCell({ value, label, onExpand, maxChars = 22, className = '' }: ExpandableCellProps) {
+  if (!value || value === '—') {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  if (value.length <= maxChars) {
+    return <span className={`block truncate ${className}`} title={value}>{value}</span>;
+  }
+  return (
+    <button
+      type="button"
+      title="Clic para ver texto completo"
+      onClick={() => onExpand(label, value)}
+      className={`group flex items-center gap-1 w-full text-left truncate hover:text-primary transition-colors ${className}`}
+    >
+      <span className="truncate flex-1">{value}</span>
+      <Maximize2 className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+    </button>
+  );
+}
+
 // ── Tipos locales ─────────────────────────────────────────────────────────────
 type TextFilters = Pick<SalesColumnFilters, 'ticketCode' | 'opCode' | 'paymentRef' | 'clientName' | 'sellerName'>;
 const EMPTY_TEXT: TextFilters = { ticketCode: '', opCode: '', paymentRef: '', clientName: '', sellerName: '' };
+type ExportState = 'idle' | 'fetching' | 'generating' | 'success' | 'error';
+const EXPORT_CHUNK_SIZE = 1000;
+const SUCCESS_OVERLAY_MS = 1800;
+const COL_COUNT = 12;
 
 // ── Componente ────────────────────────────────────────────────────────────────
 interface Props { filters: ReportFilters; }
@@ -115,19 +209,23 @@ export function SalesReport({ filters }: Props) {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exportState, setExportState] = useState<ExportState>('idle');
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [colFilters, dispatch] = useReducer(filterReducer, EMPTY_COLUMN_FILTERS);
   const [debouncedText, setDebouncedText] = useState<TextFilters>(EMPTY_TEXT);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
 
+  // Estado del dialog de celda expandida — UN solo dialog para toda la tabla.
+  const [expandedCell, setExpandedCell] = useState<{ label: string; value: string } | null>(null);
+  const handleExpand = useCallback((label: string, value: string) => setExpandedCell({ label, value }), []);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fechas activas: semana tiene prioridad sobre el filtro global
   const activeDateFrom = selectedWeek ? getWeekRange(selectedWeek).from : filters.dateRange.from;
   const activeDateTo   = selectedWeek ? getWeekRange(selectedWeek).to   : filters.dateRange.to;
 
-  // Debounce 500ms solo para inputs de texto
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
@@ -140,9 +238,8 @@ export function SalesReport({ filters }: Props) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [colFilters.ticketCode, colFilters.opCode, colFilters.paymentRef, colFilters.clientName, colFilters.sellerName]);
 
-  // RPC params — incluye todos los filtros activos
-  const buildRpcParams = useCallback(
-    (limit: number, offset: number) => ({
+  const buildRpcBaseParams = useCallback(
+    () => ({
       p_school_id:      filters.effectiveSchoolId ?? undefined,
       p_date_from:      activeDateFrom,
       p_date_to:        activeDateTo,
@@ -153,10 +250,13 @@ export function SalesReport({ filters }: Props) {
       p_seller_name:    toOptionalFilter(debouncedText.sellerName),
       p_payment_method: toOptionalFilter(colFilters.paymentMethod),
       p_payment_status: toOptionalFilter(colFilters.paymentStatus),
-      p_limit:          limit,
-      p_offset:         offset,
     }),
     [filters.effectiveSchoolId, activeDateFrom, activeDateTo, debouncedText, colFilters.paymentMethod, colFilters.paymentStatus],
+  );
+
+  const buildRpcParams = useCallback(
+    (limit: number, offset: number) => ({ ...buildRpcBaseParams(), p_limit: limit, p_offset: offset }),
+    [buildRpcBaseParams],
   );
 
   const fetchData = useCallback(
@@ -164,17 +264,9 @@ export function SalesReport({ filters }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const params = buildRpcParams(PAGE_SIZE, currentPage * PAGE_SIZE);
-        const countParams = {
-          p_school_id: params.p_school_id, p_date_from: params.p_date_from,
-          p_date_to: params.p_date_to, p_ticket_code: params.p_ticket_code,
-          p_op_code: params.p_op_code, p_payment_ref: params.p_payment_ref,
-          p_client_name: params.p_client_name, p_seller_name: params.p_seller_name,
-          p_payment_method: params.p_payment_method, p_payment_status: params.p_payment_status,
-        };
         const [{ data, error: e1 }, { data: cnt, error: e2 }] = await Promise.all([
-          supabase.rpc('get_sales_report', params),
-          supabase.rpc('count_sales_report', countParams),
+          supabase.rpc('get_sales_report', buildRpcParams(PAGE_SIZE, currentPage * PAGE_SIZE)),
+          supabase.rpc('count_sales_report', buildRpcBaseParams()),
         ]);
         if (e1) throw e1;
         if (e2) throw e2;
@@ -186,10 +278,9 @@ export function SalesReport({ filters }: Props) {
         setLoading(false);
       }
     },
-    [buildRpcParams],
+    [buildRpcParams, buildRpcBaseParams],
   );
 
-  // Reset de página cuando cambia cualquier filtro
   useEffect(() => { setPage(0); }, [
     filters.effectiveSchoolId, activeDateFrom, activeDateTo,
     colFilters.paymentMethod, colFilters.paymentStatus,
@@ -197,10 +288,7 @@ export function SalesReport({ filters }: Props) {
     debouncedText.clientName, debouncedText.sellerName,
   ]);
 
-  // Fetch cuando cambia página o filtros
   useEffect(() => { fetchData(page); }, [fetchData, page]);
-
-  const goToPage = (p: number) => setPage(p);
 
   const handleClearFilters = () => {
     dispatch({ type: 'reset' });
@@ -209,39 +297,135 @@ export function SalesReport({ filters }: Props) {
     setPage(0);
   };
 
-  // Export: mismos filtros activos + página actual
+  // ── Export ────────────────────────────────────────────────────────────────
+  // Columnas en el MISMO orden que la tabla UI.
+  // El texto siempre sale COMPLETO en Excel (sin truncate).
   const handleExport = async () => {
-    setExporting(true);
+    let completed = false;
+    setError(null);
+    setExportError(null);
+    setFetchedRowCount(0);
+    setExportState('fetching');
     try {
-      const { data, error: err } = await supabase.rpc('get_sales_report', buildRpcParams(PAGE_SIZE, page * PAGE_SIZE));
-      if (err) throw err;
-      const exportRows = (data as SalesRow[]) ?? [];
+      const TYPE_EXPORT_LABEL: Record<string, string> = {
+        purchase: 'Venta',
+        recharge: 'Recarga',
+      };
+      const toTitleCase = (value: string): string =>
+        value ? value.charAt(0).toUpperCase() + value.slice(1).toLowerCase() : '—';
+      const normalizeTypeForExport = (value: string | null | undefined): string => {
+        const key = (value ?? '').trim().toLowerCase();
+        if (!key) return '—';
+        return TYPE_EXPORT_LABEL[key] ?? toTitleCase(key);
+      };
+      const stripTrailingDateSuffix = (value: string): string =>
+        value
+          .replace(/\s*-\s*(lunes|martes|mi[eé]rcoles|jueves|viernes|s[áa]bado|domingo)\b.*$/i, '')
+          .replace(/\s*-\s*\d{1,2}\s+de\s+[a-záéíóúñ]+(?:\s+de\s+\d{4})?\s*$/i, '')
+          .replace(/\s*-\s*\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\s*$/i, '')
+          .trim();
+      const normalizeDescriptionForExport = (value: string | null | undefined): string => {
+        const raw = (value ?? '').trim();
+        if (!raw) return '—';
+        if (/^almuerzo\s*-\s*men[uú]\s+del\s+d[ií]a\s*-/i.test(raw)) return 'Almuerzo';
+        const cleaned = stripTrailingDateSuffix(raw);
+        if (/^almuerzo\s*-\s*men[uú]\s+del\s+d[ií]a\b/i.test(cleaned)) return 'Almuerzo';
+        return cleaned || '—';
+      };
+
+      const baseParams = buildRpcBaseParams();
+      const exportRows: SalesRow[] = [];
+      let offset = 0;
+
+      while (true) {
+        const { data, error: err } = await supabase.rpc('get_sales_report', {
+          ...baseParams,
+          p_limit: EXPORT_CHUNK_SIZE,
+          p_offset: offset,
+        });
+        if (err) throw err;
+        const chunk = (data as SalesRow[]) ?? [];
+        if (chunk.length === 0) break;
+        exportRows.push(...chunk);
+        setFetchedRowCount(exportRows.length);
+        if (chunk.length < EXPORT_CHUNK_SIZE) break;
+        offset += EXPORT_CHUNK_SIZE;
+      }
+
+      setExportState('generating');
+
+      // Orden de columnas espeja exactamente el orden visual de la tabla.
       const ws = XLSX.utils.json_to_sheet(
         exportRows.map((r) => ({
-          'N° Operación': r.op_code,
-          Ticket: r.ticket_code ?? '',
-          'Ref. Pago (Yape/Plin)': r.payment_ref ?? '',
-          Fecha: fmtDate(r.created_at),
-          Hora: fmtTime(r.created_at),
-          Semana: `S${r.week_number}`,
-          Cliente: r.client_name,
-          Vendedor: r.seller_name,
-          'Monto (S/)': Math.abs(r.amount),
-          Método: PAYMENT_METHOD_LABEL[(r.payment_method ?? '').toLowerCase()] ?? r.payment_method ?? '',
-          Estado: getStatus(r.payment_status).label,
-          Sede: r.school_name ?? '',
-          Tipo: r.type,
-          Descripción: r.description ?? '',
+          'N° Operación':   r.op_code,
+          'Ticket':         r.ticket_code ?? '—',
+          'Semana':         `S${r.week_number}`,
+          'Cliente':        r.client_name,
+          'Vendedor':       r.seller_name,
+          'Monto (S/)':     Math.abs(r.amount),
+          'Método':         getMethodLabel(r.payment_method, r.payment_status),
+          'Ref. Pago':      r.payment_ref ?? '—',
+          'Fecha de Pago':  r.payment_status === 'pending' ? '—' : new Date(r.created_at),
+          'Hora de Pago':   fmtPaymentTime(r.created_at, r.payment_status),
+          'Estado':         getStatus(r.payment_status).label,
+          'Sede':           r.school_name ?? '—',
+          'Tipo':           normalizeTypeForExport(r.type),
+          'Descripción':    normalizeDescriptionForExport(r.description),
         })),
+        { cellDates: true },
       );
+
+      // Anchos de columna alineados con el orden de exportación.
+      ws['!cols'] = [
+        { wch: 14 }, // A: N° Operación
+        { wch: 14 }, // B: Ticket
+        { wch: 8  }, // C: Semana
+        { wch: 34 }, // D: Cliente
+        { wch: 28 }, // E: Vendedor
+        { wch: 14 }, // F: Monto
+        { wch: 16 }, // G: Método
+        { wch: 20 }, // H: Ref. Pago
+        { wch: 14 }, // I: Fecha de Pago
+        { wch: 10 }, // J: Hora de Pago
+        { wch: 14 }, // K: Estado
+        { wch: 24 }, // L: Sede
+        { wch: 18 }, // M: Tipo
+        { wch: 40 }, // N: Descripción
+      ];
+
+      const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1:A1');
+      for (let row = range.s.r + 1; row <= range.e.r; row++) {
+        // Formato numérico para Monto (col F = c:5)
+        const amtCell = ws[XLSX.utils.encode_cell({ r: row, c: 5 })];
+        if (amtCell && typeof amtCell.v === 'number') {
+          amtCell.t = 'n';
+          amtCell.z = '"S/ " #,##0.00';
+        }
+        // Formato de fecha para Fecha de Pago (col I = c:8) solo si es Date
+        const dtCell = ws[XLSX.utils.encode_cell({ r: row, c: 8 })];
+        if (dtCell && dtCell.v instanceof Date) {
+          dtCell.z = 'dd/mm/yyyy';
+        }
+      }
+
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
       const weekTag = selectedWeek ? `_S${selectedWeek}` : '';
-      XLSX.writeFile(wb, `ventas_${activeDateFrom}_${activeDateTo}${weekTag}_p${page + 1}.xlsx`);
+      XLSX.writeFile(wb, `ventas_${activeDateFrom}_${activeDateTo}${weekTag}.xlsx`, { cellDates: true });
+
+      setExportState('success');
+      await new Promise((resolve) => setTimeout(resolve, SUCCESS_OVERLAY_MS));
+      completed = true;
     } catch (e) {
-      setError(parseError(e));
+      const msg = parseError(e);
+      setError(msg);
+      setExportError(msg);
+      setExportState('error');
     } finally {
-      setExporting(false);
+      if (completed) {
+        setExportState('idle');
+        setFetchedRowCount(0);
+      }
     }
   };
 
@@ -251,7 +435,7 @@ export function SalesReport({ filters }: Props) {
   return (
     <div className="space-y-3">
 
-      {/* ── Selector de Semana operativa ─────────────────────────────────── */}
+      {/* Selector de semana operativa */}
       <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <CalendarDays className="h-3.5 w-3.5" />
@@ -267,9 +451,7 @@ export function SalesReport({ filters }: Props) {
           <SelectContent>
             <SelectItem value="none">— Usar rango de fechas —</SelectItem>
             {WEEK_OPTIONS.map((o) => (
-              <SelectItem key={o.weekNum} value={String(o.weekNum)}>
-                {o.label}
-              </SelectItem>
+              <SelectItem key={o.weekNum} value={String(o.weekNum)}>{o.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -288,7 +470,7 @@ export function SalesReport({ filters }: Props) {
         )}
       </div>
 
-      {/* ── Barra superior ────────────────────────────────────────────────── */}
+      {/* Barra superior */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">
@@ -307,78 +489,100 @@ export function SalesReport({ filters }: Props) {
           <Button
             variant="default" size="sm"
             onClick={handleExport}
-            disabled={loading || exporting || total === 0}
-            title="Exporta la página visible con los filtros activos"
+            disabled={loading || exportState !== 'idle' || total === 0}
+            title="Exporta todos los registros filtrados con texto completo"
           >
-            {exporting
+            {(exportState === 'fetching' || exportState === 'generating')
               ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
               : <Download className="h-4 w-4 mr-1" />
             }
-            Exportar xlsx
+            {(exportState === 'fetching' || exportState === 'generating') ? 'Generando Excel...' : 'Exportar xlsx'}
           </Button>
         </div>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
           {error}
         </div>
       )}
 
-      {/* ── Tabla ─────────────────────────────────────────────────────────── */}
+      {/* ── Tabla con layout fijo ─────────────────────────────────────────── */}
+      {/* table-fixed + anchos definidos en <th> → las columnas no se deforman
+          sin importar el contenido. overflow-x-auto en el wrapper para móvil. */}
       <div className="rounded-lg border overflow-x-auto bg-card">
-        <table className="w-full text-sm">
+        <TooltipProvider delayDuration={120}>
+          <table className="w-full text-sm table-fixed min-w-[1100px]">
           <thead>
+            {/* Cabecera */}
             <tr className="border-b bg-muted/40">
-              {([
-                ['N° OP',    'text-left'],    ['Ticket',   'text-left'],
-                ['Ref. Pago','text-left'],    ['Fecha',    'text-center'],
-                ['Hora',     'text-center'],  ['S.',       'text-center'],
-                ['Cliente',  'text-left'],    ['Vendedor', 'text-left'],
-                ['Monto',    'text-right'],   ['Método',   'text-center'],
-                ['Estado',   'text-center'],  ['Sede',     'text-left'],
-              ] as [string, string][]).map(([label, align]) => (
-                <th key={label} className={`px-3 py-2 font-semibold text-muted-foreground whitespace-nowrap ${align}`}>
-                  {label}
-                </th>
-              ))}
+              <th className="w-[100px] px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center gap-1.5">N° OP<HeaderTooltip content={SALES_HEADER_DEFINITIONS['N° OP']} /></span>
+              </th>
+              <th className="w-[110px] px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center gap-1.5">Ticket<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Ticket} /></span>
+              </th>
+              <th className="w-[36px] px-3 py-2 text-center font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center justify-center gap-1.5">S.<HeaderTooltip content={SALES_HEADER_DEFINITIONS['S.']} /></span>
+              </th>
+              <th className="w-[150px] px-3 py-2 text-left font-semibold text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">Cliente<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Cliente} /></span>
+              </th>
+              <th className="w-[130px] px-3 py-2 text-left font-semibold text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">Vendedor<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Vendedor} /></span>
+              </th>
+              <th className="w-[90px] px-3 py-2 text-right font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center gap-1.5">Monto<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Monto} /></span>
+              </th>
+              <th className="w-[110px] px-3 py-2 text-center font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center justify-center gap-1.5">Método<HeaderTooltip content={SALES_HEADER_DEFINITIONS['Método']} /></span>
+              </th>
+              <th className="w-[110px] px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center gap-1.5">Ref. Pago<HeaderTooltip content={SALES_HEADER_DEFINITIONS['Ref. Pago']} /></span>
+              </th>
+              <th className="w-[80px] px-3 py-2 text-center font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center justify-center gap-1.5">Fecha<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Fecha} /></span>
+              </th>
+              <th className="w-[52px] px-3 py-2 text-center font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center justify-center gap-1.5">Hora<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Hora} /></span>
+              </th>
+              <th className="w-[90px] px-3 py-2 text-center font-semibold text-muted-foreground whitespace-nowrap">
+                <span className="inline-flex items-center justify-center gap-1.5">Estado<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Estado} /></span>
+              </th>
+              <th className="w-[100px] px-3 py-2 text-left font-semibold text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">Sede<HeaderTooltip content={SALES_HEADER_DEFINITIONS.Sede} /></span>
+              </th>
             </tr>
 
-            {/* Fila de filtros por columna (estilo Excel) */}
+            {/* Fila de filtros por columna */}
             <tr className="border-b bg-muted/20">
-              {/* OP */}
+              {/* N° OP */}
               <td className="px-2 py-1">
                 <Input placeholder="OP-…" value={colFilters.opCode}
                   onChange={(e) => dispatch({ field: 'opCode', value: e.target.value })}
-                  className="h-7 text-xs w-24" />
+                  className="h-7 text-xs w-full" />
               </td>
               {/* Ticket */}
               <td className="px-2 py-1">
                 <Input placeholder="T-…" value={colFilters.ticketCode}
                   onChange={(e) => dispatch({ field: 'ticketCode', value: e.target.value })}
-                  className="h-7 text-xs w-28" />
+                  className="h-7 text-xs w-full" />
               </td>
-              {/* Ref Pago */}
-              <td className="px-2 py-1">
-                <Input placeholder="Ref…" value={colFilters.paymentRef}
-                  onChange={(e) => dispatch({ field: 'paymentRef', value: e.target.value })}
-                  className="h-7 text-xs w-24" />
-              </td>
-              {/* Fecha / Hora / S. sin filtro */}
-              <td colSpan={3} />
+              {/* S. — sin filtro */}
+              <td />
               {/* Cliente */}
               <td className="px-2 py-1">
                 <Input placeholder="Cliente…" value={colFilters.clientName}
                   onChange={(e) => dispatch({ field: 'clientName', value: e.target.value })}
-                  className="h-7 text-xs w-32" />
+                  className="h-7 text-xs w-full" />
               </td>
               {/* Vendedor */}
               <td className="px-2 py-1">
                 <Input placeholder="Vendedor…" value={colFilters.sellerName}
                   onChange={(e) => dispatch({ field: 'sellerName', value: e.target.value })}
-                  className="h-7 text-xs w-32" />
+                  className="h-7 text-xs w-full" />
               </td>
+              {/* Monto — sin filtro */}
               <td />
               {/* Método */}
               <td className="px-2 py-1">
@@ -386,7 +590,7 @@ export function SalesReport({ filters }: Props) {
                   value={colFilters.paymentMethod === 'all' ? undefined : colFilters.paymentMethod}
                   onValueChange={(v) => dispatch({ field: 'paymentMethod', value: v })}
                 >
-                  <SelectTrigger className="h-7 text-xs w-28">
+                  <SelectTrigger className="h-7 text-xs w-full">
                     <SelectValue placeholder="Método" />
                   </SelectTrigger>
                   <SelectContent>
@@ -396,13 +600,21 @@ export function SalesReport({ filters }: Props) {
                   </SelectContent>
                 </Select>
               </td>
+              {/* Ref. Pago */}
+              <td className="px-2 py-1">
+                <Input placeholder="Ref…" value={colFilters.paymentRef}
+                  onChange={(e) => dispatch({ field: 'paymentRef', value: e.target.value })}
+                  className="h-7 text-xs w-full" />
+              </td>
+              {/* Fecha / Hora — sin filtro (colSpan=2) */}
+              <td colSpan={2} />
               {/* Estado */}
               <td className="px-2 py-1">
                 <Select
                   value={colFilters.paymentStatus === 'all' ? undefined : colFilters.paymentStatus}
                   onValueChange={(v) => dispatch({ field: 'paymentStatus', value: v })}
                 >
-                  <SelectTrigger className="h-7 text-xs w-28">
+                  <SelectTrigger className="h-7 text-xs w-full">
                     <SelectValue placeholder="Estado" />
                   </SelectTrigger>
                   <SelectContent>
@@ -412,62 +624,174 @@ export function SalesReport({ filters }: Props) {
                   </SelectContent>
                 </Select>
               </td>
+              {/* Sede — sin filtro */}
               <td />
             </tr>
           </thead>
 
           <tbody>
             {loading && (
-              <tr><td colSpan={12} className="py-12 text-center text-muted-foreground">
-                <Loader2 className="h-6 w-6 animate-spin inline mr-2" />Consultando datos…
-              </td></tr>
+              <tr>
+                <td colSpan={COL_COUNT} className="py-12 text-center text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin inline mr-2" />Consultando datos…
+                </td>
+              </tr>
             )}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={12} className="py-12 text-center text-muted-foreground">
-                <SearchX className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p>Sin resultados para los filtros seleccionados.</p>
-              </td></tr>
+              <tr>
+                <td colSpan={COL_COUNT} className="py-12 text-center text-muted-foreground">
+                  <SearchX className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                  <p>Sin resultados para los filtros seleccionados.</p>
+                </td>
+              </tr>
             )}
             {!loading && rows.map((r) => {
               const st = getStatus(r.payment_status);
-              const methodLabel = PAYMENT_METHOD_LABEL[(r.payment_method ?? '').toLowerCase()] ?? r.payment_method ?? '—';
               return (
-                <tr key={r.id}
+                <tr
+                  key={r.id}
                   className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${r.is_deleted ? 'opacity-40 line-through' : ''}`}
                 >
-                  <td className="px-3 py-2 font-mono text-xs text-primary whitespace-nowrap">{r.op_code}</td>
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.ticket_code ?? '—'}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{r.payment_ref ?? '—'}</td>
-                  <td className="px-3 py-2 text-xs text-center whitespace-nowrap">{fmtDate(r.created_at)}</td>
-                  <td className="px-3 py-2 text-xs text-center text-muted-foreground whitespace-nowrap">{fmtTime(r.created_at)}</td>
-                  <td className="px-3 py-2 text-xs text-center font-medium">S{r.week_number}</td>
-                  <td className="px-3 py-2 text-xs max-w-[140px] truncate" title={r.client_name}>{r.client_name}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.seller_name}>{r.seller_name}</td>
-                  <td className="px-3 py-2 text-right font-semibold tabular-nums whitespace-nowrap">{formatAmount(r.amount)}</td>
-                  <td className="px-3 py-2 text-xs text-center">{methodLabel}</td>
+                  {/* N° OP */}
+                  <td className="px-3 py-2 font-mono text-xs text-primary whitespace-nowrap overflow-hidden">
+                    {r.op_code}
+                  </td>
+                  {/* Ticket */}
+                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap overflow-hidden">
+                    {r.ticket_code ?? '—'}
+                  </td>
+                  {/* Semana */}
+                  <td className="px-3 py-2 text-xs text-center font-medium">
+                    S{r.week_number}
+                  </td>
+                  {/* Cliente — expandible */}
+                  <td className="px-3 py-2 text-xs overflow-hidden">
+                    <ExpandableCell
+                      value={r.client_name}
+                      label="Cliente"
+                      onExpand={handleExpand}
+                      maxChars={20}
+                    />
+                  </td>
+                  {/* Vendedor — expandible */}
+                  <td className="px-3 py-2 text-xs text-muted-foreground overflow-hidden">
+                    <ExpandableCell
+                      value={r.seller_name}
+                      label="Vendedor"
+                      onExpand={handleExpand}
+                      maxChars={18}
+                    />
+                  </td>
+                  {/* Monto */}
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums whitespace-nowrap">
+                    {formatAmount(r.amount)}
+                  </td>
+                  {/* Método */}
+                  <td className="px-3 py-2 text-xs text-center whitespace-nowrap">
+                    {getMethodLabel(r.payment_method, r.payment_status)}
+                  </td>
+                  {/* Ref. Pago — expandible (UUIDs de pasarela son muy largos) */}
+                  <td className="px-3 py-2 text-xs text-muted-foreground overflow-hidden">
+                    <ExpandableCell
+                      value={r.payment_ref ?? '—'}
+                      label="Ref. Pago"
+                      onExpand={handleExpand}
+                      maxChars={14}
+                    />
+                  </td>
+                  {/* Fecha de pago — '—' si pendiente */}
+                  <td className="px-3 py-2 text-xs text-center whitespace-nowrap">
+                    {fmtPaymentDate(r.created_at, r.payment_status)}
+                  </td>
+                  {/* Hora de pago — '—' si pendiente */}
+                  <td className="px-3 py-2 text-xs text-center text-muted-foreground whitespace-nowrap">
+                    {fmtPaymentTime(r.created_at, r.payment_status)}
+                  </td>
+                  {/* Estado */}
                   <td className="px-3 py-2 text-center">
                     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${st.color}`}>
                       {st.label}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{r.school_name ?? '—'}</td>
+                  {/* Sede */}
+                  <td className="px-3 py-2 text-xs text-muted-foreground overflow-hidden">
+                    <ExpandableCell
+                      value={r.school_name ?? '—'}
+                      label="Sede"
+                      onExpand={handleExpand}
+                      maxChars={14}
+                    />
+                  </td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
+          </table>
+        </TooltipProvider>
       </div>
 
-      {/* ── Paginación ────────────────────────────────────────────────────── */}
+      {/* Paginación */}
       {totalPages > 1 && (
         <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => goToPage(page - 1)} disabled={page === 0 || loading}>
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => p - 1)} disabled={page === 0 || loading}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="text-xs text-muted-foreground">{page + 1} / {totalPages}</span>
-          <Button variant="outline" size="sm" onClick={() => goToPage(page + 1)} disabled={page >= totalPages - 1 || loading}>
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1 || loading}>
             <ChevronRight className="h-4 w-4" />
           </Button>
+        </div>
+      )}
+
+      {/* Dialog de celda expandida — única instancia, compartida por toda la tabla */}
+      <Dialog open={expandedCell !== null} onOpenChange={(open) => { if (!open) setExpandedCell(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold text-muted-foreground">
+              {expandedCell?.label}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm break-words leading-relaxed whitespace-pre-wrap">
+            {expandedCell?.value}
+          </p>
+        </DialogContent>
+      </Dialog>
+
+      {/* Overlay de exportación */}
+      {exportState !== 'idle' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white p-6 rounded shadow-xl flex min-w-[320px] max-w-[90vw] flex-col items-center gap-4 text-center">
+            {(exportState === 'fetching' || exportState === 'generating') && (
+              <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            )}
+            {exportState === 'fetching' && (
+              <p className="text-sm text-slate-700">
+                Descargando registros… ({fetchedRowCount.toLocaleString('es-PE')} procesados)
+              </p>
+            )}
+            {exportState === 'generating' && (
+              <p className="text-sm text-slate-700">Armando archivo Excel…</p>
+            )}
+            {exportState === 'success' && (
+              <>
+                <CheckCircle2 className="h-14 w-14 text-green-600" />
+                <p className="text-base font-semibold text-green-700">¡Descarga completada!</p>
+              </>
+            )}
+            {exportState === 'error' && (
+              <>
+                <XCircle className="h-14 w-14 text-red-600" />
+                <p className="text-base font-semibold text-red-700">No se pudo generar el Excel</p>
+                {exportError && <p className="text-xs text-slate-600 max-w-[440px]">{exportError}</p>}
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => { setExportState('idle'); setFetchedRowCount(0); setExportError(null); }}
+                >
+                  Cerrar
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

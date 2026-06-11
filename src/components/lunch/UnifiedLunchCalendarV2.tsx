@@ -43,6 +43,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // ==========================================
 // INTERFACES
@@ -131,6 +141,8 @@ interface ExistingOrder {
   cancelled_by: string | null;
   /** payment_status de la transacción vinculada (null si no tiene transacción) */
   transaction_payment_status?: string | null;
+  /** true solo si existe recharge_request pendiente asociado al pedido */
+  has_pending_voucher?: boolean;
   /** Estado del flujo de prepago (Fase 1). null = pedido pre-migración (tratar como confirmed_paid) */
   payment_flow_state?: string | null;
   // Selecciones del plato armado
@@ -158,6 +170,18 @@ const MONTHS = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
+
+/** Alineado con tg_validate_lunch_order_deadline / check_order_eligibility (solo tope horario global). */
+/** Debe coincidir con tg_validate_lunch_order_deadline / check_order_eligibility en BD. */
+const LUNCH_DEADLINE_BYPASS_ROLES = new Set([
+  'admin',
+  'admin_general',
+  'superadmin',
+  'admin_sede',
+  'gestor_unidad',
+  'operador_caja',
+  'cajero',
+]);
 
 // ==========================================
 // TIMEZONE HELPERS (Peru UTC-5) - FIXED
@@ -280,6 +304,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const [submitting, setSubmitting] = useState(false);
   const isSubmittingRef = useRef(false); // 🔒 Lock sincrónico anti doble-clic
 
+  // ── Advertencia "pedir doble" ────────────────────────────────────────────
+  /** Muestra el AlertDialog de confirmación cuando el alumno ya tiene un pedido activo ese día */
+  const [showDoubleLunchConfirm, setShowDoubleLunchConfirm] = useState(false);
+  /** Guarda la función a ejecutar si el padre acepta pedir doble */
+  const pendingDoubleOrderRef = useRef<(() => void) | null>(null);
+
   // ── Confirmación de cancelación ──
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
@@ -328,6 +358,37 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const configurableLoadRequestRef = useRef(0);
   // Mirror ref so the inline-order useEffect always reads the latest totalOrderAmount
   const totalOrderAmountRef = useRef(0);
+
+  /** Rol del usuario autenticado (misma fila que usa el trigger en BD). */
+  const [callerProfileRole, setCallerProfileRole] = useState<string | null>(null);
+  useEffect(() => {
+    if (!userId) {
+      setCallerProfileRole(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data?.role) {
+        setCallerProfileRole(null);
+        return;
+      }
+      setCallerProfileRole(data.role);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const bypassLunchOrderDeadline = useMemo(
+    () => !!callerProfileRole && LUNCH_DEADLINE_BYPASS_ROLES.has(callerProfileRole),
+    [callerProfileRole]
+  );
 
   // ==========================================
   // COMPUTED
@@ -512,7 +573,34 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           }
           orders.forEach(o => {
             o.transaction_payment_status = txPaymentMap.get(o.id) ?? null;
+            o.has_pending_voucher = false;
           });
+
+          // "Pago en revisión" SOLO aplica si existe voucher pendiente real.
+          // payment_status='pending' por sí solo significa deuda/crédito pendiente.
+          if (userType === 'parent') {
+            const { data: rrData, error: rrError } = await supabase
+              .from('recharge_requests')
+              .select('lunch_order_ids')
+              .eq('parent_id', userId)
+              .in('request_type', ['lunch_payment', 'debt_payment'])
+              .eq('status', 'pending')
+              .not('lunch_order_ids', 'is', null);
+
+            if (rrError) {
+              console.warn('⚠️ [UnifiedCalendarV2] No se pudo leer vouchers pendientes:', rrError);
+            } else if (rrData) {
+              const pendingVoucherOrderIds = new Set<string>();
+              rrData.forEach((rr: any) => {
+                if (Array.isArray(rr.lunch_order_ids)) {
+                  rr.lunch_order_ids.forEach((id: string) => pendingVoucherOrderIds.add(id));
+                }
+              });
+              orders.forEach((o) => {
+                o.has_pending_voucher = pendingVoucherOrderIds.has(o.id);
+              });
+            }
+          }
         }
         setExistingOrders(orders);
       }
@@ -537,6 +625,10 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const canOrderForDate = useCallback((dateStr: string): { canOrder: boolean; reason?: string } => {
     if (!config) return { canOrder: true };
     if (!config.orders_enabled) return { canOrder: false, reason: 'Pedidos deshabilitados' };
+
+    if (bypassLunchOrderDeadline) {
+      return { canOrder: true };
+    }
 
     // ── Deadline GLOBAL (system_status id=1) — manda sobre lunch_configuration por sede.
     // Fallback defensivo: si el valor global es vacío/nulo no bloqueamos.
@@ -564,7 +656,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
 
     return { canOrder: true };
-  }, [config, globalDeadlineTime, globalDeadlineDays]);
+  }, [config, globalDeadlineTime, globalDeadlineDays, bypassLunchOrderDeadline]);
 
   /**
    * Checks if cancellation is allowed for a given date.
@@ -1329,27 +1421,58 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
       if (!personId) throw new Error('No se encontró el usuario');
 
-      // ── Verificar si ya existe un pedido activo para esta categoría + fecha ──
-      const { data: existingOrder } = await supabase
+      // ── Verificar si ya existe CUALQUIER pedido activo para este alumno ese día ──
+      // (regla de negocio: el padre PUEDE pedir doble, pero se le advierte primero)
+      const { data: existingDayOrders } = await supabase
         .from('lunch_orders')
         .select('id')
         .eq(personField, personId)
         .eq('order_date', currentDateStr)
-        .eq('category_id', selectedCategory.id)
         .eq('is_cancelled', false)
-        .maybeSingle();
+        .limit(1);
 
-      if (existingOrder) {
-        toast({
-          variant: 'destructive',
-          title: '⚠️ Pedido duplicado',
-          description: `Ya tienes un pedido de "${selectedCategory.name}" para este día. Puedes cancelarlo primero si deseas cambiarlo.`,
-        });
+      if (existingDayOrders && existingDayOrders.length > 0) {
+        // Liberar el lock mientras esperamos respuesta del usuario
         setSubmitting(false);
         isSubmittingRef.current = false;
+
+        // Guardar el resto del flujo en el ref para ejecutarlo si acepta
+        pendingDoubleOrderRef.current = () => proceedWithOrderCreation(personField, personId, currentDateStr);
+        setShowDoubleLunchConfirm(true);
         return;
       }
 
+      // No hay pedido previo → proceder directamente sin advertencia
+      await proceedWithOrderCreation(personField, personId, currentDateStr);
+
+    } catch (error: any) {
+      console.error('❌ Error confirmando pedido:', error);
+      toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudo registrar el pedido' });
+    } finally {
+      setSubmitting(false);
+      isSubmittingRef.current = false; // 🔓 Liberar lock
+    }
+  };
+
+  // ── Lógica de creación del pedido extraída (idempotente, reutilizable) ───────
+  // Se llama tanto desde handleConfirmOrder (sin pedido previo)
+  // como desde el AlertDialog "pedir doble" (con aceptación explícita del padre).
+  const proceedWithOrderCreation = async (
+    personField: string,
+    personId: string,
+    currentDateStr: string,
+  ) => {
+    if (!config || !selectedCategory || !selectedMenu) return;
+
+    // 🔒 Doble candado: bloquear si ya está en vuelo
+    if (isSubmittingRef.current && !submitting) {
+      // Si el ref está activo pero submitting no, re-sincronizar
+      setSubmitting(true);
+    }
+    isSubmittingRef.current = true;
+    setSubmitting(true);
+
+    try {
       const unitPrice = selectedCategory.price || config.lunch_price;
 
       // 1. Create lunch_order (con modificadores si los hay)
@@ -1399,8 +1522,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
             title: '⚠️ Pedido duplicado',
             description: `Ya existe un pedido para esta categoría en este día.`,
           });
-          setSubmitting(false);
-          isSubmittingRef.current = false;
           return;
         }
 
@@ -1419,8 +1540,6 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           if (retryError) {
             if (retryError.code === '23505') {
               toast({ variant: 'destructive', title: '⚠️ Pedido duplicado', description: 'Ya existe un pedido para esta categoría en este día.' });
-              setSubmitting(false);
-              isSubmittingRef.current = false;
               return;
             }
             throw retryError;
@@ -1496,7 +1615,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
       // Track for payment (parents) — incluir tanto order IDs como transaction IDs
       if (userType === 'parent' && insertedOrder?.id) {
-        setCreatedOrderIds(prev => [...prev, insertedOrder.id]);
+        setCreatedOrderIds(prev => [...prev, insertedOrder!.id]);
         if (txData?.id) setCreatedTransactionIds(prev => [...prev, txData.id]);
         setTotalOrderAmount(prev => {
           const next = prev + (unitPrice * quantity);
@@ -1558,7 +1677,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       }
 
     } catch (error: any) {
-      console.error('❌ Error confirmando pedido:', error);
+      console.error('❌ Error en proceedWithOrderCreation:', error);
       toast({ variant: 'destructive', title: 'Error', description: error.message || 'No se pudo registrar el pedido' });
     } finally {
       setSubmitting(false);
@@ -1792,30 +1911,39 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
 
     setCancellingOrderId(orderId);
     try {
-      // 1. Update lunch_order
-      const { error: orderError } = await supabase
-        .from('lunch_orders')
-        .update({
-          is_cancelled: true,
-          status: 'cancelled',
-          cancelled_by: userId,
-          cancelled_at: new Date().toISOString(),
-        })
-        .eq('id', orderId);
+      let result: any = null;
+      if (userType === 'parent') {
+        const { data, error } = await supabase.rpc('cancel_lunch_order_as_parent', {
+          p_order_id: orderId,
+          p_parent_id: userId,
+        });
+        if (error) throw error;
+        result = data;
+      } else {
+        const { data, error } = await supabase.rpc('cancel_lunch_order', {
+          p_order_id: orderId,
+          p_cancelled_by: userId,
+          p_reason: 'Anulado desde UnifiedLunchCalendarV2',
+        });
+        if (error) throw error;
+        result = data;
+      }
 
-      if (orderError) throw orderError;
+      if (!result?.success) {
+        throw new Error(result?.error || 'No se pudo anular el pedido');
+      }
 
-      // 2. Update related transaction — SOLO si aún no fue pagada
-      // (si ya está 'paid' o tiene voucher en revisión, NO tocar la transacción)
-      const { error: txError } = await supabase
-        .from('transactions')
-        .update({ payment_status: 'cancelled', is_taxable: false, billing_status: 'excluded' })
-        .contains('metadata', { lunch_order_id: orderId })
-        .eq('payment_status', 'pending');
-
-      if (txError) console.error('⚠️ Error updating transaction:', txError);
-
-      toast({ title: '✅ Pedido cancelado', description: 'El pedido fue anulado correctamente' });
+      if (result?.already_billed) {
+        toast({
+          variant: 'destructive',
+          title: '⚠️ Pedido anulado con aviso',
+          description: 'La transacción ya fue enviada a SUNAT. Se requiere nota de crédito.',
+        });
+      } else if (result?.tx_cancelled) {
+        toast({ title: '✅ Pedido cancelado', description: 'Pedido y deuda vinculada anulados correctamente.' });
+      } else {
+        toast({ title: '✅ Pedido cancelado', description: 'El pedido fue anulado correctamente.' });
+      }
 
       // Refresh data
       await fetchMonthlyData();
@@ -3405,7 +3533,7 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                       )}
                       {order.transaction_payment_status === 'pending' && (
                         <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 border border-amber-200 rounded px-2 py-0.5 font-semibold">
-                          <Clock className="h-3 w-3" /> Pago pendiente
+                          <Clock className="h-3 w-3" /> Deuda pendiente
                         </span>
                       )}
                       {order.transaction_payment_status === 'cancelled' && (
@@ -3417,13 +3545,13 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
                   )}
 
                   {/* Cancel button — evaluado por pedido individual */}
-                  {!order.is_cancelled && order.status === 'pending' && order.transaction_payment_status === 'pending' && (
+                  {!order.is_cancelled && order.status === 'pending' && order.has_pending_voucher === true && (
                     <div className="mt-3 flex items-start gap-1.5 text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1.5 text-blue-700">
                       <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
                       <span><strong>Pago en revisión.</strong> No se puede cancelar mientras el comprobante está siendo procesado.</span>
                     </div>
                   )}
-                  {!order.is_cancelled && order.status === 'pending' && canCancel && order.transaction_payment_status !== 'paid' && order.transaction_payment_status !== 'pending' && (
+                  {!order.is_cancelled && order.status === 'pending' && canCancel && order.transaction_payment_status !== 'paid' && order.has_pending_voucher !== true && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -3946,6 +4074,50 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Overlay bloqueante global (anti doble-clic durante envío) ──────── */}
+      {submitting && (
+        <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+            <Loader2 className="h-10 w-10 animate-spin text-orange-500" />
+            <p className="text-gray-700 font-semibold text-base">Registrando pedido…</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── AlertDialog: advertencia "pedir doble" ──────────────────────────── */}
+      <AlertDialog open={showDoubleLunchConfirm} onOpenChange={setShowDoubleLunchConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>⚠️ ¿Deseas agregar otro almuerzo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Este alumno ya tiene un pedido de almuerzo activo para este día.
+              Puedes agregar otro de todas formas, pero asegúrate de que sea intencional.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                pendingDoubleOrderRef.current = null;
+                setShowDoubleLunchConfirm(false);
+              }}
+            >
+              No, cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              onClick={() => {
+                setShowDoubleLunchConfirm(false);
+                const fn = pendingDoubleOrderRef.current;
+                pendingDoubleOrderRef.current = null;
+                if (fn) fn();
+              }}
+            >
+              Sí, pedir doble
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

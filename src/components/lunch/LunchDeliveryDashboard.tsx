@@ -138,6 +138,8 @@ interface DeliveryOrder {
   configurable_selections: Array<{ group_name: string; selected_name: string }> | null;
   selected_garnishes: string[] | null;
   manual_name: string | null;
+  // Columna calculada por v_lunch_orders_unified
+  final_target_type: string;
 }
 
 type PaymentFilter = 'all' | 'paid' | 'unpaid';
@@ -222,8 +224,8 @@ function DeliveryPanel({
   // (mostramos todos los grupos de una vez, sin paginación)
   const currentListOrders = useMemo(() => {
     let filtered = personType === 'students'
-      ? orders.filter(o => o.student_id || isDirectCashSaleOrder(o))
-      : orders.filter(o => o.teacher_id);
+      ? orders.filter(o => o.final_target_type === 'students')
+      : orders.filter(o => o.final_target_type === 'teachers');
 
     if (mode === 'alphabetical' || mode === 'all') {
       filtered.sort((a, b) => {
@@ -275,8 +277,8 @@ function DeliveryPanel({
   // Progreso GLOBAL (todos los pedidos, sin filtrar por salón)
   const listProgress = useMemo(() => {
     const base = personType === 'students'
-      ? orders.filter(o => o.student_id || isDirectCashSaleOrder(o))
-      : orders.filter(o => o.teacher_id);
+      ? orders.filter(o => o.final_target_type === 'students')
+      : orders.filter(o => o.final_target_type === 'teachers');
     const total     = base.length;
     const delivered = base.filter(o => o.status === 'delivered').length;
     return { total, delivered, pct: total > 0 ? Math.round((delivered / total) * 100) : 0 };
@@ -1652,16 +1654,19 @@ export function LunchDeliveryDashboard({
   const fetchTodayOrders = useCallback(async () => {
     setLoading(true);
     try {
+      // Vista SSOT: is_active_unified encapsula is_cancelled=false +
+      // lógica de frozen con bypass para profesores (fix bug de .neq + NULL)
       const { data: ordersData, error } = await supabase
-        .from('lunch_orders')
+        .from('v_lunch_orders_unified')
         .select(`
           id, order_date, status, is_cancelled, created_at,
           delivered_at, delivered_by, menu_id, category_id,
           quantity, base_price, final_price, is_no_order_delivery,
           student_id, teacher_id, parent_notes, manual_name,
           selected_modifiers, configurable_selections, selected_garnishes,
+          final_target_type,
           student:students (
-            full_name, photo_url, grade, section
+            full_name, photo_url, grade, section, parent_id
           ),
           teacher:teacher_profiles (
             full_name
@@ -1674,16 +1679,40 @@ export function LunchDeliveryDashboard({
           )
         `)
         .eq('order_date', todayStr)
-        .eq('is_cancelled', false)
+        .eq('is_active_unified', true)
         .eq('school_id', schoolId)
-        .neq('payment_flow_state', 'frozen_pending_payment')
         .order('created_at', { ascending: true });
 
       if (error) throw error;
 
+      const parentIds = Array.from(
+        new Set(
+          (ordersData || [])
+            .map((o: any) => o?.student?.parent_id)
+            .filter((id: string | null | undefined): id is string => Boolean(id))
+        )
+      );
+      let suspendedSet = new Set<string>();
+      if (parentIds.length > 0) {
+        const { data: suspendedParents, error: suspendedParentsError } = await supabase
+          .from('parent_profiles')
+          .select('user_id')
+          .in('user_id', parentIds)
+          .eq('is_suspended', true);
+        if (suspendedParentsError) {
+          console.warn('[LunchDelivery] No se pudo validar suspensión de padres:', suspendedParentsError);
+        } else {
+          suspendedSet = new Set((suspendedParents || []).map((p: any) => p.user_id));
+        }
+      }
+      const visibleOrdersData = (ordersData || []).filter((o: any) => {
+        const parentId = o?.student?.parent_id;
+        return !parentId || !suspendedSet.has(parentId);
+      });
+
       // Categories
       const categoryIds = [...new Set(
-        (ordersData || []).map(o => (o.lunch_menus as any)?.category_id || o.category_id).filter(Boolean) as string[]
+        visibleOrdersData.map(o => (o.lunch_menus as any)?.category_id || o.category_id).filter(Boolean) as string[]
       )];
 
       let categoriesMap = new Map<string, string>();
@@ -1693,7 +1722,7 @@ export function LunchDeliveryDashboard({
       }
 
       // Ticket codes + estado de pago — filtrado por school_id para performance
-      const orderIds = (ordersData || []).map(o => o.id);
+      const orderIds = visibleOrdersData.map(o => o.id);
       let ticketMap = new Map<string, string>();
       let paidOrderIds = new Set<string>();
 
@@ -1736,7 +1765,7 @@ export function LunchDeliveryDashboard({
         }
       }
 
-      const mapped: DeliveryOrder[] = (ordersData || []).map((o: any) => {
+      const mapped: DeliveryOrder[] = visibleOrdersData.map((o: any) => {
         const catId = o.lunch_menus?.category_id || o.category_id;
         return {
           id: o.id,
@@ -1773,15 +1802,20 @@ export function LunchDeliveryDashboard({
           configurable_selections: o.configurable_selections || null,
           selected_garnishes: o.selected_garnishes || null,
           manual_name: o.manual_name || null,
+          // Columna calculada por v_lunch_orders_unified — SSOT de clasificación
+          final_target_type: o.final_target_type || (o.teacher_id ? 'teachers' : 'students'),
         };
       });
 
       setOrders(mapped);
 
-      const studentOrders = mapped.filter(o => o.student_id);
-      const teacherOrders = mapped.filter(o => o.teacher_id);
-      const uniqueClassrooms = new Set(studentOrders.map(o => `${o.student_grade}-${o.student_section}`).filter(Boolean));
-      const uniqueGrades = new Set(studentOrders.map(o => o.student_grade).filter(Boolean));
+      // Clasificación por final_target_type (DB-computed): incluye manuales de caja
+      const studentOrders = mapped.filter(o => o.final_target_type === 'students');
+      const teacherOrders = mapped.filter(o => o.final_target_type === 'teachers');
+      // Aulas: solo pedidos con student_id real (los manuales no tienen grado)
+      const ordersWithGrade = mapped.filter(o => o.student_id);
+      const uniqueClassrooms = new Set(ordersWithGrade.map(o => `${o.student_grade}-${o.student_section}`).filter(Boolean));
+      const uniqueGrades = new Set(ordersWithGrade.map(o => o.student_grade).filter(Boolean));
 
       setSummary({
         totalStudents: studentOrders.length,
@@ -1880,8 +1914,8 @@ export function LunchDeliveryDashboard({
   const buildLists = (pType: PersonType, dMode: DeliveryMode, sourceOrders?: DeliveryOrder[], gradeFilter?: string): string[] => {
     const base = sourceOrders ?? deliveryOrders;
     const typeOrders = pType === 'students'
-      ? base.filter(o => o.student_id || isDirectCashSaleOrder(o))
-      : base.filter(o => o.teacher_id);
+      ? base.filter(o => o.final_target_type === 'students')
+      : base.filter(o => o.final_target_type === 'teachers');
     const directBucket = typeOrders.some(isDirectCashSaleOrder) ? [DIRECT_SALES_BUCKET] : [];
     const sortWithDirectLast = (a: string, b: string) => {
       if (a === DIRECT_SALES_BUCKET) return 1;
@@ -1922,8 +1956,8 @@ export function LunchDeliveryDashboard({
     if (!mode) return;
 
     const typeOrders = personType === 'students'
-      ? deliveryOrders.filter(o => o.student_id || isDirectCashSaleOrder(o))
-      : deliveryOrders.filter(o => o.teacher_id);
+      ? deliveryOrders.filter(o => o.final_target_type === 'students')
+      : deliveryOrders.filter(o => o.final_target_type === 'teachers');
 
     if (typeOrders.length === 0) {
       const filterLabel = paymentFilter === 'paid' ? ' pagados' : paymentFilter === 'unpaid' ? ' sin pagar' : '';

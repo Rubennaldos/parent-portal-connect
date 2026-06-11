@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -107,6 +107,12 @@ interface TransferDetailLine {
   quantity: number;
 }
 
+interface InsufficientStockAlertState {
+  open: boolean;
+  productName: string;
+  originLabel: string;
+}
+
 // Hash determinístico para idempotencia. Mismo payload → mismo hash → no se regenera el PDF.
 function simpleHash(payload: object): string {
   const s = JSON.stringify(payload, Object.keys(payload).sort() as any);
@@ -140,6 +146,12 @@ function getErrorMessage(err: any): string {
 function relName(v: any): string {
   if (Array.isArray(v)) return v[0]?.name || 'Producto';
   return v?.name || 'Producto';
+}
+
+function getInsufficientStockProductName(errorMessage: string): string | null {
+  const quoted = errorMessage.match(/"([^"]+)"/);
+  if (quoted?.[1]) return quoted[1].trim();
+  return null;
 }
 
 interface GuidePdfLine {
@@ -372,6 +384,11 @@ export function MovementsHubTab({ schoolId }: { schoolId: string | null }) {
   const [selectedTrf, setSelectedTrf] = useState<RecentTransfer | null>(null);
   const [txDetailLines, setTxDetailLines] = useState<IngressDetailLine[]>([]);
   const [trfDetailLines, setTrfDetailLines] = useState<TransferDetailLine[]>([]);
+  const [insufficientStockAlert, setInsufficientStockAlert] = useState<InsufficientStockAlertState>({
+    open: false,
+    productName: '',
+    originLabel: '',
+  });
 
   // ── Form Ingreso ─────────────────────────────────────────────────────────
   const [iSupplier,       setISupplier]       = useState('');
@@ -1007,6 +1024,26 @@ export function MovementsHubTab({ schoolId }: { schoolId: string | null }) {
   const sValidLines = sLines.filter(l => l.product_id && (parseInt(l.quantity) || 0) > 0);
   const sStep1Ok = !!sFrom && !!sTo && sFrom !== sTo && sValidLines.length > 0;
 
+  const openIngresoModal = useCallback(() => {
+    setISupplier('');
+    setIDocType('factura');
+    setIDocNumber('');
+    setIEvidenceUrl('');
+    setINotes('');
+    setIDistItems([]);
+    setIIsWarehouseOnly(false);
+    setIPricesIncludeIgv(false);
+    setSection('ingresos');
+    setStep(1);
+    setModal('ingreso');
+  }, []);
+
+  const goToIngresoFromStockAlert = useCallback(() => {
+    setInsufficientStockAlert(prev => ({ ...prev, open: false }));
+    setModal(null);
+    openIngresoModal();
+  }, [openIngresoModal]);
+
   const openPreviewTransferGuide = () => {
     if (!sStep1Ok) {
       toast({
@@ -1269,10 +1306,26 @@ export function MovementsHubTab({ schoolId }: { schoolId: string | null }) {
       setSStep(1);
       loadAll();
     } catch (err: any) {
+      const errorMessage = getErrorMessage(err);
+      if (errorMessage.toUpperCase().includes('INSUFFICIENT_STOCK')) {
+        const productName =
+          getInsufficientStockProductName(errorMessage)
+          || sValidLines.find(line => line.productName.trim())?.productName
+          || 'este producto';
+        const originLabel = fromIsWarehouse
+          ? WAREHOUSE_LABEL
+          : (schools.find(s => s.id === sFrom)?.name || 'sede de origen');
+        setInsufficientStockAlert({
+          open: true,
+          productName,
+          originLabel,
+        });
+        return;
+      }
       toast({
         variant: 'destructive',
         title: 'Error al registrar traslado',
-        description: getErrorMessage(err),
+        description: errorMessage,
       });
     } finally {
       setSaving(false);
@@ -1326,10 +1379,7 @@ export function MovementsHubTab({ schoolId }: { schoolId: string | null }) {
               className={`gap-1.5 shrink-0 ${section === 'ingresos' ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-blue-700 hover:bg-blue-800'}`}
               onClick={() => {
                 if (section === 'ingresos') {
-                  setISupplier(''); setIDocType('factura'); setIDocNumber('');
-                  setIEvidenceUrl(''); setINotes(''); setIDistItems([]);
-                  setIIsWarehouseOnly(false); setIPricesIncludeIgv(false);
-                  setStep(1); setModal('ingreso');
+                  openIngresoModal();
                 } else {
                   setSFrom(''); setSTo('');
                   setSLines([{ uid: uid(), product_id: '', productName: '', quantity: '1', searchQuery: '', searchResults: [], searchLoading: false, showResults: false }]);
@@ -2123,6 +2173,47 @@ export function MovementsHubTab({ schoolId }: { schoolId: string | null }) {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={insufficientStockAlert.open}
+        onOpenChange={(open) => setInsufficientStockAlert(prev => ({ ...prev, open }))}
+      >
+        <DialogContent className="w-[92vw] sm:max-w-md p-0 overflow-hidden">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-amber-100 p-2.5 shrink-0">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <DialogHeader className="space-y-0 text-left">
+                  <DialogTitle className="text-base font-semibold text-slate-900">Stock insuficiente</DialogTitle>
+                  <DialogDescription className="text-sm text-slate-600 mt-1">
+                    No hay stock disponible de <span className="font-semibold text-slate-800">{insufficientStockAlert.productName}</span> en <span className="font-semibold text-slate-800">{insufficientStockAlert.originLabel}</span>.
+                  </DialogDescription>
+                </DialogHeader>
+                <p className="text-xs text-slate-500 mt-2">
+                  Puedes registrar un ingreso de proveedor para reabastecer y continuar con el traslado.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row gap-2">
+              <Button
+                variant="outline"
+                className="h-10 sm:flex-1"
+                onClick={() => setInsufficientStockAlert(prev => ({ ...prev, open: false }))}
+              >
+                Entendido
+              </Button>
+              <Button
+                className="h-10 sm:flex-1 bg-emerald-700 hover:bg-emerald-800"
+                onClick={goToIngresoFromStockAlert}
+              >
+                Ir a Ingreso de Proveedor
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

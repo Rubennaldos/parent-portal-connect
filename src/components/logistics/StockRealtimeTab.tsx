@@ -7,6 +7,8 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Loader2, Search, Activity, RefreshCw, Plus, Minus, Save } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { StockBitacoraModal } from '@/features/stock-live/components/StockBitacoraModal';
+import type { StockBitacoraTarget } from '@/features/stock-live/types';
 
 type StockRow = {
   product_id: string;
@@ -42,8 +44,20 @@ export default function StockRealtimeTab() {
   const [estadoFilter, setEstadoFilter] = useState<string>('all');
   const [deltas, setDeltas] = useState<DeltaMap>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [bitacoraOpen, setBitacoraOpen] = useState(false);
+  const [bitacoraSelection, setBitacoraSelection] = useState<StockBitacoraTarget | null>(null);
   const debounceRef = useRef<number | null>(null);
   const reloadTimerRef = useRef<number | null>(null);
+
+  const openBitacora = (r: StockRow) => {
+    setBitacoraSelection({
+      productId: r.product_id,
+      schoolId: r.school_id,
+      productName: r.nombre_producto,
+      schoolName: r.sede,
+    });
+    setBitacoraOpen(true);
+  };
 
   const rowKey = (r: StockRow) => `${r.product_id}__${r.school_id}`;
 
@@ -342,15 +356,24 @@ export default function StockRealtimeTab() {
                   const isSaving = savingKey === k;
                   const displayStock = r.stock_actual + delta;
                   return (
-                    <tr key={`${r.product_id}__${r.school_id}__${i}`} className="border-t hover:bg-slate-50">
+                    <tr
+                      key={`${r.product_id}__${r.school_id}__${i}`}
+                      className="border-t hover:bg-slate-50 cursor-pointer"
+                      onClick={() => openBitacora(r)}
+                      title="Ver bitácora de movimientos (esta sede)"
+                    >
                       <td className="px-3 py-2 font-medium text-slate-700">{r.nombre_producto}</td>
                       <td className="px-3 py-2 text-slate-500">{r.categoria}</td>
                       <td className="px-3 py-2 text-slate-600">{r.sede}</td>
 
                       {/* Stock + controles de ajuste rápido */}
-                      <td className="px-3 py-2 text-center">
+                      <td
+                        className="px-3 py-2 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div className="flex items-center justify-center gap-1">
                           <button
+                            type="button"
                             onClick={() => adjustDelta(r, -1)}
                             disabled={isSaving}
                             className="w-5 h-5 rounded flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 border border-red-200"
@@ -369,6 +392,7 @@ export default function StockRealtimeTab() {
                           </span>
 
                           <button
+                            type="button"
                             onClick={() => adjustDelta(r, 1)}
                             disabled={isSaving}
                             className="w-5 h-5 rounded flex items-center justify-center bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 border border-emerald-200"
@@ -379,6 +403,7 @@ export default function StockRealtimeTab() {
 
                           {delta !== 0 && (
                             <button
+                              type="button"
                               onClick={() => saveAdjustment(r)}
                               disabled={isSaving}
                               className="w-5 h-5 rounded flex items-center justify-center bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 border border-blue-200"
@@ -413,6 +438,15 @@ export default function StockRealtimeTab() {
           </div>
         )}
       </div>
+
+      <StockBitacoraModal
+        open={bitacoraOpen}
+        onOpenChange={(open) => {
+          setBitacoraOpen(open);
+          if (!open) setBitacoraSelection(null);
+        }}
+        selection={bitacoraSelection}
+      />
     </div>
   );
 }

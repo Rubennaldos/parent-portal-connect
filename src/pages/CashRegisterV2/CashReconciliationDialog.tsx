@@ -162,20 +162,18 @@ export default function CashReconciliationDialog({
     raw.replace(',', '.').replace(/[^0-9.]/g, '');
 
   const handleCerrarCaja = async () => {
-    // Guard de doble clic
     if (saving) return;
 
-    // Guard de doble cierre: sesión ya cerrada (seguridad extra)
+    // Guard cliente: sesión ya cerrada (doble clic, refresco tardío)
     if (session.status === 'closed') {
       toast({ title: 'Esta caja ya fue cerrada', description: 'No se puede volver a cerrar una caja ya cerrada.' });
       onClose();
       return;
     }
 
-    // V4: Limpiar y validar inputs ANTES de parsear
+    // Validar inputs numéricos
     const cashRaw    = sanitizeAmount(declaredCash.trim());
     const tarjetaRaw = sanitizeAmount(declaredTarjeta.trim());
-
     if (cashRaw !== '') {
       const v = parseFloat(cashRaw);
       if (isNaN(v) || v < 0) {
@@ -191,15 +189,9 @@ export default function CashReconciliationDialog({
       }
     }
 
-    // ── CAJEROS hacen cierre a ciegas: nunca se les pide justificación ────────
-    // ── ADMINS ven el descuadre y deben justificarlo antes de cerrar ──────────
+    // Flujo de justificación para admins con descuadre (solo UI, no BD)
     if (isAdmin) {
-      // Primer clic con descuadre → mostrar el área de justificación
-      if (hasVariance && !showJustification) {
-        setShowJustification(true);
-        return;
-      }
-      // Segundo clic → bloquear si no escribió la justificación
+      if (hasVariance && !showJustification) { setShowJustification(true); return; }
       if (hasVariance && !justification.trim()) {
         toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
         return;
@@ -210,103 +202,39 @@ export default function CashReconciliationDialog({
     setSaving(true);
 
     try {
-      // ── Guard: verificar si ya existe un arqueo para esta sesión ─────────
-      // Evita el error 409 (duplicate key uq_cash_reconciliation_session) si
-      // el admin abre el modal de una sesión que ya fue cerrada previamente.
-      const { data: existingRecon } = await supabase
-        .from('cash_reconciliations')
-        .select('id')
-        .eq('cash_session_id', session.id)
-        .maybeSingle();
-      if (existingRecon) {
-        toast({
-          title: 'Esta caja ya fue cerrada previamente',
-          description: 'El arqueo ya existe en el sistema. Actualiza la página para ver el estado actualizado.',
-        });
-        onClosed();
-        onClose();
-        return;
-      }
+      // ── Una sola llamada atómica al RPC ───────────────────────────────────
+      // El RPC ejecuta en una única transacción PostgreSQL:
+      //   1. SELECT FOR UPDATE (candado de fila → sin doble cierre)
+      //   2. Verifica status = 'open'
+      //   3. UPSERT cash_reconciliations
+      //   4. UPDATE cash_sessions → 'closed'
+      //   5. INSERT huella_digital_logs
+      // Si cualquier paso falla → rollback completo automático.
+      const reconData = {
+        system_cash:             systemCash,
+        system_yape:             digitalInfo.yapePlin,
+        system_transferencia:    digitalInfo.transferencia,
+        system_tarjeta:          systemTarjeta,
+        system_total:            safeAdd(systemCash, systemTarjeta),
+        physical_cash:           declaredCashNum,
+        physical_tarjeta:        declaredTarjetaNum,
+        physical_total:          safeAdd(declaredCashNum, declaredTarjetaNum),
+        variance_cash:           varianceCash,
+        variance_tarjeta:        varianceTarjeta,
+        variance_total:          varianceTotal,
+        declared_overage:        varianceTotal < 0 ? Math.abs(varianceTotal) : 0,
+        declared_deficit:        varianceTotal > 0 ? varianceTotal : 0,
+        variance_justification:  justification.trim() || null,
+        is_admin:                isAdmin,
+      };
 
-      // ── Vector 5: Log de auditoría PRIMERO ────────────────────────────────
-      // Si el log falla, el cierre se aborta. El cajero no puede irse sin rastro.
-      const { error: logError } = await supabase.from('huella_digital_logs').insert({
-        usuario_id:  user.id,
-        accion:      isAdmin ? 'CIERRE_CAJA_ADMIN' : 'CIERRE_CAJA_CAJERO',
-        modulo:      'CIERRE_CAJA',
-        school_id:   schoolId,
-        contexto: {
-          session_id:         session.id,
-          session_date:       session.session_date,
-          tipo_cierre:        isAdmin ? 'con_vision_sistema' : 'ciegas',
-          cajero_id:          user.id,
-          declarado_efectivo: declaredCashNum,
-          declarado_tarjeta:  declaredTarjetaNum,
-          sistema_efectivo:   systemCash,
-          sistema_tarjeta:    systemTarjeta,
-          descuadre_efectivo: varianceCash,
-          descuadre_tarjeta:  varianceTarjeta,
-          descuadre_total:    varianceTotal,
-          justificacion:      justification.trim() || null,
-        },
+      const { error: rpcError } = await supabase.rpc('execute_cash_reconciliation_atomic', {
+        p_session_id:          session.id,
+        p_reconciliation_data: reconData,
+        p_user_id:             user.id,
       });
-      if (logError) {
-        // Log obligatorio — sin log no hay cierre
-        throw new Error(`No se pudo registrar el log de auditoría. Sin rastro no se permite el cierre. Detalle: ${logError.message}`);
-      }
 
-      // ── Registrar arqueo (upsert — si ya existe por colisión, actualiza) ──
-      const { error: reconError } = await supabase.from('cash_reconciliations').upsert(
-        {
-          cash_session_id: session.id,
-          school_id: schoolId,
-          system_cash: systemCash,
-          system_yape: digitalInfo.yapePlin,
-          system_plin: 0,
-          system_transferencia: digitalInfo.transferencia,
-          system_tarjeta: systemTarjeta,
-          system_mixto: 0,
-          system_total: safeAdd(systemCash, systemTarjeta),
-          physical_cash: declaredCashNum,
-          physical_yape: 0,
-          physical_plin: 0,
-          physical_transferencia: 0,
-          physical_tarjeta: declaredTarjetaNum,
-          physical_mixto: 0,
-          physical_total: safeAdd(declaredCashNum, declaredTarjetaNum),
-          variance_cash: varianceCash,
-          variance_yape: 0,
-          variance_plin: 0,
-          variance_transferencia: 0,
-          variance_tarjeta: varianceTarjeta,
-          variance_mixto: 0,
-          variance_total: varianceTotal,
-          declared_overage: varianceTotal < 0 ? Math.abs(varianceTotal) : 0,
-          declared_deficit: varianceTotal > 0 ? varianceTotal : 0,
-          reconciled_by: user.id,
-        },
-        { onConflict: 'cash_session_id' },
-      );
-      if (reconError) throw reconError;
-
-      // ── Cerrar sesión ─────────────────────────────────────────────────────
-      const { error: closeError } = await supabase
-        .from('cash_sessions')
-        .update({
-          status: 'closed',
-          closed_by: user.id,
-          closed_at: new Date().toISOString(),
-          declared_cash: declaredCashNum,
-          declared_tarjeta: declaredTarjetaNum,
-          system_cash: systemCash,
-          system_tarjeta: systemTarjeta,
-          variance_cash: varianceCash,
-          variance_tarjeta: varianceTarjeta,
-          variance_total: varianceTotal,
-          variance_justification: justification.trim() || null,
-        })
-        .eq('id', session.id);
-      if (closeError) throw closeError;
+      if (rpcError) throw rpcError;
 
       toast({
         title: '✅ Caja cerrada exitosamente',
@@ -319,31 +247,34 @@ export default function CashReconciliationDialog({
     } catch (err: any) {
       console.error('[CashReconciliation] Error closing:', err);
 
-      // ── Caja ya cerrada (duplicate key 23505 o uq_cash_reconciliation_session) ──
-      const isDuplicateKey =
-        err?.code === '23505' ||
-        (typeof err?.message === 'string' && err.message.includes('uq_cash_reconciliation_session'));
-      if (isDuplicateKey) {
+      const msg: string = err?.message ?? '';
+
+      // Error controlado: sesión ya cerrada (detectado por el candado en BD)
+      if (msg.includes('SESSION_ALREADY_CLOSED')) {
         toast({
-          title: 'Esta caja ya fue cerrada previamente',
-          description: 'El arqueo ya existe en el sistema. Actualiza la página para ver el estado actualizado.',
+          title: 'Esta caja ya fue cerrada',
+          description: 'Otro usuario cerró la caja al mismo tiempo. Actualiza la página.',
         });
         onClosed();
         onClose();
         return;
       }
 
-      // ── V2: Mensaje claro para error de red / apagón ─────────────────────
+      // Error controlado: sesión no encontrada
+      if (msg.includes('SESSION_NOT_FOUND')) {
+        toast({ variant: 'destructive', title: 'Sesión no encontrada', description: 'La sesión de caja no existe. Recarga la página.' });
+        return;
+      }
+
+      // Error de red
       const isNetworkError =
         err instanceof TypeError ||
-        (typeof err.message === 'string' &&
-          (err.message.includes('fetch') ||
-           err.message.includes('network') ||
-           err.message.includes('Failed') ||
-           err.message.includes('NetworkError')));
+        msg.includes('fetch') || msg.includes('network') ||
+        msg.includes('Failed') || msg.includes('NetworkError');
       const friendlyMsg = isNetworkError
         ? 'Error de red: tu cierre no se guardó. Revisa tu conexión e intenta de nuevo.'
-        : err.message || 'No se pudo cerrar la caja.';
+        : msg || 'No se pudo cerrar la caja.';
+
       // El modal NO se cierra — el cajero puede reintentar
       toast({ variant: 'destructive', title: 'Error al cerrar caja', description: friendlyMsg });
     } finally {

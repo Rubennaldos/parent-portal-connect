@@ -120,6 +120,17 @@ export function useRechargeSubmit(config: RechargeSubmitConfig): UseRechargeSubm
     const rawMsg: string = (err as any)?.message || (err as any)?.details || String(err) || '';
     console.error('[useRechargeSubmit] Error al enviar solicitud:', rawMsg, err);
 
+    // 0. Cortafuegos backend: vouchers manuales deshabilitados permanentemente.
+    if (rawMsg.includes('TUQUI_MANUAL_PAYMENTS_DISABLED')) {
+      const exactMsg = rawMsg.slice(rawMsg.indexOf('TUQUI_MANUAL_PAYMENTS_DISABLED')).trim();
+      showError(
+        'Pagos manuales deshabilitados',
+        exactMsg,
+        14000,
+      );
+      return;
+    }
+
     // 1. Código de operación duplicado (constraint BD)
     if (
       rawMsg.includes('idx_recharge_unique_ref_code') ||

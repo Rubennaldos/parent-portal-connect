@@ -84,6 +84,11 @@ import { calcBillingFlags } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { getProductsForSchool } from '@/lib/productPricing';
+import {
+  getPosStockBadge,
+  posStockBadgeClass,
+  shouldBlockProductCardWhenNoStock,
+} from '@/lib/posProductStock';
 import { printPOSSale } from '@/lib/posPrinterService';
 import { CashOpeningModal } from '@/components/cash-register/CashOpeningModal';
 import {
@@ -167,6 +172,7 @@ interface Student {
   current_period_spent?: number;
   /** Cuándo se reinicia el tope (ISO UTC). Si ya pasó, current_period_spent es del período anterior. */
   next_reset_date?: string | null;
+  parent_id?: string | null;
 }
 
 interface Product {
@@ -322,6 +328,7 @@ const POS = () => {
   const [filteredCombos, setFilteredCombos] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('todos');
   const [combos, setCombos] = useState<any[]>([]); // Combos activos
+  const [allowNegativeStock, setAllowNegativeStock] = useState<boolean | null>(null);
 
   // Estados de carrito y venta
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -500,6 +507,98 @@ const POS = () => {
 
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  // ── Switch global: permitir stock negativo (solo lectura para POS) ─────────
+  useEffect(() => {
+    const loadAllowNegativeStock = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_settings')
+          .select('value')
+          .eq('key', 'allow_negative_stock')
+          .maybeSingle();
+
+        if (error) throw error;
+        setAllowNegativeStock(Boolean(data?.value?.enabled));
+      } catch (e) {
+        console.warn('[POS] No se pudo leer allow_negative_stock:', e);
+        setAllowNegativeStock(null);
+      }
+    };
+
+    loadAllowNegativeStock();
+
+    const channel = supabase
+      .channel('pos-negative-stock-setting')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_settings',
+          filter: 'key=eq.allow_negative_stock',
+        },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setAllowNegativeStock(null);
+            return;
+          }
+          const row = payload.new as { value?: { enabled?: boolean } } | undefined;
+          setAllowNegativeStock(Boolean(row?.value?.enabled));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ── Realtime: stock en vivo por sede ─────────────────────────────────────
+  // Cuando logística sube stock en otra pestaña, el POS refleja el nuevo número
+  // sin que el cajero tenga que recargar la página.
+  useEffect(() => {
+    if (!userSchoolId) return;
+
+    const stockChannel = supabase
+      .channel(`pos-stock-live-${userSchoolId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'product_stock',
+          filter: `school_id=eq.${userSchoolId}`,
+        },
+        (payload) => {
+          const merge = (prev: Product[]): Product[] =>
+            prev.map((p) => {
+              if (payload.eventType === 'DELETE') {
+                const oldRow = payload.old as { product_id?: string } | undefined;
+                // Fila eliminada → producto sin inventario → venta libre (null).
+                return oldRow?.product_id === p.id ? { ...p, current_stock: null } : p;
+              }
+              const row = payload.new as {
+                product_id: string;
+                current_stock: number;
+                is_enabled: boolean;
+              };
+              if (!row?.product_id || row.product_id !== p.id) return p;
+              return {
+                ...p,
+                // is_enabled=false → fila desactivada → sin inventario activo → null.
+                current_stock: row.is_enabled ? row.current_stock : null,
+              };
+            });
+
+          setProducts((prev) => merge(prev));
+          setFilteredProducts((prev) => merge(prev));
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(stockChannel); };
+  }, [userSchoolId]);
 
   // ── OFFLINE: Precarga y Sincronización ──────────────────────────
   // Precargar datos para uso offline cuando hay conexión
@@ -849,6 +948,15 @@ const POS = () => {
   const fetchProducts = async () => {
     console.log('🔵 POS - Iniciando carga de productos...');
     try {
+      // Admin global/superadmin: primero debe elegir sede manualmente.
+      if (isSuperAdmin && !userSchoolId) {
+        setProducts([]);
+        setFilteredProducts([]);
+        setCombos([]);
+        setFilteredCombos([]);
+        return;
+      }
+
       // Obtener el school_id del usuario actual
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
@@ -860,7 +968,8 @@ const POS = () => {
         console.warn('⚠️ POS - No se pudo obtener school_id del usuario, usando precios base');
       }
 
-      const schoolId = profile?.school_id || null;
+      const storedSchoolId = isSuperAdmin ? null : localStorage.getItem('pos_user_school_id');
+      const schoolId = userSchoolId || profile?.school_id || storedSchoolId || null;
       console.log('🏫 POS - Sede del usuario:', schoolId);
       
       // Guardar el school_id del usuario para filtrar estudiantes
@@ -919,62 +1028,38 @@ const POS = () => {
         console.warn('⚠️ POS - Sin school_id, no se cargarán combos');
         return;
       }
-      const todayLima = todayLimaDateString();
 
-      const { data, error } = await supabase
-        .from('combos')
-        .select('*')
-        .eq('active', true)
-        .eq('is_active', true)
-        .eq('is_archived', false)
-        .order('created_at', { ascending: false });
+      const { data, error } = await supabase.rpc('get_active_combos_for_school', {
+        p_school_id: schoolId,
+      });
 
       if (error) {
         console.error('Error fetching combos:', error);
         return;
       }
 
-      // Filtro estricto en app para evitar falsos negativos por sintaxis OR/JSON en PostgREST.
-      const scopedCombos = (data || []).filter((combo: any) => {
-        const schoolIds = Array.isArray(combo.school_ids) ? combo.school_ids : [];
-        const inSchoolScope =
-          combo.school_id === schoolId ||
-          schoolIds.includes(schoolId);
-        if (!inSchoolScope) return false;
-
-        if (combo.valid_from && String(combo.valid_from) > todayLima) return false;
-        if (combo.valid_until && String(combo.valid_until) < todayLima) return false;
-        return true;
-      });
-
-      // Cargar items de cada combo
-      const combosWithItems = await Promise.all(
-        scopedCombos.map(async (combo: any) => {
-          const { data: items } = await supabase
-            .from('combo_items')
-            .select('quantity, product_id')
-            .eq('combo_id', combo.id);
-
-          const productIds = (items || []).map(item => item.product_id);
-
-          if (productIds.length === 0) {
-            return { ...combo, combo_items: [] };
-          }
-
-          const { data: products } = await supabase
-            .from('products')
-            .select('id, name, price_sale, has_stock')
-            .in('id', productIds)
-            .eq('active', true);
-
-          const combo_items = (items || []).map(item => ({
+      const combosWithItems = (data || []).map((combo: any) => {
+        const comboItems = Array.isArray(combo.products) ? combo.products : [];
+        return {
+          id: combo.combo_id,
+          name: combo.combo_name,
+          description: combo.combo_description,
+          combo_price: Number(combo.combo_price || 0),
+          image_url: combo.combo_image_url,
+          runtime_status: combo.runtime_status,
+          is_available_by_stock: combo.is_available_by_stock !== false,
+          combo_items: comboItems.map((item: any) => ({
             quantity: item.quantity,
-            product: products?.find(p => p.id === item.product_id)
-          }));
-
-          return { ...combo, combo_items };
-        })
-      );
+            product: {
+              id: item.product_id,
+              name: item.product_name,
+              has_stock: item.has_stock,
+              price_sale: item.price,
+              current_stock: item.current_stock ?? null,
+            },
+          })),
+        };
+      });
 
       setCombos(combosWithItems);
       setFilteredCombos(combosWithItems);
@@ -1001,7 +1086,7 @@ const POS = () => {
       // Construir la consulta base
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date, parent_id')
         .eq('is_active', true)
         .ilike('full_name', `%${query}%`);
       
@@ -1020,19 +1105,46 @@ const POS = () => {
         throw error;
       }
 
-      console.log('✅ Estudiantes encontrados:', data?.length || 0);
-      setStudents(data || []);
+      const allStudents = data || [];
+
+      const parentIds = Array.from(
+        new Set(
+          allStudents
+            .map((s: any) => s.parent_id)
+            .filter((id: string | null | undefined): id is string => Boolean(id))
+        )
+      );
+
+      let suspendedParentIds = new Set<string>();
+      if (parentIds.length > 0) {
+        const { data: suspendedParents, error: suspendedParentsError } = await supabase
+          .from('parent_profiles')
+          .select('user_id')
+          .in('user_id', parentIds)
+          .eq('is_suspended', true);
+
+        if (!suspendedParentsError) {
+          suspendedParentIds = new Set((suspendedParents || []).map((p: any) => p.user_id));
+        } else {
+          console.warn('⚠️ No se pudo validar suspensión de padres en búsqueda POS:', suspendedParentsError);
+        }
+      }
+
+      const filteredStudents = allStudents.filter((s: any) => !s.parent_id || !suspendedParentIds.has(s.parent_id));
+
+      console.log('✅ Estudiantes encontrados:', filteredStudents.length);
+      setStudents(filteredStudents);
       // Cachear resultados para offline
-      if (data && data.length > 0 && userSchoolId) {
-        cacheStudents(data, userSchoolId).catch(() => {});
+      if (filteredStudents.length > 0 && userSchoolId) {
+        cacheStudents(filteredStudents, userSchoolId).catch(() => {});
       }
 
       // Calcular estado de cuenta para cada estudiante (con manejo robusto de errores)
-      if (data && data.length > 0) {
+      if (filteredStudents.length > 0) {
         const statusMap = new Map();
         
         // Procesar cada estudiante de forma segura
-        const statusPromises = data.map(async (student) => {
+        const statusPromises = filteredStudents.map(async (student) => {
           try {
             const status = await getAccountStatus(student);
             statusMap.set(student.id, status);
@@ -1063,8 +1175,8 @@ const POS = () => {
             const statusMap = new Map();
             for (const s of cachedResults) {
               const lt = s.limit_type;
-              const hasLimit = lt && lt !== 'none';
               const limitAmt = lt === 'daily' ? s.daily_limit : lt === 'weekly' ? s.weekly_limit : s.monthly_limit;
+              const hasLimit = lt && lt !== 'none' && (limitAmt ?? 0) > 0;
               const limitLabel = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
               statusMap.set(s.id, {
                 canPurchase: !s.kiosk_disabled,
@@ -1152,7 +1264,7 @@ const POS = () => {
       // Consulta de alumnos
       let studentsQuery = supabase
         .from('students')
-        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name), limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date')
+        .select('id, full_name, photo_url, balance, grade, section, free_account, kiosk_disabled, school_id, schools(id, name), limit_type, daily_limit, weekly_limit, monthly_limit, current_period_spent, next_reset_date, parent_id')
         .eq('is_active', true)
         .ilike('full_name', `%${query.trim()}%`);
 
@@ -1182,7 +1294,26 @@ const POS = () => {
         teachersQuery.limit(teacherLimit),
       ]);
 
-      const studentItems = (studentsResult.data || []).map((s: any) => ({
+      const rawStudents = studentsResult.data || [];
+      const parentIds = Array.from(
+        new Set(
+          rawStudents
+            .map((s: any) => s.parent_id)
+            .filter((id: string | null | undefined): id is string => Boolean(id))
+        )
+      );
+      let suspendedParentIds = new Set<string>();
+      if (parentIds.length > 0) {
+        const { data: suspendedParents } = await supabase
+          .from('parent_profiles')
+          .select('user_id')
+          .in('user_id', parentIds)
+          .eq('is_suspended', true);
+        suspendedParentIds = new Set((suspendedParents || []).map((p: any) => p.user_id));
+      }
+      const visibleStudents = rawStudents.filter((s: any) => !s.parent_id || !suspendedParentIds.has(s.parent_id));
+
+      const studentItems = visibleStudents.map((s: any) => ({
         type: 'student' as const,
         data: { ...s, school_name: s.schools?.name || null },
       }));
@@ -1255,6 +1386,8 @@ const POS = () => {
     const limitAmt = lt === 'daily'   ? (student.daily_limit   ?? 0)
                    : lt === 'weekly'  ? (student.weekly_limit  ?? 0)
                    : (student.monthly_limit ?? 0);
+    // Tope 0 o sin configurar = cuenta libre (regla acordada)
+    if (limitAmt <= 0) return null;
     const spent = getEffectiveSpent(student);
     const avail = Math.max(0, limitAmt - spent);
     const label  = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
@@ -1532,6 +1665,14 @@ const POS = () => {
   };
 
   const addComboToCart = (combo: any) => {
+    if (combo.is_available_by_stock === false) {
+      toast({
+        variant: 'destructive',
+        title: 'Sin stock',
+        description: `"${combo.name}" no está disponible: uno o más componentes sin stock.`,
+      });
+      return;
+    }
     // Crear un "producto virtual" para el combo
     const comboProduct: Product = {
       id: `combo_${combo.id}`,
@@ -1781,7 +1922,7 @@ const POS = () => {
         tipo:           clientData.tipo === 'factura' ? 1 : 2,
         cliente: {
           nombre:     clientData.razon_social,
-          tipo_doc:   clientData.doc_type === 'ruc' ? 6 : clientData.doc_type === 'dni' ? 1 : 0,
+          tipo_doc:   clientData.doc_type === 'ruc' ? 6 : clientData.doc_type === 'ce' ? 4 : clientData.doc_type === 'pasaporte' ? 7 : clientData.doc_type === 'dni' ? 1 : 0,
           numero_doc: clientData.doc_number !== '-' ? clientData.doc_number : undefined,
           direccion:  clientData.direccion  || undefined,
           email:      clientData.email      || undefined,
@@ -2136,12 +2277,19 @@ const POS = () => {
       const rpcLines = cart.map(item => {
         const isComboItem = item.product.id.startsWith('combo_');
         const lineIsCustom = (item.is_custom ?? false) || isComboItem;
+        // Para combos: extraer el UUID real (quitar prefijo "combo_") y enviar
+        // combo_id + combo_name para que el RPC expanda los componentes en stock.
+        // Ventas libres puras (is_custom sin isComboItem) no envían combo_id.
+        const comboRawId = isComboItem ? item.product.id.replace(/^combo_/, '') : undefined;
         return {
           ...(lineIsCustom ? {} : { product_id: item.product.id }),
-          quantity: item.quantity,
-          // Los combos no tienen stock directo en product_stock; se envían como venta custom.
-          is_custom: lineIsCustom,
-          custom_name: lineIsCustom ? item.product.name : undefined,
+          ...(comboRawId ? {
+            combo_id:   comboRawId,
+            combo_name: item.product.name.replace(/^🎁\s*/, ''),
+          } : {}),
+          quantity:     item.quantity,
+          is_custom:    lineIsCustom,
+          custom_name:  lineIsCustom ? item.product.name : undefined,
           custom_price: lineIsCustom ? item.product.price : undefined,
         };
       });
@@ -2485,6 +2633,15 @@ const POS = () => {
   // admin_general y superadmin pueden operar sin sesión de caja (supervisión/emergencia).
   const isSuperAdmin = role === 'admin_general' || role === 'superadmin';
 
+  // En cada entrada al POS, admin global/superadmin debe elegir sede nuevamente.
+  // Evita saltar el selector por valores residuales en estado/localStorage.
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    setUserSchoolId(null);
+    setClientMode(null);
+    localStorage.removeItem('pos_user_school_id');
+  }, [isSuperAdmin]);
+
   // Si es admin global sin sede asignada, cargar lista de sedes una sola vez
   useEffect(() => {
     if (!isSuperAdmin || userSchoolId || adminSchoolList.length > 0) return;
@@ -2499,6 +2656,13 @@ const POS = () => {
         setAdminSchoolListLoading(false);
       });
   }, [isSuperAdmin, userSchoolId, adminSchoolList.length]);
+
+  // Cuando admin global elige sede, cargar catálogo POS de esa sede.
+  useEffect(() => {
+    if (!isSuperAdmin || !userSchoolId) return;
+    fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, userSchoolId]);
 
   // ─── GUARD: Bloquear POS si no hay caja abierta ─────────────────
   const needsCashDeclaration =
@@ -3197,26 +3361,33 @@ const POS = () => {
             <div className="flex-1 overflow-y-auto p-1 sm:p-2">
               {selectedCategory === 'combos' ? (
                 <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
-                  {filteredCombos.map((combo) => (
-                    <button
-                      key={combo.id}
-                      onClick={() => addComboToCart(combo)}
-                      className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center"
-                    >
-                      <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
-                        <Gift className="h-2.5 w-2.5 sm:h-4 sm:w-4 text-purple-600 flex-shrink-0" />
-                        <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
-                          {combo.name}
-                        </h3>
-                      </div>
-                      <p className="text-[10px] sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
-                        S/ {combo.combo_price.toFixed(2)}
-                      </p>
-                      <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
-                        {combo.combo_items?.length || 0} productos
-                      </p>
-                    </button>
-                  ))}
+                  {filteredCombos.map((combo) => {
+                    const blockCombo = combo.is_available_by_stock === false;
+                    return (
+                      <button
+                        key={combo.id}
+                        onClick={() => !blockCombo && addComboToCart(combo)}
+                        disabled={blockCombo}
+                        className={`group border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center
+                          ${blockCombo
+                            ? 'opacity-50 cursor-not-allowed border-gray-200 bg-gray-50'
+                            : 'bg-gradient-to-br from-purple-50 to-pink-50 border-purple-200 hover:shadow-xl hover:border-purple-400 active:scale-95'}`}
+                      >
+                        <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
+                          <Gift className={`h-2.5 w-2.5 sm:h-4 sm:w-4 flex-shrink-0 ${blockCombo ? 'text-gray-400' : 'text-purple-600'}`} />
+                          <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
+                            {combo.name}
+                          </h3>
+                        </div>
+                        <p className={`text-[10px] sm:text-xl font-black ${blockCombo ? 'text-gray-400' : 'text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600'}`}>
+                          S/ {combo.combo_price.toFixed(2)}
+                        </p>
+                        <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
+                          {blockCombo ? 'Sin stock' : `${combo.combo_items?.length || 0} productos`}
+                        </p>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : filteredProducts.length === 0 && filteredCombos.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
@@ -3227,41 +3398,47 @@ const POS = () => {
                 <div className="space-y-2 sm:space-y-3">
                   {selectedCategory === 'todos' && productSearch.trim() && filteredCombos.length > 0 && (
                     <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">
-                      {filteredCombos.map((combo) => (
-                        <button
-                          key={`search_combo_${combo.id}`}
-                          onClick={() => addComboToCart(combo)}
-                          className="group bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-md sm:rounded-xl overflow-hidden transition-all hover:shadow-xl hover:border-purple-400 active:scale-95 p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center"
-                        >
-                          <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
-                            <Gift className="h-2.5 w-2.5 sm:h-4 sm:w-4 text-purple-600 flex-shrink-0" />
-                            <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
-                              {combo.name}
-                            </h3>
-                          </div>
-                          <p className="text-[10px] sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
-                            S/ {combo.combo_price.toFixed(2)}
-                          </p>
-                          <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
-                            {combo.combo_items?.length || 0} productos
-                          </p>
-                        </button>
-                      ))}
+                      {filteredCombos.map((combo) => {
+                        const blockCombo = combo.is_available_by_stock === false;
+                        return (
+                          <button
+                            key={`search_combo_${combo.id}`}
+                            onClick={() => !blockCombo && addComboToCart(combo)}
+                            disabled={blockCombo}
+                            className={`group border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[120px] flex flex-col justify-center
+                              ${blockCombo
+                                ? 'opacity-50 cursor-not-allowed border-gray-200 bg-gray-50'
+                                : 'bg-gradient-to-br from-purple-50 to-pink-50 border-purple-200 hover:shadow-xl hover:border-purple-400 active:scale-95'}`}
+                          >
+                            <div className="flex items-center gap-0.5 sm:gap-2 mb-0.5 sm:mb-1">
+                              <Gift className={`h-2.5 w-2.5 sm:h-4 sm:w-4 flex-shrink-0 ${blockCombo ? 'text-gray-400' : 'text-purple-600'}`} />
+                              <h3 className="font-bold text-[8px] sm:text-base line-clamp-2 leading-tight text-left">
+                                {combo.name}
+                              </h3>
+                            </div>
+                            <p className={`text-[10px] sm:text-xl font-black ${blockCombo ? 'text-gray-400' : 'text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600'}`}>
+                              S/ {combo.combo_price.toFixed(2)}
+                            </p>
+                            <p className="text-[8px] sm:text-xs text-gray-500 mt-0.5">
+                              {blockCombo ? 'Sin stock' : `${combo.combo_items?.length || 0} productos`}
+                            </p>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
 
                   <div className="grid grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 gap-1 sm:gap-2">{filteredProducts.map((product) => {
-                      const hasStockControl = product.stock_control_enabled && product.current_stock !== null && product.current_stock !== undefined;
-                      const isOutOfStock    = hasStockControl && (product.current_stock ?? 0) === 0;
-                      const isLowStock      = hasStockControl && !isOutOfStock && (product.current_stock ?? 0) <= 5;
+                      const stockBadge = getPosStockBadge(product);
+                      const blockNoStock = shouldBlockProductCardWhenNoStock(product, allowNegativeStock ?? false);
 
                       return (
                       <button
                         key={product.id}
-                        onClick={() => !isOutOfStock && addToCart(product)}
-                        disabled={isOutOfStock}
+                        onClick={() => !blockNoStock && addToCart(product)}
+                        disabled={blockNoStock}
                         className={`group bg-white border-2 rounded-md sm:rounded-xl overflow-hidden transition-all p-1 sm:p-3 min-h-[65px] sm:min-h-[130px] flex flex-col justify-between
-                        ${isOutOfStock
+                        ${blockNoStock
                           ? 'opacity-50 cursor-not-allowed border-red-200 bg-red-50'
                           : 'hover:shadow-xl hover:border-emerald-500 active:scale-95'}`}
                       >
@@ -3275,17 +3452,19 @@ const POS = () => {
                             </p>
                           )}
                         </div>
-                        <div className="flex items-end justify-between gap-0.5">
+                        <div className="mt-auto space-y-0.5">
                           <p className="text-[9px] sm:text-base font-semibold text-emerald-600">
                             S/ {product.price.toFixed(2)}
                           </p>
-                          {hasStockControl && (
-                            <span className={`text-[7px] sm:text-[9px] font-bold px-1 py-0.5 rounded leading-none ${
-                              isOutOfStock  ? 'bg-red-100 text-red-700'    :
-                              isLowStock    ? 'bg-amber-100 text-amber-700' :
-                                              'bg-slate-100 text-slate-500'
-                            }`}>
-                              {isOutOfStock ? '✖ Agotado' : `📦 ${product.current_stock}`}
+                          {stockBadge.visible && (
+                            <span
+                              className={cn(
+                                'inline-flex items-center justify-center min-w-[2.2rem] text-center tabular-nums text-[9px] sm:text-[11px] font-bold px-1.5 py-0.5 rounded leading-none',
+                                posStockBadgeClass(stockBadge.variant)
+                              )}
+                              title={stockBadge.label}
+                            >
+                              {stockBadge.label}
                             </span>
                           )}
                         </div>
@@ -3342,24 +3521,28 @@ const POS = () => {
                           <span className="text-[8px] sm:text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold shadow-md">
                             🚫 KIOSCO DESACTIVADO
                           </span>
-                        ) : selectedStudent.limit_type && selectedStudent.limit_type !== 'none' ? (() => {
+                        ) : (() => {
                           const lt = selectedStudent.limit_type;
                           const limitAmt = lt === 'daily'  ? (selectedStudent.daily_limit   ?? 0)
                                          : lt === 'weekly' ? (selectedStudent.weekly_limit  ?? 0)
                                          : (selectedStudent.monthly_limit ?? 0);
-                          const spent    = getEffectiveSpent(selectedStudent);
-                          const avail    = Math.max(0, limitAmt - spent);
-                          const label    = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
+                          const hasActiveTope = lt && lt !== 'none' && limitAmt > 0;
+                          if (hasActiveTope) {
+                            const spent = getEffectiveSpent(selectedStudent);
+                            const avail = Math.max(0, limitAmt - spent);
+                            const label = lt === 'daily' ? 'Diario' : lt === 'weekly' ? 'Semanal' : 'Mensual';
+                            return (
+                              <span className="text-[8px] sm:text-xs bg-amber-400 text-amber-900 px-2 py-0.5 rounded-full font-bold shadow-md">
+                                🟠 Tope {label}: S/ {avail.toFixed(2)} disp.
+                              </span>
+                            );
+                          }
                           return (
-                            <span className="text-[8px] sm:text-xs bg-amber-400 text-amber-900 px-2 py-0.5 rounded-full font-bold shadow-md">
-                              🟠 Tope {label}: S/ {avail.toFixed(2)} disp.
+                            <span className="text-[8px] sm:text-xs bg-green-400 text-green-900 px-2 py-0.5 rounded-full font-bold shadow-md">
+                              ✓ CUENTA LIBRE
                             </span>
                           );
-                        })() : (
-                          <span className="text-[8px] sm:text-xs bg-green-400 text-green-900 px-2 py-0.5 rounded-full font-bold shadow-md">
-                            ✓ CUENTA LIBRE
-                          </span>
-                        )}
+                        })()}
                       </div>
                     </div>
                     

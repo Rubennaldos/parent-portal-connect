@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, RefreshCw, BadgeCheck, AlertTriangle } from 'lucide-react';
+import { Loader2, RefreshCw, BadgeCheck, AlertTriangle, LayoutGrid } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { BulkDistributionModal } from '@/components/logistics/BulkDistributionModal';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,9 @@ export default function InventoryMatrixView() {
 
   // Ref para evitar guardar si el valor no cambió
   const prevStockRef = useRef<Record<string, number>>({});
+
+  // Estado del modal de distribución masiva
+  const [distModal, setDistModal] = useState<{ productId: string; productName: string } | null>(null);
 
   // ── Carga inicial ──────────────────────────────────────────────────────────
 
@@ -338,14 +342,21 @@ export default function InventoryMatrixView() {
                 <tr key={product.id} className={`${rowBg} border-t border-slate-200 transition-colors`}>
 
                   {/* Columna fija: nombre del producto */}
-                  <td className={`sticky left-0 z-10 px-2 py-1 font-medium border-r border-slate-200 max-w-[160px] ${
+                  <td className={`sticky left-0 z-10 px-2 py-1 font-medium border-r border-slate-200 max-w-[180px] ${
                     isMaster ? 'bg-green-50' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                   }`}>
-                    <div className="flex items-center gap-1 truncate">
+                    <div className="flex items-center gap-1">
                       {isMaster && (
                         <BadgeCheck className="h-3 w-3 text-green-600 shrink-0" title="Producto Maestro" />
                       )}
-                      <span className="truncate text-[11px] leading-tight" title={product.name}>{product.name}</span>
+                      <span className="truncate text-[11px] leading-tight flex-1" title={product.name}>{product.name}</span>
+                      <button
+                        title="Distribuir stock entre sedes"
+                        onClick={() => setDistModal({ productId: product.id, productName: product.name })}
+                        className="shrink-0 p-0.5 rounded hover:bg-emerald-100 text-emerald-600 hover:text-emerald-800 transition-colors"
+                      >
+                        <LayoutGrid className="h-3 w-3" />
+                      </button>
                     </div>
                   </td>
 
@@ -437,8 +448,19 @@ export default function InventoryMatrixView() {
 
       {/* ── Tip móvil ── */}
       <p className="text-[10px] text-slate-300 text-center sm:hidden">
-        Desliza la tabla → para ver más sedes
+        Desliza la tabla → para ver más sedes · Ícono verde = distribuir entre sedes
       </p>
+
+      {/* ── Modal de distribución masiva ── */}
+      {distModal && (
+        <BulkDistributionModal
+          open={!!distModal}
+          onClose={() => setDistModal(null)}
+          onSuccess={loadData}
+          productId={distModal.productId}
+          productName={distModal.productName}
+        />
+      )}
     </div>
   );
 }

@@ -400,11 +400,18 @@ serve(async (req) => {
     }
 
     // 9. Tipo de documento del cliente
-    // Nubefact: 0=sin doc, 1=DNI, 6=RUC
+    // Nubefact: 0=sin doc, 1=DNI, 4=CE (Carnet Extranjería), 6=RUC, 7=Pasaporte
+    // Catálogo 06 SUNAT — no modificar sin verificar con Nubefact demo primero.
+    const SUNAT_DOC_CODES: Record<string, number> = {
+      dni:       1,
+      ce:        4,
+      ruc:       6,
+      pasaporte: 7,
+    };
     const clientDocTypeNubefact =
-      cliente?.doc_type === "ruc"  ? 6 :
-      cliente?.doc_type === "dni"  ? 1 :
-      (cliente?.tipo_doc ?? 0);
+      (cliente?.doc_type && SUNAT_DOC_CODES[cliente.doc_type as string] !== undefined)
+        ? SUNAT_DOC_CODES[cliente.doc_type as string]
+        : (cliente?.tipo_doc ?? 0);
 
     // 10. Payload para Nubefact
     const payload: Record<string, unknown> = {
@@ -570,7 +577,7 @@ serve(async (req) => {
         document_type_code: document_type_code_map[tipo] || "03",
         serie,
         numero,
-        client_document_type:   cliente?.doc_type || (clientDocTypeNubefact === 6 ? "ruc" : clientDocTypeNubefact === 1 ? "dni" : "-"),
+        client_document_type:   cliente?.doc_type || (clientDocTypeNubefact === 6 ? "ruc" : clientDocTypeNubefact === 1 ? "dni" : clientDocTypeNubefact === 4 ? "ce" : clientDocTypeNubefact === 7 ? "pasaporte" : "-"),
         client_document_number: cliente?.doc_number || cliente?.numero_doc || null,
         client_name:            cliente?.razon_social || cliente?.nombre || "Consumidor Final",
         client_address:         cliente?.direccion || null,

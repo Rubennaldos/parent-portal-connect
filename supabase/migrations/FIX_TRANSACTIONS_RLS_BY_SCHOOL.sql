@@ -15,10 +15,12 @@ FROM pg_policies
 WHERE tablename = 'transactions'
 ORDER BY policyname;
 
--- 2. Eliminar políticas existentes de SELECT
+-- 2. Eliminar políticas existentes de SELECT (incluye las que este script vuelve a crear)
 DROP POLICY IF EXISTS "Admin general puede ver todas las transacciones" ON transactions;
 DROP POLICY IF EXISTS "Gestor puede ver transacciones de su sede" ON transactions;
 DROP POLICY IF EXISTS "Cajeros pueden ver transacciones de su sede" ON transactions;
+DROP POLICY IF EXISTS "Padres pueden ver sus propias transacciones" ON transactions;
+DROP POLICY IF EXISTS "Profesores pueden ver sus propias transacciones" ON transactions;
 DROP POLICY IF EXISTS "Users can view their own transactions" ON transactions;
 DROP POLICY IF EXISTS "Public can view transactions" ON transactions;
 

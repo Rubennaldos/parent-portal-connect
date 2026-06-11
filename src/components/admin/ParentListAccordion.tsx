@@ -79,7 +79,10 @@ export interface AccordionParentRow {
 
 interface ParentListAccordionProps {
   parents: AccordionParentRow[];
-  permissions: { canEditParent: boolean };
+  permissions: {
+    canEditParent: boolean;
+    canViewBehaviorNotes?: boolean;
+  };
   onResetPassword: (parent: AccordionParentRow) => void;
   onMerge: (parent: AccordionParentRow) => void;
   onEditParent: (parent: AccordionParentRow) => void;
@@ -282,6 +285,9 @@ export function ParentListAccordion({
         const schoolName      = parent.school?.name || parent.school_name;
         const childCount      = parent.children?.length ?? 0;
         const hasResponsible2 = Boolean(parent.responsible_2_full_name);
+        const canViewBehaviorNotes = permissions.canViewBehaviorNotes ?? permissions.canEditParent;
+        const behaviorNotes = parent.behavior_notes?.trim() ?? '';
+        const showBehaviorNotes = canViewBehaviorNotes && behaviorNotes.length > 0;
         const bp              = parent.behavior_profile ?? 'neutro';
 
         return (
@@ -475,6 +481,17 @@ export function ParentListAccordion({
                         <div className="flex items-start gap-2 text-slate-700">
                           <MapPin className="h-3.5 w-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
                           <span className="text-xs">{parent.address}</span>
+                        </div>
+                      )}
+
+                      {showBehaviorNotes && (
+                        <div className="rounded-md border border-indigo-200 bg-indigo-50/70 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+                            Nota administrativa:
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
+                            {behaviorNotes}
+                          </p>
                         </div>
                       )}
                     </div>

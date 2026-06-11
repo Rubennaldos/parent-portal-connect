@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge }    from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { SupportDirectoryPanel } from '@/components/admin/SupportDirectoryPanel';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -703,6 +704,10 @@ export function ComunicadosPanel({
             </div>
           )}
         </div>
+      </div>
+
+      <div className="lg:col-span-5">
+        <SupportDirectoryPanel />
       </div>
     </div>
   );

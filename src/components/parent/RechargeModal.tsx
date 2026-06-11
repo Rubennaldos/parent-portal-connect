@@ -120,6 +120,11 @@ interface RechargeModalProps {
    * pantalla de mantenimiento. Ningún padre real tiene acceso a esta prop.
    */
   izipayTestMode?: boolean;
+  /**
+   * Si true y requestType='debt_payment', deshabilita por completo el flujo
+   * manual con voucher (Yape/Plin/Transferencia) desde este modal.
+   */
+  manualPaymentsDisabled?: boolean;
 }
 
 interface PaymentConfig {
@@ -169,6 +174,7 @@ export function RechargeModal({
   onSuccess,
   rechargeCartAmount,
   izipayTestMode = false,
+  manualPaymentsDisabled = false,
 }: RechargeModalProps) {
   const RECHARGES_MAINTENANCE = false; // Pasarela activa en producción
   const isCombinedPayment = !!(combinedStudentIds && combinedStudentIds.length > 1);
@@ -203,6 +209,7 @@ export function RechargeModal({
   // IziPay habilitado según la configuración de la sede (billing_config.izipay_enabled).
   // El admin puede activar/desactivar por sede desde Facturación → Configuración SUNAT.
   const isIzipayPilotUser = false; // Mantenido por compatibilidad con izipayTestMode
+  const manualDebtPaymentsDisabled = manualPaymentsDisabled && requestType === 'debt_payment';
   const IZIPAY_ENABLED = izipayTestMode
     ? true
     : (paymentConfig?.izipay_enabled ?? false);
@@ -754,6 +761,13 @@ export function RechargeModal({
   useEffect(() => {
     if (!isOpen) setShowYapeManualWarning(false);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!manualDebtPaymentsDisabled) return;
+    if (selectedMethod === 'yape') {
+      setSelectedMethod(null);
+    }
+  }, [manualDebtPaymentsDisabled, selectedMethod]);
 
   // Determinar pasos visibles
   const visibleSteps = skipAmountStep 
@@ -1638,66 +1652,79 @@ export function RechargeModal({
                   </div>
                 </button>
 
-                {/* Opción DISUASORA: Yape manual (solo estética, sin acción) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (yapeManualActive) setSelectedMethod('yape');
-                  }}
-                  disabled={!yapeManualActive}
-                  className={cn(
-                    "mx-auto w-[95%] rounded-xl border p-3 sm:p-4 text-left transition-all duration-200 cursor-pointer",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300",
-                    !yapeManualActive && "cursor-not-allowed border-gray-200 bg-gray-100",
-                    selectedMethod === 'yape'
-                      ? "border-sky-400 bg-sky-50 shadow-[0_8px_20px_-14px_rgba(14,165,233,0.7)]"
-                      : yapeManualActive
-                        ? "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
-                        : "border-gray-200 bg-gray-100"
-                  )}
-                >
-                  <div className="flex items-start gap-3">
-                    <div
-                      className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-white p-0.5 sm:h-14 sm:w-14"
-                      aria-hidden
-                    >
-                      <img
-                        src={`${import.meta.env.BASE_URL}yape-official-logo.png`}
-                        alt=""
-                        className="h-full w-full object-contain"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    </div>
-                    <div className="min-w-0 space-y-1.5">
-                      <p className="text-sm font-semibold text-gray-800 leading-snug">
-                        Yape Manual (Verificación externa)
-                      </p>
-                      {!yapeManualActive && (
-                        <p className="text-xs font-medium text-gray-500">
-                          Temporalmente no disponible
+                {!manualDebtPaymentsDisabled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (yapeManualActive) setSelectedMethod('yape');
+                    }}
+                    disabled={!yapeManualActive}
+                    className={cn(
+                      "mx-auto w-[95%] rounded-xl border p-3 sm:p-4 text-left transition-all duration-200 cursor-pointer",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300",
+                      !yapeManualActive && "cursor-not-allowed border-gray-200 bg-gray-100",
+                      selectedMethod === 'yape'
+                        ? "border-sky-400 bg-sky-50 shadow-[0_8px_20px_-14px_rgba(14,165,233,0.7)]"
+                        : yapeManualActive
+                          ? "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                          : "border-gray-200 bg-gray-100"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-white p-0.5 sm:h-14 sm:w-14"
+                        aria-hidden
+                      >
+                        <img
+                          src={`${import.meta.env.BASE_URL}yape-official-logo.png`}
+                          alt=""
+                          className="h-full w-full object-contain"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <p className="text-sm font-semibold text-gray-800 leading-snug">
+                          Yape Manual (Verificación externa)
                         </p>
-                      )}
-                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
-                        <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                        <span>Validación dura 4 horas.</span>
-                      </p>
-                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                        <span>Solo disponible hasta las 8:00 AM.</span>
-                      </p>
-                      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-                        <span>
-                          <strong>Advertencia:</strong> solo se admiten transferencias por Yape. Plin no se admite.
-                          Requiere <strong>código de aprobación</strong>.
-                        </span>
-                      </p>
+                        {!yapeManualActive && (
+                          <p className="text-xs font-medium text-gray-500">
+                            Temporalmente no disponible
+                          </p>
+                        )}
+                        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                          <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                          <span>Validación dura 4 horas.</span>
+                        </p>
+                        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                          <span>Solo disponible hasta las 8:00 AM.</span>
+                        </p>
+                        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-700">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span>
+                            <strong>Advertencia:</strong> solo se admiten transferencias por Yape. Plin no se admite.
+                            Requiere <strong>código de aprobación</strong>.
+                          </span>
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                )}
 
-                {selectedMethod === 'yape' && yapeManualActive && (
+                {manualDebtPaymentsDisabled && (
+                  <div className="mx-auto w-[95%] rounded-xl border border-amber-200 bg-amber-50 p-3 sm:p-4">
+                    <p className="text-sm font-semibold text-amber-900">
+                      Canal manual deshabilitado de forma permanente
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                      Los pagos manuales con voucher (Plin/Yape/transferencia) fueron clausurados.
+                      Continúa usando tarjeta a través de la pasarela oficial.
+                    </p>
+                  </div>
+                )}
+
+                {selectedMethod === 'yape' && yapeManualActive && !manualDebtPaymentsDisabled && (
                   <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
                     <p className="text-sm text-gray-700">
                       Estimado padre, usted está pagando los siguientes conceptos:

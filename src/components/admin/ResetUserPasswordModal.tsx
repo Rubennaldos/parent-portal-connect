@@ -37,11 +37,16 @@ export const ResetUserPasswordModal = ({
   const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [done, setDone] = useState(false);
+  const [fallbackEmail, setFallbackEmail] = useState('');
+  const [messageStatus, setMessageStatus] = useState<'draft' | 'confirmed' | 'pending_server'>('draft');
 
   const emailOptions = emails && emails.length > 0
     ? emails
     : userEmail ? [{ email: userEmail }] : [];
   const [selectedEmail, setSelectedEmail] = useState(emailOptions[0]?.email || '');
+  const effectiveEmail = selectedEmail || fallbackEmail || '';
+  const canResetIdentity = !!selectedEmail || !!userId;
+  const canReset = !loading && !!newPassword && newPassword.length >= 6 && canResetIdentity;
 
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -58,11 +63,34 @@ export const ResetUserPasswordModal = ({
       for (let i = 0; i < 8; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
       setNewPassword(pwd);
       setDone(false);
+      setMessageStatus('draft');
       setShowPassword(true);
       setSelectedEmail(emailOptions[0]?.email || '');
+      setFallbackEmail('');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Fallback visual/operativo: si no viene email de negocio pero sí userId, resolver email desde profiles.
+  useEffect(() => {
+    const resolveFallbackEmail = async () => {
+      if (!open) return;
+      if (selectedEmail || !userId) return;
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', userId)
+          .maybeSingle();
+        if (!error && data?.email) {
+          setFallbackEmail(data.email);
+        }
+      } catch {
+        // no bloquear UI si falla el fallback
+      }
+    };
+    resolveFallbackEmail();
+  }, [open, selectedEmail, userId]);
 
   const recipientLabel = isStaff ? 'el usuario' : 'el padre/madre';
   const recipientLabelCap = isStaff ? 'El usuario' : 'El padre/madre';
@@ -72,7 +100,8 @@ export const ResetUserPasswordModal = ({
     const intro = isStaff
       ? 'Le informamos que su contraseña de acceso al portal Lima Café 28 ha sido restablecida temporalmente por administración.'
       : 'Le informamos que su contraseña ha sido restablecida temporalmente.';
-    return `Estimado/a ${nombre},\n\n${intro}\n\n📧 Usuario: ${selectedEmail}\n🔑 Contraseña temporal: ${newPassword}\n\nAl ingresar con esta contraseña, el sistema le pedirá que cree una nueva contraseña de su elección.\n\nSi tiene alguna duda, comuníquese con la administración de su sede.\n\nSaludos,\nEquipo Lima Café 28`;
+    const usuario = effectiveEmail || '[usuario interno por confirmar]';
+    return `Estimado/a ${nombre},\n\n${intro}\n\n📧 Usuario: ${usuario}\n🔑 Contraseña temporal: ${newPassword}\n\nAl ingresar con esta contraseña, el sistema le pedirá que cree una nueva contraseña de su elección.\n\nSi tiene alguna duda, comuníquese con la administración de su sede.\n\nSaludos,\nEquipo Lima Café 28`;
   };
 
   const copyPassword = () => {
@@ -82,12 +111,18 @@ export const ResetUserPasswordModal = ({
 
   const copyMessage = () => {
     navigator.clipboard.writeText(getFriendlyMessage()).catch(() => {});
-    toast({ title: '✅ Mensaje copiado', description: 'Listo para enviar por WhatsApp, correo o mensaje de texto.' });
+    const statusText =
+      messageStatus === 'confirmed'
+        ? 'Mensaje confirmado en servidor.'
+        : messageStatus === 'pending_server'
+          ? 'Borrador copiado. Pendiente de confirmación en servidor.'
+          : 'Borrador copiado. Aún no confirmado en servidor.';
+    toast({ title: '✅ Mensaje copiado', description: statusText });
   };
 
   const handleReset = async () => {
-    if (!selectedEmail) {
-      toast({ variant: 'destructive', title: 'Selecciona un correo' });
+    if (!canResetIdentity) {
+      toast({ variant: 'destructive', title: 'No hay identidad válida', description: 'Falta correo y también userId del usuario.' });
       return;
     }
     if (!newPassword || newPassword.length < 6) {
@@ -101,7 +136,7 @@ export const ResetUserPasswordModal = ({
       if (!session) throw new Error('No hay sesión activa');
 
       const { data, error } = await supabase.functions.invoke('reset-user-password', {
-        body: { userEmail: selectedEmail, newPassword, userId },
+        body: { userEmail: effectiveEmail || undefined, newPassword, userId },
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 
@@ -110,22 +145,30 @@ export const ResetUserPasswordModal = ({
 
       // Garantía adicional: marcar is_temp_password desde el frontend
       try {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('id')
-          .ilike('email', selectedEmail.trim())
-          .single();
-        if (profileData?.id) {
+        if (userId) {
           await supabase
             .from('profiles')
             .update({ is_temp_password: true })
-            .eq('id', profileData.id);
+            .eq('id', userId);
+        } else if (effectiveEmail) {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id')
+            .ilike('email', effectiveEmail.trim())
+            .maybeSingle();
+          if (profileData?.id) {
+            await supabase
+              .from('profiles')
+              .update({ is_temp_password: true })
+              .eq('id', profileData.id);
+          }
         }
       } catch {
         // No bloquear el flujo si falla
       }
 
       setDone(true);
+      setMessageStatus('confirmed');
       onSuccess?.();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
@@ -134,6 +177,7 @@ export const ResetUserPasswordModal = ({
       else if (msg.includes('FunctionsRelayError')) friendly = 'La función de restablecimiento no está disponible. Contacta al soporte técnico.';
       else if (msg) friendly = msg;
       toast({ variant: 'destructive', title: '❌ Error', description: friendly, duration: 7000 });
+      setMessageStatus('pending_server');
     } finally {
       setLoading(false);
     }
@@ -142,8 +186,10 @@ export const ResetUserPasswordModal = ({
   const handleClose = () => {
     setNewPassword('');
     setDone(false);
+    setMessageStatus('draft');
     setShowPassword(false);
     setSelectedEmail(emailOptions[0]?.email || '');
+    setFallbackEmail('');
     onOpenChange(false);
   };
 
@@ -175,7 +221,7 @@ export const ResetUserPasswordModal = ({
 
             {/* Credenciales */}
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm space-y-1">
-              <p><span className="text-gray-500">Correo:</span> <strong>{selectedEmail}</strong></p>
+              <p><span className="text-gray-500">Correo:</span> <strong>{effectiveEmail || '(sin correo visible)'}</strong></p>
               <p className="flex items-center gap-2">
                 <span className="text-gray-500">Contraseña:</span>
                 <strong className="font-mono bg-yellow-100 px-2 py-0.5 rounded">{newPassword}</strong>
@@ -191,7 +237,7 @@ export const ResetUserPasswordModal = ({
               className="w-full bg-green-600 hover:bg-green-700 gap-2"
             >
               <MessageSquare className="h-4 w-4" />
-              {isStaff ? 'Copiar mensaje para el usuario' : 'Copiar mensaje para el padre'}
+              {isStaff ? 'Copiar mensaje confirmado' : 'Copiar mensaje confirmado'}
             </Button>
 
             {/* Vista previa del mensaje */}
@@ -229,11 +275,11 @@ export const ResetUserPasswordModal = ({
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
                 <strong>{isStaff ? 'Usuario:' : 'Padre/Madre:'}</strong>{' '}
-                {userName && userName !== selectedEmail
+                {userName && userName !== effectiveEmail
                   ? userName
                   : <em className="text-blue-600">Nombre no registrado</em>}
                 <br />
-                <strong>Correo:</strong> {selectedEmail}
+                <strong>Correo:</strong> {effectiveEmail || <em className="text-amber-700">Sin correo de negocio; usando identidad por userId</em>}
               </div>
             )}
 
@@ -289,10 +335,28 @@ export const ResetUserPasswordModal = ({
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800 whitespace-pre-line">
                   {getFriendlyMessage()}
                 </div>
-                <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3 shrink-0" />
-                  Primero haz clic en <strong>"Restablecer"</strong> — luego podrás copiar y enviar este mensaje.
-                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 text-xs h-8 border-emerald-300 text-emerald-700"
+                    onClick={copyMessage}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5 mr-1" />
+                    Copiar borrador
+                  </Button>
+                </div>
+                {messageStatus === 'pending_server' ? (
+                  <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    Pendiente de confirmación en servidor. Reintenta “Restablecer” cuando vuelva la conexión.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-600 font-medium flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    Este es un borrador previo; quedará confirmado cuando el servidor responda OK.
+                  </p>
+                )}
               </div>
             )}
 
@@ -302,7 +366,7 @@ export const ResetUserPasswordModal = ({
               </Button>
               <Button
                 onClick={handleReset}
-                disabled={loading || !newPassword || newPassword.length < 6 || !selectedEmail}
+                disabled={!canReset}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-base font-bold"
               >
                 {loading

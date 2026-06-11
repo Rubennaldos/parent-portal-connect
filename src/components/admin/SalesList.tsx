@@ -51,6 +51,8 @@ import {
   Sheet,
   ExternalLink,
   CreditCard,
+  MoreVertical,
+  FileX,
 } from "lucide-react";
 import { 
   Dialog,
@@ -78,6 +80,7 @@ import { es } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import { ThermalTicket } from "@/components/pos/ThermalTicket";
 import { EmitirComprobanteModal, type TransaccionParaEmitir } from '@/components/billing/EmitirComprobanteModal';
+import { TransactionDetailModal, type TransactionDetailData } from '@/components/admin/TransactionDetailModal';
 
 interface School {
   id: string;
@@ -137,6 +140,22 @@ interface TransactionItem {
   quantity: number;
   unit_price: number;
   subtotal: number;
+}
+
+// ── FASE 1: Datos del comprobante original para armar el doc_ref de la NC ──────
+interface InvoiceRef {
+  id: string;
+  serie: string;
+  numero: number;
+  document_type_code: string; // '01' = factura, '03' = boleta
+}
+// ── FASE 1: Datos de la Nota de Crédito ya emitida (si existe) ─────────────────
+interface NcInfo {
+  id: string;
+  serie: string;
+  numero: number;
+  pdf_url: string | null;
+  sunat_status: string;
 }
 
 const PAGE_SIZE = 50;
@@ -246,7 +265,11 @@ export const SalesList = () => {
   // Modal de detalles
   const [showDetails, setShowDetails] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [selectedTransactionDetail, setSelectedTransactionDetail] = useState<TransactionDetailData | null>(null);
   const [transactionItems, setTransactionItems] = useState<TransactionItem[]>([]);
+  const [detailLoadingIds, setDetailLoadingIds] = useState<Set<string>>(new Set());
+  // Nombre del usuario que anuló — se carga al abrir el detalle de una venta cancelada
+  const [cancelledByName, setCancelledByName] = useState<string | null>(null);
   
   // Modal de editar cliente
   const [showEditClient, setShowEditClient] = useState(false);
@@ -274,6 +297,21 @@ export const SalesList = () => {
   // Modal de impresión
   const [showPrintOptions, setShowPrintOptions] = useState(false);
   const [printType, setPrintType] = useState<'individual' | 'consolidated'>('individual');
+
+  // ── FASE 1: Lookup por lote — comprobante original e NC existente ──────────────
+  // Mapa: invoice_id → datos del comprobante original (serie, numero, tipo)
+  const [invoiceRefMap, setInvoiceRefMap] = useState<Map<string, InvoiceRef>>(new Map());
+  // Mapa: invoice_id original → NC ya emitida (si existe)
+  const [ncExistsMap, setNcExistsMap] = useState<Map<string, NcInfo>>(new Map());
+  // Modal para emitir Nota de Crédito
+  const [showNcModal, setShowNcModal] = useState(false);
+  const [ncTargetTransaction, setNcTargetTransaction] = useState<Transaction | null>(null);
+  const [ncReason, setNcReason] = useState('');
+  const [ncProcessing, setNcProcessing] = useState(false);
+  // FASE 2: loading por fila para "Devolver Saldo al Alumno" (anti doble clic)
+  const [operationalVoidLoadingIds, setOperationalVoidLoadingIds] = useState<Set<string>>(new Set());
+  // Control del menú "..." avanzado (id de la transacción cuyo menú está abierto)
+  const [openAdvancedMenuId, setOpenAdvancedMenuId] = useState<string | null>(null);
 
   // Verificar permisos al cargar
   useEffect(() => {
@@ -313,6 +351,26 @@ export const SalesList = () => {
       toast({ title: '🔄 Ventas actualizadas', description: 'Se detectaron cambios en transacciones.', duration: 3000 });
     }
   }, [txSyncTs]);
+
+  // ── FASE 1: Cargar datos de comprobantes y NCs tras cada cambio de página/búsqueda ──
+  useEffect(() => {
+    let active = true;
+    const visibleTxs = globalSearchResults !== null ? globalSearchResults : transactions;
+    const runLookup = async () => {
+      if (visibleTxs.length > 0) {
+        await fetchNcDataForPage(visibleTxs, () => active);
+      } else if (active) {
+        setInvoiceRefMap(new Map());
+        setNcExistsMap(new Map());
+      }
+    };
+    void runLookup();
+
+    return () => {
+      active = false;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions, globalSearchResults]);
 
   const checkPermissions = async () => {
     if (!user || !role) {
@@ -572,7 +630,9 @@ export const SalesList = () => {
     if (activeTab === 'deleted') {
       q = q.or('payment_status.eq.cancelled,is_deleted.eq.true');
     } else {
-      q = q.eq('is_deleted', false).neq('payment_status', 'cancelled');
+      // Las ventas anuladas (payment_status='cancelled') se muestran inline
+      // en "Ventas del Día" con badge rojo, en lugar de desaparecer.
+      q = q.eq('is_deleted', false);
     }
 
     // ── Filtro de Nº de Operación (columna dedicada) ─────────────────────────
@@ -640,6 +700,75 @@ export const SalesList = () => {
       toast({ variant: 'destructive', title: 'Error', description: 'No se pudieron cargar las ventas' });
     } finally {
       if (currentRequestId === fetchTxRequestId.current) setLoading(false);
+    }
+  };
+
+  // ── FASE 1: Lookup por lote — comprobante original + NC ya emitida ───────────────
+  // Solo lee datos desde `invoices`; no modifica saldos ni transacciones.
+  const fetchNcDataForPage = async (
+    txList: Transaction[],
+    isActive: () => boolean = () => true,
+  ) => {
+    try {
+      const sentInvoiceIds = [...new Set(
+        txList
+          // Blindaje almuerzos: este módulo no gestiona NC/extorno para lunch
+          .filter(t => !isLunchTransaction(t) && t.billing_status === 'sent' && !!t.invoice_id)
+          .map(t => t.invoice_id as string),
+      )];
+      if (sentInvoiceIds.length === 0) {
+        if (!isActive()) return;
+        setInvoiceRefMap(new Map());
+        setNcExistsMap(new Map());
+        return;
+      }
+
+      // Datos del comprobante original (para construir el doc_ref de la NC)
+      const { data: invRows, error: invError } = await supabase
+        .from('invoices')
+        .select('id, serie, numero, document_type_code')
+        .in('id', sentInvoiceIds);
+      if (invError) throw invError;
+
+      const refMap = new Map<string, InvoiceRef>();
+      for (const row of invRows ?? []) {
+        refMap.set(row.id, {
+          id: row.id,
+          serie: row.serie ?? '',
+          numero: row.numero ?? 0,
+          document_type_code: row.document_type_code ?? '03',
+        });
+      }
+
+      // Notas de Crédito existentes (código '07') que referencian esos comprobantes
+      const { data: ncRows, error: ncError } = await supabase
+        .from('invoices')
+        .select('id, serie, numero, pdf_url, sunat_status, original_invoice_id')
+        .in('original_invoice_id', sentInvoiceIds)
+        .eq('document_type_code', '07');
+      if (ncError) throw ncError;
+
+      const ncMap = new Map<string, NcInfo>();
+      for (const row of ncRows ?? []) {
+        if (row.original_invoice_id) {
+          ncMap.set(row.original_invoice_id, {
+            id: row.id,
+            serie: row.serie ?? '',
+            numero: row.numero ?? 0,
+            pdf_url: row.pdf_url ?? null,
+            sunat_status: row.sunat_status ?? 'pending',
+          });
+        }
+      }
+
+      if (!isActive()) return;
+      setInvoiceRefMap(refMap);
+      setNcExistsMap(ncMap);
+    } catch (error: any) {
+      console.error('[FASE1 NC] Error en lookup por lote:', error);
+      if (!isActive()) return;
+      setInvoiceRefMap(new Map());
+      setNcExistsMap(new Map());
     }
   };
 
@@ -846,12 +975,34 @@ export const SalesList = () => {
 
   // ========== ANULAR VENTA ==========
   const handleOpenAnnul = (transaction: Transaction) => {
+    if (isLunchTransaction(transaction)) {
+      toast({
+        variant: 'destructive',
+        title: 'Operación prohibida',
+        description: 'Los almuerzos se gestionan desde el módulo administrativo de Cobranzas.',
+      });
+      return;
+    }
+
     console.log('🗑️ Intentando anular venta:', {
       ticket: transaction.ticket_code,
       userRole: role,
       isCajero: role === 'cajero' || role === 'operador_caja'
     });
-    
+
+    // Bloqueo preventivo: comprobante electrónico ya enviado a SUNAT/Nubefact.
+    // El trigger SUNAT_INTEGRITY en BD rechazaría el UPDATE de todas formas;
+    // este aviso evita el modal vacío y el mensaje de error críptico.
+    if (transaction.invoice_id && transaction.billing_status === 'sent') {
+      toast({
+        variant: 'destructive',
+        title: 'Comprobante enviado a SUNAT',
+        description: `El ticket ${transaction.ticket_code} tiene un comprobante electrónico emitido en Nubefact. Para anularlo debe emitirse una Nota de Crédito desde el módulo de facturación. La venta no fue modificada.`,
+        duration: 9000,
+      });
+      return;
+    }
+
     // Si es cajero u operador de caja, requiere contraseña de admin primero
     if (role === 'cajero' || role === 'operador_caja') {
       console.log('✅ Es cajero/operador, pidiendo autorización de admin');
@@ -970,6 +1121,253 @@ export const SalesList = () => {
     return method && ['yape', 'yape_qr', 'yape_numero', 'tarjeta', 'transferencia', 'plin', 'plin_qr'].includes(method);
   };
 
+  // Lee payment_status e is_deleted — no hace cálculos financieros.
+  const isTransactionCancelled = (t: Transaction) =>
+    t.payment_status === 'cancelled' || t.is_deleted === true;
+
+  // Traduce errores de backend (SUNAT, RLS, red) a mensajes comprensibles para el cajero.
+  const getAnnulErrorTitle = (error: any): string => {
+    const msg: string = error?.message || error?.details || '';
+    if (
+      msg.includes('SUNAT_INTEGRITY') ||
+      msg.includes('invoice_id') ||
+      msg.includes('informada a la SUNAT')
+    ) return 'No se puede anular desde aquí';
+    if (msg.includes('42501') || msg.includes('permission') || msg.includes('policy'))
+      return 'Sin permiso';
+    return 'No se pudo anular la venta';
+  };
+
+  const getAnnulErrorDescription = (error: any): string => {
+    const msg: string = error?.message || error?.details || '';
+    if (
+      msg.includes('SUNAT_INTEGRITY') ||
+      msg.includes('invoice_id') ||
+      msg.includes('informada a la SUNAT')
+    ) {
+      return 'El comprobante ya fue enviado a SUNAT/Nubefact. Debe anularse con una Nota de Crédito desde el módulo de facturación. La venta en caja NO fue modificada.';
+    }
+    if (msg.includes('42501') || msg.includes('permission') || msg.includes('policy'))
+      return 'No tienes permiso para anular esta venta.';
+    return `No se pudo anular la venta.${msg ? ` (${msg.slice(0, 140)})` : ''}`.trim();
+  };
+
+  // Refresca la lista paginada y, si hay búsqueda activa, también la caché globalSearchResults.
+  // Necesario para que la tarjeta no quede congelada con datos viejos tras una anulación.
+  const refreshSalesListAfterAnnul = async () => {
+    await fetchTransactions();
+    if (searchTerm.trim().length >= 3) {
+      await fetchGlobalSearch(searchTerm);
+    } else {
+      setGlobalSearchResults(null);
+    }
+  };
+
+  // ── FASE 1: Abrir modal de Nota de Crédito ────────────────────────────────────
+  const handleOpenNcModal = (transaction: Transaction) => {
+    if (isLunchTransaction(transaction)) {
+      toast({
+        variant: 'destructive',
+        title: 'Operación prohibida',
+        description: 'Los almuerzos se gestionan desde el módulo administrativo de Cobranzas.',
+      });
+      return;
+    }
+
+    setNcTargetTransaction(transaction);
+    setNcReason('');
+    setNcProcessing(false);
+    setOpenAdvancedMenuId(null);
+    setShowNcModal(true);
+  };
+
+  // ── FASE 1: Emitir Nota de Crédito vía Edge Function generate-document ─────────
+  // Solo emite el documento fiscal en Nubefact y persiste en `invoices`.
+  // NO modifica payment_status ni saldo del alumno (eso es FASE 2).
+  const handleEmitNC = async () => {
+    if (!ncTargetTransaction || ncReason.trim().length < 5) return;
+
+    const invoiceRef = ncTargetTransaction.invoice_id
+      ? invoiceRefMap.get(ncTargetTransaction.invoice_id)
+      : null;
+
+    if (!invoiceRef) {
+      toast({
+        variant: 'destructive',
+        title: 'Sin comprobante vinculado',
+        description: 'No se encontraron los datos del comprobante original. Recarga la página e intenta nuevamente.',
+      });
+      return;
+    }
+
+    // '01' factura → tipo NC = 8 y doc_ref.tipo = 1 (Nubefact)
+    // '03' boleta  → tipo NC = 7 y doc_ref.tipo = 2 (Nubefact)
+    const tipoNC     = invoiceRef.document_type_code === '01' ? 8 : 7;
+    const tipoDocRef = invoiceRef.document_type_code === '01' ? 1 : 2;
+
+    const clienteName = ncTargetTransaction.invoice_client_name
+      || ncTargetTransaction.student?.full_name
+      || ncTargetTransaction.teacher?.full_name
+      || 'Consumidor Final';
+    const clienteDni = ncTargetTransaction.invoice_client_dni_ruc ?? '';
+    const docTypeStr = clienteDni.length === 11 ? 'ruc' : 'dni';
+
+    setNcProcessing(true);
+    try {
+      const { data: result, error: fnErr } = await supabase.functions.invoke('generate-document', {
+        body: {
+          school_id:           ncTargetTransaction.school_id ?? '',
+          tipo:                tipoNC,
+          transaction_id:      ncTargetTransaction.id,
+          related_invoice_id:  invoiceRef.id,
+          cancellation_reason: ncReason.trim(),
+          payment_method:      'nc_pos_manual',
+          monto_total:         Math.abs(ncTargetTransaction.amount),
+          cliente: {
+            doc_type:     clienteDni ? docTypeStr : '-',
+            doc_number:   clienteDni || '-',
+            razon_social: clienteName,
+          },
+          doc_ref: {
+            tipo:   tipoDocRef,
+            serie:  invoiceRef.serie,
+            numero: invoiceRef.numero,
+          },
+        },
+      });
+
+      if (fnErr) throw new Error(fnErr.message || 'Error interno en la Edge Function');
+      if (!result?.success) {
+        const nubefactErr = Array.isArray(result?.nubefact?.errors)
+          ? result.nubefact.errors.join(' | ')
+          : (result?.error ?? 'Nubefact rechazó la Nota de Crédito');
+        throw new Error(nubefactErr);
+      }
+
+      // Actualizar mapa local para reflejar la NC en la UI sin recargar la página
+      const ncSerie  = result.documento?.serie ?? result.nubefact?.serie ?? '';
+      const ncNumero = result.documento?.numero ?? result.nubefact?.numero ?? 0;
+      const ncPdf    = result.documento?.enlace_pdf ?? result.nubefact?.enlace_del_pdf ?? null;
+      const ncLabel  = ncSerie
+        ? `${ncSerie}-${String(ncNumero).padStart(8, '0')}`
+        : 'Nota de Crédito';
+
+      if (ncTargetTransaction.invoice_id) {
+        setNcExistsMap(prev => {
+          const next = new Map(prev);
+          next.set(ncTargetTransaction.invoice_id!, {
+            id:           result.documento?.id ?? '',
+            serie:        ncSerie,
+            numero:       ncNumero,
+            pdf_url:      ncPdf,
+            sunat_status: result.sunat_status ?? 'pending',
+          });
+          return next;
+        });
+      }
+
+      toast({
+        title: `✅ Nota de Crédito emitida — ${ncLabel}`,
+        description: ncPdf
+          ? 'Documento listo en Nubefact. Luego podrás usar "Devolver Saldo al Alumno".'
+          : 'NC generada. El PDF se procesará en Nubefact en los próximos minutos.',
+        duration: 9000,
+      });
+      setShowNcModal(false);
+      setNcReason('');
+      setNcTargetTransaction(null);
+    } catch (err: any) {
+      console.error('[FASE1 NC] Error al emitir NC:', err);
+      // Modal permanece abierto para que el cajero no pierda el motivo escrito
+      toast({
+        variant: 'destructive',
+        title: 'Error al emitir Nota de Crédito',
+        description: (err.message ?? 'Error desconocido').slice(0, 300),
+        duration: 10000,
+      });
+    } finally {
+      setNcProcessing(false);
+    }
+  };
+
+  const handleExecuteOperationalVoid = async (transaction: Transaction) => {
+    if (isLunchTransaction(transaction)) {
+      toast({
+        variant: 'destructive',
+        title: 'Operación prohibida',
+        description: 'Los almuerzos se gestionan desde el módulo administrativo de Cobranzas.',
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'Sesión inválida',
+        description: 'No se pudo identificar el usuario autenticado.',
+      });
+      return;
+    }
+
+    if (operationalVoidLoadingIds.has(transaction.id)) return;
+
+    const nc = transaction.invoice_id ? ncExistsMap.get(transaction.invoice_id) : null;
+    const isAccepted = (nc?.sunat_status || '').toLowerCase() === 'accepted';
+    if (!isAccepted) {
+      toast({
+        variant: 'destructive',
+        title: 'Aún no disponible',
+        description: 'Primero emite la Nota de Crédito y espera su aprobación.',
+      });
+      return;
+    }
+
+    setOpenAdvancedMenuId(null);
+    setOperationalVoidLoadingIds(prev => {
+      const next = new Set(prev);
+      next.add(transaction.id);
+      return next;
+    });
+
+    try {
+      const { data, error } = await supabase.rpc('void_pos_sale_with_nc', {
+        p_transaction_id: transaction.id,
+        p_admin_id: user.id,
+        p_reason: `Devolución de saldo al alumno desde Ventas (NC ${nc?.serie || ''}-${String(nc?.numero || 0).padStart(8, '0')})`,
+      });
+
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error(data?.error || 'La base de datos rechazó la devolución de saldo.');
+      }
+
+      setInvoiceRefMap(new Map());
+      setNcExistsMap(new Map());
+      await refreshSalesListAfterAnnul();
+
+      const refunded = Number(data?.balance_refunded || 0);
+      toast({
+        title: '✅ Saldo devuelto al alumno',
+        description: `Se devolvió S/ ${refunded.toFixed(2)} correctamente.`,
+        duration: 9000,
+      });
+    } catch (err: any) {
+      const msg = err?.message || err?.details || 'Error desconocido';
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo devolver el saldo',
+        description: String(msg).slice(0, 220),
+        duration: 10000,
+      });
+    } finally {
+      setOperationalVoidLoadingIds(prev => {
+        const next = new Set(prev);
+        next.delete(transaction.id);
+        return next;
+      });
+    }
+  };
+
   const handleAnnulSale = async () => {
     if (!selectedTransaction || !annulReason.trim()) {
       toast({
@@ -991,93 +1389,59 @@ export const SalesList = () => {
 
     setIsProcessing(true);
     try {
-      const { data: currentTx } = await supabase
-        .from('transactions')
-        .select('metadata')
-        .eq('id', selectedTransaction.id)
-        .single();
-      
-      const currentMetadata = currentTx?.metadata || {};
-      
-      const { error: updateError } = await supabase
-        .from('transactions')
-        .update({
-          payment_status: 'cancelled',
-          metadata: {
-            ...currentMetadata,
-            cancelled_at: new Date().toISOString(),
-            cancelled_by: user?.id,
-            cancellation_reason: annulReason.trim(),
-            ...(refundMethod ? { refund_method: refundMethod } : {}),
-          },
-        })
-        .eq('id', selectedTransaction.id);
+      // RPC atómico: anula la transacción + devuelve stock al inventario.
+      // No toca students.balance ni sales.payment_method (por regla de negocio).
+      const { data, error: rpcError } = await supabase.rpc('cancel_pos_sale', {
+        p_transaction_id: selectedTransaction.id,
+        p_admin_id:       user?.id,
+        p_reason:         annulReason.trim(),
+        p_refund_method:  refundMethod || null,
+      });
 
-      if (updateError) throw updateError;
-
-      const { error: salesError } = await supabase
-        .from('sales')
-        .update({ payment_method: 'cancelled' })
-        .eq('transaction_id', selectedTransaction.id);
-
-      if (salesError) {
-        console.error('⚠️ Error actualizando sales:', salesError);
+      if (rpcError) throw rpcError;
+      if (!data?.success) {
+        throw new Error(data?.error || 'La base de datos rechazó la anulación.');
       }
 
-      // Insertar alerta de anulación para admin_general
+      // Alerta operativa para admin_general (no financiera — sin cálculos de saldo)
       await supabase.from('cancellation_alerts').insert({
-        school_id: selectedTransaction.school_id,
-        transaction_id: selectedTransaction.id,
-        alert_type: 'sale_cancelled',
-        amount: Math.abs(selectedTransaction.amount),
-        payment_method: selectedTransaction.payment_method,
-        refund_method: refundMethod || null,
-        cancelled_by: user?.id,
+        school_id:           selectedTransaction.school_id,
+        transaction_id:      selectedTransaction.id,
+        alert_type:          'sale_cancelled',
+        amount:              Math.abs(selectedTransaction.amount),
+        payment_method:      selectedTransaction.payment_method,
+        refund_method:       refundMethod || null,
+        cancelled_by:        user?.id,
         cancellation_reason: annulReason.trim(),
-        client_name: selectedTransaction.invoice_client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'Cliente genérico',
+        client_name:
+          selectedTransaction.invoice_client_name ||
+          selectedTransaction.student?.full_name ||
+          selectedTransaction.teacher?.full_name ||
+          'Cliente genérico',
         ticket_code: selectedTransaction.ticket_code,
       }).then(({ error }) => {
         if (error) console.error('⚠️ Error insertando alerta:', error);
       });
 
-      if (selectedTransaction.student_id && selectedTransaction.student) {
-        const amountToReturn = Math.abs(selectedTransaction.amount);
+      // Aviso de acción manual: el operador es responsable de devolver el dinero.
+      toast({
+        title: '⚠️ Venta anulada',
+        description:
+          'Recuerde realizar la devolución del dinero o saldo al cliente de forma manual.',
+      });
 
-        // 🔒 ATÓMICO: Devolver saldo usando RPC (evita usar balance stale del state)
-        const { data: updatedBalance, error: rpcError } = await supabase
-          .rpc('adjust_student_balance', {
-            p_student_id: selectedTransaction.student_id,
-            p_amount: amountToReturn,
-          });
-
-        if (rpcError) throw rpcError;
-
-        const finalBalance = updatedBalance ?? (selectedTransaction.student.balance + amountToReturn);
-
-        toast({
-          title: '✅ Venta Anulada',
-          description: `Saldo devuelto: S/ ${amountToReturn.toFixed(2)}. Nuevo saldo: S/ ${finalBalance.toFixed(2)}`,
-        });
-      } else {
-        toast({
-          title: '✅ Venta Anulada',
-          description: 'La venta fue marcada como anulada',
-        });
-      }
-
-      // Rastro de auditoría: anulación de venta con devolución de saldo
       registrarHuella(
-        'DEVOLUCION_SALDO_POR_ANULACION',
+        'ANULACION_VENTA_MANUAL',
         'VENTAS',
         {
-          admin_id: user?.id,
-          transaccion_id: selectedTransaction.id,
-          ticket_code: selectedTransaction.ticket_code ?? null,
-          alumno_id: selectedTransaction.student_id ?? null,
-          alumno_nombre: selectedTransaction.student?.full_name ?? null,
-          monto_devuelto: selectedTransaction.student_id ? Math.abs(selectedTransaction.amount) : 0,
-          motivo_anulacion: annulReason.trim(),
+          admin_id:          user?.id,
+          transaccion_id:    selectedTransaction.id,
+          ticket_code:       selectedTransaction.ticket_code ?? null,
+          alumno_id:         selectedTransaction.student_id ?? null,
+          alumno_nombre:     selectedTransaction.student?.full_name ?? null,
+          motivo_anulacion:  annulReason.trim(),
           metodo_devolucion: refundMethod || null,
+          items_restaurados: (data?.items_restored as number) ?? 0,
         },
         undefined,
         selectedTransaction.school_id ?? undefined
@@ -1085,16 +1449,17 @@ export const SalesList = () => {
 
       setShowAnnul(false);
       setRefundMethod('');
-      fetchTransactions();
-      // 'balances' refresca el selectedStudent en el POS (incluye current_period_spent).
-      // Sin esto, el cajero tendría que buscar al alumno de nuevo para ver el tope liberado.
+      await refreshSalesListAfterAnnul();
+      // 'balances' refresca el POS (trg_transactions_balance_sync ya recalculó
+      // la deuda pending; spending_limits también se actualiza por trigger).
       emitSync(['debtors', 'balances', 'spending_limits', 'dashboard']);
     } catch (error: any) {
       console.error('Error annulling sale:', error);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo anular la venta',
+        title: getAnnulErrorTitle(error),
+        description: getAnnulErrorDescription(error),
+        duration: 8000,
       });
     } finally {
       setIsProcessing(false);
@@ -1103,9 +1468,56 @@ export const SalesList = () => {
 
   // ========== REIMPRIMIR TICKET ==========
   const handleViewDetails = async (transaction: Transaction) => {
-    setSelectedTransaction(transaction);
-    await fetchTransactionItems(transaction.id);
-    setShowDetails(true);
+    if (detailLoadingIds.has(transaction.id)) return;
+    setDetailLoadingIds(prev => {
+      const next = new Set(prev);
+      next.add(transaction.id);
+      return next;
+    });
+
+    try {
+      setSelectedTransaction(transaction);
+      setCancelledByName(null);
+
+      const { data, error } = await supabase
+        .from('v_transaction_detail_view')
+        .select('detail_json')
+        .eq('transaction_id', transaction.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data?.detail_json) {
+        throw new Error('No se pudo cargar el detalle de la venta.');
+      }
+
+      setSelectedTransactionDetail(data.detail_json as TransactionDetailData);
+
+      // Si la venta está anulada, resolver el nombre del usuario que la anuló
+      const cancelledById = transaction.metadata?.cancelled_by;
+      if ((transaction.payment_status === 'cancelled' || transaction.is_deleted) && cancelledById) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', cancelledById)
+          .maybeSingle();
+        setCancelledByName(prof?.full_name || prof?.email || cancelledById);
+      }
+
+      setShowDetails(true);
+    } catch (error: any) {
+      console.error('Error cargando detalle optimizado:', error);
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo abrir el detalle',
+        description: (error?.message || 'Intenta nuevamente en unos segundos.').slice(0, 180),
+      });
+    } finally {
+      setDetailLoadingIds(prev => {
+        const next = new Set(prev);
+        next.delete(transaction.id);
+        return next;
+      });
+    }
   };
 
   const handleReprint = async (transaction: Transaction) => {
@@ -2275,35 +2687,41 @@ export const SalesList = () => {
                         {isOpen && (
                           <div className="divide-y bg-slate-50 border-t">
                             {group.txs.map(t => (
-                              <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white transition text-sm">
+                              <div
+                                key={t.id}
+                                className={`flex items-center gap-3 px-4 py-2.5 hover:bg-white transition text-sm ${isTransactionCancelled(t) ? 'opacity-60 bg-red-50' : ''}`}
+                              >
                                 <div className="text-slate-400 font-mono text-xs w-28 shrink-0">
                                   {format(new Date(t.created_at), "dd/MM/yyyy HH:mm")}
                                 </div>
                                 <Badge variant="outline" className="font-mono text-xs shrink-0">
                                   {t.ticket_code || '—'}
                                 </Badge>
+                                {isTransactionCancelled(t) && (
+                                  <Badge variant="destructive" className="text-[10px] shrink-0 font-bold">⚠️ ANULADO</Badge>
+                                )}
                                 {t.school && (
                                   <Badge variant="secondary" className="text-[10px] shrink-0">
                                     {t.school.name}
                                   </Badge>
                                 )}
-                                <span className="text-slate-500 text-xs truncate flex-1" title={t.description || ''}>
+                                <span
+                                  className={`text-xs truncate flex-1 ${isTransactionCancelled(t) ? 'text-slate-400 line-through decoration-slate-400' : 'text-slate-500'}`}
+                                  title={t.description || ''}
+                                >
                                   {buildInlineLabel(t)}
                                 </span>
-                                <span className="font-bold text-emerald-700 shrink-0">
+                                <span className={`font-bold shrink-0 ${isTransactionCancelled(t) ? 'text-slate-400 line-through decoration-slate-400' : 'text-emerald-700'}`}>
                                   S/ {Math.abs(t.amount || 0).toFixed(2)}
                                 </span>
                                 <Button
                                   size="sm" variant="ghost"
                                   className="h-6 w-6 p-0 text-slate-400 hover:text-slate-700 shrink-0"
-                                  onClick={() => {
-                                    setSelectedTransaction(t);
-                                    setShowDetails(true);
-                                    fetchTransactionItems(t.id);
-                                  }}
+                                  onClick={() => handleViewDetails(t)}
+                                  disabled={detailLoadingIds.has(t.id)}
                                   title="Ver detalle completo"
                                 >
-                                  <Eye className="h-3 w-3" />
+                                  <Eye className={`h-3 w-3 ${detailLoadingIds.has(t.id) ? 'animate-pulse' : ''}`} />
                                 </Button>
                                 {/* Editar medio de pago — vista agrupada */}
                                 {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && permissions.canEdit && (
@@ -2316,8 +2734,8 @@ export const SalesList = () => {
                                     <CreditCard className="h-3 w-3" />
                                   </Button>
                                 )}
-                                {/* Anular desde vista agrupada — solo kiosco/venta directa, NO almuerzos */}
-                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && !isLunchTransaction(t) && (
+                                {/* Anular desde vista agrupada — solo kiosco/venta directa, NO almuerzos ni ventas ya enviadas a SUNAT */}
+                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && !isLunchTransaction(t) && t.billing_status !== 'sent' && (
                                   <Button
                                     size="sm" variant="ghost"
                                     className="h-6 w-6 p-0 text-red-400 hover:text-red-700 hover:bg-red-50 shrink-0"
@@ -2326,6 +2744,80 @@ export const SalesList = () => {
                                   >
                                     <Trash2 className="h-3 w-3" />
                                   </Button>
+                                )}
+                                {/* FASE 1.5/2 — Menú avanzado SUNAT (vista agrupada, excluye almuerzos) */}
+                                {activeTab !== 'deleted' && t.payment_status !== 'cancelled' && !t.is_deleted && !isLunchTransaction(t) && t.billing_status === 'sent' && (
+                                  <Popover
+                                    open={openAdvancedMenuId === t.id}
+                                    onOpenChange={open => setOpenAdvancedMenuId(open ? t.id : null)}
+                                  >
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        size="sm" variant="ghost"
+                                        className="h-6 w-6 p-0 text-slate-400 hover:text-slate-700 shrink-0"
+                                        title="Opciones avanzadas SUNAT"
+                                      >
+                                        <MoreVertical className="h-3 w-3" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-64 p-2" align="end">
+                                      <p className="text-[10px] font-semibold text-slate-500 px-2 pb-1 uppercase tracking-wide">Opciones SUNAT</p>
+                                      {!t.invoice_id && (
+                                        <div className="flex items-start gap-2 rounded-md bg-orange-50 border border-orange-200 px-3 py-2">
+                                          <AlertTriangle className="h-3.5 w-3.5 text-orange-500 mt-0.5 shrink-0" />
+                                          <p className="text-[11px] text-orange-800 font-medium">⚠️ Comprobante sin vínculo local. Saneo requerido.</p>
+                                        </div>
+                                      )}
+                                      {t.invoice_id && ncExistsMap.has(t.invoice_id) && (() => {
+                                        const nc = ncExistsMap.get(t.invoice_id)!;
+                                        const ncLabel = nc.serie ? `${nc.serie}-${String(nc.numero).padStart(8, '0')}` : 'NC emitida';
+                                        return (
+                                          <div className="flex items-center gap-2 rounded-md bg-green-50 border border-green-200 px-3 py-2">
+                                            <FileCheck className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                                            <div>
+                                              <p className="text-[11px] font-bold text-green-800">NC emitida: {ncLabel}</p>
+                                              {nc.pdf_url && (
+                                                <button
+                                                  className="text-[10px] text-green-700 underline"
+                                                  onClick={() => { window.open(nc.pdf_url!, '_blank'); setOpenAdvancedMenuId(null); }}
+                                                >
+                                                  Ver PDF
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                      {t.invoice_id && !ncExistsMap.has(t.invoice_id) && (
+                                        <Button
+                                          variant="ghost" size="sm"
+                                          className="w-full h-8 justify-start gap-2 text-xs hover:bg-red-50 hover:text-red-700"
+                                          onClick={() => handleOpenNcModal(t)}
+                                        >
+                                          <FileX className="h-3.5 w-3.5 text-red-500" />
+                                          Emitir Nota de Crédito
+                                        </Button>
+                                      )}
+                                      {t.invoice_id && (() => {
+                                        const nc = ncExistsMap.get(t.invoice_id);
+                                        const canReturn = (nc?.sunat_status || '').toLowerCase() === 'accepted';
+                                        const isLoading = operationalVoidLoadingIds.has(t.id);
+                                        return (
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="w-full h-8 justify-start gap-2 text-xs border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                                            onClick={() => handleExecuteOperationalVoid(t)}
+                                            disabled={!canReturn || isLoading}
+                                            title={!canReturn ? 'Primero emite la Nota de Crédito y espera su aprobación' : 'Devuelve el saldo al alumno'}
+                                          >
+                                            <CreditCard className="h-3.5 w-3.5" />
+                                            {isLoading ? 'Procesando...' : 'Devolver Saldo al Alumno'}
+                                          </Button>
+                                        );
+                                      })()}
+                                    </PopoverContent>
+                                  </Popover>
                                 )}
                               </div>
                             ))}
@@ -2347,10 +2839,11 @@ export const SalesList = () => {
                     <Card 
                       key={t.id} 
                       className={`hover:shadow-md transition-all border-l-4 ${
-                        selectedIds.has(t.id) ? 'bg-blue-50 border-blue-500' : ''
+                        selectedIds.has(t.id) ? 'bg-blue-50 border-blue-500' :
+                        isTransactionCancelled(t) ? 'bg-red-50/40' : ''
                       }`}
                       style={{
-                        borderLeftColor: t.payment_status === 'cancelled' ? '#ef4444' : '#10b981'
+                        borderLeftColor: isTransactionCancelled(t) ? '#ef4444' : '#10b981'
                       }}
                     >
                       <CardContent className="p-4">
@@ -2370,8 +2863,8 @@ export const SalesList = () => {
                                 <Clock className="h-4 w-4" />
                                 {format(new Date(t.created_at), "dd/MM/yyyy HH:mm", { locale: es })}
                               </span>
-                              {t.payment_status === 'cancelled' && (
-                                <Badge variant="destructive" className="text-xs font-bold">ANULADA</Badge>
+                              {isTransactionCancelled(t) && (
+                                <Badge variant="destructive" className="text-sm font-bold px-3 py-1">⚠️ ANULADO</Badge>
                               )}
                             </div>
 
@@ -2396,7 +2889,7 @@ export const SalesList = () => {
                             {/* Tercera línea: Cliente - MÁS GRANDE */}
                             <div className="flex items-center gap-2 mb-2">
                               <User className="h-5 w-5 text-emerald-600" />
-                              <span className="text-base font-bold text-slate-900">
+                              <span className={`text-base font-bold ${isTransactionCancelled(t) ? 'text-slate-400 line-through decoration-slate-400' : 'text-slate-900'}`}>
                                 CLIENTE: {t.invoice_client_name || t.student?.full_name || t.teacher?.full_name || 'GENÉRICO'}
                               </span>
                             </div>
@@ -2407,10 +2900,20 @@ export const SalesList = () => {
                                 👤 Cajero: {t.profiles?.full_name || t.profiles?.email || 'Sistema'}
                               </Badge>
                             </div>
+
+                            {/* FASE 1 — Banda de alerta: NC emitida ante SUNAT, devolución de saldo pendiente */}
+                            {t.invoice_id && ncExistsMap.has(t.invoice_id) && (
+                              <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-300 px-3 py-1.5">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                <span className="text-[11px] font-semibold text-amber-800">
+                                  Documento fiscal anulado ante SUNAT. Pendiente devolución de saldo al alumno.
+                                </span>
+                              </div>
+                            )}
                           </div>
                           
                           <div className="text-right">
-                            <p className="text-2xl font-black text-emerald-600">
+                            <p className={`text-2xl font-black ${isTransactionCancelled(t) ? 'text-slate-400 line-through decoration-slate-400' : 'text-emerald-600'}`}>
                               S/ {Math.abs(t.amount).toFixed(2)}
                             </p>
                             <div className="flex gap-1 mt-2">
@@ -2420,9 +2923,10 @@ export const SalesList = () => {
                                 size="sm"
                                 className="h-8 gap-1 border-blue-200 hover:bg-blue-50 text-blue-700"
                                 onClick={() => handleViewDetails(t)}
+                                disabled={detailLoadingIds.has(t.id)}
                                 title="Ver detalles de la venta"
                               >
-                                <Eye className="h-3.5 w-3.5" />
+                                <Eye className={`h-3.5 w-3.5 ${detailLoadingIds.has(t.id) ? 'animate-pulse' : ''}`} />
                               </Button>
 
                               {/* Botón SUNAT: Ver PDF si ya existe, Emitir si no */}
@@ -2502,8 +3006,8 @@ export const SalesList = () => {
                                       </Button>
                                     </>
                                   )}
-                                  {/* Anular: oculto para transacciones de almuerzo */}
-                                  {!isLunchTransaction(t) && (
+                                  {/* Anular: oculto para almuerzos y para ventas ya enviadas a SUNAT */}
+                                  {!isLunchTransaction(t) && t.billing_status !== 'sent' && (
                                     <Button 
                                       variant="ghost" 
                                       size="sm"
@@ -2513,6 +3017,100 @@ export const SalesList = () => {
                                     >
                                       <Trash2 className="h-4 w-4 text-red-600" />
                                     </Button>
+                                  )}
+                                  {/* FASE 1.5/2 — Menú avanzado para ventas enviadas a SUNAT (excluye almuerzos) */}
+                                  {!isLunchTransaction(t) && t.billing_status === 'sent' && (
+                                    <Popover
+                                      open={openAdvancedMenuId === t.id}
+                                      onOpenChange={open => setOpenAdvancedMenuId(open ? t.id : null)}
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 w-8 p-0 hover:bg-slate-100"
+                                          title="Opciones avanzadas SUNAT"
+                                        >
+                                          <MoreVertical className="h-4 w-4 text-slate-600" />
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-72 p-2" align="end">
+                                        <p className="text-[10px] font-semibold text-slate-500 px-2 pb-1 uppercase tracking-wide">
+                                          Opciones SUNAT
+                                        </p>
+                                        {/* Caso huérfano: billing_status sent pero sin invoice_id local */}
+                                        {!t.invoice_id && (
+                                          <div className="flex items-start gap-2 rounded-md bg-orange-50 border border-orange-200 px-3 py-2">
+                                            <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
+                                            <p className="text-[11px] text-orange-800 font-medium">
+                                              ⚠️ Comprobante sin vínculo local. Saneo administrativo requerido.
+                                            </p>
+                                          </div>
+                                        )}
+                                        {/* NC ya emitida — mostrar datos y deshabilitar reemisión */}
+                                        {t.invoice_id && ncExistsMap.has(t.invoice_id) && (() => {
+                                          const nc = ncExistsMap.get(t.invoice_id)!;
+                                          const ncLabel = nc.serie
+                                            ? `${nc.serie}-${String(nc.numero).padStart(8, '0')}`
+                                            : 'NC emitida';
+                                          return (
+                                            <div className="space-y-1.5 p-1">
+                                              <div className="flex items-center gap-2 rounded-md bg-green-50 border border-green-200 px-3 py-2">
+                                                <FileCheck className="h-4 w-4 text-green-600 shrink-0" />
+                                                <div>
+                                                  <p className="text-[11px] font-bold text-green-800">NC ya emitida: {ncLabel}</p>
+                                                  <p className="text-[10px] text-green-700">Estado: {nc.sunat_status}</p>
+                                                </div>
+                                              </div>
+                                              {nc.pdf_url && (
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="w-full h-7 text-[11px] border-green-300 text-green-700 hover:bg-green-50"
+                                                  onClick={() => { window.open(nc.pdf_url!, '_blank'); setOpenAdvancedMenuId(null); }}
+                                                >
+                                                  <ExternalLink className="h-3 w-3 mr-1" />
+                                                  Ver PDF Nota de Crédito
+                                                </Button>
+                                              )}
+                                              <p className="text-[10px] text-slate-500 px-1">
+                                                Para continuar, usa la opción "Devolver Saldo al Alumno".
+                                              </p>
+                                            </div>
+                                          );
+                                        })()}
+                                        {/* NC no emitida — ofrecer el botón de emisión */}
+                                        {t.invoice_id && !ncExistsMap.has(t.invoice_id) && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="w-full h-9 justify-start gap-2 text-sm hover:bg-red-50 hover:text-red-700"
+                                            onClick={() => handleOpenNcModal(t)}
+                                          >
+                                            <FileX className="h-4 w-4 text-red-500" />
+                                            Emitir Nota de Crédito
+                                          </Button>
+                                        )}
+                                        {t.invoice_id && (() => {
+                                          const nc = ncExistsMap.get(t.invoice_id);
+                                          const canReturn = (nc?.sunat_status || '').toLowerCase() === 'accepted';
+                                          const isLoading = operationalVoidLoadingIds.has(t.id);
+                                          return (
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              className="w-full h-8 justify-start gap-2 text-[11px] border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                                              onClick={() => handleExecuteOperationalVoid(t)}
+                                              disabled={!canReturn || isLoading}
+                                              title={!canReturn ? 'Primero emite la Nota de Crédito y espera su aprobación' : 'Devuelve el saldo al alumno'}
+                                            >
+                                              <CreditCard className="h-3.5 w-3.5" />
+                                              {isLoading ? 'Procesando...' : 'Devolver Saldo al Alumno'}
+                                            </Button>
+                                          );
+                                        })()}
+                                      </PopoverContent>
+                                    </Popover>
                                   )}
                                 </>
                               )}
@@ -2847,41 +3445,143 @@ export const SalesList = () => {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: Detalles de Venta (DISEÑO TICKET REAL) */}
-      <Dialog open={showDetails} onOpenChange={setShowDetails}>
-        <DialogContent className="max-w-[400px] p-0 bg-gray-100 overflow-hidden" aria-describedby={undefined}>
-          <DialogHeader className="p-4 bg-white border-b">
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-blue-600" />
-              Vista de Comprobante
-            </DialogTitle>
-          </DialogHeader>
-          
-          <div className="p-6 overflow-y-auto max-h-[70vh]">
-            {selectedTransaction && (
-              <ThermalTicket
-                ticketCode={selectedTransaction.ticket_code}
-                date={new Date(selectedTransaction.created_at)}
-                cashierEmail={selectedTransaction.profiles?.full_name || selectedTransaction.profiles?.email || 'Sistema'}
-                clientName={selectedTransaction.invoice_client_name || selectedTransaction.student?.full_name || selectedTransaction.teacher?.full_name || 'CLIENTE GENÉRICO'}
-                documentType={selectedTransaction.document_type || 'ticket'}
-                items={transactionItems}
-                total={Math.abs(selectedTransaction.amount)}
-                clientDNI={selectedTransaction.invoice_client_dni_ruc}
-                clientRUC={selectedTransaction.invoice_client_dni_ruc}
-                isReprint={false}
-                showOnScreen={true}
-              />
-            )}
-          </div>
+      {/* MODAL: Detalle profesional de venta (sin preview térmica) */}
+      <TransactionDetailModal
+        open={showDetails}
+        onOpenChange={(open) => {
+          setShowDetails(open);
+          if (!open) setSelectedTransactionDetail(null);
+        }}
+        detail={selectedTransactionDetail}
+        isCancelled={!!selectedTransaction && isTransactionCancelled(selectedTransaction)}
+        cancelledBy={cancelledByName || selectedTransaction?.metadata?.cancelled_by || null}
+        cancelledAt={selectedTransaction?.metadata?.cancelled_at || null}
+        cancellationReason={selectedTransaction?.metadata?.cancellation_reason || null}
+        refundMethod={selectedTransaction?.metadata?.refund_method || null}
+        onPrint={() => selectedTransaction && handleReprint(selectedTransaction)}
+      />
 
-          <DialogFooter className="p-4 bg-white border-t flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => setShowDetails(false)}>
-              Cerrar
+      {/* ── FASE 1: Modal para emitir Nota de Crédito ────────────────────────────── */}
+      <Dialog
+        open={showNcModal}
+        onOpenChange={open => {
+          // Si está procesando, no permitir cerrar para evitar estados inconsistentes
+          if (ncProcessing) return;
+          if (!open) {
+            setShowNcModal(false);
+            setNcReason('');
+            setNcTargetTransaction(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <FileX className="h-5 w-5" />
+              Emitir Nota de Crédito
+            </DialogTitle>
+            <DialogDescription>
+              Este proceso emite una Nota de Crédito ante la SUNAT para anular
+              fiscalmente el comprobante. <strong>No devuelve el saldo al alumno</strong> ni
+              cambia el estado de la venta — eso se ejecutará en el paso "Devolver Saldo al Alumno".
+            </DialogDescription>
+          </DialogHeader>
+
+          {ncTargetTransaction && (
+            <div className="space-y-4">
+              {/* Resumen de la venta a anular fiscalmente */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-medium">Ticket:</span>
+                  <span className="font-bold font-mono">{ncTargetTransaction.ticket_code}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-medium">Monto:</span>
+                  <span className="font-bold text-emerald-700">
+                    S/ {Math.abs(ncTargetTransaction.amount).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-medium">Cliente:</span>
+                  <span className="font-semibold text-right max-w-[200px] truncate">
+                    {ncTargetTransaction.invoice_client_name
+                      || ncTargetTransaction.student?.full_name
+                      || 'Consumidor Final'}
+                  </span>
+                </div>
+                {ncTargetTransaction.invoice_id && invoiceRefMap.get(ncTargetTransaction.invoice_id) && (() => {
+                  const ref = invoiceRefMap.get(ncTargetTransaction.invoice_id)!;
+                  const label = ref.serie
+                    ? `${ref.serie}-${String(ref.numero).padStart(8, '0')}`
+                    : '—';
+                  return (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Comprobante:</span>
+                      <span className="font-bold font-mono text-indigo-700">{label}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Campo de motivo — obligatorio, mínimo 5 caracteres */}
+              <div className="space-y-1.5">
+                <Label htmlFor="nc-reason" className="font-semibold">
+                  Motivo de la Nota de Crédito <span className="text-red-500">*</span>
+                </Label>
+                <Textarea
+                  id="nc-reason"
+                  placeholder="Ej: Error en precio, devolución acordada con el cliente…"
+                  rows={3}
+                  value={ncReason}
+                  onChange={e => setNcReason(e.target.value)}
+                  disabled={ncProcessing}
+                  className={ncReason.trim().length > 0 && ncReason.trim().length < 5 ? 'border-red-400' : ''}
+                />
+                {ncReason.trim().length > 0 && ncReason.trim().length < 5 && (
+                  <p className="text-xs text-red-600">El motivo debe tener al menos 5 caracteres.</p>
+                )}
+              </div>
+
+              {/* Aviso sobre lo que NO hace esta operación */}
+              <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-800">
+                  <strong>Importante:</strong> Esta operación solo cancela el documento fiscal ante
+                  la SUNAT. El saldo del alumno y el estado de la venta no se modifican en este paso.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (ncProcessing) return;
+                setShowNcModal(false);
+                setNcReason('');
+                setNcTargetTransaction(null);
+              }}
+              disabled={ncProcessing}
+            >
+              Cancelar
             </Button>
-            <Button className="flex-1 gap-2" onClick={() => selectedTransaction && handleReprint(selectedTransaction)}>
-              <Printer className="h-4 w-4" />
-              Imprimir Real
+            <Button
+              variant="destructive"
+              onClick={handleEmitNC}
+              disabled={ncProcessing || ncReason.trim().length < 5}
+            >
+              {ncProcessing ? (
+                <>
+                  <span className="animate-spin mr-2">⏳</span>
+                  Emitiendo en Nubefact…
+                </>
+              ) : (
+                <>
+                  <FileX className="h-4 w-4 mr-2" />
+                  Emitir Nota de Crédito
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

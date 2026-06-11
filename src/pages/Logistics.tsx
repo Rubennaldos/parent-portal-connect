@@ -14,8 +14,10 @@ import LogisticsMovementReport from '@/components/logistics/LogisticsMovementRep
 import { MovementsHubTab } from '@/components/logistics/MovementsHubTab';
 import StockRealtimeTab from '@/components/logistics/StockRealtimeTab';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
-
 const BROWN = '#8B4513';
+
+/** Fase 0 (2026-06-06): Comprobantes oculto — stock inmediato en submit; auditoría legacy vía RPC en BD. */
+const SHOW_BRANCH_SUPPLY_AUDIT_TAB = false;
 
 const Logistics = () => {
   const { user } = useAuth();
@@ -86,7 +88,7 @@ const Logistics = () => {
         <Tabs defaultValue="dashboard" className="w-full">
 
           <div className="overflow-x-auto pb-1">
-            <TabsList className="flex w-max sm:grid sm:w-full sm:grid-cols-6 bg-white border rounded-xl p-1 gap-0.5 min-w-full">
+            <TabsList className={`flex w-max sm:grid sm:w-full ${SHOW_BRANCH_SUPPLY_AUDIT_TAB ? 'sm:grid-cols-7' : 'sm:grid-cols-6'} bg-white border rounded-xl p-1 gap-0.5 min-w-full`}>
 
               <TabsTrigger
                 value="dashboard"
@@ -135,6 +137,15 @@ const Logistics = () => {
                 <CalendarRange className="h-3.5 w-3.5 shrink-0" />
                 <span>Reportes</span>
               </TabsTrigger>
+
+              {SHOW_BRANCH_SUPPLY_AUDIT_TAB && (
+                <TabsTrigger
+                  value="comprobantes-sede"
+                  className="flex items-center gap-1 text-xs px-2 py-2 whitespace-nowrap data-[state=active]:bg-orange-700 data-[state=active]:text-white"
+                >
+                  <span>Comprobantes</span>
+                </TabsTrigger>
+              )}
 
             </TabsList>
           </div>

@@ -324,3 +324,55 @@ v_today_start := date_trunc('day', v_now_lima) AT TIME ZONE 'America/Lima';
 ```
 
 **Criterio de oro:** catálogo y precios gobiernan **ventas futuras**; deuda y cobro gobiernan **hechos pasados** — y el usuario nunca debe perder la pista de **qué** debe y **cuánto**.
+
+---
+
+## REGLA #14 — DESPLIEGUE VERCEL: PREVIEW ANTES QUE PRODUCCIÓN
+
+**Nunca subir cambios directo a producción sin pasar por Preview y pruebas.**
+
+### Flujo obligatorio
+
+```
+Rama de trabajo
+    ↓ push / deploy
+Preview en Vercel
+    ↓ pruebas manuales mínimas
+    • Padres (portal, recargas, saldo visible)
+    • Cobranzas (aprobar, rechazar, vouchers)
+    • Logística (stock, movimientos, ingresos)
+    ↓ solo si TODO OK
+Merge a main
+    ↓
+Production (Vercel)
+```
+
+```
+❌ MAL: merge o push a main después de cada cambio chico sin probar
+❌ MAL: asumir que "ya compiló en local" = listo para producción
+❌ MAL: hacer push/deploy automático al terminar cada edición o cada archivo tocado
+
+✅ BIEN: acumular cambios en rama, desplegar Preview cuando el dueño lo pida
+✅ BIEN: probar en Preview los módulos afectados (padres, cobranzas, logística)
+✅ BIEN: merge a main solo después de confirmación explícita de que Preview pasó
+```
+
+### Cuándo preguntar (no cuándo desplegar solo)
+
+**Al cerrar una integración o movida de código** — es decir, cuando el bloque de trabajo quedó terminado y estable, no tras cada commit o cada ajuste menor — **Cursor debe preguntar al dueño**, en español simple:
+
+> *"¿Querés que subamos esto a Preview en Vercel para probar antes de producción?"*
+
+- **No** hacer push, merge ni deploy por iniciativa propia en cada cambio.
+- **Sí** ofrecer el deploy al **final** del bloque de trabajo (feature, fix, migración aplicada, refactor cerrado).
+- Si el dueño dice que no → dejar los cambios en rama/local; seguir trabajando sin desplegar.
+- Si el dueño dice que sí → seguir el flujo Preview → pruebas → merge a main solo con su OK final.
+
+### Antes de merge a main
+
+Recordar brevemente:
+- qué se probó en Preview y qué quedó pendiente (si algo)
+- si hay migraciones SQL que deben aplicarse en Supabase antes o después del deploy
+- que producción afecta usuarios reales (padres, caja, logística)
+
+**Sin "dale" explícito para producción → no merge a main.**

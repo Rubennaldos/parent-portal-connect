@@ -4,24 +4,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ShoppingCart, Calendar, CreditCard, Plus, Clock, CheckCircle2, AlertTriangle, ArrowLeft, GraduationCap, Wrench } from 'lucide-react';
+import { ShoppingCart, Calendar, CreditCard, AlertTriangle, ArrowLeft, GraduationCap, Wrench } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { CreateSupplyRequestModal } from '@/components/school-admin/CreateSupplyRequestModal';
 import { GradesManagement } from '@/components/school-admin/GradesManagement';
+import { BranchSupplySedePanel } from '@/features/branch-supply/components/BranchSupplySedePanel';
 import { NFCCardsManager } from '@/components/admin/NFCCardsManager';
 import { MaintenanceConfig } from '@/components/school-admin/MaintenanceConfig';
 import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 
-interface SupplyRequest {
-  id: string;
-  request_number: string;
-  status: string;
-  created_at: string;
-  items_count: number;
-  notes: string;
-}
 
 const SchoolAdmin = () => {
   const { toast } = useToast();
@@ -30,8 +22,6 @@ const SchoolAdmin = () => {
   const [loading, setLoading] = useState(true);
   const [userSchoolId, setUserSchoolId] = useState<string | null>(null);
   const maintenance = useMaintenanceGuard('admin_sede_admin', userSchoolId);
-  const [myRequests, setMyRequests] = useState<SupplyRequest[]>([]);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -55,26 +45,6 @@ const SchoolAdmin = () => {
       // Admin General puede no tener school_id, es normal
       setUserSchoolId(profileData.school_id);
 
-      // Cargar pedidos de esta sede (solo si tiene school_id)
-      if (profileData.school_id) {
-        const { data: requestsData, error: requestsError } = await supabase
-          .from('supply_requests')
-          .select(`
-            *,
-            items:supply_request_items(count)
-          `)
-          .eq('requesting_school_id', profileData.school_id)
-          .order('created_at', { ascending: false });
-
-        if (requestsError) throw requestsError;
-
-        const formattedRequests = requestsData?.map(req => ({
-          ...req,
-          items_count: req.items?.[0]?.count || 0
-        })) || [];
-
-        setMyRequests(formattedRequests);
-      }
 
     } catch (error: any) {
       console.error('Error loading school admin data:', error);
@@ -88,24 +58,6 @@ const SchoolAdmin = () => {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      pending: { label: 'Pendiente', color: 'bg-yellow-100 text-yellow-700', icon: Clock },
-      processing: { label: 'En Proceso', color: 'bg-blue-100 text-blue-700', icon: ShoppingCart },
-      partially_fulfilled: { label: 'Parcial', color: 'bg-orange-100 text-orange-700', icon: AlertTriangle },
-      fulfilled: { label: 'Completado', color: 'bg-green-100 text-green-700', icon: CheckCircle2 },
-    };
-
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
-    const Icon = config.icon;
-
-    return (
-      <Badge className={`${config.color} flex items-center gap-1`}>
-        <Icon className="h-3 w-3" />
-        {config.label}
-      </Badge>
-    );
-  };
 
   if (loading) {
     return (
@@ -184,22 +136,13 @@ const SchoolAdmin = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* Pestaña de Pedidos */}
-          <TabsContent value="requests" className="mt-6">
-            <Card className="border-2 border-[#8B4513]/20">
-              <CardHeader className="bg-gradient-to-r from-amber-50 to-orange-50">
-                <div className="text-center">
-                  <CardTitle className="flex items-center justify-center gap-3 text-2xl mb-3">
-                    <ShoppingCart className="h-8 w-8 text-[#8B4513]" />
-                    Módulo de Pedidos
-                  </CardTitle>
-                  <Badge className="bg-gradient-to-r from-[#8B4513] to-amber-700 text-white text-lg px-6 py-2">
-                    🚧 Próximamente
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-8">
-                {/* Especificaciones del Módulo */}
+          {/* Pestaña de Pedidos — Panel de Suministros de Sede */}
+          <TabsContent value="requests" className="mt-4">
+            <BranchSupplySedePanel schoolId={userSchoolId} />
+          </TabsContent>
+
+          {/* ↓ Inicio bloque legado (inactivo) ↓ */}
+          {false && <TabsContent value="__unused__">
                 <div className="space-y-6 max-w-4xl mx-auto">
                   {/* Descripción General */}
                   <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-xl border-2 border-blue-200">
@@ -325,13 +268,12 @@ const SchoolAdmin = () => {
                   {/* Mensaje Final */}
                   <div className="text-center bg-gradient-to-r from-slate-50 to-gray-100 p-6 rounded-xl border-2 border-slate-300">
                     <p className="text-slate-600 text-lg">
-                      Este módulo estará disponible próximamente. Mientras tanto, puedes contactar al administrador para realizar pedidos manuales.
+                      Este módulo estará disponible próximamente.
                     </p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
+          </TabsContent>}
+          {/* ↑ Fin bloque legado (inactivo) ↑ */}
 
           {/* Pestaña de Grados y Salones */}
           <TabsContent value="grades" className="mt-6">
@@ -367,13 +309,6 @@ const SchoolAdmin = () => {
           </TabsContent>
         </Tabs>
 
-        {/* Modal de Crear Pedido */}
-        <CreateSupplyRequestModal
-          open={showCreateModal}
-          onClose={() => setShowCreateModal(false)}
-          onSuccess={loadData}
-          userSchoolId={userSchoolId}
-        />
       </div>
     </div>
   );

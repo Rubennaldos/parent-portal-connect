@@ -452,8 +452,15 @@ export default function CashDayDashboard({
       const d = rpcData || { pos: {}, lunch: {}, manual: {} };
       const pos    = d.pos    || {};
       const lunch  = d.lunch  || {};
-      const manIn  = d.manual?.income  || {};
-      const manOut = d.manual?.expense || {};
+      const manInRaw  = d.manual?.income;
+      const manOutRaw = d.manual?.expense;
+      const manIn = typeof manInRaw === 'object' && manInRaw !== null ? manInRaw : {};
+      const manualIncomeTotal = typeof manInRaw === 'number'
+        ? Number(manInRaw.toFixed(2))
+        : Number((manIn.total || 0).toFixed(2));
+      const manualExpenseTotal = typeof manOutRaw === 'number'
+        ? Number(manOutRaw.toFixed(2))
+        : Number(((manOutRaw as any)?.total || 0).toFixed(2));
 
       const posCobrado = safeAdd(
         pos.cash, lunch.cash, pos.mixed_cash,
@@ -481,8 +488,8 @@ export default function CashDayDashboard({
         manual_income_tarjeta:       Number((manIn.tarjeta       || 0).toFixed(2)),
         manual_income_transferencia: Number((manIn.transferencia || 0).toFixed(2)),
         manual_income_otro:          Number((manIn.otro          || 0).toFixed(2)),
-        manual_income_total:         Number((manIn.total         || 0).toFixed(2)),
-        manual_expense_total:        Number((manOut.total        || 0).toFixed(2)),
+        manual_income_total:         manualIncomeTotal,
+        manual_expense_total:        manualExpenseTotal,
       } as any);
 
       if (currentSession?.id) {
@@ -524,7 +531,7 @@ export default function CashDayDashboard({
 
       let query = supabase
         .from('transactions')
-        .select('id, created_at, amount, payment_method, metadata, student:students(full_name)')
+        .select('id, created_at, amount, payment_method, description, metadata, student:students(full_name)')
         .eq('type', 'purchase')
         .in('payment_method', methods)
         .neq('payment_status', 'cancelled')
@@ -547,7 +554,7 @@ export default function CashDayDashboard({
           created_at: t.created_at,
           amount: Math.abs(t.amount),
           payment_method: t.payment_method,
-          student_name: t.student?.full_name ?? 'Desconocido',
+          student_name: t.student?.full_name?.trim() || t.description?.trim() || 'Venta General',
           metadata: t.metadata,
         }))
       );
@@ -616,6 +623,16 @@ export default function CashDayDashboard({
   const expenseEntries = manualEntries.filter(e => e.entry_type === 'expense');
   const totalManualIncome  = Number(incomeEntries .reduce((s, e) => s + e.amount, 0).toFixed(2));
   const totalManualExpense = Number(expenseEntries.reduce((s, e) => s + e.amount, 0).toFixed(2));
+  const manualNetByMethod = manualEntries.reduce<Record<string, number>>((acc, e) => {
+    const method = ((e as any).payment_method || 'cash') as string;
+    const signed = e.entry_type === 'income' ? e.amount : -e.amount;
+    acc[method] = safeAdd(acc[method] || 0, signed);
+    return acc;
+  }, {});
+  const manualCashNet           = manualNetByMethod.cash ?? 0;
+  const manualYapePlinNet       = safeAdd(manualNetByMethod.yape ?? 0, manualNetByMethod.plin ?? 0);
+  const manualTransferenciaNet  = manualNetByMethod.transferencia ?? 0;
+  const manualTarjetaNet        = manualNetByMethod.tarjeta ?? 0;
 
   const posTotal        = salesTotals?.total ?? 0;
   const manIncomeTotal  = (salesTotals as any)?.manual_income_total ?? 0;
@@ -629,6 +646,7 @@ export default function CashDayDashboard({
 
   const yapePlin    = safeAdd(salesTotals?.yape ?? 0, salesTotals?.plin ?? 0);
   const posEnCaja   = safeAdd(salesTotals?.cash ?? 0, salesTotals?.tarjeta ?? 0);
+  const subtotalEnCaja = safeAdd(posEnCaja, manualCashNet, manualTarjetaNet);
   const posDigital  = safeAdd(yapePlin, salesTotals?.transferencia ?? 0);
   const granTotal   = safeAdd(posEnCaja, manIncomeTotal, -manExpenseTotal);
 
@@ -1032,8 +1050,10 @@ export default function CashDayDashboard({
                   />
                 </div>
                 <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 flex items-center justify-between">
-                  <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Subtotal en caja</span>
-                  <span className="text-lg font-black text-indigo-700">S/ {posEnCaja.toFixed(2)}</span>
+                  <span className="text-xs font-bold text-indigo-700 uppercase tracking-wide">
+                    {(manIncomeTotal > 0 || manExpenseTotal > 0) ? 'Subtotal en caja (con manuales)' : 'Subtotal en caja'}
+                  </span>
+                  <span className="text-lg font-black text-indigo-700">S/ {subtotalEnCaja.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -1120,19 +1140,19 @@ export default function CashDayDashboard({
               <CardContent className="px-5 pb-5">
                 <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {[
-                    { label: '💵 Efectivo',    pos: salesTotals.cash,          man: (salesTotals as any).manual_income_cash },
-                    { label: '📱 Yape/Plin',   pos: yapePlin,                  man: safeAdd((salesTotals as any).manual_income_yape, (salesTotals as any).manual_income_plin) },
-                    { label: '🏦 Transfer.',   pos: salesTotals.transferencia, man: (salesTotals as any).manual_income_transferencia },
-                    { label: '💳 Tarjeta',     pos: salesTotals.tarjeta,       man: (salesTotals as any).manual_income_tarjeta },
+                    { label: '💵 Efectivo',    pos: salesTotals.cash,          man: manualCashNet },
+                    { label: '📱 Yape/Plin',   pos: yapePlin,                  man: manualYapePlinNet },
+                    { label: '🏦 Transfer.',   pos: salesTotals.transferencia, man: manualTransferenciaNet },
+                    { label: '💳 Tarjeta',     pos: salesTotals.tarjeta,       man: manualTarjetaNet },
                   ].map((item) => {
                     const total = safeAdd(item.pos, item.man);
                     return (
                       <div key={item.label} className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                         <p className="text-xs text-gray-400 font-medium">{item.label}</p>
                         <p className="text-base font-black text-gray-800 mt-0.5">S/ {total.toFixed(2)}</p>
-                        {item.man > 0 && (
+                        {item.man !== 0 && (
                           <p className="text-xs text-gray-400 mt-0.5">
-                            POS {item.pos.toFixed(2)} + Man. {item.man.toFixed(2)}
+                            POS {item.pos.toFixed(2)} {item.man >= 0 ? '+' : '-'} Man. {Math.abs(item.man).toFixed(2)}
                           </p>
                         )}
                       </div>

@@ -186,7 +186,12 @@ const MODULE_CONFIG = {
       { action: 'gestionar_proveedores', label: 'Gestionar proveedores', description: 'Agregar/editar proveedores' },
       { action: 'ver_activos', label: 'Ver activos', description: 'Ver inventario de máquinas y equipos' },
       { action: 'editar_activos', label: 'Editar activos', description: 'Agregar/modificar activos' },
-      { action: 'ver_analytics', label: 'Ver analytics de inventario', description: 'Reportes y gráficos' }
+      { action: 'ver_analytics', label: 'Ver analytics de inventario', description: 'Reportes y gráficos' },
+      {
+        action:      'auditar_comprobantes_sede',
+        label:       'Auditar comprobantes de sedes',
+        description: 'Ver panel dual de auditoría, aprobar y rechazar comprobantes de ingreso de sedes',
+      }
     ]
   },
   admin_sede: {

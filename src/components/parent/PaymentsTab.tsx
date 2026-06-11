@@ -97,6 +97,8 @@ export const PaymentsTab = ({
   onRemoveRechargeItem,
   onClearRechargeCart,
 }: PaymentsTabProps) => {
+  // Clausura global del canal manual de vouchers desde la pestaña de deudas.
+  const MANUAL_RECHARGES_DISABLED = true;
   const { toast } = useToast();
   const voucherSyncTs = useDebouncedSync('vouchers', 800);
   const [loading, setLoading] = useState(true);
@@ -137,10 +139,11 @@ export const PaymentsTab = ({
   const toggleWallet = (studentId: string) =>
     setUseWalletByStudent(prev => new Map(prev).set(studentId, !prev.get(studentId)));
 
-  // ── Billetera virtual: datos globales ──
-  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
-  const [totalWalletBalance, setTotalWalletBalance] = useState<number>(0);
-  const [walletHistoryOpen, setWalletHistoryOpen] = useState(false);
+  // ── Saldo de Recargas (REC): datos globales desde DB ──
+  // Fuente: get_parent_rec_total → view_recharge_ledger (FIFO aprobado)
+  // Regla 11.A: el frontend solo muestra; todos los cálculos vienen de la DB.
+  const [recTotal, setRecTotal] = useState<number>(0);
+  const [recStudentsList, setRecStudentsList] = useState<Array<{ student_id: string; full_name: string; remaining: number }>>([]);
   const [loadingWallet, setLoadingWallet] = useState(false);
 
   // ── Pedidos congelados (prepago): IDs de lunch_orders con frozen_pending_payment ──
@@ -416,47 +419,18 @@ export const PaymentsTab = ({
   const fetchWalletData = async () => {
     setLoadingWallet(true);
     try {
-      // Suma de wallet_balance: viene del RPC (Regla 11.A — sin .reduce() financiero)
-      const [studentsResult, walletTotalResult] = await Promise.all([
-        supabase
-          .from('students')
-          .select('id, full_name, wallet_balance')
-          .eq('parent_id', userId)
-          .eq('is_active', true),
-        supabase.rpc('get_parent_wallet_total', { p_parent_id: userId }),
-      ]);
-
-      if (studentsResult.error) throw studentsResult.error;
-
-      const allStudents = studentsResult.data ?? [];
-      const total = Number(walletTotalResult.data ?? 0);
-      setTotalWalletBalance(total);
-
-      if (total > 0) {
-        const studentIds = allStudents.map(s => s.id);
-        const { data: txs, error: txError } = await supabase
-          .from('wallet_transactions')
-          .select('id, student_id, amount, type, description, created_at')
-          .in('student_id', studentIds)
-          .order('created_at', { ascending: false })
-          .limit(30);
-
-        if (txError) throw txError;
-
-        const nameMap = new Map(allStudents.map(s => [s.id, s.full_name]));
-        setWalletTransactions(
-          (txs ?? []).map(tx => ({
-            ...tx,
-            amount: Number(tx.amount),
-            type: tx.type as WalletTransaction['type'],
-            student_name: nameMap.get(tx.student_id),
-          }))
-        );
-      } else {
-        setWalletTransactions([]);
-      }
+      // Saldo REC por padre: total + desglose por alumno desde DB (Regla 11.A)
+      // Fuente: get_parent_rec_total → view_recharge_ledger (FIFO aprobado)
+      const { data, error } = await supabase.rpc('get_parent_rec_total', { p_parent_id: userId });
+      if (error) throw error;
+      const result = (data ?? {}) as {
+        total_remaining: number;
+        students: Array<{ student_id: string; full_name: string; remaining: number }>;
+      };
+      setRecTotal(Number(result.total_remaining ?? 0));
+      setRecStudentsList(result.students ?? []);
     } catch (err: any) {
-      console.error('Error al cargar billetera:', err);
+      console.error('Error al cargar saldo REC:', err);
     } finally {
       setLoadingWallet(false);
     }
@@ -738,11 +712,13 @@ export const PaymentsTab = ({
     return null;
   };
 
-  // ── COMPONENTE: Banner de Billetera Virtual ─────────────────────────────────
+  // ── COMPONENTE: Banner de Saldo de Recargas (REC) ──────────────────────────
+  // Fuente: get_parent_rec_total → view_recharge_ledger (FIFO aprobado, DB)
+  // Solo muestra datos; sin cálculos financieros en frontend (Regla 11.A)
   const WalletBanner = () => {
-    const hasBalance = totalWalletBalance > 0;
+    const hasBalance = recTotal > 0;
 
-    if (!hasBalance && walletTransactions.length === 0 && !loadingWallet) return null;
+    if (!hasBalance && !loadingWallet) return null;
 
     return (
       <div
@@ -752,7 +728,6 @@ export const PaymentsTab = ({
             : 'border border-slate-100 bg-white shadow-sm'
         }`}
       >
-        {/* Cabecera del banner */}
         <div className="px-4 py-3 flex items-center gap-3">
           <div
             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
@@ -761,125 +736,37 @@ export const PaymentsTab = ({
                 : 'bg-slate-100'
             }`}
           >
-            {hasBalance ? (
-              <Sparkles className="h-5 w-5 text-white" />
-            ) : (
-              <Wallet className="h-5 w-5 text-slate-400" />
-            )}
+            <Wallet className={`h-5 w-5 ${hasBalance ? 'text-white' : 'text-slate-400'}`} />
           </div>
 
           <div className="flex-1 min-w-0">
             {loadingWallet ? (
-              <div className="h-4 w-32 bg-slate-200 animate-pulse rounded" />
+              <div className="space-y-1.5">
+                <div className="h-3 w-28 bg-slate-200 animate-pulse rounded" />
+                <div className="h-5 w-20 bg-slate-200 animate-pulse rounded" />
+              </div>
             ) : hasBalance ? (
               <>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">
-                  Billetera Virtual
+                  Saldo de Recargas disponible
                 </p>
                 <p className="text-xl font-black text-emerald-700 leading-tight">
-                  S/ {totalWalletBalance.toFixed(2)}{' '}
-                  <span className="text-sm font-semibold text-emerald-500">a favor</span>
+                  S/ {recTotal.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-emerald-600 mt-0.5">
-                  ✨ Se descuenta automáticamente al pagar
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  Billetera Virtual
-                </p>
-                <p className="text-sm font-semibold text-slate-400">Sin saldo disponible</p>
-              </>
-            )}
-          </div>
-
-          {(hasBalance || walletTransactions.length > 0) && (
-            <button
-              onClick={() => setWalletHistoryOpen(p => !p)}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
-                hasBalance
-                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 active:scale-95'
-                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200 active:scale-95'
-              }`}
-            >
-              <History className="h-3.5 w-3.5" />
-              {walletHistoryOpen ? 'Ocultar' : 'Historial'}
-              <ChevronDown
-                className={`h-3 w-3 transition-transform duration-200 ${
-                  walletHistoryOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
-          )}
-        </div>
-
-        {/* Historial de movimientos */}
-        {walletHistoryOpen && (
-          <div className="border-t border-emerald-100 px-4 pb-4 pt-3 space-y-2">
-            {walletTransactions.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-2">
-                Aún no hay movimientos registrados
-              </p>
-            ) : (
-              walletTransactions.map(tx => (
-                <div
-                  key={tx.id}
-                  className="flex items-start gap-2.5 py-2 border-b border-slate-50 last:border-0"
-                >
-                  {/* Badge tipo */}
-                  {tx.type === 'cancellation_credit' ? (
-                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
-                      <Gift className="h-2.5 w-2.5" />
-                      CRÉDITO
-                    </span>
-                  ) : tx.type === 'payment_debit' ? (
-                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
-                      <ArrowDownLeft className="h-2.5 w-2.5" />
-                      PAGO APLICADO
-                    </span>
-                  ) : (
-                    <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">
-                      <CreditCard className="h-2.5 w-2.5" />
-                      AJUSTE
-                    </span>
-                  )}
-
-                  {/* Descripción y fecha */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-700 leading-snug">
-                      {tx.description ??
-                        (tx.type === 'cancellation_credit'
-                          ? 'Devolución por almuerzo anulado'
-                          : tx.type === 'payment_debit'
-                          ? 'Descuento aplicado en pago'
-                          : 'Ajuste de saldo')}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-[10px] text-slate-400">
-                        {format(new Date(tx.created_at), "dd/MM/yyyy · HH:mm", { locale: es })}
-                      </p>
-                      {tx.student_name && debts.length > 1 && (
-                        <p className="text-[10px] text-slate-400 truncate">
-                          · {tx.student_name.split(' ')[0]}
-                        </p>
-                      )}
-                    </div>
+                {/* Desglose por alumno — valores desde DB */}
+                {recStudentsList.length > 1 && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                    {recStudentsList.map(s => (
+                      <span key={s.student_id} className="text-[10px] text-emerald-700 font-semibold">
+                        {s.full_name.split(' ')[0]}: S/ {Number(s.remaining).toFixed(2)}
+                      </span>
+                    ))}
                   </div>
-
-                  {/* Monto */}
-                  <p
-                    className={`shrink-0 text-sm font-black ${
-                      tx.amount > 0 ? 'text-emerald-600' : 'text-blue-600'
-                    }`}
-                  >
-                    {tx.amount > 0 ? '+' : ''}S/ {Math.abs(tx.amount).toFixed(2)}
-                  </p>
-                </div>
-              ))
-            )}
+                )}
+              </>
+            ) : null}
           </div>
-        )}
+        </div>
       </div>
     );
   };
@@ -951,7 +838,7 @@ export const PaymentsTab = ({
               <CreditCard className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
               <p className="text-xs text-slate-600 leading-relaxed">
                 <strong className="text-slate-700">¿Cómo pagar?</strong> — Puedes pagar presencialmente en caja
-                o enviando un comprobante (Yape, Plin, transferencia) tocando el botón <strong>"Pagar"</strong> de cada hijo.
+                o con tarjeta en línea tocando el botón <strong>"Pagar"</strong> de cada hijo.
               </p>
             </div>
 
@@ -1575,6 +1462,7 @@ export const PaymentsTab = ({
             invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
             walletAmountToUse={walletToUse}
             rechargeCartAmount={rechargeCartTotal}
+            manualPaymentsDisabled={MANUAL_RECHARGES_DISABLED}
             onSuccess={async () => {
               if (rechargeCartTotal > 0) onClearRechargeCart();
               await fetchDebts();
@@ -1644,6 +1532,7 @@ export const PaymentsTab = ({
             rechargeCartAmount={combined.rechargeAmount}
             invoiceType={invoiceType}
             invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
+            manualPaymentsDisabled={MANUAL_RECHARGES_DISABLED}
           />
         );
       })()}

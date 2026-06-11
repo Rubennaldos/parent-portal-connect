@@ -97,17 +97,19 @@ USING (
 -- ============================================
 -- VERIFICAR POLÍTICAS CREADAS
 -- ============================================
-SELECT 
-  policyname as politica,
-  CASE 
-    WHEN policyname LIKE '%admin%' THEN '👑 Ve TODAS las sedes'
-    WHEN policyname LIKE '%gestor%' THEN '🏢 Solo SU sede'
-    WHEN policyname LIKE '%cajero%' THEN '🏢 Solo SU sede'
-    WHEN policyname LIKE '%operador%' THEN '🏢 Solo SU sede ✅ NUEVO'
-    WHEN policyname LIKE '%padre%' THEN '👤 Solo SUS propias'
-    WHEN policyname LIKE '%profesor%' THEN '👤 Solo SUS propias'
-    ELSE '❓ Verificar'
-  END as alcance
+SELECT
+  policyname AS politica,
+  CASE
+    WHEN policyname = 'reports_select_admin_general_only' THEN 'RESTRICTIVA (debe cumplirse además de una permisiva)'
+    WHEN policyname ILIKE '%Superadmin%' OR policyname ILIKE 'Admin general puede ver todas%' THEN 'Alcance global (todas las sedes)'
+    WHEN policyname ILIKE '%admin_sede%' OR policyname ILIKE '%transactions_select_admin_sede%' THEN 'Solo su sede (admin_sede)'
+    WHEN policyname ILIKE '%gestor%' THEN 'Solo su sede (gestor_unidad)'
+    WHEN policyname ILIKE '%cajero%' AND policyname NOT ILIKE '%operador%' THEN 'Solo su sede (cajero)'
+    WHEN policyname ILIKE '%operador%' THEN 'Solo su sede (operador_caja)'
+    WHEN policyname ILIKE '%padre%' THEN 'Solo hijos vinculados (parent)'
+    WHEN policyname ILIKE '%profesor%' THEN 'Solo filas teacher_id = auth.uid()'
+    ELSE 'Ver qual en pg_policies / documentar'
+  END AS alcance
 FROM pg_policies
 WHERE tablename = 'transactions'
   AND cmd = 'SELECT'

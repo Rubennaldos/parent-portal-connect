@@ -27,22 +27,24 @@ export function useOnlineStatus() {
 
       // Si la URL no está disponible o es placeholder → ping a Google (siempre responde)
       const pingUrl = supabaseUrl && !supabaseUrl.includes('placeholder')
-        ? `${supabaseUrl}/rest/v1/`
+        ? `${supabaseUrl}/auth/v1/health`
         : 'https://www.google.com/generate_204';
 
       const isSupabasePing = pingUrl.includes('supabase');
 
       const response = await fetch(pingUrl, {
-        method: 'HEAD',
+        method: 'GET',
         signal: controller.signal,
         cache: 'no-store',
-        headers: isSupabasePing && supabaseKey ? { apikey: supabaseKey } : {},
+        headers: isSupabasePing && supabaseKey
+          ? { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+          : {},
       });
       clearTimeout(timeout);
 
-      // Supabase: 200 (con apikey) o 401 (sin apikey) = online
+      // Supabase health: 200 = online
       // Google generate_204: 204 = online
-      const online = response.ok || response.status === 401 || response.status === 204;
+      const online = response.ok || response.status === 204;
       setIsOnline(online);
       setLastChecked(Date.now());
       return online;

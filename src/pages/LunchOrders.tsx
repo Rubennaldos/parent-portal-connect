@@ -140,6 +140,7 @@ interface LunchOrder {
     lunch_categories?: {
       name: string;
       icon: string | null;
+      target_type?: 'students' | 'teachers' | 'both' | null;
     };
   };
   lunch_order_addons?: Array<{
@@ -148,6 +149,12 @@ interface LunchOrder {
     addon_price: number;
     quantity: number;
   }>;
+  // Columnas calculadas por la vista v_lunch_orders_unified
+  final_target_type?: 'students' | 'teachers';
+  is_active_unified?: boolean;
+  category_name_resolved?: string | null;
+  category_icon_resolved?: string | null;
+  category_target_type?: string | null;
 }
 
 interface School {
@@ -209,6 +216,7 @@ export default function LunchOrders() {
   // 🍽️ Modo entrega de almuerzos
   const [showDelivery, setShowDelivery] = useState(false);
   const [adminSchoolId, setAdminSchoolId] = useState<string | null>(null);
+  const [limaTodayKey, setLimaTodayKey] = useState<string | null>(null);
 
   // ── Modal de exportación ──────────────────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
@@ -284,6 +292,10 @@ export default function LunchOrders() {
     });
   }, [searchTerm, allOrders]);
 
+  // Clasificación delegada a la DB: final_target_type viene calculado
+  // por v_lunch_orders_unified (no se necesita lógica JS aquí).
+  // El filtro por selectedPersonType se aplica directo en la query PostgREST.
+
   const fetchConfigAndInitialize = async () => {
     try {
       console.log('📅 Cargando configuración de entrega...');
@@ -332,6 +344,11 @@ export default function LunchOrders() {
           : Array.isArray(limaDateData) && limaDateData.length > 0
             ? limaDateData[0]?.today_lima
             : null;
+        if (limaTodayStr) {
+          setLimaTodayKey(limaTodayStr);
+        } else {
+          setLimaTodayKey(getLimaDateKey(new Date()));
+        }
         const baseDate = limaTodayStr ? new Date(`${limaTodayStr}T12:00:00`) : new Date();
 
         const now = new Date();
@@ -371,6 +388,7 @@ export default function LunchOrders() {
         setDraftSelectedDate(formattedDate);
       } else {
         // Si no tiene school_id (admin general), usar mañana por defecto
+        setLimaTodayKey(getLimaDateKey(new Date()));
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const formattedDate = format(tomorrow, 'yyyy-MM-dd');
@@ -384,6 +402,7 @@ export default function LunchOrders() {
     } catch (error: any) {
       console.error('Error inicializando:', error);
       // En caso de error, usar mañana como fallback
+      setLimaTodayKey(getLimaDateKey(new Date()));
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const formattedDate = format(tomorrow, 'yyyy-MM-dd');
@@ -422,6 +441,37 @@ export default function LunchOrders() {
     }
   };
 
+  const filterOrdersWithSuspendedParents = async (orders: any[]) => {
+    if (!orders || orders.length === 0) return orders;
+
+    const parentIds = Array.from(
+      new Set(
+        orders
+          .map((o: any) => o?.student?.parent_id)
+          .filter((id: string | null | undefined): id is string => Boolean(id))
+      )
+    );
+
+    if (parentIds.length === 0) return orders;
+
+    const { data: suspendedParents, error } = await supabase
+      .from('parent_profiles')
+      .select('user_id')
+      .in('user_id', parentIds)
+      .eq('is_suspended', true);
+
+    if (error) {
+      console.warn('[LunchOrders] No se pudo validar suspensión de padres:', error);
+      return orders;
+    }
+
+    const suspendedSet = new Set((suspendedParents || []).map((p: any) => p.user_id));
+    return orders.filter((o: any) => {
+      const parentId = o?.student?.parent_id;
+      return !parentId || !suspendedSet.has(parentId);
+    });
+  };
+
   const fetchOrders = async () => {
     try {
       setLoading(true);
@@ -432,7 +482,12 @@ export default function LunchOrders() {
         
         const listSelect = `
             *,
-            school:schools!lunch_orders_school_id_fkey (
+            final_target_type,
+            is_active_unified,
+            category_name_resolved,
+            category_icon_resolved,
+            category_target_type,
+            school:schools (
               name,
               code
             ),
@@ -444,7 +499,8 @@ export default function LunchOrders() {
               school_id,
               free_account,
               grade,
-              section
+              section,
+              parent_id
             ),
             teacher:teacher_profiles (
               full_name,
@@ -466,6 +522,7 @@ export default function LunchOrders() {
             )
           `;
 
+        // ── Query paginada única a la vista SSOT (modo rango) ──────────────
         const applyCommonRangeFilters = (q: any) => {
           const rangeStartLima = `${startDate}T00:00:00-05:00`;
           const rangeEndLima = `${endDate}T23:59:59-05:00`;
@@ -479,133 +536,49 @@ export default function LunchOrders() {
           }
           if (selectedStatus === 'cancelled') {
             x = x.eq('is_cancelled', true);
-          } else if (selectedStatus !== 'all') {
-            x = x.eq('is_cancelled', false);
+          } else if (selectedStatus === 'all') {
+            x = x.or('is_active_unified.eq.true,is_cancelled.eq.true');
+          } else {
+            x = x.eq('is_active_unified', true).eq('status', selectedStatus);
           }
-          if (selectedStatus !== 'all') {
-            x = x.eq('status', selectedStatus);
+          if (selectedPersonType !== 'all') {
+            x = x.eq('final_target_type', selectedPersonType);
           }
           return x;
         };
 
-        /** Pedidos de profesor: sin filtrar por pasarela (pueden quedar frozen). */
-        const fetchRangeTeacherBranch = async () => {
-          let allData: any[] = [];
-          let from = 0;
-          const PAGE_SIZE = 1000;
-          while (true) {
-            let q = supabase.from('lunch_orders').select(listSelect);
-            q = applyCommonRangeFilters(q);
-            q = q.not('teacher_id', 'is', null);
-            q = q
-              .order('order_date', { ascending: false })
-              .order('created_at', { ascending: false })
-              .range(from, from + PAGE_SIZE - 1);
-            const { data: page, error: pageError } = await q;
-            if (pageError) throw pageError;
-            if (!page || page.length === 0) break;
-            allData = allData.concat(page);
-            if (page.length < PAGE_SIZE) break;
-            from += PAGE_SIZE;
-          }
-          return allData;
-        };
-
-        /** Pedidos no-profesor: ocultar frozen (prepago padres), permitir NULL en payment_flow_state. */
-        const fetchRangeNonTeacherBranch = async () => {
-          let allData: any[] = [];
-          let from = 0;
-          const PAGE_SIZE = 1000;
-          while (true) {
-            let q = supabase.from('lunch_orders').select(listSelect);
-            q = applyCommonRangeFilters(q);
-            q = q
-              .is('teacher_id', null)
-              .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment');
-            q = q
-              .order('order_date', { ascending: false })
-              .order('created_at', { ascending: false })
-              .range(from, from + PAGE_SIZE - 1);
-            const { data: page, error: pageError } = await q;
-            if (pageError) throw pageError;
-            if (!page || page.length === 0) break;
-            allData = allData.concat(page);
-            if (page.length < PAGE_SIZE) break;
-            from += PAGE_SIZE;
-          }
-          return allData;
-        };
-
-        let data: any[];
-        if (selectedPersonType === 'teachers') {
-          data = await fetchRangeTeacherBranch();
-        } else if (selectedPersonType === 'students') {
-          let allData: any[] = [];
-          let from = 0;
-          const PAGE_SIZE = 1000;
-          while (true) {
-            let q = supabase.from('lunch_orders').select(listSelect);
-            q = applyCommonRangeFilters(q);
-            q = q
-              .not('student_id', 'is', null)
-              .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment');
-            q = q
-              .order('order_date', { ascending: false })
-              .order('created_at', { ascending: false })
-              .range(from, from + PAGE_SIZE - 1);
-            const { data: page, error: pageError } = await q;
-            if (pageError) throw pageError;
-            if (!page || page.length === 0) break;
-            allData = allData.concat(page);
-            if (page.length < PAGE_SIZE) break;
-            from += PAGE_SIZE;
-          }
-          data = allData;
-        } else {
-          const [teacherRows, nonTeacherRows] = await Promise.all([
-            fetchRangeTeacherBranch(),
-            fetchRangeNonTeacherBranch(),
-          ]);
-          const byId = new Map<string, any>();
-          for (const row of teacherRows) byId.set(row.id, row);
-          for (const row of nonTeacherRows) byId.set(row.id, row);
-          data = Array.from(byId.values()).sort((a, b) => {
-            const da = String(b.order_date || '').localeCompare(String(a.order_date || ''));
-            if (da !== 0) return da;
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          });
+        let allData: any[] = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        while (true) {
+          let qPage = supabase.from('v_lunch_orders_unified').select(listSelect);
+          qPage = applyCommonRangeFilters(qPage);
+          qPage = qPage
+            .order('order_date', { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(from, from + PAGE_SIZE - 1);
+          const { data: page, error: pageError } = await qPage;
+          if (pageError) throw pageError;
+          if (!page || page.length === 0) break;
+          allData = allData.concat(page);
+          if (page.length < PAGE_SIZE) break;
+          from += PAGE_SIZE;
         }
-        
+        let data: any[] = await filterOrdersWithSuspendedParents(allData);
+
         console.log('✅ Pedidos cargados (rango):', data?.length || 0);
-        // Debug: verificar si llegan todos los pedidos y si tienen student
+
+        // La vista resuelve categorías — sin segunda query
         if (data && data.length > 0) {
-          const sinStudent = data.filter((o: any) => !o.student && !o.teacher && !o.manual_name);
-          if (sinStudent.length > 0) {
-            console.warn('⚠️ Pedidos sin join de student/teacher:', sinStudent.length, sinStudent.map((o: any) => ({ id: o.id, order_date: o.order_date, student_id: o.student_id })));
-          }
-        }
-        
-        // Cargar categorías para los menús que tengan category_id
-        if (data && data.length > 0) {
-          const categoryIds = data
-            .map(order => order.lunch_menus?.category_id)
-            .filter((id): id is string => id !== null && id !== undefined);
-          
-          if (categoryIds.length > 0) {
-            const { data: categories, error: catError } = await supabase
-              .from('lunch_categories')
-              .select('id, name')
-              .in('id', categoryIds);
-            
-            if (!catError && categories) {
-              const categoryMap = new Map(categories.map(cat => [cat.id, cat.name]));
-              data.forEach(order => {
-                if (order.lunch_menus?.category_id) {
-                  order.lunch_menus.category_name = categoryMap.get(order.lunch_menus.category_id);
-                }
-              });
+          data.forEach((order: any) => {
+            if (order.lunch_menus && !order.lunch_menus.lunch_categories) {
+              order.lunch_menus.lunch_categories = {
+                name: order.category_name_resolved ?? '',
+                icon: order.category_icon_resolved ?? null,
+                target_type: order.category_target_type ?? null,
+              };
             }
-          }
+          });
         }
         
         // 🎫💰 Resumen de pago por pedido (RPC + índice metadata.lunch_order_id)
@@ -661,6 +634,7 @@ export default function LunchOrders() {
           }
         }
         
+        // final_target_type filtrado en DB — solo queda filtro de pago en JS
         const resultRows = (data || []).filter((order: any) => {
           if (selectedPaymentFilter === 'all') return true;
           const txStatus = order._tx_payment_status;
@@ -678,7 +652,12 @@ export default function LunchOrders() {
       // Modo normal: una sola fecha
       const listSelectSingle = `
           *,
-          school:schools!lunch_orders_school_id_fkey (
+          final_target_type,
+          is_active_unified,
+          category_name_resolved,
+          category_icon_resolved,
+          category_target_type,
+          school:schools (
             name,
             code
           ),
@@ -690,7 +669,8 @@ export default function LunchOrders() {
             school_id,
             free_account,
             grade,
-            section
+              section,
+              parent_id
           ),
           teacher:teacher_profiles (
             full_name,
@@ -712,107 +692,57 @@ export default function LunchOrders() {
           )
         `;
 
-      const applyCommonSingleFilters = (q: any) => {
-        let x = q.eq('order_date', selectedDate);
-        if (adminSchoolId && !canViewAllSchools) {
-          x = x.eq('school_id', adminSchoolId);
-        } else if (canViewAllSchools && selectedSchool !== 'all') {
-          x = x.eq('school_id', selectedSchool);
-        }
-        if (selectedStatus === 'cancelled') {
-          x = x.eq('is_cancelled', true);
-        } else if (selectedStatus !== 'all') {
-          x = x.eq('is_cancelled', false);
-        }
-        if (selectedStatus !== 'all') {
-          x = x.eq('status', selectedStatus);
-        }
-        return x;
-      };
+      // ── Query única a la vista SSOT ──────────────────────────────────────
+      // is_active_unified encapsula en DB el criterio unificado:
+      //   • teachers: bypass de payment_flow_state
+      //   • no-teachers: excluye frozen pero permite NULL (fix bug de .neq)
+      let q = supabase.from('v_lunch_orders_unified').select(listSelectSingle);
+      q = q.eq('order_date', selectedDate);
 
-      let data: any[];
+      // Filtro de sede
+      if (adminSchoolId && !canViewAllSchools) {
+        q = q.eq('school_id', adminSchoolId);
+      } else if (canViewAllSchools && selectedSchool !== 'all') {
+        q = q.eq('school_id', selectedSchool);
+      }
 
-      if (selectedPersonType === 'teachers') {
-        let q = supabase.from('lunch_orders').select(listSelectSingle);
-        q = applyCommonSingleFilters(q);
-        q = q.not('teacher_id', 'is', null).order('created_at', { ascending: false });
-        const { data: d, error } = await q;
-        if (error) {
-          console.error('❌ ERROR EN QUERY (profesores):', error);
-          throw error;
-        }
-        data = d ?? [];
-      } else if (selectedPersonType === 'students') {
-        let q = supabase.from('lunch_orders').select(listSelectSingle);
-        q = applyCommonSingleFilters(q);
-        q = q
-          .not('student_id', 'is', null)
-          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment')
-          .order('created_at', { ascending: false });
-        const { data: d, error } = await q;
-        if (error) {
-          console.error('❌ ERROR EN QUERY (alumnos):', error);
-          throw error;
-        }
-        data = d ?? [];
+      // Filtro de estado — la vista resuelve frozen/cancelled en is_active_unified
+      if (selectedStatus === 'cancelled') {
+        q = q.eq('is_cancelled', true);
+      } else if (selectedStatus === 'all') {
+        // Mostrar activos + cancelados; excluir solo frozen no-cancelados no-profesor
+        q = q.or('is_active_unified.eq.true,is_cancelled.eq.true');
       } else {
-        let qT = supabase.from('lunch_orders').select(listSelectSingle);
-        qT = applyCommonSingleFilters(qT);
-        qT = qT.not('teacher_id', 'is', null).order('created_at', { ascending: false });
-
-        let qN = supabase.from('lunch_orders').select(listSelectSingle);
-        qN = applyCommonSingleFilters(qN);
-        qN = qN
-          .is('teacher_id', null)
-          .or('payment_flow_state.is.null,payment_flow_state.neq.frozen_pending_payment')
-          .order('created_at', { ascending: false });
-
-        const [{ data: teacherData, error: errT }, { data: nonTeacherData, error: errN }] = await Promise.all([
-          qT,
-          qN,
-        ]);
-        if (errT) {
-          console.error('❌ ERROR EN QUERY (rama profesores):', errT);
-          throw errT;
-        }
-        if (errN) {
-          console.error('❌ ERROR EN QUERY (rama no profesor):', errN);
-          throw errN;
-        }
-        const byId = new Map<string, any>();
-        for (const row of teacherData || []) byId.set(row.id, row);
-        for (const row of nonTeacherData || []) byId.set(row.id, row);
-        data = Array.from(byId.values()).sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-        );
+        q = q.eq('is_active_unified', true).eq('status', selectedStatus);
       }
+
+      // Filtro de tipo de persona — push a DB, evita JS en memoria
+      if (selectedPersonType !== 'all') {
+        q = q.eq('final_target_type', selectedPersonType);
+      }
+
+      q = q.order('created_at', { ascending: false });
+
+      const { data: rawData, error: errQ } = await q;
+      if (errQ) {
+        console.error('❌ ERROR EN QUERY (v_lunch_orders_unified):', errQ);
+        throw errQ;
+      }
+      const data = await filterOrdersWithSuspendedParents(rawData || []);
       
-      // Cargar categorías para los menús que tengan category_id
+      // La vista ya resuelve los datos de categoría — sin segunda query
       if (data && data.length > 0) {
-        const categoryIds = data
-          .map(order => order.lunch_menus?.category_id)
-          .filter((id): id is string => id !== null && id !== undefined);
-        
-        if (categoryIds.length > 0) {
-          const { data: categories } = await supabase
-            .from('lunch_categories')
-            .select('id, name, icon')
-            .in('id', categoryIds);
-          
-          // Mapear categorías a los menús
-          const categoriesMap = new Map(categories?.map(c => [c.id, c]) || []);
-          
-          data.forEach(order => {
-            if (order.lunch_menus && order.lunch_menus.category_id) {
-              const category = categoriesMap.get(order.lunch_menus.category_id);
-              if (category) {
-                order.lunch_menus.lunch_categories = category;
-              }
-            }
-          });
-        }
+        data.forEach((order: any) => {
+          if (order.lunch_menus && !order.lunch_menus.lunch_categories) {
+            order.lunch_menus.lunch_categories = {
+              name: order.category_name_resolved ?? '',
+              icon: order.category_icon_resolved ?? null,
+              target_type: order.category_target_type ?? null,
+            };
+          }
+        });
       }
-      
+
       // 🎫💰 Resumen de pago por pedido (RPC; admin sede filtra por school_id de la transacción)
       if (data && data.length > 0) {
         try {
@@ -866,6 +796,7 @@ export default function LunchOrders() {
         }
       }
 
+      // final_target_type ya filtrado en DB — solo queda filtro de pago en JS
       const resultRows = (data || []).filter((order: any) => {
         if (selectedPaymentFilter === 'all') return true;
         const txStatus = order._tx_payment_status;
@@ -932,16 +863,43 @@ export default function LunchOrders() {
    *   blocked: true   → mostrar badge "Bloqueado · HH:MM" (corte de hoy ya pasó)
    *   allowed + blocked false → no mostrar nada (histórico)
    */
+  const getLimaDateKey = (date: Date): string => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const year = parts.find((p) => p.type === 'year')?.value ?? '0000';
+    const month = parts.find((p) => p.type === 'month')?.value ?? '01';
+    const day = parts.find((p) => p.type === 'day')?.value ?? '01';
+    return `${year}-${month}-${day}`;
+  };
+
+  const getOrderDateKey = (rawOrderDate: string | null | undefined): string | null => {
+    if (!rawOrderDate) return null;
+    const trimmed = rawOrderDate.trim();
+    const isoDatePrefixMatch = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+    if (isoDatePrefixMatch) return isoDatePrefixMatch[1];
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return getLimaDateKey(parsed);
+    return null;
+  };
+
   const canCancelThisOrder = (order: LunchOrder): { allowed: boolean; blocked: boolean } => {
     // admin_general: bypass total
     if (canBypassDeadlineAsGeneralAdmin) return { allowed: true, blocked: false };
 
-    // Fecha de hoy en Lima (formato YYYY-MM-DD, usando toLocaleDateString en-CA)
-    const nowLima = new Date();
-    const todayLimaStr = nowLima.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    // Fecha de hoy en Lima en formato estable YYYY-MM-DD
+    const todayLimaStr = limaTodayKey ?? getLimaDateKey(new Date());
+    // Fecha del pedido sin conversiones UTC que distorsionen el día
+    const orderDateStr = getOrderDateKey(order.order_date);
 
-    // Extraer solo la parte de fecha del pedido (puede venir como "2026-05-22T00:00:00-05:00")
-    const orderDateStr = (order.order_date ?? '').substring(0, 10);
+    if (!orderDateStr) {
+      // Failsafe: si la fecha llega corrupta, no bloquear por tiempo para no ocultar controles operativos.
+      return { allowed: true, blocked: false };
+    }
 
     if (orderDateStr > todayLimaStr) {
       // Fecha futura: siempre permitir (el almuerzo aún no se ha preparado)
@@ -2237,7 +2195,12 @@ export default function LunchOrders() {
             <div>
               <CardTitle>Pedidos del día</CardTitle>
               <CardDescription>
-                {visibleOrders.length} pedido{visibleOrders.length !== 1 ? 's' : ''} encontrado{visibleOrders.length !== 1 ? 's' : ''}
+                {(() => {
+                  const activeCount = visibleOrders.filter(o => !o.is_cancelled).length;
+                  const cancelledCount = visibleOrders.filter(o => o.is_cancelled).length;
+                  const total = visibleOrders.length;
+                  return `${total} pedido${total !== 1 ? 's' : ''} encontrado${total !== 1 ? 's' : ''} (${activeCount} activo${activeCount !== 1 ? 's' : ''} y ${cancelledCount} anulado${cancelledCount !== 1 ? 's' : ''})`;
+                })()}
               </CardDescription>
             </div>
             {!canModifyOrder() && !canBypassDeadlineAsGeneralAdmin && (
@@ -2266,6 +2229,12 @@ export default function LunchOrders() {
           ) : (
             <div className="space-y-3">
               {visibleOrders.map((order) => (
+                (() => {
+                  // Clasificación delegada a final_target_type de la vista
+                  const showTeacherBadge = order.final_target_type === 'teachers';
+                  const showStudentBadge = order.final_target_type === 'students' && !showTeacherBadge && !order.student?.is_temporary;
+                  const showTeacherAvatarAccent = Boolean(order.teacher) || (!order.student_id && !order.teacher_id && showTeacherBadge);
+                  return (
                 <div
                   key={order.id}
                   onClick={() => order.lunch_menus && handleViewMenu(order)}
@@ -2286,11 +2255,11 @@ export default function LunchOrders() {
                       ) : (
                         <div className={cn(
                           "h-14 w-14 rounded-full flex items-center justify-center border-2",
-                          order.teacher ? "bg-green-100 border-green-300" : "bg-blue-100 border-blue-200"
+                          showTeacherAvatarAccent ? "bg-green-100 border-green-300" : "bg-blue-100 border-blue-200"
                         )}>
                           <span className={cn(
                             "font-bold text-xl",
-                            order.teacher ? "text-green-700" : "text-blue-600"
+                            showTeacherAvatarAccent ? "text-green-700" : "text-blue-600"
                           )}>
                             {order.student?.full_name[0] || order.teacher?.full_name[0] || order.manual_name?.[0] || '?'}
                           </span>
@@ -2301,7 +2270,7 @@ export default function LunchOrders() {
                           <UserPlus className="h-3 w-3 text-white" />
                         </div>
                       )}
-                      {order.teacher && (
+                      {showTeacherAvatarAccent && (
                         <div className="absolute -bottom-1 -right-1 bg-green-600 rounded-full p-1">
                           <span className="text-white text-[10px] font-bold px-1">👨‍🏫</span>
                         </div>
@@ -2319,7 +2288,7 @@ export default function LunchOrders() {
                             🏫 {order.school.name}
                           </Badge>
                         )}
-                        {order.teacher && (
+                        {showTeacherBadge && (
                           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 text-xs">
                             Profesor
                           </Badge>
@@ -2329,7 +2298,7 @@ export default function LunchOrders() {
                             💵 Pago Físico
                           </Badge>
                         )}
-                        {order.student && !order.student.is_temporary && (
+                        {showStudentBadge && (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 text-xs">
                             Alumno
                           </Badge>
@@ -2464,18 +2433,17 @@ export default function LunchOrders() {
                       </div>
                     )}
 
-                    {/* Botón Anular — admin_sede / admin_general / superadmin
+                    {/* Botón Anular — gestor_unidad(admin de sede) / admin_general / superadmin
                         - admin_general: bypass absoluto (cualquier fecha/hora)
-                        - admin_sede / superadmin: por fecha del pedido (canCancelThisOrder)
+                        - gestor_unidad / superadmin: por fecha del pedido (canCancelThisOrder)
                           · fecha futura → siempre habilitado
                           · fecha de hoy → solo antes del corte
                           · fecha pasada → oculto (histórico)
-                        - pago "pending": admin_sede lo ve igual; solo admin_general puede si el corte pasó
+                        - no bloquear por payment_status: la decisión la toma fecha + rol + corte
                     */}
                     {!order.is_cancelled &&
-                      ((order as any)._tx_payment_status !== 'pending' || role === 'admin_general') &&
                       (() => {
-                      const canAdminCancel = ['admin_sede', 'admin_general', 'superadmin'].includes(role || '');
+                      const canAdminCancel = ['gestor_unidad', 'admin_sede', 'admin_general', 'superadmin'].includes(role || '');
                       if (!canAdminCancel) return null;
                       const cancelability = canCancelThisOrder(order);
                       if (!cancelability.allowed && !cancelability.blocked) {
@@ -2511,6 +2479,8 @@ export default function LunchOrders() {
                     )}
                   </div>
                 </div>
+                  );
+                })()
               ))}
             </div>
           )}

@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  Building2, Plus, Search, Pencil, Trash2, Phone, Mail, MapPin, Loader2, CheckCircle2
+  Building2, Plus, Search, Pencil, Trash2, Phone, Mail, MapPin,
+  Loader2, CheckCircle2, User, Globe, FileText, Clock,
 } from 'lucide-react';
 
 interface Supplier {
@@ -18,6 +20,10 @@ interface Supplier {
   address: string | null;
   phone: string | null;
   email: string | null;
+  contact_person: string | null;
+  payment_terms: string | null;
+  website: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -27,17 +33,21 @@ const emptyForm = () => ({
   address: '',
   phone: '',
   email: '',
+  contact_person: '',
+  payment_terms: '',
+  website: '',
+  notes: '',
 });
 
 export const SuppliersTab = () => {
   const { toast } = useToast();
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm());
-  const [saving, setSaving] = useState(false);
+  const [suppliers, setSuppliers]   = useState<Supplier[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [search, setSearch]         = useState('');
+  const [showModal, setShowModal]   = useState(false);
+  const [editingId, setEditingId]   = useState<string | null>(null);
+  const [form, setForm]             = useState(emptyForm());
+  const [saving, setSaving]         = useState(false);
   const [rucSearching, setRucSearching] = useState(false);
 
   useEffect(() => { loadSuppliers(); }, []);
@@ -60,7 +70,17 @@ export const SuppliersTab = () => {
 
   const openEdit = (s: Supplier) => {
     setEditingId(s.id);
-    setForm({ name: s.name, ruc: s.ruc || '', address: s.address || '', phone: s.phone || '', email: s.email || '' });
+    setForm({
+      name:           s.name,
+      ruc:            s.ruc            || '',
+      address:        s.address        || '',
+      phone:          s.phone          || '',
+      email:          s.email          || '',
+      contact_person: s.contact_person || '',
+      payment_terms:  s.payment_terms  || '',
+      website:        s.website        || '',
+      notes:          s.notes          || '',
+    });
     setShowModal(true);
   };
 
@@ -72,9 +92,6 @@ export const SuppliersTab = () => {
     }
     setRucSearching(true);
     try {
-      // Usamos el anon key del proyecto para autenticar el edge function.
-      // supabase.functions.invoke a veces pierde el token de sesión en dev,
-      // pero el anon key siempre es válido para este tipo de consulta pública.
       const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').toString().trim();
       const { data, error } = await supabase.functions.invoke('consult-document', {
         body: { tipo: 'ruc', numero: ruc },
@@ -87,8 +104,8 @@ export const SuppliersTab = () => {
       setForm(prev => ({
         ...prev,
         ruc,
-        name: data.razon_social || prev.name,
-        address: data.direccion || prev.address,
+        name:    data.razon_social || prev.name,
+        address: data.direccion    || prev.address,
       }));
       toast({ title: '✅ Datos cargados', description: `Razón social: ${data.razon_social}` });
     } catch (e: any) {
@@ -106,11 +123,15 @@ export const SuppliersTab = () => {
     setSaving(true);
     try {
       const payload = {
-        name: form.name.trim(),
-        ruc: form.ruc.trim() || null,
-        address: form.address.trim() || null,
-        phone: form.phone.trim() || null,
-        email: form.email.trim() || null,
+        name:           form.name.trim(),
+        ruc:            form.ruc.trim()            || null,
+        address:        form.address.trim()        || null,
+        phone:          form.phone.trim()          || null,
+        email:          form.email.trim()          || null,
+        contact_person: form.contact_person.trim() || null,
+        payment_terms:  form.payment_terms.trim()  || null,
+        website:        form.website.trim()        || null,
+        notes:          form.notes.trim()          || null,
       };
       if (editingId) {
         const { error } = await supabase.from('suppliers').update(payload).eq('id', editingId);
@@ -131,7 +152,7 @@ export const SuppliersTab = () => {
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`¿Eliminar proveedor "${name}"?`)) return;
+    if (!confirm(`¿Eliminar proveedor "${name}"? Esta acción no se puede deshacer.`)) return;
     const { error } = await supabase.from('suppliers').delete().eq('id', id);
     if (error) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -143,7 +164,8 @@ export const SuppliersTab = () => {
 
   const filtered = suppliers.filter(s =>
     s.name.toLowerCase().includes(search.toLowerCase()) ||
-    (s.ruc || '').includes(search)
+    (s.ruc            || '').includes(search) ||
+    (s.contact_person || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -170,7 +192,7 @@ export const SuppliersTab = () => {
           <div className="relative mb-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar por nombre o RUC..."
+              placeholder="Buscar por nombre, RUC o contacto..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="pl-10"
@@ -195,7 +217,7 @@ export const SuppliersTab = () => {
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between">
                       <CardTitle className="text-base leading-tight">{s.name}</CardTitle>
-                      <div className="flex gap-1 ml-2">
+                      <div className="flex gap-1 ml-2 shrink-0">
                         <Button size="sm" variant="ghost" onClick={() => openEdit(s)}>
                           <Pencil className="h-3 w-3" />
                         </Button>
@@ -211,6 +233,12 @@ export const SuppliersTab = () => {
                     )}
                   </CardHeader>
                   <CardContent className="space-y-1 text-sm text-slate-500">
+                    {s.contact_person && (
+                      <div className="flex items-center gap-2">
+                        <User className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{s.contact_person}</span>
+                      </div>
+                    )}
                     {s.address && (
                       <div className="flex items-start gap-2">
                         <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
@@ -229,6 +257,27 @@ export const SuppliersTab = () => {
                         <span className="truncate">{s.email}</span>
                       </div>
                     )}
+                    {s.payment_terms && (
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-3 w-3 shrink-0" />
+                        <span className="text-xs text-slate-400">{s.payment_terms}</span>
+                      </div>
+                    )}
+                    {s.website && (
+                      <div className="flex items-center gap-2">
+                        <Globe className="h-3 w-3 shrink-0" />
+                        <a href={s.website} target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-blue-500 hover:underline truncate">
+                          {s.website}
+                        </a>
+                      </div>
+                    )}
+                    {s.notes && (
+                      <div className="flex items-start gap-2 mt-1 pt-1 border-t border-slate-100">
+                        <FileText className="h-3 w-3 mt-0.5 shrink-0 text-slate-400" />
+                        <span className="text-xs text-slate-400 line-clamp-2">{s.notes}</span>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -237,9 +286,9 @@ export const SuppliersTab = () => {
         </CardContent>
       </Card>
 
-      {/* Modal crear/editar proveedor */}
+      {/* Modal crear/editar */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md" aria-describedby={undefined}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-[#8B4513]" />
@@ -258,19 +307,15 @@ export const SuppliersTab = () => {
                   maxLength={11}
                   className="flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleRucSearch}
+                <Button type="button" variant="outline" onClick={handleRucSearch}
                   disabled={rucSearching || form.ruc.replace(/\D/g, '').length !== 11}
-                  className="shrink-0"
-                >
+                  className="shrink-0">
                   {rucSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                   {rucSearching ? '' : 'Buscar'}
                 </Button>
               </div>
               <p className="text-xs text-slate-400">
-                Ingresa el RUC de 11 dígitos y presiona Buscar para autocompletar con datos de SUNAT.
+                Ingresa 11 dígitos y presiona Buscar para autocompletar con datos de SUNAT.
               </p>
             </div>
 
@@ -281,6 +326,25 @@ export const SuppliersTab = () => {
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Persona de Contacto</Label>
+                <Input
+                  placeholder="Nombre de quien llamas"
+                  value={form.contact_person}
+                  onChange={e => setForm(f => ({ ...f, contact_person: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Condiciones de Pago</Label>
+                <Input
+                  placeholder="Ej: Contado, 30 días"
+                  value={form.payment_terms}
+                  onChange={e => setForm(f => ({ ...f, payment_terms: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -312,15 +376,30 @@ export const SuppliersTab = () => {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label>Sitio Web</Label>
+              <Input
+                placeholder="https://proveedor.com"
+                value={form.website}
+                onChange={e => setForm(f => ({ ...f, website: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notas Internas</Label>
+              <Textarea
+                placeholder="Observaciones sobre el proveedor, horarios de atención, etc."
+                value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                rows={2}
+              />
+            </div>
+
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>
                 Cancelar
               </Button>
-              <Button
-                className="flex-1 bg-[#8B4513] hover:bg-[#6F370F]"
-                onClick={handleSave}
-                disabled={saving}
-              >
+              <Button className="flex-1 bg-[#8B4513] hover:bg-[#6F370F]" onClick={handleSave} disabled={saving}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                 {saving ? 'Guardando...' : 'Guardar'}
               </Button>

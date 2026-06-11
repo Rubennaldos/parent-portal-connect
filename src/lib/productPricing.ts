@@ -101,17 +101,18 @@ export async function getProductsForSchool(schoolId: string | null): Promise<any
     // Obtener todos los precios personalizados para esta sede de una sola vez
     const productIds = products.map(p => p.id);
 
-    const [pricesResult, stockResult] = await Promise.all([
+    const [pricesResult, liveStockResult] = await Promise.all([
       supabase
         .from('product_school_prices')
         .select('product_id, price_sale, price_cost, is_available')
         .eq('school_id', schoolId)
         .in('product_id', productIds),
-      supabase
-        .from('product_stock')
-        .select('product_id, current_stock, is_enabled')
-        .eq('school_id', schoolId)
-        .in('product_id', productIds),
+      supabase.rpc('get_live_stock_v2', {
+        p_query: null,
+        p_school_id: schoolId,
+        p_estado: null,
+        p_limit: 5000,
+      }),
     ]);
 
     if (pricesResult.error && pricesResult.error.code !== 'PGRST116') {
@@ -123,21 +124,44 @@ export async function getProductsForSchool(schoolId: string | null): Promise<any
       (pricesResult.data || []).map(cp => [cp.product_id, cp])
     );
 
-    // Mapear stock por product_id
+    let stockRows = (liveStockResult.data || []).map((r: any) => ({
+      product_id: r.product_id,
+      current_stock: Number(r.stock_actual ?? 0),
+    }));
+    if (liveStockResult.error) {
+      // Fallback: lectura directa por product_stock en la sede, sin NULL.
+      console.warn('[POS] get_live_stock_v2 no disponible, usando fallback:', liveStockResult.error.message);
+      const { data: fallbackStock, error: fallbackError } = await supabase
+        .from('product_stock')
+        .select('product_id, current_stock')
+        .eq('school_id', schoolId)
+        .eq('is_enabled', true)
+        .in('product_id', productIds);
+      if (fallbackError) throw fallbackError;
+
+      const fallbackMap = new Map((fallbackStock || []).map(s => [s.product_id, s.current_stock]));
+      stockRows = productIds.map((id) => ({
+        product_id: id,
+        current_stock: fallbackMap.has(id) ? Number(fallbackMap.get(id)) : null,
+      }));
+    }
+
+    // Mapear stock por product_id (misma lectura que Stock Live por sede, sin NULL).
     const stockMap = new Map(
-      (stockResult.data || []).map(s => [s.product_id, s])
+      stockRows.map(s => [s.product_id, s])
     );
 
     // Combinar productos con sus precios efectivos y stock actual
     const productsWithPrices = products
       .map(product => {
         const customPrice = pricesMap.get(product.id);
-        const stockRow    = stockMap.get(product.id);
-        
+        const stockRow = stockMap.get(product.id);
+
         const base = {
           ...product,
-          // Stock actual de esta sede (null si no hay registro en product_stock)
-          current_stock: stockRow?.current_stock ?? null,
+          // null = sin fila product_stock en esta sede → venta libre (no bloquea).
+          // número = hay fila activa; si es 0 o negativo, el POS bloqueará si switch OFF.
+          current_stock: stockRow !== undefined ? Number(stockRow.current_stock) : null,
         };
 
         // Si existe precio personalizado, usarlo
