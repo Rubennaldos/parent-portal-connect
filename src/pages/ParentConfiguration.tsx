@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Search, Users, BarChart3, FileText, Plus, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, Bell, Loader2 } from 'lucide-react';
+import { Search, Users, BarChart3, FileText, Plus, Download, Baby, UserCircle, ArrowLeft, Mail, Phone, MapPin, CreditCard, Wallet, User2, IdCard, BookOpen, AlertTriangle, ChevronLeft, ChevronRight, KeyRound, Bell, Loader2, Sparkles, UserPlus } from 'lucide-react';
 import { ResetUserPasswordModal } from '@/components/admin/ResetUserPasswordModal';
 import { MergeParentsModal } from '@/components/admin/MergeParentsModal';
 import { ParentListAccordion, type AccordionParentRow } from '@/components/admin/ParentListAccordion';
@@ -24,6 +24,8 @@ import { useMaintenanceGuard } from '@/hooks/useMaintenanceGuard';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { ExpressEnrollmentModal } from '@/features/express-enrollment/components/ExpressEnrollmentModal';
+import { CreateTeacherModal } from '@/features/teacher-express/components/CreateTeacherModal';
 
 interface School {
   id: string;
@@ -195,6 +197,10 @@ const ParentConfiguration = () => {
   // Modal de unir padres (resolver duplicados)
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeSourceParent, setMergeSourceParent] = useState<ParentProfile | null>(null);
+
+  // Modales express
+  const [showExpressEnroll, setShowExpressEnroll] = useState(false);
+  const [showCreateTeacher, setShowCreateTeacher] = useState(false);
 
   // Formulario
   const [formData, setFormData] = useState({
@@ -977,6 +983,12 @@ const ParentConfiguration = () => {
                       Nuevo Padre
                     </Button>
                   )}
+                  {permissions.canCreateStudent && (
+                    <Button onClick={() => setShowExpressEnroll(true)} className="gap-2 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 text-white shadow-md">
+                      <Sparkles className="h-4 w-4" />
+                      + Matriculación Express
+                    </Button>
+                  )}
                   <Button onClick={exportToExcel} variant="outline" className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
                     <Download className="h-4 w-4" />
                     Excel
@@ -1136,6 +1148,12 @@ const ParentConfiguration = () => {
                         ))}
                       </SelectContent>
                     </Select>
+                  )}
+                  {permissions.canCreateTeacher && (
+                    <Button onClick={() => setShowCreateTeacher(true)} className="gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md">
+                      <UserPlus className="h-4 w-4" />
+                      + Agregar Profesor
+                    </Button>
                   )}
                   <Button onClick={() => exportTeachersToExcel()} variant="outline" className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
                     <Download className="h-4 w-4" />
@@ -1742,6 +1760,29 @@ const ParentConfiguration = () => {
           }}
         />
       )}
+
+      {/* Modal Matriculación Express */}
+      <ExpressEnrollmentModal
+        open={showExpressEnroll}
+        onOpenChange={setShowExpressEnroll}
+        onSuccess={fetchData}
+        userRole={role}
+        userSchoolId={userSchoolId}
+      />
+
+      {/* Modal Registro Rápido de Profesor */}
+      <CreateTeacherModal
+        open={showCreateTeacher}
+        onOpenChange={setShowCreateTeacher}
+        onSuccess={() => {
+          setShowCreateTeacher(false);
+          setTeachersLoaded(false);
+          fetchTeachers();
+        }}
+        userRole={role}
+        userSchoolId={userSchoolId}
+        selectedSchoolFilter={selectedSchoolTeacher}
+      />
     </div>
   );
 };
