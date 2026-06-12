@@ -132,6 +132,51 @@ const PARENTS_PAGE_SIZE = 50;
 const PARENTS_SEARCH_DEBOUNCE_MS = 700;
 const PARENTS_MIN_SEARCH_CHARS = 3;
 
+/** Regla de negocio: solo estos 2 roles ven y gestionan profesores en Config Padres. */
+const TEACHER_ACCESS_ROLES = new Set(['admin_general', 'gestor_unidad']);
+
+type TeacherPermissionFlags = {
+  canViewTeachers: boolean;
+  canViewTeacherDetails: boolean;
+  canCreateTeacher: boolean;
+  canEditTeacher: boolean;
+  canDeleteTeacher: boolean;
+  canExportTeachers: boolean;
+};
+
+function resolveTeacherPermissions(role: string): TeacherPermissionFlags {
+  if (role === 'admin_general') {
+    return {
+      canViewTeachers: true,
+      canViewTeacherDetails: true,
+      canCreateTeacher: true,
+      canEditTeacher: true,
+      canDeleteTeacher: true,
+      canExportTeachers: true,
+    };
+  }
+
+  if (role === 'gestor_unidad') {
+    return {
+      canViewTeachers: true,
+      canViewTeacherDetails: true,
+      canCreateTeacher: true,
+      canEditTeacher: false,
+      canDeleteTeacher: false,
+      canExportTeachers: true,
+    };
+  }
+
+  return {
+    canViewTeachers: false,
+    canViewTeacherDetails: false,
+    canCreateTeacher: false,
+    canEditTeacher: false,
+    canDeleteTeacher: false,
+    canExportTeachers: false,
+  };
+}
+
 const ParentConfiguration = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -262,7 +307,7 @@ const ParentConfiguration = () => {
     try {
       console.log('🔍 Verificando permisos de Config Padres para rol:', role);
 
-      // Admin General tiene acceso total
+      // Admin General tiene acceso total (padres/estudiantes); profesores por regla explícita de rol
       if (role === 'admin_general') {
         setCanViewAllSchools(true);
         setPermissions({
@@ -270,13 +315,7 @@ const ParentConfiguration = () => {
           canEditParent: true,
           canCreateStudent: true,
           canEditStudent: true,
-          // Permisos de profesores
-          canViewTeachers: true,
-          canViewTeacherDetails: true,
-          canCreateTeacher: true,
-          canEditTeacher: true,
-          canDeleteTeacher: true,
-          canExportTeachers: true,
+          ...resolveTeacherPermissions(role),
         });
         setLoading(false);
         return;
@@ -358,30 +397,16 @@ const ParentConfiguration = () => {
             case 'editar_estudiante':
               perms.canEditStudent = true;
               break;
-            // Permisos de profesores
-            case 'view_teachers':
-              perms.canViewTeachers = true;
-              break;
-            case 'view_teacher_details':
-              perms.canViewTeacherDetails = true;
-              break;
-            case 'create_teacher':
-              perms.canCreateTeacher = true;
-              break;
-            case 'edit_teacher':
-              perms.canEditTeacher = true;
-              break;
-            case 'delete_teacher':
-              perms.canDeleteTeacher = true;
-              break;
-            case 'export_teachers':
-              perms.canExportTeachers = true;
-              break;
           }
         }
       });
 
+      // Profesores: regla fija por rol (no depende de role_permissions en DB)
+      const teacherPerms = resolveTeacherPermissions(role);
+      perms = { ...perms, ...teacherPerms };
+
       console.log('✅ Permisos finales de Config Padres:', perms);
+      console.log('👨‍🏫 Acceso profesores — rol:', role, 'permitido:', TEACHER_ACCESS_ROLES.has(role));
       
       setPermissions(perms);
       setCanViewAllSchools(canViewAll);
