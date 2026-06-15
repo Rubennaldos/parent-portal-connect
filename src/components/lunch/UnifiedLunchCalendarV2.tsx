@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { fetchLunchOrderPurchaseTxSummary } from '@/services/lunchOrderPurchaseTxSummary';
-import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
@@ -1475,148 +1474,60 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     try {
       const unitPrice = selectedCategory.price || config.lunch_price;
 
-      // 1. Create lunch_order (con modificadores si los hay)
-      // Solo incluir columnas opcionales si tienen datos (evita error si la migración no se ejecutó)
-      const orderPayload: Record<string, any> = {
-        [personField]: personId,
-        order_date: currentDateStr,
-        status: 'pending',
-        category_id: selectedCategory.id,
-        menu_id: selectedMenu.id,
-        school_id: effectiveSchoolId,
-        quantity,
-        base_price: unitPrice,
-        addons_total: 0,
-        final_price: unitPrice * quantity,
-        created_by: userId,
-      };
-      if (selectedModifiers.length > 0) {
-        orderPayload.selected_modifiers = selectedModifiers;
-      }
-      if (selectedGarnishes.size > 0) {
-        orderPayload.selected_garnishes = Array.from(selectedGarnishes);
-      }
-      if (configSelections.length > 0) {
-        orderPayload.configurable_selections = configSelections;
-      }
-      // Solo agregar observaciones del padre si es pedido individual (no bulk)
-      if (parentNotes.trim() && wizardDates.length <= 1) {
-        orderPayload.parent_notes = parentNotes.trim();
-      }
-
-      let insertedOrder: { id: string } | null = null;
-
-      // Intentar insertar con columnas opcionales
-      // Incluimos payment_flow_state para detectar si quedó congelado (Fase 2 Prepago)
-      const { data: orderData, error: orderError } = await supabase
-        .from('lunch_orders')
-        .insert([orderPayload])
-        .select('id, payment_flow_state')
-        .single();
-
-      if (orderError) {
-        // Handle unique constraint violation gracefully
-        if (orderError.code === '23505') {
-          toast({
-            variant: 'destructive',
-            title: '⚠️ Pedido duplicado',
-            description: `Ya existe un pedido para esta categoría en este día.`,
-          });
-          return;
-        }
-
-        // 🔧 Si falla por columna no encontrada (migración no ejecutada), reintentar sin columnas opcionales
-        if (orderError.code === 'PGRST204' || orderError.message?.includes('column')) {
-          delete orderPayload.selected_modifiers;
-          delete orderPayload.selected_garnishes;
-          delete orderPayload.configurable_selections;
-
-          const { data: retryData, error: retryError } = await supabase
-            .from('lunch_orders')
-            .insert([orderPayload])
-            .select('id')
-            .single();
-
-          if (retryError) {
-            if (retryError.code === '23505') {
-              toast({ variant: 'destructive', title: '⚠️ Pedido duplicado', description: 'Ya existe un pedido para esta categoría en este día.' });
-              return;
-            }
-            throw retryError;
-          }
-          insertedOrder = retryData;
-        } else {
-          throw orderError;
-        }
-      } else {
-        insertedOrder = orderData;
-      }
-
-      if (!insertedOrder) throw new Error('No se pudo crear el pedido');
-
-      // ── Fase 2 Prepago: registrar si el pedido quedó congelado ───────────────
-      const orderWasFrozen = (insertedOrder as any).payment_flow_state === 'frozen_pending_payment';
-      if (orderWasFrozen) setLastOrderWasFrozen(true);
-
-      // 2. Create transaction (pending)
+      // Crear pedido + deuda en una sola transacción atómica (RPC create_lunch_order_v2).
+      // Elimina el patrón de 3 viajes que causaba pedidos huérfanos y timeouts bajo carga.
       const dateFormatted = format(getPeruDateOnly(currentDateStr), "d 'de' MMMM", { locale: es });
       const description = `Almuerzo - ${selectedCategory.name} - ${dateFormatted}`;
 
-      // 🎫 Generar ticket_code
-      let ticketCode: string | null = null;
-      try {
-        const { data: ticketNumber, error: ticketErr } = await supabase
-          .rpc('get_next_ticket_number', { p_user_id: userId });
-        if (!ticketErr && ticketNumber) {
-          ticketCode = ticketNumber;
+      const { data: orderResult, error: orderError } = await supabase
+        .rpc('create_lunch_order_v2', {
+          p_person_type: personField === 'student_id' ? 'student' : 'teacher',
+          p_person_id: personId,
+          p_order_date: currentDateStr,
+          p_category_id: selectedCategory.id,
+          p_menu_id: selectedMenu.id,
+          p_school_id: effectiveSchoolId,
+          p_quantity: quantity,
+          p_base_price: unitPrice,
+          p_final_price: unitPrice * quantity,
+          p_created_by: userId,
+          p_source: `unified_calendar_v2_${userType}`,
+          p_category_name: selectedCategory.name,
+          p_description: description,
+          p_selected_modifiers: selectedModifiers.length > 0 ? selectedModifiers : null,
+          p_selected_garnishes: selectedGarnishes.size > 0 ? Array.from(selectedGarnishes) : null,
+          p_configurable_selections: configSelections.length > 0 ? configSelections : null,
+          p_parent_notes: (parentNotes.trim() && wizardDates.length <= 1) ? parentNotes.trim() : null,
+        });
+
+      if (orderError) {
+        if (orderError.message?.includes('LUNCH_DUPLICATE:') || orderError.code === '23505') {
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Pedido duplicado',
+            description: 'Ya existe un pedido para esta categoría en este día.',
+          });
+          return;
         }
-      } catch (err) {
-        // ticket_code generation failed silently
+        throw orderError;
       }
 
-      const { data: txData, error: txError } = await supabase
-        .from('transactions')
-        .insert([{
-          [personField]: personId,
-          type: 'purchase',
-          amount: -Math.abs(unitPrice * quantity),
-          description,
-          payment_status: 'pending',
-          payment_method: null,
-          school_id: effectiveSchoolId,
-          created_by: userId,
-          ticket_code: ticketCode,
-          metadata: {
-            lunch_order_id: insertedOrder.id,
-            source: `unified_calendar_v2_${userType}`,
-            order_date: currentDateStr,
-            category_name: selectedCategory.name,
-            quantity,
-          },
-          ...BILLING_EXCLUDED,
-        }])
-        .select('id')
-        .single();
+      if (!orderResult) throw new Error('No se pudo crear el pedido');
 
-      if (txError) {
-        console.error('❌ Error creating transaction — revertiendo pedido para evitar huérfano:', txError);
-        // Cancelar el pedido recién creado: sin transacción no puede quedar "activo"
-        await supabase
-          .from('lunch_orders')
-          .update({ is_cancelled: true, status: 'cancelled' })
-          .eq('id', insertedOrder.id);
-        throw new Error(
-          'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Por favor intenta de nuevo.'
-        );
-      }
+      const insertedOrderId = orderResult.lunch_order_id as string;
+      const txId = orderResult.transaction_id as string;
+
+      // ── Fase 2 Prepago: registrar si el pedido quedó congelado ───────────────
+      const orderWasFrozen = orderResult.payment_flow_state === 'frozen_pending_payment';
+      if (orderWasFrozen) setLastOrderWasFrozen(true);
 
       const newCount = ordersCreated + 1;
       setOrdersCreated(newCount);
 
       // Track for payment (parents) — incluir tanto order IDs como transaction IDs
-      if (userType === 'parent' && insertedOrder?.id) {
-        setCreatedOrderIds(prev => [...prev, insertedOrder!.id]);
-        if (txData?.id) setCreatedTransactionIds(prev => [...prev, txData.id]);
+      if (userType === 'parent' && insertedOrderId) {
+        setCreatedOrderIds(prev => [...prev, insertedOrderId]);
+        if (txId) setCreatedTransactionIds(prev => [...prev, txId]);
         setTotalOrderAmount(prev => {
           const next = prev + (unitPrice * quantity);
           totalOrderAmountRef.current = next;
@@ -1639,8 +1550,8 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
             dates: remainingDates,
             studentId: selectedStudent.id,
             ordersCreatedSoFar: newCount,
-            createdOrderIds: [...createdOrderIds, ...(insertedOrder?.id ? [insertedOrder.id] : [])],
-            createdTransactionIds: [...createdTransactionIds, ...(txData?.id ? [txData.id] : [])],
+            createdOrderIds: [...createdOrderIds, ...(insertedOrderId ? [insertedOrderId] : [])],
+            createdTransactionIds: [...createdTransactionIds, ...(txId ? [txId] : [])],
             totalOrderAmount: totalOrderAmount + (unitPrice * quantity),
             orderDescriptions: [...orderDescriptions, `${quantity}x ${selectedCategory.name} - ${dateFormatted}`],
             savedAt: new Date().toISOString(),
