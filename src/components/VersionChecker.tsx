@@ -1,83 +1,95 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 
 /**
- * 🔄 VersionChecker — Auto-actualización del sistema
- * 
- * Este componente verifica periódicamente si hay una nueva versión desplegada.
- * Si detecta un cambio, recarga la página automáticamente (como Ctrl+Shift+R).
- * 
- * ¿Cómo funciona?
- * 1. En cada build, se genera un /version.json con un hash único
- * 2. Este componente lo consulta cada 60 segundos y al volver a la pestaña
- * 3. Si el hash cambió → hay nuevo deploy → recarga automática
- * 4. La recarga es "limpia" (borra cache del service worker)
- * 5. NUEVO: También escucha un canal Realtime "force-update" para que el
- *    admin pueda forzar la recarga de TODOS los usuarios al instante.
- * 
- * Esto resuelve el problema de que los padres se quedan con versiones viejas
- * y ven errores porque su navegador cachea todo.
+ * VersionChecker — detección de nuevo deploy y actualización limpia.
+ *
+ * COMPORTAMIENTO:
+ *  1. Consulta /version.json cada 60 segundos (y al volver a la pestaña / reconectarse).
+ *  2. Si detecta un nuevo deploy, muestra un toast con botón "Actualizar ahora".
+ *     → NO recarga la página automáticamente: el padre puede estar en medio del
+ *       wizard de almuerzos o eligiendo una fecha.
+ *  3. El canal Realtime "force-update" permite que el admin dispare la misma
+ *     notificación suave para todos los conectados (no una recarga forzada).
+ *  4. La función cleanReload borra caches y SW SOLO cuando el usuario acepta.
+ *
+ * POR QUÉ SE ELIMINÓ EL AUTO-RELOAD:
+ *  - Workbox (skipWaiting + clientsClaim) ya activa el nuevo SW automáticamente
+ *    al instalar. El auto-reload extra era redundante y rompía flujos en curso.
+ *  - Una recarga en pleno wizard masivo descarta la selección de fechas del padre,
+ *    aunque el progreso esté en sessionStorage.
  */
 
-const CHECK_INTERVAL_MS = 60 * 1000; // Verificar cada 60 segundos
-const INITIAL_DELAY_MS = 10 * 1000;  // Esperar 10 seg antes de la primera verificación
+const CHECK_INTERVAL_MS  = 60 * 1000;
+const INITIAL_DELAY_MS   = 15 * 1000;
 
-/** Función reutilizable: limpiar cache + service workers y recargar */
-async function forceCleanReload(reason: string) {
-  console.log(`[VersionChecker] 🔄 ${reason}. Recargando...`);
-
-  // 1. Limpiar el cache del Service Worker
+async function cleanReload(): Promise<void> {
   if ('caches' in window) {
     try {
-      const cacheNames = await caches.keys();
-      await Promise.all(cacheNames.map(name => caches.delete(name)));
-    } catch {
-      // Ignorar errores de cache
-    }
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    } catch { /* ignorar */ }
   }
 
-  // 2. Des-registrar el Service Worker viejo
   if ('serviceWorker' in navigator) {
     try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map(reg => reg.unregister()));
-    } catch {
-      // Ignorar
-    }
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    } catch { /* ignorar */ }
   }
 
-  // 3. Limpiar sessionStorage/localStorage de versión
-  try {
-    sessionStorage.removeItem('app_session_start');
-  } catch { /* noop */ }
+  try { sessionStorage.removeItem('app_session_start'); } catch { /* noop */ }
 
-  // 4. Recargar la página
-  setTimeout(() => {
-    window.location.reload();
-  }, 500);
+  window.location.reload();
 }
 
 export function VersionChecker() {
-  const currentVersion = useRef<string | null>(null);
-  const isReloading = useRef(false);
-  const sessionStartedAt = useRef(Date.now());
+  const { toast } = useToast();
+  const currentVersion  = useRef<string | null>(null);
+  const updatePending   = useRef(false);
+  const isReloading     = useRef(false);
 
   const fetchVersion = useCallback(async (): Promise<string | null> => {
     try {
-      const response = await fetch('/version.json?t=' + Date.now(), {
+      const res = await fetch('/version.json?t=' + Date.now(), {
         cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-        },
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       });
-      if (!response.ok) return null;
-      const data = await response.json();
-      return data.version || null;
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.version ?? null;
     } catch {
       return null;
     }
   }, []);
+
+  const notifyUpdate = useCallback((source: string) => {
+    if (updatePending.current || isReloading.current) return;
+    updatePending.current = true;
+
+    console.info(`[VersionChecker] Nueva versión detectada (${source}). Notificando al usuario.`);
+
+    toast({
+      title: '🆕 Actualización disponible',
+      description: 'Hay una versión nueva de la app. Toca para aplicarla ahora.',
+      // Infinity: Radix no programa el auto-dismiss. El toast permanece visible
+      // hasta que el usuario haga clic en "Actualizar ahora" o lo cierre manualmente.
+      duration: Infinity,
+      action: (
+        <ToastAction
+          altText="Actualizar ahora"
+          onClick={() => {
+            isReloading.current = true;
+            void cleanReload();
+          }}
+        >
+          Actualizar ahora
+        </ToastAction>
+      ),
+    });
+  }, [toast]);
 
   const checkForUpdate = useCallback(async () => {
     if (isReloading.current) return;
@@ -85,69 +97,49 @@ export function VersionChecker() {
     const serverVersion = await fetchVersion();
     if (!serverVersion) return;
 
-    // Primera vez: guardar la versión actual
     if (currentVersion.current === null) {
       currentVersion.current = serverVersion;
       return;
     }
 
-    // Si la versión cambió → nuevo deploy → recargar
     if (serverVersion !== currentVersion.current) {
-      isReloading.current = true;
-      await forceCleanReload(
-        `Nueva versión detectada: ${currentVersion.current} → ${serverVersion}`
-      );
+      notifyUpdate('version.json');
     }
-  }, [fetchVersion]);
+  }, [fetchVersion, notifyUpdate]);
 
   useEffect(() => {
-    // Guardar momento en que esta sesión inició
-    sessionStartedAt.current = Date.now();
+    const initialTimer = setTimeout(checkForUpdate, INITIAL_DELAY_MS);
+    const intervalId   = setInterval(checkForUpdate, CHECK_INTERVAL_MS);
 
-    // ── 1. Verificación por version.json (polling) ──
-    const initialTimer = setTimeout(() => {
-      checkForUpdate();
-    }, INITIAL_DELAY_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') checkForUpdate(); };
+    const onOnline  = () => checkForUpdate();
+    const onFocus   = () => checkForUpdate();
 
-    const intervalId = setInterval(() => {
-      checkForUpdate();
-    }, CHECK_INTERVAL_MS);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkForUpdate();
-      }
-    };
-    const handleOnline = () => { checkForUpdate(); };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('focus', checkForUpdate);
-
-    // ── 2. Canal Realtime: "force-update" (señal del admin) ──
-    const channel = supabase.channel('force-update', {
+    // Canal Realtime: el admin puede emitir la señal "force-update" desde Dashboard.
+    // Se convierte en notificación suave (igual que detección por version.json).
+    const channel = supabase?.channel('force-update', {
       config: { broadcast: { self: false } },
     });
 
     channel
-      .on('broadcast', { event: 'reload' }, (payload) => {
-        if (isReloading.current) return;
-        isReloading.current = true;
-        const ts = payload?.payload?.triggered_at || 'unknown';
-        forceCleanReload(`Actualización forzada por el administrador (${ts})`);
+      ?.on('broadcast', { event: 'reload' }, () => {
+        notifyUpdate('admin force-update');
       })
       .subscribe();
 
     return () => {
       clearTimeout(initialTimer);
       clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('focus', checkForUpdate);
-      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
+      if (channel) supabase?.removeChannel(channel);
     };
-  }, [checkForUpdate]);
+  }, [checkForUpdate, notifyUpdate]);
 
-  // Este componente no renderiza nada visible
   return null;
 }

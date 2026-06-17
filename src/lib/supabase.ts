@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabaseConfig } from "@/config/supabase.config";
+import { resilientFetch } from "@/lib/resilientFetch";
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? supabaseConfig.url ?? "").toString().trim();
 const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? supabaseConfig.anonKey ?? "").toString().trim();
@@ -16,6 +17,11 @@ if (configured) {
 export const isAuthConfigured = configured;
 
 // IMPORTANT: No lanzamos error aquí para evitar pantalla en blanco por fallos al importar.
+// Se inyecta resilientFetch como fetch global del cliente:
+//   - GET → reintenta hasta 3 veces con backoff exponencial + headers no-cache.
+//   - POST/RPC → viaja UNA vez (protección financiera: sin retry en writes).
 export const supabase: SupabaseClient | null = configured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      global: { fetch: resilientFetch },
+    })
   : null;

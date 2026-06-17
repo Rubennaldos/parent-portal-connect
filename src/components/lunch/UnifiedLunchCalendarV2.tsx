@@ -357,6 +357,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const configurableLoadRequestRef = useRef(0);
   // Mirror ref so the inline-order useEffect always reads the latest totalOrderAmount
   const totalOrderAmountRef = useRef(0);
+  // Previene el bucle infinito del auto-confirm en modo bulk:
+  // si el RPC falla (error de red, LUNCH_DUPLICATE, timeout), wizardStep queda en
+  // 'confirm' y submitting vuelve a false, lo que re-dispara el useEffect → bucle.
+  // Este ref marca que ya se intentó el auto-confirm para el día actual; solo se
+  // resetea cuando el wizard avanza al siguiente día (wizardCurrentIndex cambia).
+  const bulkAutoConfirmFiredRef = useRef(false);
 
   /** Rol del usuario autenticado (misma fila que usa el trigger en BD). */
   const [callerProfileRole, setCallerProfileRole] = useState<string | null>(null);
@@ -1019,6 +1025,9 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
   const openWizardFlow = (datesToProcess: string[], preselectedCategory?: LunchCategory | null) => {
     setLastOrderWasFrozen(false);
     setWizardDates(datesToProcess);
+    // Reset explícito del flag de auto-confirm: el useEffect([wizardCurrentIndex]) no
+    // dispara si el índice ya era 0 antes de abrir el wizard (reapertura tras fallo en día 1).
+    bulkAutoConfirmFiredRef.current = false;
     setWizardCurrentIndex(0);
     setCreatedOrderIds([]);
     setTotalOrderAmount(0);
@@ -1091,6 +1100,12 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
     }
   }, [wizardStep, wizardCurrentIndex, bulkPreselectedCategory, skipAutoSelect]);
 
+  // Resetear el flag de auto-confirm cada vez que el wizard avanza al siguiente día.
+  // Esto permite un nuevo intento automático para cada día sin carryover del anterior.
+  useEffect(() => {
+    bulkAutoConfirmFiredRef.current = false;
+  }, [wizardCurrentIndex]);
+
   // ── Auto-avanzar en modo automático (bulk "rápido") ──
   useEffect(() => {
     if (bulkMenuMode !== 'auto' || !bulkPreselectedCategory) return;
@@ -1117,8 +1132,19 @@ export function UnifiedLunchCalendarV2({ userType, userId, userSchoolId, onGoToC
       return () => clearTimeout(timer);
     }
 
-    // 4. confirm → confirmar automáticamente
+    // 4. confirm → confirmar automáticamente UNA SOLA VEZ por día.
+    //
+    // PROBLEMA ANTERIOR: si el RPC fallaba (error de red, LUNCH_DUPLICATE, timeout),
+    // wizardStep permanecía en 'confirm' y submitting volvía a false → el useEffect
+    // se re-ejecutaba → bucle infinito de RPC cada 300ms hasta que el padre cerrara.
+    //
+    // SOLUCIÓN: bulkAutoConfirmFiredRef actúa como llave de un solo uso por día.
+    // Un fallo deja el wizard en 'confirm' para que el padre pueda reintentar
+    // manualmente, sin generar una ráfaga automática contra la base de datos.
     if (wizardStep === 'confirm' && selectedMenu && !submitting) {
+      if (bulkAutoConfirmFiredRef.current) return; // ya se disparó una vez para este día
+      bulkAutoConfirmFiredRef.current = true;
+
       const timer = setTimeout(() => {
         handleConfirmOrder();
       }, 300);

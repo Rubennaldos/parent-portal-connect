@@ -87,38 +87,29 @@ export default defineConfig(({ mode }) => ({
         ],
       },
       workbox: {
-        // ✅ skipWaiting + clientsClaim: el SW nuevo toma control INMEDIATAMENTE
+        // skipWaiting + clientsClaim: el SW nuevo toma control inmediatamente.
         skipWaiting: true,
         clientsClaim: true,
-        // Cachear recursos estáticos
-        globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
+        // Precachear SOLO assets estáticos con hash (JS, CSS, fuentes, imágenes).
+        // El hash en el nombre del archivo garantiza que siempre son frescos.
+        globPatterns: ["**/*.{js,css,ico,svg,png,woff2}"],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // ❌ NO cachear version.json ni izipay-frame.html (van directo al servidor)
-        // izipay-frame.html debe cargarse en su propio contexto limpio (popup aislado)
+        // index.html y manifest no tienen hash → nunca pre-caché.
         navigateFallbackDenylist: [/^\/version\.json$/, /^\/izipay-frame\.html/],
         runtimeCaching: [
           {
-            // ❌ version.json SIEMPRE NetworkOnly (nunca cachear)
+            // version.json → siempre desde la red. Usado por VersionChecker.
             urlPattern: /\/version\.json$/,
             handler: "NetworkOnly",
           },
           {
-            // ⚡ Toda petición REST a la tabla products va SIEMPRE a la red.
-            // Cubre: /rest/v1/products, /rest/v1/products?select=...
-            // y el patrón con parámetros complejos que genera el cliente JS de Supabase.
-            urlPattern: /supabase\.co\/rest\/v1\/products/i,
+            // TODA la API REST de Supabase → siempre desde la red, sin excepción.
+            // Incluye: /rest/v1/*, /storage/v1/*, /auth/v1/*, /functions/v1/* (RPC).
+            // Razón: datos financieros y de almuerzos no pueden servirse desde caché.
+            // Si la red no responde, el error debe llegar al usuario, no una respuesta
+            // obsoleta de 24h que le haría ver pedidos incorrectos o saldos viejos.
+            urlPattern: /\.supabase\.co\//i,
             handler: "NetworkOnly",
-          },
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-api-cache",
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24,
-              },
-            },
           },
         ],
       },
