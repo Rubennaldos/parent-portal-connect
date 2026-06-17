@@ -71,11 +71,13 @@ export default defineConfig(({ mode }) => ({
         // skipWaiting + clientsClaim: el SW nuevo toma control inmediatamente.
         skipWaiting: true,
         clientsClaim: true,
-        // Precachear SOLO assets estáticos con hash (JS, CSS, fuentes, imágenes).
-        // El hash en el nombre del archivo garantiza que siempre son frescos.
-        globPatterns: ["**/*.{js,css,ico,svg,png,woff2}"],
+        // Precachear assets estáticos + index.html.
+        // index.html DEBE estar en el precaché porque Workbox lo usa como
+        // navigateFallback para el ruteo SPA (client-side routing).
+        // Workbox le asigna un revision hash basado en el CONTENIDO del archivo,
+        // así que cada build nuevo invalida la entrada y sirve el HTML fresco.
+        globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // index.html y manifest no tienen hash → nunca pre-caché.
         navigateFallbackDenylist: [/^\/version\.json$/, /^\/izipay-frame\.html/],
         runtimeCaching: [
           {

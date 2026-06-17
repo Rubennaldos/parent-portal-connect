@@ -21,6 +21,32 @@ const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 /** Métodos HTTP idempotentes donde el reintento es seguro. */
 const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD']);
 
+/**
+ * Convierte cualquier variante de HeadersInit a Record<string, string> seguro para spread.
+ *
+ * PROBLEMA REAL: si el cliente de Supabase (o cualquier lib interna) pasa los headers
+ * como una instancia del browser `Headers`, hacer `{ ...headersInstance }` devuelve {}
+ * porque las entradas de `Headers` no son propiedades enumerables del objeto.
+ * Resultado: se pierde el `Authorization: Bearer <token>` → 401 en toda la API.
+ *
+ * Esta función normaliza los tres formatos posibles de HeadersInit:
+ *  - Headers (instancia del browser) → iterar con .forEach()
+ *  - [string, string][]              → Object.fromEntries()
+ *  - Record<string, string>          → spread directo
+ */
+function toPlainHeaders(headers: HeadersInit | undefined): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => { result[key] = value; });
+    return result;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers as [string, string][]);
+  }
+  return headers as Record<string, string>;
+}
+
 export interface ResilientFetchOptions {
   /** Número máximo de intentos total (incluye el primero). Por defecto: 3. */
   maxAttempts?: number;
@@ -45,10 +71,12 @@ export async function resilientFetch(
   const canRetry = SAFE_RETRY_METHODS.has(method);
 
   // Enriquecer siempre los headers anti-caché sin mutar el objeto original.
+  // toPlainHeaders() garantiza que no se pierda Authorization ni apikey,
+  // independientemente del tipo de HeadersInit que el cliente de Supabase use.
   const enrichedInit: RequestInit = {
     ...init,
     headers: {
-      ...init?.headers,
+      ...toPlainHeaders(init?.headers),
       'Cache-Control': 'no-cache, no-store',
       Pragma: 'no-cache',
     },
