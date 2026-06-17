@@ -57,10 +57,34 @@ export function VersionChecker() {
         cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       });
-      if (!res.ok) return null;
+
+      if (!res.ok) {
+        // status distinto de 200: el archivo no existe en el build → el prebuild falló
+        // o el deploy no incluyó public/version.json. Requiere revisión del pipeline.
+        console.warn(`[VersionChecker] /version.json devolvió HTTP ${res.status}. ` +
+          'Verifica que el prebuild (scripts/generate-version.mjs) se haya ejecutado.');
+        return null;
+      }
+
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json') && !contentType.includes('text/plain')) {
+        // Vercel está sirviendo index.html (rewrite SPA) en lugar del JSON.
+        // Causa: version.json no está en dist/ y el rewrite catch-all lo interceptó.
+        console.warn('[VersionChecker] /version.json devolvió Content-Type inesperado: ' +
+          `"${contentType}". El rewrite SPA de Vercel puede estar interceptando la ruta. ` +
+          'Verifica vercel.json y que public/version.json exista en el build.');
+        return null;
+      }
+
       const data = await res.json();
-      return data.version ?? null;
+      if (!data.version) {
+        console.warn('[VersionChecker] /version.json no contiene el campo "version".');
+        return null;
+      }
+      return data.version;
     } catch {
+      // Error de red (offline, CORS, abort): silencioso.
+      // No loguear — es esperado en dispositivos con conectividad intermitente.
       return null;
     }
   }, []);

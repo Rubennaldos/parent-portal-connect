@@ -1,31 +1,12 @@
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import mkcert from "vite-plugin-mkcert";
 import { VitePWA } from "vite-plugin-pwa";
-import fs from "fs";
 
-/**
- * 🔄 Plugin personalizado: genera /version.json en cada build
- * con un hash único (timestamp). El VersionChecker del frontend
- * lo compara periódicamente y fuerza recarga si cambia.
- */
-function versionPlugin(): Plugin {
-  return {
-    name: "version-generator",
-    writeBundle() {
-      const versionData = {
-        version: Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8),
-        buildTime: new Date().toISOString(),
-      };
-      fs.writeFileSync(
-        path.resolve(__dirname, "dist", "version.json"),
-        JSON.stringify(versionData)
-      );
-    },
-  };
-}
+// version.json se genera en scripts/generate-version.mjs (prebuild).
+// Vite copia public/ → dist/ automáticamente, Vercel lo sirve como estático.
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -118,8 +99,6 @@ export default defineConfig(({ mode }) => ({
       },
     }),
     
-    // ✅ Generar version.json en cada build
-    versionPlugin(),
   ].filter(Boolean),
   resolve: {
     alias: {

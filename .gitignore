@@ -10,6 +10,10 @@ node_modules
 /build
 /dist
 
+# Artefacto de build — generado por scripts/generate-version.mjs (prebuild)
+# No debe commitearse: cada deploy genera su propio identificador único
+/public/version.json
+
 # misc
 .DS_Store
 .env

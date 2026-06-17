@@ -19,7 +19,7 @@
       "destination": "/izipay-frame.html"
     },
     {
-      "source": "/((?!api|izipay-frame\\.html).*)",
+      "source": "/((?!api|izipay-frame\\.html|version\\.json).*)",
       "destination": "/index.html"
     }
   ],
