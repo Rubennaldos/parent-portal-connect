@@ -734,6 +734,7 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loadingMenus, setLoadingMenus] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'credit' | 'cash' | 'yape'>('credit');
   const searchTimeout = useRef<NodeJS.Timeout>();
 
   // Reset on open
@@ -745,6 +746,7 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
       setSelectedCategoryId('');
       setSelectedMenuId('');
       setMenus([]);
+      setPaymentMethod('credit');
       fetchCategories();
     }
   }, [open]);
@@ -826,81 +828,35 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
       const category = categories.find(c => c.id === selectedCategoryId);
       if (!category) throw new Error('Categoría no encontrada');
 
-      // Create lunch order as delivered + no_order
-      const orderData: any = {
-        menu_id: selectedMenuId,
-        order_date: todayStr,
-        status: 'delivered',
-        category_id: selectedCategoryId,
-        school_id: schoolId,
-        quantity: 1,
-        base_price: category.price,
-        final_price: category.price,
-        is_no_order_delivery: true,
-        delivered_at: new Date().toISOString(),
-        delivered_by: userId,
-      };
+      const description = `Almuerzo (sin pedido) - ${category.name} - ${format(new Date(todayStr + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`;
 
-      if (personType === 'students') {
-        orderData.student_id = selectedPerson.id;
-      } else {
-        orderData.teacher_id = selectedPerson.id;
-      }
+      // RPC atómica: crea lunch_order (delivered) + transaction de deuda en una sola
+      // transacción SQL. Si falla el INSERT de transacción → rollback automático.
+      // No hay UPDATE de compensación ni AUTO-cancel en frontend.
+      const { data: result, error: rpcError } = await supabase.rpc('create_and_deliver_lunch_order', {
+        p_person_type:    personType === 'students' ? 'student' : 'teacher',
+        p_person_id:      selectedPerson.id,
+        p_order_date:     todayStr,
+        p_category_id:    selectedCategoryId,
+        p_menu_id:        selectedMenuId,
+        p_school_id:      schoolId,
+        p_price:          category.price,
+        p_created_by:     userId,
+        p_description:    description,
+        p_category_name:  category.name,
+        p_payment_method: paymentMethod,
+      });
 
-      const { data: inserted, error: orderErr } = await supabase
-        .from('lunch_orders')
-        .insert([orderData])
-        .select('id')
-        .single();
+      if (rpcError) throw rpcError;
+      if (!result) throw new Error('La RPC no devolvió resultado. Intenta de nuevo.');
 
-      if (orderErr) throw orderErr;
-
-      if (category.price > 0) {
-        const txData: any = {
-          type: 'purchase',
-          amount: -Math.abs(category.price),
-          description: `Almuerzo (sin pedido) - ${category.name} - ${format(new Date(todayStr + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
-          payment_status: 'pending',
-          school_id: schoolId,
-          created_by: userId,
-          metadata: {
-            lunch_order_id: inserted.id,
-            source: 'delivery_no_order',
-            order_date: todayStr,
-            category_name: category.name,
-            quantity: 1,
-          },
-          ...BILLING_EXCLUDED,
-        };
-
-        if (personType === 'students') {
-          txData.student_id = selectedPerson.id;
-        } else {
-          txData.teacher_id = selectedPerson.id;
-        }
-
-        const { error: txError } = await supabase.from('transactions').insert([txData]);
-        if (txError) {
-          // Si falla deuda, no dejamos el almuerzo "sin pedido" activo para evitar huérfanos
-          await supabase
-            .from('lunch_orders')
-            .update({
-              is_cancelled: true,
-              status: 'cancelled',
-              cancellation_reason: 'AUTO: transacción fallida en delivery_no_order'
-            })
-            .eq('id', inserted.id);
-          throw new Error(
-            'No se pudo registrar la deuda del almuerzo. El registro fue cancelado automáticamente.'
-          );
-        }
-      }
-
-      toast({ title: '✅ Almuerzo registrado', description: `${selectedPerson.full_name} — ${category.name} (entregado + deuda generada)` });
+      const paymentLabel = paymentMethod === 'cash' ? 'cobrado en efectivo' : paymentMethod === 'yape' ? 'cobrado en Yape' : 'deuda pendiente generada';
+      toast({ title: '✅ Almuerzo registrado', description: `${selectedPerson.full_name} — ${category.name} (${paymentLabel})` });
       onOrderCreated();
       onClose();
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message || 'No se pudo registrar.' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'No se pudo registrar.';
+      toast({ variant: 'destructive', title: 'Error', description: msg });
     } finally {
       setSubmitting(false);
     }
@@ -915,7 +871,7 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
             Agregar almuerzo sin pedido
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Entrega un almuerzo a alguien que no hizo pedido previo. Se generará una deuda pendiente.
+            Entrega un almuerzo a alguien que no hizo pedido previo. Elige abajo cómo se cobra.
           </DialogDescription>
         </DialogHeader>
 
@@ -1017,6 +973,36 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
               )}
             </div>
           )}
+
+          {/* Step 4: Método de cobro */}
+          <div>
+            <label className="text-xs font-semibold text-gray-700 mb-2 block">4. ¿Cómo paga?</label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { value: 'credit', label: 'A cuenta',  icon: '🧾', desc: 'Queda como deuda' },
+                  { value: 'cash',   label: 'Efectivo',  icon: '💵', desc: 'Cobrado en caja'  },
+                  { value: 'yape',   label: 'Yape/Plin', icon: '📱', desc: 'Cobrado digital'  },
+                ] as const
+              ).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(opt.value)}
+                  className={cn(
+                    'flex-1 flex flex-col items-center p-2 rounded-lg border text-xs transition-all',
+                    paymentMethod === opt.value
+                      ? 'border-blue-500 bg-blue-50 shadow-sm'
+                      : 'border-gray-200 hover:border-blue-300 bg-white text-gray-600'
+                  )}
+                >
+                  <span className="text-lg leading-none mb-0.5">{opt.icon}</span>
+                  <span className="font-semibold text-[11px]">{opt.label}</span>
+                  <span className="text-[9px] text-gray-500 mt-0.5">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <DialogFooter className="mt-4 gap-2">
@@ -1024,10 +1010,19 @@ function AddWithoutOrderModal({ open, onClose, schoolId, userId, todayStr, perso
           <Button
             onClick={handleSubmit}
             disabled={!selectedPerson || !selectedCategoryId || !selectedMenuId || submitting}
-            className="h-9 text-xs bg-green-600 hover:bg-green-700"
+            className={cn(
+              'h-9 text-xs',
+              paymentMethod === 'credit'
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-blue-600 hover:bg-blue-700'
+            )}
           >
             {submitting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Plus className="h-3 w-3 mr-1" />}
-            Entregar y generar deuda
+            {paymentMethod === 'credit'
+              ? 'Entregar y generar deuda'
+              : paymentMethod === 'cash'
+              ? 'Entregar (cobrado en efectivo)'
+              : 'Entregar (cobrado en Yape)'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1843,11 +1838,19 @@ export function LunchDeliveryDashboard({
         filter: `order_date=eq.${todayStr}`,
       }, (payload) => {
         const updated = payload.new as any;
-        setOrders(prev => prev.map(o =>
-          o.id === updated.id
-            ? { ...o, status: updated.status, delivered_at: updated.delivered_at, delivered_by: updated.delivered_by, is_cancelled: updated.is_cancelled }
-            : o
-        ));
+        if (updated.is_cancelled === true) {
+          // Un pedido cancelado (incluyendo AUTO-cancel por fallo de deuda) no debe
+          // mostrarse en cocina. Filtrarlo de la lista en lugar de parchear in-situ,
+          // que era lo que causaba que la cocina viera "Anulado" sin que la fila
+          // desapareciera tras 4 días seguidos de incidentes en hora punta.
+          setOrders(prev => prev.filter(o => o.id !== updated.id));
+        } else {
+          setOrders(prev => prev.map(o =>
+            o.id === updated.id
+              ? { ...o, status: updated.status, delivered_at: updated.delivered_at, delivered_by: updated.delivered_by, is_cancelled: updated.is_cancelled }
+              : o
+          ));
+        }
       })
       .on('postgres_changes', {
         event: 'INSERT',

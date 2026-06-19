@@ -7,7 +7,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
-import { BILLING_EXCLUDED, calcBillingFlags } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -43,6 +42,7 @@ interface Student {
 interface LunchMenu {
   id: string;
   date: string;
+  category_id: string;   // requerido por create_lunch_order_v2; DB confirma 0 nulls
   starter: string | null;
   main_course: string;
   beverage: string | null;
@@ -97,6 +97,18 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
   const [rangeStartDate, setRangeStartDate] = useState<string>('');
   const [rangeEndDate, setRangeEndDate] = useState<string>('');
   const [selectedWeekdays, setSelectedWeekdays] = useState<Set<number>>(new Set());
+
+  // Protección de recarga automática por Service Worker:
+  // Mientras el calendario está abierto, un controllerchange en main.tsx
+  // leerá esta clave y no recargará la página para no perder las selecciones.
+  useEffect(() => {
+    if (isOpen) {
+      sessionStorage.setItem('lunch_calendar_open', '1');
+    } else {
+      sessionStorage.removeItem('lunch_calendar_open');
+    }
+    return () => sessionStorage.removeItem('lunch_calendar_open');
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && parentId) {
@@ -512,7 +524,7 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
     const daysWithExistingOrders: string[] = [];
     for (const dateStr of selectedDates) {
       if (existingOrders.has(dateStr)) {
-        daysWithExistingOrders.push(new Date(dateStr).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' }));
+        daysWithExistingOrders.push(new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' }));
       }
     }
 
@@ -526,177 +538,89 @@ export function LunchOrderCalendar({ isOpen, onClose, parentId, embedded = false
     }
 
     setSubmitting(true);
+
     try {
-      console.log('🍽️ Iniciando proceso de pedidos de almuerzos...');
-      
-      // Crear pedidos
-      const orders = [];
-      
-      for (const dateStr of selectedDates) {
-        for (const studentId of selectedStudents) {
-          const student = students.find(s => s.id === studentId);
-          orders.push({
-            student_id: studentId,
-            order_date: dateStr,
-            status: 'confirmed',
-            created_at: new Date().toISOString(),
-            school_id: student?.school_id || null,
-          });
-        }
+      // Construir el arreglo de {order_date, category_id, menu_id, description}.
+      // Si alguna fecha no tiene menú se omite de forma silenciosa.
+      const validDateMenus = Array.from(selectedDates).flatMap(dateStr => {
+        const menu = menus.get(dateStr);
+        if (!menu?.category_id) return [];
+        const dateLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' });
+        return [{ order_date: dateStr, category_id: menu.category_id, menu_id: menu.id, description: `Almuerzo - ${dateLabel}` }];
+      });
+
+      if (validDateMenus.length === 0) {
+        toast({ variant: 'destructive', title: 'Error', description: 'No hay menús disponibles para los días seleccionados.' });
+        return;
       }
 
-      // 📋 Insertar pedidos Y obtener sus IDs para vincularlos a transacciones
-      console.log('📋 Insertando pedidos:', orders.length);
-      const { data: insertedOrders, error: ordersError } = await supabase
-        .from('lunch_orders')
-        .insert(orders)
-        .select('id, student_id, order_date');
+      // Una sola llamada HTTP por alumno.
+      // create_lunch_orders_batch_v2 ejecuta el bucle dentro de PostgreSQL:
+      // cada fecha es un SAVEPOINT independiente. Si la fecha 3 falla, las
+      // fechas 1 y 2 ya confirmadas NO se revierten. LUNCH_DUPLICATE = éxito.
+      let totalSucceeded = 0;
+      const allFailed: Array<{ date: string; reason: string }> = [];
 
-      if (ordersError) throw ordersError;
+      for (const studentId of selectedStudents) {
+        const student = students.find(s => s.id === studentId);
 
-      // Crear mapa de lunch_order_id por (student_id + order_date)
-      const orderIdMap = new Map<string, string>();
-      if (insertedOrders) {
-        for (const io of insertedOrders) {
-          orderIdMap.set(`${io.student_id}_${io.order_date}`, io.id);
-        }
-      }
-
-      // Crear transacciones con lunch_order_id vinculado
-      const transactions = [];
-      
-      for (const dateStr of selectedDates) {
-        for (const studentId of selectedStudents) {
-          const student = students.find(s => s.id === studentId);
-
-          // Si el estudiante tiene CUENTA LIBRE, crear transacción (deuda)
-          if (student) {
-            const { data: studentData } = await supabase
-              .from('students')
-              .select('free_account')
-              .eq('id', studentId)
-              .single();
-
-            if (studentData?.free_account === true) {
-              console.log(`💳 Estudiante ${student.full_name} tiene CUENTA LIBRE - Creando transacción`);
-              
-              const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
-              if (!lunchOrderId) {
-                throw new Error(
-                  `No se pudo vincular lunch_order_id para ${student.full_name} (${dateStr}). Se canceló para evitar mezcla con topes.`
-                );
-              }
-
-              // 🎫 Generar ticket_code T-CAL-
-              let ticketCode: string | null = null;
-              try {
-                const { data: ticketNumber, error: ticketErr } = await supabase
-                  .rpc('get_next_calendar_ticket');
-                if (!ticketErr && ticketNumber) {
-                  ticketCode = ticketNumber;
-                }
-              } catch (err) {
-                console.warn('⚠️ No se pudo generar ticket_code:', err);
-              }
-              
-              transactions.push({
-                student_id: studentId,
-                type: 'purchase',
-                amount: -config.lunch_price,
-                payment_status: 'pending',
-                description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
-                created_at: new Date().toISOString(),
-                ticket_code: ticketCode,
-                metadata: {
-                  lunch_order_id: lunchOrderId,
-                  source: 'parent_lunch_calendar',
-                  order_date: dateStr
-                },
-                ...BILLING_EXCLUDED,
-              });
-            } else {
-              console.log(`💰 Estudiante ${student.full_name} es PREPAGADO - Creando transacción pendiente (NO se toca el saldo de recargas)`);
-              
-              // 🚨 IMPORTANTE: Los almuerzos NUNCA descuentan del saldo de recargas.
-              // Recargas y almuerzos son cajas 100% independientes.
-              // Se crea una transacción pendiente igual que cuenta libre.
-              const lunchOrderId = orderIdMap.get(`${studentId}_${dateStr}`);
-              if (!lunchOrderId) {
-                throw new Error(
-                  `No se pudo vincular lunch_order_id para ${student.full_name} (${dateStr}). Se canceló para evitar mezcla con topes.`
-                );
-              }
-
-              // 🎫 Generar ticket_code T-CAL-
-              let ticketCode2: string | null = null;
-              try {
-                const { data: ticketNumber, error: ticketErr } = await supabase
-                  .rpc('get_next_calendar_ticket');
-                if (!ticketErr && ticketNumber) {
-                  ticketCode2 = ticketNumber;
-                }
-              } catch (err) {
-                // silencioso
-              }
-
-              transactions.push({
-                student_id: studentId,
-                type: 'purchase',
-                amount: -config.lunch_price,
-                payment_status: 'pending',
-                description: `Almuerzo - ${new Date(dateStr + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })}`,
-                created_at: new Date().toISOString(),
-                ticket_code: ticketCode2,
-                metadata: {
-                  lunch_order_id: lunchOrderId,
-                  source: 'parent_lunch_calendar',
-                  order_date: dateStr
-                },
-                ...BILLING_EXCLUDED,
-              });
-            }
-          }
-        }
-      }
-
-      console.log('💰 Insertando transacciones:', transactions.length);
-      if (transactions.length > 0) {
-        const { error: transError } = await supabase
-          .from('transactions')
-          .insert(transactions);
-
-        if (transError) {
-          console.error('❌ Error insertando transacciones — revertiendo pedidos para evitar huérfanos:', transError);
-          // Cancelar todos los lunch_orders recién creados para que no queden sin deuda
-          if (insertedOrders && insertedOrders.length > 0) {
-            const orphanedIds = insertedOrders.map((o: any) => o.id);
-            await supabase
-              .from('lunch_orders')
-              .update({ is_cancelled: true, status: 'cancelled' })
-              .in('id', orphanedIds);
-          }
-          throw new Error(
-            'No se pudieron registrar las deudas de los pedidos. Los pedidos fueron cancelados automáticamente. Por favor intenta de nuevo.'
+        // Fallo rápido: si el alumno no está en el estado local es una señal de
+        // desincronización. Pasar '' a una columna UUID lanzaría un error de tipo
+        // en PostgreSQL sin mensaje útil para el padre.
+        if (!student?.school_id) {
+          validDateMenus.forEach(dm =>
+            allFailed.push({
+              date:   dm.order_date,
+              reason: `Alumno no encontrado en el estado local (${studentId}). Recarga la página e intenta de nuevo.`,
+            })
           );
+          continue;
+        }
+
+        const { data, error } = await supabase.rpc('create_lunch_orders_batch_v2', {
+          p_person_type:   'student',
+          p_person_id:     studentId,
+          p_school_id:     student.school_id,
+          p_base_price:    config.lunch_price,
+          p_final_price:   config.lunch_price,
+          p_created_by:    parentId,
+          p_source:        'parent_lunch_calendar',
+          p_category_name: 'Almuerzo',
+          p_date_menus:    validDateMenus,
+        });
+
+        if (error) {
+          validDateMenus.forEach(dm => allFailed.push({ date: dm.order_date, reason: error.message }));
+        } else if (data) {
+          // Contrato tipado del retorno de create_lunch_orders_batch_v2.
+          // Si la RPC cambia su firma, TypeScript lo detecta en compilación.
+          const result = data as { succeeded: string[]; failed: Array<{ date: string; reason: string }>; total: number };
+          totalSucceeded += result.succeeded.length;
+          if (Array.isArray(result.failed)) allFailed.push(...result.failed);
         }
       }
 
-      toast({
-        title: '✅ ¡Pedidos realizados!',
-        description: `${orders.length} almuerzo(s) pedido(s) • ${transactions.filter(t => t.payment_status === 'pending').length} registrado(s) como deuda`,
-      });
-
-      // Recargar datos y limpiar selección
-      await fetchMonthlyData();
-      setSelectedDates(new Set());
-      onClose();
-    } catch (error: any) {
-      console.error('❌ Error submitting orders:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message || 'No se pudieron procesar los pedidos',
-      });
+      if (totalSucceeded > 0) {
+        toast({
+          title: '✅ ¡Pedidos realizados!',
+          description: allFailed.length > 0
+            ? `${totalSucceeded} pedido(s) registrado(s). Fallaron ${allFailed.length}: ${allFailed.map(f => f.date).join(', ')}.`
+            : `${totalSucceeded} almuerzo(s) pedido(s) correctamente.`,
+        });
+        await fetchMonthlyData();
+        setSelectedDates(new Set());
+        onClose();
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: `No se pudo registrar ningún pedido. ${allFailed.length > 0 ? `Razón: ${allFailed[0].reason}` : 'Intenta de nuevo.'}`,
+        });
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'No se pudieron procesar los pedidos';
+      console.error('❌ Error en handleSubmitOrders:', error);
+      toast({ variant: 'destructive', title: 'Error', description: msg });
     } finally {
       setSubmitting(false);
     }

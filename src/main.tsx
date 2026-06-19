@@ -61,9 +61,28 @@ createRoot(document.getElementById("root")!).render(
  *
  * Las reglas de caché de Supabase están en vite.config.ts:
  *   - /rest/v1/products → NetworkOnly  (siempre datos frescos)
- *   - resto de Supabase → NetworkFirst (red primero, caché de respaldo)
+ *   - resto de Supabase → NetworkOnly  (siempre desde la red)
  *
  * NO desregistrar el SW aquí: hacerlo crearía un ciclo donde el SW
  * se registra (VitePWA) y se mata (este bloque) en cada carga de página,
  * dejando el caché anterior activo para las primeras peticiones.
  */
+
+// ── Recarga automática al activar un SW nuevo ────────────────────────────────
+// controllerchange se dispara cuando el SW nuevo (skipWaiting + clientsClaim)
+// toma el control de este cliente. En ese momento el nuevo bundle precacheado
+// está disponible y es seguro recargar para aplicar JS y CSS frescos.
+//
+// Protección de formulario activo: si el padre tiene el calendario de almuerzos
+// abierto (clave 'lunch_calendar_open' en sessionStorage, escrita por
+// LunchOrderCalendar en su useEffect de montaje/desmontaje), no se recarga para
+// no perder las fechas ya seleccionadas. VersionChecker mostrará el toast.
+//
+// NOTA: la clave anterior 'lunch_wizard_*' nunca se escribía en ningún sitio
+// del código — el guard era aspiracional y siempre evaluaba false.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (sessionStorage.getItem('lunch_calendar_open') === '1') return;
+    window.location.reload();
+  });
+}

@@ -135,13 +135,30 @@ export function VersionChecker() {
     const initialTimer = setTimeout(checkForUpdate, INITIAL_DELAY_MS);
     const intervalId   = setInterval(checkForUpdate, CHECK_INTERVAL_MS);
 
-    const onVisible = () => { if (document.visibilityState === 'visible') checkForUpdate(); };
-    const onOnline  = () => checkForUpdate();
-    const onFocus   = () => checkForUpdate();
+    const onVisible  = () => { if (document.visibilityState === 'visible') void checkForUpdate(); };
+    const onOnline   = () => void checkForUpdate();
+    const onFocus    = () => void checkForUpdate();
+
+    // BFCache (Back/Forward Cache) — crítico para iOS Safari y Chrome mobile.
+    // Cuando el usuario vuelve a la app desde WhatsApp u otra app, el navegador
+    // puede restaurar la página desde BFCache (estado congelado en RAM).
+    // En ese caso:
+    //   • controllerchange puede haberse disparado mientras la página estaba
+    //     suspendida → el listener de main.tsx lo perdió.
+    //   • visibilitychange SÍ se dispara al salir de BFCache, pero si el event
+    //     loop quedó en un punto donde checkForUpdate ya corrió y currentVersion
+    //     no cambió, el poll silencioso falló.
+    //   • pageshow con event.persisted === true es el único punto de entrada
+    //     GARANTIZADO en todos los browsers (incluido iOS Safari) al salir de BFCache.
+    // Acción: verificar versión INMEDIATAMENTE. Si hay update, el toast aparece.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void checkForUpdate();
+    };
 
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
     window.addEventListener('focus', onFocus);
+    window.addEventListener('pageshow', onPageShow);
 
     // Canal Realtime: el admin puede emitir la señal "force-update" desde Dashboard.
     // Se convierte en notificación suave (igual que detección por version.json).
@@ -161,6 +178,7 @@ export function VersionChecker() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('pageshow', onPageShow);
       if (channel) supabase?.removeChannel(channel);
     };
   }, [checkForUpdate, notifyUpdate]);
