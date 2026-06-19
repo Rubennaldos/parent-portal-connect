@@ -20,7 +20,6 @@ export function FreeAccountOnboardingModal({
   const [confirmDisable, setConfirmDisable] = useState(false);
 
   const handleAccept = () => {
-    if (!understood) return;
     if (accountChoice === 'kiosk' && !confirmDisable) {
       setConfirmDisable(true);
       return;
@@ -203,8 +202,7 @@ export function FreeAccountOnboardingModal({
           {/* Botón de aceptar */}
           <Button
             onClick={handleAccept}
-            disabled={!understood}
-            className={`w-full h-14 text-base font-medium shadow-md rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed tracking-wide text-white ${
+            className={`w-full h-14 text-base font-medium shadow-md rounded-xl transition-all tracking-wide text-white ${
               accountChoice === 'kiosk'
                 ? 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'
                 : 'bg-gradient-to-r from-[#8B7355] to-[#6B5744] hover:from-[#6B5744] hover:to-[#5B4734]'
