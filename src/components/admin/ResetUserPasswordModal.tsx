@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2, Copy, RefreshCw, MessageSquare } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { AdminPasswordServiceError, resetUserPassword } from '@/services/adminPasswordService';
 
 interface ResetUserPasswordModalProps {
   open: boolean;
@@ -132,50 +133,21 @@ export const ResetUserPasswordModal = ({
 
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No hay sesión activa');
-
-      const { data, error } = await supabase.functions.invoke('reset-user-password', {
-        body: { userEmail: effectiveEmail || undefined, newPassword, userId },
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      await resetUserPassword({
+        newPassword,
+        userId,
+        userEmail: effectiveEmail || undefined,
       });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      // Garantía adicional: marcar is_temp_password desde el frontend
-      try {
-        if (userId) {
-          await supabase
-            .from('profiles')
-            .update({ is_temp_password: true })
-            .eq('id', userId);
-        } else if (effectiveEmail) {
-          const { data: profileData } = await supabase
-            .from('profiles')
-            .select('id')
-            .ilike('email', effectiveEmail.trim())
-            .maybeSingle();
-          if (profileData?.id) {
-            await supabase
-              .from('profiles')
-              .update({ is_temp_password: true })
-              .eq('id', profileData.id);
-          }
-        }
-      } catch {
-        // No bloquear el flujo si falla
-      }
 
       setDone(true);
       setMessageStatus('confirmed');
       onSuccess?.();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error desconocido';
-      let friendly = 'No se pudo restablecer la contraseña';
-      if (msg.includes('not found')) friendly = 'Usuario no encontrado en el sistema';
-      else if (msg.includes('FunctionsRelayError')) friendly = 'La función de restablecimiento no está disponible. Contacta al soporte técnico.';
-      else if (msg) friendly = msg;
+      const friendly = err instanceof AdminPasswordServiceError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'No se pudo restablecer la contraseña';
       toast({ variant: 'destructive', title: '❌ Error', description: friendly, duration: 7000 });
       setMessageStatus('pending_server');
     } finally {

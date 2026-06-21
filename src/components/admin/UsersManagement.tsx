@@ -109,7 +109,6 @@ export function UsersManagement() {
   const [editingUser, setEditingUser] = useState<UserWithProfile | null>(null);
   const [deletingUser, setDeletingUser] = useState<UserWithProfile | null>(null);
   const [resetPasswordUser, setResetPasswordUser] = useState<UserWithProfile | null>(null);
-  const [newPassword, setNewPassword] = useState('');
   // ── Sesiones activas ──────────────────────────────────────────
   const [sessionsUser, setSessionsUser] = useState<UserWithProfile | null>(null);
   const [sessionsData, setSessionsData] = useState<{ sessions: any[]; note?: string } | null>(null);
@@ -478,45 +477,6 @@ export function UsersManagement() {
         description: 'No se pudo eliminar el usuario',
       });
     }
-  };
-
-  const handleResetPassword = async () => {
-    if (!resetPasswordUser || !newPassword || newPassword.length < 6) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'La contraseña debe tener al menos 6 caracteres',
-      });
-      return;
-    }
-
-    try {
-      // Nota: Esto requiere service_role key en producción
-      // Por ahora, solo actualizamos en profiles como referencia
-      toast({
-        title: '⚠️ Función Limitada',
-        description: 'El cambio de contraseña requiere configuración adicional en el servidor. El usuario debe usar "Olvidé mi contraseña" en el login.',
-      });
-
-      setResetPasswordUser(null);
-      setNewPassword('');
-    } catch (error: any) {
-      console.error('Error resetting password:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'No se pudo cambiar la contraseña',
-      });
-    }
-  };
-
-  const generateTempPassword = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-    let password = '';
-    for (let i = 0; i < 10; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setNewPassword(password);
   };
 
   // La búsqueda y filtro se hacen directamente en Supabase (via fetchUsers con debounce)
@@ -888,6 +848,7 @@ export function UsersManagement() {
       <ResetUserPasswordModal
         open={!!resetPasswordUser}
         onOpenChange={(open) => !open && setResetPasswordUser(null)}
+        userId={resetPasswordUser?.id}
         userEmail={resetPasswordUser?.email || ''}
         userName={resetPasswordUser?.profile?.full_name}
         recipientKind="staff"
