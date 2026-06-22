@@ -83,18 +83,26 @@ serve(async (req) => {
     //
     // El bloqueo real ocurre en fn_build_billing_payload (FOR UPDATE SKIP LOCKED).
     // ══════════════════════════════════════════════════════════════════════
-    let pendingItems: { id: string }[] | null;
+    let pendingItems: { id: string; payload_snapshot?: unknown; emit_attempts?: number }[] | null;
     let fetchErr: { message: string } | null;
 
     if (specificQueueId) {
-      // Modo prioridad: solo el registro solicitado
-      pendingItems = [{ id: specificQueueId }];
-      fetchErr = null;
-    } else {
-      // Modo lote: FIFO, máximo MAX_PER_RUN
+      // Modo prioridad: traer los mismos campos que el modo lote para que el
+      // camino snapshot funcione igual (payload_snapshot, emit_attempts necesarios).
       const result = await supabase
         .from("billing_queue")
-        .select("id")
+        .select("id, payload_snapshot, emit_attempts")
+        .eq("id", specificQueueId)
+        .maybeSingle();
+      pendingItems = result.data ? [result.data] : [];
+      fetchErr = result.error;
+    } else {
+      // Modo lote: FIFO, máximo MAX_PER_RUN.
+      // Se incluye payload_snapshot y emit_attempts para detectar el camino snapshot
+      // sin una segunda consulta dentro del loop (reduce round-trips a la BD).
+      const result = await supabase
+        .from("billing_queue")
+        .select("id, payload_snapshot, emit_attempts")
         .eq("status", "pending")
         .lte("emit_attempts", 3)
         .order("created_at", { ascending: true })
@@ -128,41 +136,77 @@ serve(async (req) => {
 
       try {
 
-        // ── PASO 3A: Llamar RPC — toda la lógica de datos en PostgreSQL ───
+        // ── PASO 3A: Obtener payload — dos caminos según origen de la fila ───
         //
-        // fn_build_billing_payload:
-        //   - Bloquea el registro atómicamente (FOR UPDATE SKIP LOCKED)
-        //   - Hace los JOINs reales con transactions, students, profiles
-        //   - Calcula el total en PostgreSQL (SUM, ROUND)
-        //   - Retorna payload completo listo para generate-document
+        // CAMINO NUEVO (Fase 1B — flujo asíncrono):
+        //   La fila tiene payload_snapshot congelado al encolar. Se usa TAL CUAL.
+        //   Esto garantiza que el worker procesa los mismos datos que aprobó el
+        //   usuario/sistema: montos, ítems, datos del cliente. Sin drift de datos.
+        //
+        // CAMINO LEGACY (Izipay / vouchers anteriores):
+        //   Sin payload_snapshot → fn_build_billing_payload reconstruye el payload
+        //   en tiempo real desde transactions, students, profiles. Retrocompatible.
+        //   (Regla 0.A: el flujo Izipay no se toca.)
         //
         // El worker NO recibe montos del cliente. No hace aritmética.
         // Cumple Regla de Oro: CERO cálculos financieros fuera de la BD.
-        const { data: payload, error: rpcErr } = await supabase
-          .rpc("fn_build_billing_payload", { p_queue_id: queueId });
 
-        if (rpcErr) {
-          await markFailed(supabase, queueId, `RPC_ERROR: ${rpcErr.message}`);
-          runLog.push({ queue_id: queueId, status: "failed", error: rpcErr.message });
-          continue;
+        let payload: Record<string, any> | null = null;
+        const snapshotRaw = (item as any).payload_snapshot;
+
+        if (snapshotRaw && typeof snapshotRaw === "object" && !Array.isArray(snapshotRaw)) {
+          // ── Camino nuevo: snapshot congelado ─────────────────────────────
+          // El UPDATE es atómico y solo aplica si status='pending'.
+          // Si devuelve count=0 → otro worker ya tomó la fila → skip.
+          const { count: lockCount, error: lockErr } = await supabase
+            .from("billing_queue")
+            .update({
+              status:                "processing",
+              processing_started_at: new Date().toISOString(),
+              emit_attempts:         (item.emit_attempts ?? 0) + 1,
+            })
+            .eq("id", queueId)
+            .eq("status", "pending")   // guard: solo tomar si sigue en pending
+            .select("id", { count: "exact", head: true });
+
+          if (lockErr || lockCount === 0) {
+            runLog.push({ queue_id: queueId, status: "skipped", error: "LOCK_LOST" });
+            continue;
+          }
+
+          payload = snapshotRaw as Record<string, any>;
+
+        } else {
+          // ── Camino legacy: fn_build_billing_payload ───────────────────────
+          const { data: rpcPayload, error: rpcErr } = await supabase
+            .rpc("fn_build_billing_payload", { p_queue_id: queueId });
+
+          if (rpcErr) {
+            await markFailed(supabase, queueId, `RPC_ERROR: ${rpcErr.message}`);
+            runLog.push({ queue_id: queueId, status: "failed", error: rpcErr.message });
+            continue;
+          }
+
+          if (rpcPayload?.error) {
+            console.warn(`[process-billing-queue] ${queueId} no disponible: ${rpcPayload.error}`);
+            runLog.push({ queue_id: queueId, status: "skipped", error: rpcPayload.error });
+            continue;
+          }
+
+          payload = rpcPayload;
         }
 
-        if (payload?.error) {
-          // El RPC retornó error (registro ya tomado por otro proceso, etc.)
-          console.warn(`[process-billing-queue] ${queueId} no disponible: ${payload.error}`);
-          runLog.push({ queue_id: queueId, status: "skipped", error: payload.error });
+        if (!payload) {
+          await markFailed(supabase, queueId, "PAYLOAD_NULL: payload vacío tras RPC/snapshot.");
+          runLog.push({ queue_id: queueId, status: "failed", error: "PAYLOAD_NULL" });
           continue;
         }
 
         // ── PASO 3B: Diferencia de monto — solo log, NUNCA bloqueo ──────────
-        //
-        // integrity_ok=false indica que el total calculado desde las transacciones
-        // difiere del monto aprobado en el voucher (ej. voucher S/12 vs deuda S/13).
-        // POR DISEÑO esto NO debe detener la facturación:
-        //   - La boleta se emite por el monto real pagado (payload.monto_total).
-        //   - El sobrante/faltante ya fue manejado en process_traditional_voucher_approval.
-        //   - Bloquear aquí deja al padre sin ticket y al sistema en estado inconsistente.
-        if (!payload.integrity_ok) {
+        // Solo aplica al camino legacy donde fn_build_billing_payload calcula
+        // la diferencia entre monto aprobado y monto real de transactions.
+        // El camino snapshot no tiene este campo (el monto ya fue validado al encolar).
+        if (!snapshotRaw && !payload.integrity_ok) {
           const diff = Math.abs((payload.amount_computed ?? 0) - (payload.amount_approved ?? 0));
           console.warn(
             `[process-billing-queue] ${queueId} — diferencia de monto S/${diff.toFixed(2)} ` +
@@ -172,45 +216,120 @@ serve(async (req) => {
           // Continúa hacia generate-document — no se llama markFailed
         }
 
-        // ── PASO 3C: Fecha de emisión en hora Lima ────────────────────────
-        // Regla 11.C: reloj único. NO usamos new Date() del servidor Deno.
-        // Usamos UTC - 5h para garantizar que la fecha sea la de Lima.
-        // (Perú = UTC-5 fijo, sin horario de verano)
-        const nowLima      = new Date(Date.now() - 5 * 60 * 60 * 1000);
-        const emissionDate =
-          `${nowLima.getUTCFullYear()}-` +
-          `${String(nowLima.getUTCMonth() + 1).padStart(2, "0")}-` +
-          `${String(nowLima.getUTCDate()).padStart(2, "0")}`;
+        // ── PASO 3C: Fecha de emisión — reloj único de PostgreSQL (Regla 11.C) ─
+        // PROHIBIDO: new Date() ni offsets manuales en JS (dispositivo puede
+        // estar mal sincronizado; Perú no tiene horario de verano pero el offset
+        // fijo en código es frágil). La fuente de verdad temporal es la BD.
+        const { data: limaDateRow, error: limaDateErr } = await supabase
+          .rpc("get_lima_date_today");    // retorna TEXT 'YYYY-MM-DD'
 
-        // ── PASO 3D: Llamar a generate-document con datos reales de la BD ──
-        //
-        // El payload viene ÍNTEGRO de PostgreSQL:
-        //   - cliente:        datos tributarios reales (DNI/RUC, nombre)
-        //   - items:          descripciones e importes de transactions
-        //   - monto_total:    SUM calculado en PostgreSQL
-        //   - payment_method: medio real de pago (Yape, Transferencia, etc.)
-        //
-        // PROHIBIDO: no pasamos monto_total calculado en JS, no hardcodeamos
-        //            "Consumidor Final" ni "transferencia".
-        const genRes = await fetch(`${supabaseUrl}/functions/v1/generate-document`, {
-          method:  "POST",
-          headers: {
-            "Authorization": `Bearer ${serviceKey}`,
-            "Content-Type":  "application/json",
-          },
-          body: JSON.stringify({
-            school_id:      payload.school_id,
-            tipo:           payload.tipo,             // 1=factura, 2=boleta
-            emission_date:  emissionDate,
-            cliente:        payload.cliente,           // datos reales del padre/empresa
-            items:          payload.items,             // ítems reales de la BD
-            monto_total:    payload.monto_total,       // total calculado en PostgreSQL
-            payment_method: payload.payment_method,    // medio real, no hardcoded
-            // CRÍTICO: debe ser ID real de transactions (FK de invoices.transaction_id),
-            // nunca el queue_id.
-            transaction_id: payload.single_transaction_id ?? null,
-          }),
-        });
+        if (limaDateErr || !limaDateRow) {
+          // Falla al obtener fecha Lima = problema de config/DB, no de Nubefact.
+          // Tratar como transitorio: requeue conservando número reservado.
+          await requeueTransient(
+            supabase, queueId,
+            `LIMA_DATE_ERROR: ${limaDateErr?.message ?? "respuesta nula"}`
+          );
+          runLog.push({ queue_id: queueId, status: "skipped", error: "LIMA_DATE_ERROR" });
+          continue;
+        }
+
+        const emissionDate: string = limaDateRow as string;
+
+        // Verificar extemporaneidad al momento de emitir, no solo al encolar.
+        // days_since_sale se congeló al encolar (puede haber sido correcto ese día),
+        // pero una fila que esperó en cola puede cruzar el límite de 7 días.
+        {
+          const { data: daysRow } = await supabase
+            .rpc("get_days_since_queue_sale", { p_queue_id: queueId });
+          const daysSinceSale = Number(daysRow ?? 0);
+          if (daysSinceSale > 7) {
+            await markBlockedExtemporaneo(
+              supabase, queueId,
+              `EXTEMPORANEO_EN_EMISION: ${daysSinceSale} días desde la venta (límite SUNAT: 7).`
+            );
+            runLog.push({ queue_id: queueId, status: "failed", error: "BLOCKED_EXTEMPORANEO" });
+            continue;
+          }
+        }
+
+        // ── PASO 3C-bis: RESERVAR correlativo (FASE 1B — garantía cero huecos) ─
+        // El número se aparta y se PERSISTE en la fila ANTES de llamar a Nubefact.
+        // Si esta fila ya tenía número reservado (reintento tras timeout), la RPC
+        // devuelve EL MISMO número (idempotente), nunca uno nuevo.
+        const { data: reservation, error: reserveErr } = await supabase
+          .rpc("reserve_invoice_number_for_queue", { p_queue_id: queueId });
+
+        if (reserveErr || !reservation || (reservation as any).error) {
+          const rMsg =
+            reserveErr?.message ||
+            (reservation as any)?.detail ||
+            (reservation as any)?.error ||
+            "reserva nula";
+          // Falla de reserva = problema de config/secuencia. Es transitorio: NO
+          // marcar dead_letter (no se consumió un número útil). Volver a pending.
+          await requeueTransient(supabase, queueId, `RESERVE_ERROR: ${rMsg}`);
+          runLog.push({ queue_id: queueId, status: "skipped", error: `RESERVE_ERROR: ${rMsg}` });
+          continue;
+        }
+
+        const reservedSerie  = (reservation as any).serie  as string;
+        const reservedNumero = (reservation as any).numero as number;
+        const reservedLabel  = `${reservedSerie}-${String(reservedNumero).padStart(8, "0")}`;
+
+        // ── PASO 3C-ter: PRE-CHECK idempotente (Rama A1) ──────────────────────
+        // Si un intento previo SÍ creó el invoice pero murió antes de marcar la
+        // cola, el número ya está en `invoices`. No volver a llamar a Nubefact:
+        // recuperar el invoice existente y marcar emitido.
+        {
+          const { data: preExisting } = await supabase
+            .from("invoices")
+            .select("id")
+            .eq("school_id", payload.school_id)
+            .eq("serie", reservedSerie)
+            .eq("numero", reservedNumero)
+            .maybeSingle();
+
+          if (preExisting?.id) {
+            console.log(`[process-billing-queue] ${queueId} — invoice ${reservedLabel} ya existe. Éxito idempotente sin Nubefact.`);
+            await markEmittedAndLink(supabase, queueId, payload, preExisting.id, reservedSerie, reservedNumero);
+            runLog.push({ queue_id: queueId, status: "emitted", serie: reservedLabel, student: payload.student_name, amount: payload.monto_total });
+            continue;
+          }
+        }
+
+        // ── PASO 3D: Llamar a generate-document con el número RESERVADO ────────
+        // El payload viene ÍNTEGRO de PostgreSQL (cliente, items, monto, medio).
+        // reserved_serie/reserved_numero le indican a generate-document que use
+        // ESE número y que NO salte a otro ante "ya existe" (eso crea huecos).
+        let genRes: Response;
+        try {
+          genRes = await fetch(`${supabaseUrl}/functions/v1/generate-document`, {
+            method:  "POST",
+            headers: {
+              "Authorization": `Bearer ${serviceKey}`,
+              "Content-Type":  "application/json",
+            },
+            body: JSON.stringify({
+              school_id:       payload.school_id,
+              tipo:            payload.tipo,
+              emission_date:   emissionDate,
+              cliente:         payload.cliente,
+              items:           payload.items,
+              monto_total:     payload.monto_total,
+              payment_method:  payload.payment_method,
+              transaction_id:  payload.single_transaction_id ?? null,
+              reserved_serie:  reservedSerie,    // FASE 1B
+              reserved_numero: reservedNumero,   // FASE 1B
+            }),
+          });
+        } catch (netErr) {
+          // TRANSITORIO: timeout / red caída. El número reservado se CONSERVA en
+          // la fila. El próximo ciclo lo reutiliza (Rama A2). Cero huecos.
+          await requeueTransient(supabase, queueId, `NETWORK: ${String(netErr)}`);
+          runLog.push({ queue_id: queueId, status: "skipped", error: "NETWORK_TRANSIENT" });
+          continue;
+        }
 
         let genResult: {
           success?: boolean;
@@ -235,17 +354,57 @@ serve(async (req) => {
         }
 
         if (!genResult?.success) {
-          const errMsg =
-            `NUBEFACT_ERROR: ` +
-            (genResult?.error || genResult?.nubefact?.errors || `HTTP ${genRes.status}`);
-          await markFailed(supabase, queueId, errMsg);
-          runLog.push({
-            queue_id: queueId,
-            status:   "failed",
-            student:  payload.student_name,
-            amount:   payload.monto_total,
-            error:    errMsg,
-          });
+          // ══ CLASIFICACIÓN DE ERRORES (FASE 1B) — sin optimismo ══════════════
+          const errText = String(
+            genResult?.error || genResult?.nubefact?.errors || `HTTP ${genRes.status}`
+          );
+          const lower = errText.toLowerCase();
+
+          // (a) DUPLICADO sobre número reservado → reconciliar, NUNCA saltar número.
+          if ((genResult as any)?.duplicate === true) {
+            const { data: dupInv } = await supabase
+              .from("invoices")
+              .select("id")
+              .eq("school_id", payload.school_id)
+              .eq("serie", reservedSerie)
+              .eq("numero", reservedNumero)
+              .maybeSingle();
+
+            if (dupInv?.id) {
+              // El comprobante SÍ existe localmente: éxito idempotente.
+              await markEmittedAndLink(supabase, queueId, payload, dupInv.id, reservedSerie, reservedNumero);
+              runLog.push({ queue_id: queueId, status: "emitted", serie: reservedLabel, student: payload.student_name, amount: payload.monto_total });
+              continue;
+            }
+            // Existe en Nubefact pero NO en nuestra BD → reconciliación manual.
+            // Se conserva el número reservado; NO se mueve a dead_letter.
+            await markFailedKeepReserved(
+              supabase, queueId,
+              `DUPLICATE_RESERVED: ${reservedLabel} existe en Nubefact sin invoice local. Reconciliar manualmente (consult-document).`,
+            );
+            runLog.push({ queue_id: queueId, status: "failed", error: "DUPLICATE_RESERVED_RECONCILE", serie: reservedLabel });
+            continue;
+          }
+
+          // (b) EXTEMPORÁNEO / fecha / periodo → permanente, requiere gestión manual.
+          if (lower.includes("extempor") || lower.includes("fecha de emision") ||
+              lower.includes("fecha de emisión") || lower.includes("periodo") || lower.includes("período")) {
+            await markBlockedExtemporaneo(supabase, queueId, errText);
+            runLog.push({ queue_id: queueId, status: "failed", error: `BLOCKED_EXTEMPORANEO: ${errText.slice(0, 160)}`, serie: reservedLabel });
+            continue;
+          }
+
+          // (c) TRANSITORIO (HTTP 5xx) → requeue conservando el número reservado.
+          if (genRes.status >= 500) {
+            await requeueTransient(supabase, queueId, `HTTP_5XX: ${errText}`);
+            runLog.push({ queue_id: queueId, status: "skipped", error: "HTTP_5XX_TRANSIENT", serie: reservedLabel });
+            continue;
+          }
+
+          // (d) Resto: error de contenido / rechazo SUNAT.
+          //     Reintentable hasta agotar intentos; luego dead_letter.
+          await markFailedOrDeadLetter(supabase, queueId, `NUBEFACT_ERROR: ${errText}`);
+          runLog.push({ queue_id: queueId, status: "failed", student: payload.student_name, amount: payload.monto_total, error: errText, serie: reservedLabel });
           continue;
         }
 
@@ -373,6 +532,148 @@ async function markFailed(
   } catch (_) { /* best-effort: si falla el update, el zombie TTL lo limpiará */ }
 
   console.error(`[process-billing-queue] ❌ ${queueId}: ${errorMessage.slice(0, 200)}`);
+}
+
+/**
+ * FASE 1B — Devuelve la fila a 'pending' SIN borrar reserved_serie/numero.
+ * Esto es lo que permite que un reintento reutilice el MISMO correlativo
+ * (cero huecos). Se usa para fallas TRANSITORIAS: timeout, red, HTTP 5xx,
+ * o error de reserva de configuración.
+ */
+async function requeueTransient(
+  supabase: ReturnType<typeof createClient>,
+  queueId:  string,
+  reason:   string,
+): Promise<void> {
+  try {
+    await supabase
+      .from("billing_queue")
+      .update({
+        status:                "pending",
+        processing_started_at: null,
+        error_message:         reason.slice(0, 2000),
+      })
+      .eq("id", queueId);
+  } catch (_) { /* best-effort: el TTL anti-zombie lo recupera */ }
+  console.warn(`[process-billing-queue] ↩️ ${queueId} requeue transitorio: ${reason.slice(0, 200)}`);
+}
+
+/**
+ * FASE 1B — Marca 'blocked_extemporaneo': SUNAT no acepta el comprobante por
+ * antigüedad/fecha. Estado PERMANENTE que exige gestión manual del contador.
+ * Conserva el número reservado para trazabilidad; no lo libera ni lo salta.
+ */
+async function markBlockedExtemporaneo(
+  supabase: ReturnType<typeof createClient>,
+  queueId:  string,
+  reason:   string,
+): Promise<void> {
+  try {
+    await supabase
+      .from("billing_queue")
+      .update({
+        status:                "blocked_extemporaneo",
+        fatal_reason:          reason.slice(0, 2000),
+        error_message:         reason.slice(0, 2000),
+        processing_started_at: null,
+      })
+      .eq("id", queueId);
+  } catch (_) { /* best-effort */ }
+  console.error(`[process-billing-queue] 🚫 ${queueId} BLOQUEADO extemporáneo: ${reason.slice(0, 200)}`);
+}
+
+/**
+ * FASE 1B — Marca 'failed' conservando el número reservado, sin tocar el contador
+ * de intentos. Para el caso DUPLICATE_RESERVED que necesita reconciliación manual.
+ */
+async function markFailedKeepReserved(
+  supabase: ReturnType<typeof createClient>,
+  queueId:  string,
+  reason:   string,
+): Promise<void> {
+  try {
+    await supabase
+      .from("billing_queue")
+      .update({
+        status:                "failed",
+        error_message:         reason.slice(0, 2000),
+        processing_started_at: null,
+      })
+      .eq("id", queueId);
+  } catch (_) { /* best-effort */ }
+  console.error(`[process-billing-queue] ⚠️ ${queueId} failed (reconciliar): ${reason.slice(0, 200)}`);
+}
+
+/**
+ * FASE 1B — Falla de CONTENIDO (datos inválidos / rechazo SUNAT). Si quedan
+ * intentos (emit_attempts < 3) deja 'failed' (reintentable tras corrección);
+ * si se agotaron, mueve a 'dead_letter' (rechazo permanente, no se reintenta solo).
+ */
+async function markFailedOrDeadLetter(
+  supabase: ReturnType<typeof createClient>,
+  queueId:  string,
+  reason:   string,
+): Promise<void> {
+  const MAX_ATTEMPTS = 3;
+  let attempts = 0;
+  try {
+    const { data: row } = await supabase
+      .from("billing_queue")
+      .select("emit_attempts")
+      .eq("id", queueId)
+      .maybeSingle();
+    attempts = Number((row as { emit_attempts?: number } | null)?.emit_attempts ?? 0);
+  } catch (_) { /* si no se puede leer, se trata como reintentable */ }
+
+  const status = attempts >= MAX_ATTEMPTS ? "dead_letter" : "failed";
+  const patch: Record<string, unknown> = {
+    status,
+    error_message:         reason.slice(0, 2000),
+    processing_started_at: null,
+  };
+  if (status === "dead_letter") patch.fatal_reason = reason.slice(0, 2000);
+
+  try {
+    await supabase.from("billing_queue").update(patch).eq("id", queueId);
+  } catch (_) { /* best-effort */ }
+  console.error(`[process-billing-queue] ${status === "dead_letter" ? "💀" : "❌"} ${queueId} ${status} (intentos=${attempts}): ${reason.slice(0, 200)}`);
+}
+
+/**
+ * FASE 1B — Marca 'emitted' y vincula invoice cuando el comprobante ya existe
+ * (recuperación idempotente: el invoice se creó en un intento previo, pero la
+ * cola no alcanzó a marcarse). Replica el cierre de éxito normal.
+ */
+async function markEmittedAndLink(
+  supabase: ReturnType<typeof createClient>,
+  queueId:  string,
+  payload:  any,
+  invoiceId: string,
+  serie:     string,
+  numero:    number,
+): Promise<void> {
+  try {
+    await supabase
+      .from("billing_queue")
+      .update({
+        status:                "emitted",
+        invoice_id:            invoiceId,
+        processed_at:          new Date().toISOString(),
+        nubefact_ticket:       `${serie}-${String(numero).padStart(8, "0")}`,
+        error_message:         null,
+        processing_started_at: null,
+      })
+      .eq("id", queueId);
+  } catch (_) { /* best-effort */ }
+
+  await markTransactionsSent(
+    supabase,
+    Array.isArray(payload?.paid_transaction_ids) ? payload.paid_transaction_ids : [],
+    Array.isArray(payload?.lunch_order_ids) ? payload.lunch_order_ids : [],
+    payload?.single_transaction_id ?? null,
+    payload?.school_id,
+    invoiceId,
+  );
 }
 
 /**

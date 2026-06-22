@@ -111,7 +111,21 @@ serve(async (req) => {
       related_invoice_id,
       cancellation_reason,
       emission_date,   // 'YYYY-MM-DD' opcional — si se omite usa hoy
+      reserved_serie,  // FASE 1B — correlativo ya reservado por el worker (cero huecos)
+      reserved_numero, // FASE 1B — si viene, NO se pide uno nuevo y NO se salta a otro
     } = body;
+
+    // FASE 1B — modo "número reservado".
+    // Cuando el worker asíncrono (process-billing-queue v2) reserva el correlativo
+    // en la fila de billing_queue y nos lo pasa, la Edge Function NO debe pedir otro
+    // ni avanzar la secuencia ante "ya existe": ese comportamiento crea huecos.
+    // En su lugar, ante "ya existe" devolvemos duplicate:true para que el worker
+    // consulte/reconcilie con el mismo número. Si reserved_numero NO viene (llamadas
+    // directas legacy durante la transición), el comportamiento es idéntico al de hoy.
+    const hasReservedNumero =
+      reserved_numero != null &&
+      Number.isInteger(Number(reserved_numero)) &&
+      Number(reserved_numero) > 0;
 
     // 1. Obtener configuración Nubefact de la sede
     const { data: cfg, error: cfgErr } = await supabase
@@ -150,28 +164,50 @@ serve(async (req) => {
       1: "01", 2: "03", 7: "07", 8: "07",
     };
 
-    // 5. Número correlativo — ATÓMICO vía get_next_invoice_numero
-    // Reemplaza el frágil SELECT MAX(numero)+1.
-    // La función usa INSERT...ON CONFLICT...DO UPDATE RETURNING, lo que garantiza
-    // que dos llamadas concurrentes NUNCA reciban el mismo número.
-    const { data: nextNumero, error: seqErr } = await supabase
-      .rpc("get_next_invoice_numero", { p_school_id: school_id, p_serie: serie });
+    // 5. Número correlativo.
+    // FASE 1B — Si el worker ya reservó el número (reserved_numero), lo usamos
+    // TAL CUAL y NO pedimos otro. Esto preserva la garantía de cero huecos: el
+    // mismo trabajo, reintentado, siempre lleva el mismo correlativo.
+    // Si NO viene reservado (llamadas legacy directas), mantenemos el camino
+    // atómico de siempre (get_next_invoice_numero).
+    let numero: number;
 
-    if (seqErr || nextNumero == null) {
-      console.error(`[generate-document] Error obteniendo correlativo atómico:`, seqErr);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `No se pudo obtener el correlativo para ${serie}. ` +
-                 `Detalle: ${seqErr?.message ?? "respuesta nula"}. ` +
-                 `Verifica que la migración 20260404_invoice_sequences.sql fue ejecutada en Supabase.`,
-        }),
-        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
-      );
+    if (hasReservedNumero) {
+      numero = Number(reserved_numero);
+      // Coherencia de serie: si el worker mandó reserved_serie, debe coincidir
+      // con la serie resuelta por billing_config. Si difiere, es un error de
+      // configuración; lo registramos pero respetamos la serie de billing_config
+      // (única fuente de verdad de la numeración).
+      if (reserved_serie && String(reserved_serie) !== String(serie)) {
+        console.warn(
+          `[generate-document] reserved_serie (${reserved_serie}) ≠ serie billing_config (${serie}). ` +
+          `Usando serie de billing_config.`
+        );
+      }
+      console.log(`📋 Correlativo RESERVADO (worker): ${serie}-${String(numero).padStart(8, "0")}`);
+    } else {
+      // Reemplaza el frágil SELECT MAX(numero)+1.
+      // La función usa INSERT...ON CONFLICT...DO UPDATE RETURNING, lo que garantiza
+      // que dos llamadas concurrentes NUNCA reciban el mismo número.
+      const { data: nextNumero, error: seqErr } = await supabase
+        .rpc("get_next_invoice_numero", { p_school_id: school_id, p_serie: serie });
+
+      if (seqErr || nextNumero == null) {
+        console.error(`[generate-document] Error obteniendo correlativo atómico:`, seqErr);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `No se pudo obtener el correlativo para ${serie}. ` +
+                   `Detalle: ${seqErr?.message ?? "respuesta nula"}. ` +
+                   `Verifica que la migración 20260404_invoice_sequences.sql fue ejecutada en Supabase.`,
+          }),
+          { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
+        );
+      }
+
+      numero = nextNumero;
+      console.log(`📋 Correlativo atómico: ${serie}-${String(numero).padStart(8, "0")}`);
     }
-
-    let numero: number = nextNumero;
-    console.log(`📋 Correlativo atómico: ${serie}-${String(numero).padStart(8, "0")}`);
 
     // 6. Calcular IGV — carga dinámica desde billing_config
     // Perú: 18% estándar, 10.5% para MYPES Restaurantes (Régimen Especial)
@@ -479,10 +515,32 @@ serve(async (req) => {
              s.includes("duplicado") || s.includes("duplicate");
     };
 
-    const MAX_SKIP = 5; // máximo de huecos consecutivos permitidos
+    // FASE 1B — Si el número vino RESERVADO por el worker, está PROHIBIDO saltar
+    // a otro correlativo: eso fabricaría huecos. Devolvemos duplicate:true con el
+    // mismo serie-numero para que el worker consulte/reconcilie en Nubefact sin
+    // consumir un número nuevo.
+    if (hasReservedNumero && isYaExiste(nubefactData)) {
+      console.warn(
+        `[generate-document] RESERVADO ${serie}-${String(numero).padStart(8, "0")} ya existe en Nubefact. ` +
+        `No se salta (modo reservado). Devolviendo duplicate:true para reconciliación del worker.`
+      );
+      return new Response(
+        JSON.stringify({
+          success:   false,
+          duplicate: true,
+          serie,
+          numero,
+          nubefact:  nubefactData,
+          error:     `DUPLICATE_RESERVED: ${serie}-${String(numero).padStart(8, "0")} ya existe en Nubefact.`,
+        }),
+        { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
+
+    const MAX_SKIP = 5; // máximo de huecos consecutivos permitidos (solo modo legacy)
     let skipCount  = 0;
 
-    while (isYaExiste(nubefactData) && skipCount < MAX_SKIP) {
+    while (!hasReservedNumero && isYaExiste(nubefactData) && skipCount < MAX_SKIP) {
       skipCount++;
       console.error(
         `🚨 [generate-document] DESFASE SECUENCIA (intento ${skipCount}/${MAX_SKIP}): ` +
