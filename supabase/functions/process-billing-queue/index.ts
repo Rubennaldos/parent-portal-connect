@@ -83,7 +83,10 @@ serve(async (req) => {
     //
     // El bloqueo real ocurre en fn_build_billing_payload (FOR UPDATE SKIP LOCKED).
     // ══════════════════════════════════════════════════════════════════════
-    let pendingItems: { id: string; payload_snapshot?: unknown; emit_attempts?: number }[] | null;
+    // FASE 2A-fix: transaction_ids incluido en ambos caminos.
+    // Para daily_summary/collection/pos_sale los IDs viven en billing_queue.transaction_ids
+    // (no en el payload_snapshot que usa los campos legacy del flujo voucher).
+    let pendingItems: { id: string; payload_snapshot?: unknown; emit_attempts?: number; transaction_ids?: string[] | null }[] | null;
     let fetchErr: { message: string } | null;
 
     if (specificQueueId) {
@@ -91,7 +94,7 @@ serve(async (req) => {
       // camino snapshot funcione igual (payload_snapshot, emit_attempts necesarios).
       const result = await supabase
         .from("billing_queue")
-        .select("id, payload_snapshot, emit_attempts")
+        .select("id, payload_snapshot, emit_attempts, transaction_ids")
         .eq("id", specificQueueId)
         .maybeSingle();
       pendingItems = result.data ? [result.data] : [];
@@ -102,7 +105,7 @@ serve(async (req) => {
       // sin una segunda consulta dentro del loop (reduce round-trips a la BD).
       const result = await supabase
         .from("billing_queue")
-        .select("id, payload_snapshot, emit_attempts")
+        .select("id, payload_snapshot, emit_attempts, transaction_ids")
         .eq("status", "pending")
         .lte("emit_attempts", 3)
         .order("created_at", { ascending: true })
@@ -292,7 +295,10 @@ serve(async (req) => {
 
           if (preExisting?.id) {
             console.log(`[process-billing-queue] ${queueId} — invoice ${reservedLabel} ya existe. Éxito idempotente sin Nubefact.`);
-            await markEmittedAndLink(supabase, queueId, payload, preExisting.id, reservedSerie, reservedNumero);
+            const preCheckQueueTxIds: string[] = Array.isArray((item as any).transaction_ids)
+              ? ((item as any).transaction_ids as string[]).filter((id: string) => UUID_RE.test(id))
+              : [];
+            await markEmittedAndLink(supabase, queueId, payload, preExisting.id, reservedSerie, reservedNumero, preCheckQueueTxIds);
             runLog.push({ queue_id: queueId, status: "emitted", serie: reservedLabel, student: payload.student_name, amount: payload.monto_total });
             continue;
           }
@@ -372,7 +378,10 @@ serve(async (req) => {
 
             if (dupInv?.id) {
               // El comprobante SÍ existe localmente: éxito idempotente.
-              await markEmittedAndLink(supabase, queueId, payload, dupInv.id, reservedSerie, reservedNumero);
+              const dupQueueTxIds: string[] = Array.isArray((item as any).transaction_ids)
+                ? ((item as any).transaction_ids as string[]).filter((id: string) => UUID_RE.test(id))
+                : [];
+              await markEmittedAndLink(supabase, queueId, payload, dupInv.id, reservedSerie, reservedNumero, dupQueueTxIds);
               runLog.push({ queue_id: queueId, status: "emitted", serie: reservedLabel, student: payload.student_name, amount: payload.monto_total });
               continue;
             }
@@ -438,10 +447,14 @@ serve(async (req) => {
           }
         }
 
+        // FASE 2A-fix: invoice_id incluido en el UPDATE de éxito.
+        // El camino legacy ya lo hacía via markEmittedAndLink; el camino snapshot
+        // lo omitía. Ahora ambos caminos cierran la fila con invoice_id vinculado.
         await supabase
           .from("billing_queue")
           .update({
             status:               "emitted",
+            invoice_id:           resolvedInvoiceId,    // ← fix: faltaba en camino snapshot
             processed_at:         new Date().toISOString(),
             nubefact_ticket:      serie,
             pdf_url:              pdfUrl,
@@ -452,8 +465,13 @@ serve(async (req) => {
           .eq("id", queueId);
 
         // ── PASO 3F: Marcar transacciones vinculadas como billing_status='sent' ─
-        // IDs provenientes del RPC (ya validados con school_id guard en la BD)
+        // FASE 2A-fix: para daily_summary/collection/pos_sale los IDs están en
+        // billing_queue.transaction_ids, no en los campos legacy del payload.
+        // Se leen del item ya cargado en memoria (sin round-trip extra a la BD).
         const invoiceId = resolvedInvoiceId;
+        const queueTxIds: string[] = Array.isArray((item as any).transaction_ids)
+          ? ((item as any).transaction_ids as string[]).filter((id: string) => UUID_RE.test(id))
+          : [];
         await markTransactionsSent(
           supabase,
           payload.paid_transaction_ids  ?? [],
@@ -461,6 +479,7 @@ serve(async (req) => {
           payload.single_transaction_id ?? null,
           payload.school_id,
           invoiceId,
+          queueTxIds,                                   // ← fix: IDs del nuevo flujo
         );
 
         console.log(
@@ -640,17 +659,22 @@ async function markFailedOrDeadLetter(
 }
 
 /**
- * FASE 1B — Marca 'emitted' y vincula invoice cuando el comprobante ya existe
+ * FASE 1B/2A — Marca 'emitted' y vincula invoice cuando el comprobante ya existe
  * (recuperación idempotente: el invoice se creó en un intento previo, pero la
  * cola no alcanzó a marcarse). Replica el cierre de éxito normal.
+ *
+ * FASE 2A-fix: acepta queueTransactionIds para cerrar correctamente los jobs de
+ * daily_summary / collection / pos_sale que almacenan los IDs en la columna
+ * billing_queue.transaction_ids en lugar de en los campos legacy del payload.
  */
 async function markEmittedAndLink(
-  supabase: ReturnType<typeof createClient>,
-  queueId:  string,
-  payload:  any,
-  invoiceId: string,
-  serie:     string,
-  numero:    number,
+  supabase:            ReturnType<typeof createClient>,
+  queueId:             string,
+  payload:             any,
+  invoiceId:           string,
+  serie:               string,
+  numero:              number,
+  queueTransactionIds: string[] = [],
 ): Promise<void> {
   try {
     await supabase
@@ -669,10 +693,11 @@ async function markEmittedAndLink(
   await markTransactionsSent(
     supabase,
     Array.isArray(payload?.paid_transaction_ids) ? payload.paid_transaction_ids : [],
-    Array.isArray(payload?.lunch_order_ids) ? payload.lunch_order_ids : [],
+    Array.isArray(payload?.lunch_order_ids)       ? payload.lunch_order_ids       : [],
     payload?.single_transaction_id ?? null,
     payload?.school_id,
     invoiceId,
+    queueTransactionIds,
   );
 }
 
@@ -682,6 +707,11 @@ async function markEmittedAndLink(
  * Nota sobre la arquitectura: esto es una actualización de ESTADO administrativo,
  * no un cálculo financiero. El monto ya fue procesado en fn_build_billing_payload.
  * Los IDs de transacciones provienen del RPC (validados con school_id guard).
+ *
+ * FASE 2A-fix: nuevo parámetro queueTransactionIds para cubrir los jobs de
+ * daily_summary / collection / pos_sale. Sus IDs no están en los campos legacy
+ * del payload sino en billing_queue.transaction_ids. Se deduplican con Set para
+ * no enviar el mismo ID dos veces si ambas fuentes lo traen (flujo voucher batch).
  */
 async function markTransactionsSent(
   supabase:            ReturnType<typeof createClient>,
@@ -690,6 +720,7 @@ async function markTransactionsSent(
   singleTransactionId: string | null,
   schoolId:            string,
   invoiceId:           string | null,
+  queueTransactionIds: string[] = [],
 ): Promise<void> {
 
   const updateData: Record<string, unknown> = { billing_status: "sent" };
@@ -697,11 +728,13 @@ async function markTransactionsSent(
     updateData.invoice_id = invoiceId;
   }
 
-  // Actualizar por IDs explícitos (paid_transaction_ids + transaction_id único)
-  const directIds = [
+  // Unión deduplicada: IDs legacy + IDs del nuevo flujo Fase 2A.
+  // Set elimina duplicados sin alterar el significado del UPDATE.
+  const directIds = [...new Set([
     ...paidTransactionIds.filter(id => UUID_RE.test(id)),
     ...(singleTransactionId && UUID_RE.test(singleTransactionId) ? [singleTransactionId] : []),
-  ];
+    ...queueTransactionIds.filter(id => UUID_RE.test(id)),
+  ])];
 
   if (directIds.length > 0) {
     const { error: txUpdateErr } = await supabase
