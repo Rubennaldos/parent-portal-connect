@@ -3,8 +3,6 @@ import { supabase } from '@/lib/supabase';
 import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { logErrorAsync } from '@/lib/logError';
 import {
-  buildClientePayload,
-  buildAutoEmisionBody,
   logEmisionFallida,
   type RawInvoiceClientData,
 } from '@/lib/invoicingHelpers';
@@ -1135,72 +1133,22 @@ export const VoucherApproval = () => {
         const schoolIdForEmit = rpcData?.school_id ?? req.school_id;
 
         if (rInvType && (rInvType === 'boleta' || rInvType === 'factura') && updatedTxIds.length > 0) {
-          try {
-            let igvPct = 18;
-            try {
-              const { data: cfg } = await supabase
-                .from('billing_config')
-                .select('igv_porcentaje')
-                .eq('school_id', schoolIdForEmit || req.school_id)
-                .maybeSingle();
-              if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
-            } catch { /* usa 18% de fallback */ }
-
-            // buildAutoEmisionBody centraliza la aritmética IGV y siempre incluye email.
-            const emisionBody = buildAutoEmisionBody({
-              schoolId:          schoolIdForEmit || req.school_id,
-              txId:              updatedTxIds[0] ?? null,
-              invoiceType:       rInvType,
-              invoiceClientData: rInvClient,
-              fallbackName:      req.students?.full_name || 'Alumno',
-              amount:            approvedAmount,
-              igvPct,
-              descriptionLine:   `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
-              paymentMethod:     req.payment_method,
-            });
-
-            const { data: emitResult, error: emitErr } = await supabase.functions.invoke(
-              'generate-document',
-              { body: emisionBody },
-            );
-
-            if (!emitErr && emitResult?.success && emitResult.documento?.id) {
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
-                .in('id', updatedTxIds);
-              toast({
-                title: '✅ Comprobante emitido',
-                description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} generada automáticamente con IGV ${igvPct}%.` +
-                  (buildClientePayload(rInvClient).email ? ' PDF enviado al correo del cliente.' : ''),
-              });
-            } else {
-              const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'failed' })
-                .in('id', updatedTxIds)
-                .eq('billing_status', 'pending');
-              logEmisionFallida(nubefactError, {
-                schoolId: schoolIdForEmit || req.school_id,
-                txIds:    updatedTxIds,
-                amount:   approvedAmount,
-                invoiceType: rInvType,
-                parentName:  req.profiles?.full_name || req.profiles?.email || '',
-                reqId:    req.id,
-              });
-              toast({
-                variant: 'destructive',
-                title: '⚠️ Pago aprobado — Error SUNAT',
-                description:
-                  `El pago se registró correctamente, pero Nubefact no pudo emitir el comprobante. ` +
-                  `Las transacciones fueron marcadas como "Error SUNAT" para reintento. ` +
-                  `Encuéntralas en Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${nubefactError}`,
-                duration: 12000,
-              });
-            }
-          } catch (invoiceErr: any) {
-            logEmisionFallida(invoiceErr, {
+          const { data: enqRes, error: enqErr } = await supabase.rpc(
+            'enqueue_billing_emission_v2',
+            {
+              p_job_type:            'collection',
+              p_school_id:           schoolIdForEmit || req.school_id,
+              p_transaction_ids:     updatedTxIds,
+              p_invoice_client_data: rInvClient,
+              p_invoice_type:        rInvType,
+              p_payment_method:      req.payment_method ?? null,
+              p_description:         `Pago ${isDebtPayment ? 'deuda' : 'almuerzo'} - ${req.students?.full_name || 'Alumno'}`,
+            },
+          );
+          const enqResult = enqRes as { status?: string; error?: string; detail?: string } | null;
+          if (enqErr || enqResult?.error) {
+            const errMsg = enqResult?.detail ?? enqResult?.error ?? enqErr?.message ?? 'Error desconocido';
+            logEmisionFallida(errMsg, {
               schoolId:    schoolIdForEmit || req.school_id,
               txIds:       updatedTxIds,
               amount:      approvedAmount,
@@ -1208,18 +1156,18 @@ export const VoucherApproval = () => {
               parentName:  req.profiles?.full_name || req.profiles?.email || '',
               reqId:       req.id,
             });
-            await supabase
-              .from('transactions')
-              .update({ billing_status: 'failed' })
-              .in('id', updatedTxIds)
-              .eq('billing_status', 'pending');
             toast({
               variant: 'destructive',
-              title: '⚠️ Pago aprobado — Error SUNAT (excepción)',
+              title: '⚠️ Pago aprobado — Error al encolar comprobante',
               description:
-                `El pago de S/ ${approvedAmount.toFixed(2)} fue aprobado, pero ocurrió un error inesperado al generar el comprobante. ` +
-                `Marcado como "Error SUNAT" para reintento en Cierre Mensual. Error: ${invoiceErr?.message || 'Desconocido'}`,
+                `El pago se registró correctamente, pero el comprobante no pudo encolarse. ` +
+                `Reintenta desde Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${errMsg}`,
               duration: 12000,
+            });
+          } else {
+            toast({
+              title: '⏳ Comprobante en cola',
+              description: `${rInvType === 'factura' ? 'Factura' : 'Boleta'} enviada a la cola de emisión automática.`,
             });
           }
         }
@@ -1314,75 +1262,48 @@ export const VoucherApproval = () => {
             `S/ ${walletUsed.toFixed(2)} de billetera + S/ ${fiscalAmount.toFixed(2)} de voucher procesados.`,
         });
 
-        // ── Generar boleta por el monto REAL del voucher (si lo hay) ─────────────
+        // ── Encolar boleta por el monto REAL del voucher (si lo hay) ─────────────
         if (shouldInvoice && fiscalTxId) {
           try {
             const splitInvType   = (req as any).invoice_type as string | null;
             const splitInvClient = (req as any).invoice_client_data as RawInvoiceClientData;
 
-            // Solo emitir si el padre eligió boleta/factura con datos completos
             if (splitInvType && (splitInvType === 'boleta' || splitInvType === 'factura')) {
-              let igvPct = 18;
-              try {
-                const { data: cfg } = await supabase
-                  .from('billing_config')
-                  .select('igv_porcentaje')
-                  .eq('school_id', req.school_id)
-                  .maybeSingle();
-                if (cfg?.igv_porcentaje != null) igvPct = Number(cfg.igv_porcentaje);
-              } catch { /* usa 18% de fallback */ }
-
-              // buildAutoEmisionBody centraliza aritmética IGV y siempre incluye email.
-              const emisionBody = buildAutoEmisionBody({
-                schoolId:          req.school_id,
-                txId:              fiscalTxId,
-                invoiceType:       splitInvType,
-                invoiceClientData: splitInvClient,
-                fallbackName:      req.students?.full_name || 'Alumno',
-                amount:            fiscalAmount,
-                igvPct,
-                descriptionLine:   `Pago deuda (billetera+voucher) — ${req.students?.full_name || 'Alumno'}`,
-                paymentMethod:     req.payment_method,
-              });
-
-              const { data: emitResult, error: emitErr } = await supabase.functions.invoke(
-                'generate-document',
-                { body: emisionBody },
+              const { data: enqRes, error: enqErr } = await supabase.rpc(
+                'enqueue_billing_emission_v2',
+                {
+                  p_job_type:            'collection',
+                  p_school_id:           req.school_id,
+                  p_transaction_ids:     [fiscalTxId],
+                  p_invoice_client_data: splitInvClient,
+                  p_invoice_type:        splitInvType,
+                  p_payment_method:      req.payment_method ?? null,
+                  p_description:         `Pago deuda (billetera+voucher) — ${req.students?.full_name || 'Alumno'}`,
+                },
               );
-
-              if (!emitErr && emitResult?.success && emitResult.documento?.id) {
-                await supabase
-                  .from('transactions')
-                  .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
-                  .eq('id', fiscalTxId);
-                toast({
-                  title: '✅ Boleta emitida',
-                  description: `${splitInvType === 'factura' ? 'Factura' : 'Boleta'} de S/ ${fiscalAmount.toFixed(2)} generada con IGV ${igvPct}%.` +
-                    (buildClientePayload(splitInvClient).email ? ' PDF enviado al correo del cliente.' : ''),
-                });
-              } else {
-                const nubefactError = emitResult?.error || emitErr?.message || 'Error desconocido';
-                logEmisionFallida(nubefactError, {
+              const enqResult = enqRes as { status?: string; error?: string; detail?: string } | null;
+              if (enqErr || enqResult?.error) {
+                const errMsg = enqResult?.detail ?? enqResult?.error ?? enqErr?.message ?? 'Error desconocido';
+                logEmisionFallida(errMsg, {
                   schoolId:    req.school_id,
-                  txIds:       fiscalTxId ? [fiscalTxId] : [],
+                  txIds:       [fiscalTxId],
                   amount:      fiscalAmount,
                   invoiceType: splitInvType,
                   parentName:  req.profiles?.full_name || req.profiles?.email || '',
                   reqId:       req.id,
                 });
-                await supabase
-                  .from('transactions')
-                  .update({ billing_status: 'failed' })
-                  .eq('id', fiscalTxId)
-                  .eq('billing_status', 'pending');
                 toast({
                   variant: 'destructive',
-                  title: '⚠️ Cobro exitoso — Error SUNAT',
+                  title: '⚠️ Cobro exitoso — Error al encolar comprobante',
                   description:
                     `El pago de S/ ${fiscalAmount.toFixed(2)} se procesó correctamente ` +
-                    `pero la boleta no se pudo emitir. Fue marcada como "Error SUNAT" para reintento manual. ` +
-                    `Revisa en Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${nubefactError}`,
+                    `pero el comprobante no pudo encolarse. Reintenta desde Facturación → Cierre Mensual → "Reintentar Fallidas". Error: ${errMsg}`,
                   duration: 12000,
+                });
+              } else {
+                toast({
+                  title: '⏳ Comprobante en cola',
+                  description: `${splitInvType === 'factura' ? 'Factura' : 'Boleta'} de S/ ${fiscalAmount.toFixed(2)} enviada a la cola de emisión automática.`,
                 });
               }
             } else {
@@ -1402,15 +1323,10 @@ export const VoucherApproval = () => {
               parentName:  req.profiles?.full_name || req.profiles?.email || '',
               reqId:       req.id,
             });
-            await supabase
-              .from('transactions')
-              .update({ billing_status: 'failed' })
-              .eq('id', fiscalTxId)
-              .eq('billing_status', 'pending');
             toast({
               variant: 'destructive',
-              title: '⚠️ Cobro exitoso — Error SUNAT (excepción)',
-              description: `El cobro se procesó pero la emisión de boleta falló con excepción. Marcada como "Error SUNAT". Reintenta desde Cierre Mensual. Detalle: ${invEx.message}`,
+              title: '⚠️ Cobro exitoso — Error al encolar (excepción)',
+              description: `El cobro se procesó pero el encolado del comprobante falló con una excepción inesperada. Reintenta desde Facturación → Cierre Mensual. Detalle: ${invEx.message}`,
               duration: 10000,
             });
           }
