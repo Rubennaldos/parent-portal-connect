@@ -78,7 +78,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { InvoiceClientModal, type InvoiceClientData, type InvoiceType } from '@/components/billing/InvoiceClientModal';
-import { generarComprobante } from '@/lib/nubefact';
+// generarComprobante eliminado en Fase 2B — el frontend ya no llama generate-document directamente.
 import { supabase } from '@/lib/supabase';
 import { calcBillingFlags } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
@@ -1840,15 +1840,14 @@ const POS = () => {
     setShowInvoiceClientModal(false);
     setIsGeneratingInvoice(true);
 
-    // Capturamos carrito Y total ANTES de que processCheckout resetee el carrito.
-    // resetClient() ocurre en un setTimeout 500 ms; Nubefact puede tardar más.
+    // Capturamos carrito ANTES de que processCheckout resetee el carrito.
+    // resetClient() ocurre en un setTimeout 500 ms.
     const cartSnapshot = [...cart];
-    const montoTotal = getTotal();
 
     try {
       // ── PASO 1: Procesar la venta ─────────────────────────────────────────
       // processCheckout guarda document_type y datos del cliente en transactions
-      // aunque Nubefact aún no responda. Retorna el UUID de la transacción.
+      // y retorna el UUID de la transacción. El monto está en la BD desde aquí.
       const transactionId = await processCheckout({
         document_type: clientData.tipo,
         client_name: clientData.razon_social || undefined,
@@ -1859,174 +1858,64 @@ const POS = () => {
       });
 
       // Si processCheckout falló internamente (ya mostró su propio toast de error),
-      // salimos sin llamar a Nubefact. La venta no existe, nada que facturar.
+      // salimos sin encolar. La venta no existe, nada que facturar.
       if (!transactionId) return;
 
-      // ── PASO 2a: Construir ítems con aritmética de enteros (céntimos) ────
-      // Se usa 18 % como tasa estándar. La Edge Function corrige el IGV total
-      // del encabezado desde billing_config; aquí solo necesitamos que
-      // sum(items.subtotal) = total_gravada y sum(items.igv) = total_igv.
-      // Técnica "último ítem absorbe residuo": garantiza cuadre exacto sin
-      // fugas de ±0.01 que SUNAT rechaza por descuadre entre líneas y cabecera.
-      const IGV_PCT_POS = 18;
-      const headerTotalCents = Math.round(montoTotal * 100);
-      const headerDivisorX100 = 100 + IGV_PCT_POS;
-      const headerBaseCents = Math.floor(headerTotalCents * 100 / headerDivisorX100);
-      const headerIgvCents  = headerTotalCents - headerBaseCents;
+      // ── PASO 2: Encolar al portón seguro (Fase 2B) ───────────────────────
+      // El frontend NO calcula IGV. Pasa solo los datos raw del carrito;
+      // el RPC recalcula montos y construye el payload para Nubefact.
+      // Los campos que espera p_items_raw: { name, qty, unit_price, uom?, code? }
+      const itemsRaw = cartSnapshot.map((ci, idx) => ({
+        name:       ci.product.name,
+        qty:        ci.quantity,
+        unit_price: ci.product.price,
+        code:       String(idx + 1).padStart(3, '0'),
+        uom:        'NIU',
+      }));
 
-      // Calcular base e IGV por ítem (sin ajuste de redondeo aún)
-      const rawItemCalcs = cartSnapshot.map((ci, idx) => {
-        const itemTotalCents = Math.round(ci.product.price * ci.quantity * 100);
-        const itemBaseCents  = Math.floor(itemTotalCents * 100 / headerDivisorX100);
-        const itemIgvCents   = itemTotalCents - itemBaseCents;
-        return { ci, idx, itemTotalCents, itemBaseCents, itemIgvCents };
-      });
+      const clientDataForRpc = {
+        doc_type:     clientData.doc_type === 'sin_documento' ? '-' : clientData.doc_type,
+        doc_number:   clientData.doc_number !== '-' ? clientData.doc_number : '-',
+        razon_social: clientData.razon_social || 'Consumidor Final',
+        direccion:    clientData.direccion || '-',
+        ...(clientData.email ? { email: clientData.email } : {}),
+      };
 
-      // Diferencia de redondeo acumulada (normalmente ±1 céntimo)
-      const sumItemsBaseCents = rawItemCalcs.reduce((s, r) => s + r.itemBaseCents, 0);
-      const sumItemsIgvCents  = rawItemCalcs.reduce((s, r) => s + r.itemIgvCents,  0);
-      const baseAdj = headerBaseCents - sumItemsBaseCents; // aplicar al último ítem
-      const igvAdj  = headerIgvCents  - sumItemsIgvCents;
-
-      const nubefactItems = rawItemCalcs.map((r, i) => {
-        const isLast       = i === rawItemCalcs.length - 1;
-        const adjBase      = r.itemBaseCents + (isLast ? baseAdj : 0);
-        const adjIgv       = r.itemIgvCents  + (isLast ? igvAdj  : 0);
-        const itemBase     = adjBase / 100;
-        const itemIgv      = adjIgv  / 100;
-        const itemTotal    = r.itemTotalCents / 100;
-        // valor_unitario = precio base por unidad (sin IGV)
-        const valUnitario  = +(itemBase / r.ci.quantity).toFixed(2);
-        return {
-          unidad_de_medida:       'NIU',
-          codigo:                 String(r.idx + 1).padStart(3, '0'),
-          descripcion:            r.ci.product.name,
-          cantidad:               r.ci.quantity,
-          valor_unitario:         valUnitario,
-          precio_unitario:        +r.ci.product.price.toFixed(2),
-          descuento:              '',
-          subtotal:               +itemBase.toFixed(2),
-          tipo_de_igv:            1,
-          igv:                    +itemIgv.toFixed(2),
-          total:                  +itemTotal.toFixed(2),
-          anticipo_regularizacion: false,
-        };
-      });
-
-      // ── PASO 2b: Llamar a Nubefact ───────────────────────────────────────
-      // La venta ya está registrada. Si Nubefact falla, la transacción
-      // queda sin invoice_id (recuperable luego). NO se borra.
-      const result = await generarComprobante({
-        school_id:      userSchoolId || '',
-        transaction_id: transactionId,
-        tipo:           clientData.tipo === 'factura' ? 1 : 2,
-        cliente: {
-          nombre:     clientData.razon_social,
-          tipo_doc:   clientData.doc_type === 'ruc' ? 6 : clientData.doc_type === 'ce' ? 4 : clientData.doc_type === 'pasaporte' ? 7 : clientData.doc_type === 'dni' ? 1 : 0,
-          numero_doc: clientData.doc_number !== '-' ? clientData.doc_number : undefined,
-          direccion:  clientData.direccion  || undefined,
-          email:      clientData.email      || undefined,
-        },
-        monto_total: montoTotal,
-        items:        nubefactItems,
-      });
-
-      // ── PASO 3: Manejar respuesta de Nubefact ────────────────────────────
-      if (result.success) {
-        const pdfUrl   = result.nubefact?.enlace_del_pdf as string | undefined;
-        const invoiceId = result.documento?.id;
-
-        if (pdfUrl) setLastInvoicePdfUrl(pdfUrl);
-
-        // ── PASO 3a: Vincular invoice_id y marcar billing_status='sent' ──
-        // AWAIT obligatorio: si este UPDATE falla, la boleta existe en SUNAT
-        // pero la BD dice 'pending' → CierreMensual la reintentaría y la
-        // emitiría dos veces. Un error aquí es un incidente fiscal, no un aviso.
-        try {
-          const { error: linkErr } = await supabase
-            .from('transactions')
-            .update({
-              ...(invoiceId ? { invoice_id: invoiceId } : {}),
-              billing_status: 'sent',
-            })
-            .eq('id', transactionId);
-          if (linkErr) throw linkErr;
-        } catch (linkErr: any) {
-          console.error('🚨 [POS] Comprobante emitido en SUNAT pero falló el UPDATE en BD:', linkErr?.message);
-          toast({
-            variant: 'destructive',
-            title: '🚨 Comprobante emitido — Error en BD',
-            description:
-              'La boleta/factura fue aceptada por SUNAT, pero no se pudo actualizar el ' +
-              'registro en la base de datos. NO reintentes la emisión. Avisa al administrador ' +
-              'para que lo actualice manualmente desde Cierre Mensual.',
-            duration: 20000,
-          });
+      const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+        'enqueue_billing_emission_v2',
+        {
+          p_job_type:            'pos_sale',
+          p_school_id:           userSchoolId || '',
+          p_transaction_id:      transactionId,
+          p_invoice_client_data: clientDataForRpc,
+          p_invoice_type:        clientData.tipo,
+          p_payment_method:      paymentMethod || 'efectivo',
+          p_items_raw:           itemsRaw,
         }
+      );
 
-        // ── PASO 3b: Mostrar resultado al cajero ─────────────────────────
-        const serie = result.documento
-          ? `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`
-          : null;
+      if (rpcErr) throw rpcErr;
 
+      const enqResult = rpcResult as { status: string; queue_id?: string; error?: string; detail?: string } | null;
+
+      if (enqResult?.error) {
+        console.error('⚠️ [POS] RPC enqueue devolvió error:', enqResult.error, enqResult.detail);
         toast({
-          title: `✅ ${clientData.tipo === 'factura' ? 'Factura' : 'Boleta'} generada`,
-          description: serie
-            ? `${serie} — ${result.nubefact?.aceptada_por_sunat ? 'Aceptada por SUNAT ✔' : 'Generada'}`
-            : 'Comprobante generado correctamente.',
-        });
-
-        if (pdfUrl) window.open(pdfUrl, '_blank');
-
-        // Toast de compartir por WhatsApp (aparece 800ms después)
-        if (pdfUrl && serie) {
-          const waMsg = `https://wa.me/?text=${encodeURIComponent(
-            `Hola, aquí tienes tu comprobante electrónico 🧾\nN° ${serie}\nPDF: ${pdfUrl}`
-          )}`;
-          setTimeout(() => {
-            toast({
-              title: '📲 Compartir comprobante',
-              description: '¿Deseas enviar el PDF por WhatsApp al cliente?',
-              action: (
-                <a
-                  href={waMsg}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-green-500 hover:bg-green-600 text-white"
-                >
-                  📱 WhatsApp
-                </a>
-              ) as any,
-            });
-          }, 800);
-        }
-
-      } else {
-        // Nubefact devolvió error — la venta YA está registrada en BD, no se borra.
-        // Marcamos billing_status='failed' para que CierreMensual pueda rescatarla.
-        const nubefactErrMsg = result.error ?? 'Error desconocido de Nubefact';
-        console.error('❌ [POS] Error Nubefact (transacción conservada):', nubefactErrMsg, { transactionId });
-
-        // UPDATE sincrónico: si falla silenciosamente, la transacción quedaría en
-        // 'pending' indefinidamente y sería invisible para CierreMensual → Fallidas.
-        const { error: failErr } = await supabase
-          .from('transactions')
-          .update({ billing_status: 'failed' })
-          .eq('id', transactionId)
-          .eq('billing_status', 'pending'); // guard: solo actualizar si aún está pendiente
-        if (failErr) {
-          console.error('⚠️ [POS] No se pudo marcar la transacción como failed:', failErr.message);
-        }
-
-        toast({
-          title: '⚠️ Venta guardada — Error en comprobante SUNAT',
-          description:
-            `La venta se registró en la base de datos, pero SUNAT/Nubefact rechazó la emisión. ` +
-            `La transacción fue marcada como "Error SUNAT". ` +
-            `Reinténtala desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
-            `NO vuelvas a cobrar. Error: ${nubefactErrMsg}`,
           variant: 'destructive',
+          title: '⚠️ Venta guardada — Error al encolar comprobante',
+          description:
+            `La venta se registró en la base de datos. ` +
+            `No se pudo encolar el comprobante (${enqResult.detail ?? enqResult.error}). ` +
+            `Reinténtalo desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
+            `NO vuelvas a cobrar.`,
           duration: 12000,
+        });
+      } else {
+        toast({
+          title: `⏳ Venta registrada — Comprobante en cola`,
+          description:
+            `La venta fue guardada. El ${clientData.tipo === 'factura' ? 'factura' : 'boleta'} ` +
+            `se emitirá automáticamente y quedará vinculada a la transacción.`,
         });
       }
 

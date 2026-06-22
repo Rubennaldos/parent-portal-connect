@@ -133,6 +133,10 @@ function clearUiLock(schoolId: string) {
   localStorage.removeItem(uiLockKey(schoolId));
 }
 
+// Estado fiscal de un grupo/día: cuántas txs siguen pendientes vs ya encoladas.
+// La BD dicta; el frontend solo muestra.
+type GroupBillingStatus = 'pending' | 'queued' | 'mixed';
+
 interface BillingGroup {
   key: string;              // 'YYYY-MM-DD'
   day: string;              // 'YYYY-MM-DD' (hora Lima)
@@ -146,6 +150,7 @@ interface BillingGroup {
   estimatedBoletas: number; // ceil(total / SUNAT_AMOUNT_LIMIT) — para mostrar en UI
   schoolId: string;
   isExtemporaneo: boolean;  // true si la fecha supera los 7 días permitidos por SUNAT
+  billingStatus: GroupBillingStatus; // estado fiscal agregado del día
 }
 
 interface School {
@@ -410,20 +415,19 @@ export const CierreMensual = () => {
         monto_boleteable: number;  // calculado en DB: mixto = solo parte digital
         dia_venta_lima: string;    // 'YYYY-MM-DD' en hora Lima, calculado en DB
         es_extemporaneo: boolean;  // > 7 días según reloj de PostgreSQL Lima
+        billing_status: string;    // 'pending' | 'queued' — viene de v_billing_masivo_emitible
         metadata?: { lunch_order_id?: string } | null;
       }[] = [];
       let from = 0, hasMore = true;
 
-      // Fuente de verdad: v_billing_masivo_pending (SSOT del boleteo).
-      // · Incluye 'mixto' (monto_boleteable = parte digital) y 'CARD' mayúscula (IziPay).
-      // · Excluye efectivo, saldo, almuerzos cancelados, transacciones en cero.
-      // · monto_boleteable y dia_venta_lima calculados en PostgreSQL (reglas #11.A y #11.C).
-      // · NO filtra es_extemporaneo aquí — se muestra todo con badge de advertencia;
-      //   el auto-cron sí filtra es_extemporaneo = false (candado automático).
+      // Fuente de verdad: v_billing_masivo_emitible (Fase 2B).
+      // Devuelve billing_status IN ('pending','queued'): pending = sin encolar, queued = encolada.
+      // La diferencia visible: badge "En Cola" cuando todas las txs del día ya están encoladas.
+      // El auto-cron sigue usando v_billing_masivo_pending (sin cambio).
       while (hasMore) {
         const { data: page, error } = await supabase
-          .from('v_billing_masivo_pending')
-          .select('id, created_at, amount, payment_method, school_id, monto_boleteable, dia_venta_lima, es_extemporaneo, metadata')
+          .from('v_billing_masivo_emitible')
+          .select('id, created_at, amount, payment_method, school_id, monto_boleteable, dia_venta_lima, es_extemporaneo, billing_status, metadata')
           .eq('school_id', schoolId)
           .gte('created_at', start.toISOString())
           .lt('created_at', end.toISOString())
@@ -457,6 +461,7 @@ export const CierreMensual = () => {
             estimatedBoletas: 0,
             schoolId:         row.school_id ?? schoolId,
             isExtemporaneo:   Boolean(row.es_extemporaneo),
+            billingStatus:    'pending',
           });
         }
         const g = map.get(day)!;
@@ -468,6 +473,10 @@ export const CierreMensual = () => {
         g.amounts.push(amtRounded);
         g.totalCents += Math.round(amtRounded * 100);
         g.count      += 1;
+        // Actualizar estado fiscal agregado del día
+        const txStatus = row.billing_status === 'queued' ? 'queued' : 'pending';
+        if (g.billingStatus !== txStatus) g.billingStatus = 'mixed';
+        else g.billingStatus = txStatus;
       });
 
       // Total desde enteros; estimado de boletas = ceil(total / límite)
@@ -576,11 +585,14 @@ export const CierreMensual = () => {
     }
   };
 
-  // ── Emitir boleta(s) resumen ──────────────────────────────────────────────────
+  // ── Encolar boleta(s) resumen (Fase 2B) ─────────────────────────────────────
+  // El frontend ya NO llama generate-document ni calcula IGV.
+  // Responsabilidades del frontend: agrupar IDs por batch de S/ 650 (límite SUNAT),
+  // llamar al RPC enqueue_billing_emission_v2 (portón seguro en BD) por batch,
+  // y mostrar estado "En cola". El worker asíncrono emite y cierra las transacciones.
   const handleBoletear = async (group: BillingGroup) => {
     if (boletearing.has(group.key)) return;
 
-    // FIX 5: OPTIMISTIC UI LOCK — verificar si hay proceso activo para esta sede
     if (schoolId) {
       const existingLock = getUiLock(schoolId);
       if (existingLock) {
@@ -591,12 +603,11 @@ export const CierreMensual = () => {
         return;
       }
       setUiLock(schoolId, group.key);
-      setUiLockActive({ schoolId, startedAt: Date.now(), expiresAt: Date.now() + 45 * 60 * 1000, groupKey: group.key });
+      setUiLockActive({ schoolId, startedAt: Date.now(), expiresAt: Date.now() + 5 * 60 * 1000, groupKey: group.key });
     }
 
     setBoletearing(prev => new Set([...prev, group.key]));
 
-    // Solo trabajar con UUIDs válidos — previene errores PG con IDs virtuales
     const realIds = filterUUIDs(group.transactionIds);
     if (realIds.length === 0) {
       if (schoolId) clearUiLock(schoolId);
@@ -606,13 +617,11 @@ export const CierreMensual = () => {
       return;
     }
 
-    const dayFmt       = format(parseISO(group.day), 'dd/MM/yyyy');
-    const emissionDate = emissionDateOverride;
+    const dayFmt = format(parseISO(group.day), 'dd/MM/yyyy');
 
-    // ── SPLIT POR MONTO (Art. 4 Ley IGV + SUNAT < S/ 700 sin identificación) ───
-    // Se combinan todas las transacciones del día (recargas + compras directas con
-    // pago digital). Se acumula hasta S/ 650 y se corta → nueva boleta.
-    // La variación natural de montos (~S/ 14 promedio) produce totales orgánicos distintos.
+    // Split por monto (Art. 4 Ley IGV: SUNAT < S/ 700 sin identificación).
+    // El RPC calculará el monto exacto desde la BD; este split solo decide
+    // cuántos IDs van por batch — el total financiero no se calcula aquí.
     const orderedPairs = realIds.map((id) => {
       const idx = group.transactionIds.indexOf(id);
       return { id, amount: idx >= 0 ? group.amounts[idx] : 0 };
@@ -626,153 +635,86 @@ export const CierreMensual = () => {
       }
     }
 
-    const totalParts = finalBatches.length;
+    const totalParts   = finalBatches.length;
+    let enqueuedParts  = 0;
+    let alreadyParts   = 0;
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session?.access_token) throw new Error('Sesión expirada. Recarga la página.');
-
       for (let partIdx = 0; partIdx < finalBatches.length; partIdx++) {
-        const { pairs: subBatch } = finalBatches[partIdx];
-        const subIds        = subBatch.map(p => p.id);
-        const subTotalCents = subBatch.reduce((acc, p) => acc + Math.round(p.amount * 100), 0);
-        const subTotal      = subTotalCents / 100;
-        const partLabel     = totalParts > 1 ? ` (${partIdx + 1}/${totalParts})` : '';
-        const descripcion   = `Resumen Ventas Diarias ${dayFmt}${partLabel}`;
+        const subIds    = finalBatches[partIdx].pairs.map(p => p.id);
+        const partLabel = totalParts > 1 ? ` (${partIdx + 1}/${totalParts})` : '';
+        const desc      = `Resumen Ventas Diarias ${dayFmt}${partLabel}`;
 
-        // ── BLOQUEO ATÓMICO ──────────────────────────────────────────────────
-        const processingAt = new Date().toISOString();
-        let lockedCount = 0;
-        for (const batch of chunks(subIds, 500)) {
-          const { data: lockRows } = await supabase
-            .from('transactions')
-            .update({ billing_status: 'processing', billing_processing_at: processingAt })
-            .in('id', batch)
-            .eq('billing_status', 'pending')
-            .select('id');
-          lockedCount += (lockRows ?? []).length;
-        }
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc(
+          'enqueue_billing_emission_v2',
+          {
+            p_job_type:        'daily_summary',
+            p_school_id:       group.schoolId,
+            p_transaction_ids: subIds,
+            p_emission_date:   emissionDateOverride || null,
+            p_description:     desc,
+          }
+        );
 
-        if (lockedCount === 0) {
+        if (rpcErr) {
+          logErrorAsync('cierre_mensual', `RPC error encolando parte ${partIdx + 1}/${totalParts}: ${rpcErr.message}`, {
+            schoolId: group.schoolId,
+            context: { day: group.day, part: partIdx + 1, total_parts: totalParts, sub_ids: subIds },
+          });
           toast({
-            title: `Parte ${partIdx + 1}/${totalParts} ya procesada`,
-            description: 'Estas transacciones ya fueron tomadas por otro proceso.',
+            variant: 'destructive',
+            title: `Error al encolar parte ${partIdx + 1}/${totalParts}`,
+            description: rpcErr.message,
           });
           continue;
         }
 
-        try {
-          const totalFinal = round2(subTotal);
-          const items      = buildItems(totalFinal, descripcion, igvPct);
+        const result = rpcResult as { status: string; queue_id?: string; error?: string; detail?: string } | null;
 
-          const { data: result, error: fnErr } = await supabase.functions.invoke(
-            'generate-document',
-            {
-              body: {
-                school_id:      group.schoolId,
-                tipo:           2,
-                emission_date:  emissionDate,
-                cliente: { doc_type: '-', doc_number: '-', razon_social: 'Consumidor Final', direccion: '-' },
-                items,
-                monto_total:    totalFinal,
-                payment_method: 'digital',
-              },
-            }
-          );
-
-          if (fnErr) throw fnErr;
-          if (!result?.success) throw new Error(result?.error || result?.nubefact?.errors || 'Error en Nubefact');
-          if (!result.documento?.serie || !result.documento?.numero) {
-            throw new Error('Nubefact respondió OK pero sin datos del comprobante. Intenta de nuevo en unos minutos.');
-          }
-
-          // ── UPDATE ATÓMICO: billing_status + invoice_id en un solo query ──
-          // CRÍTICO: si hacemos billing_status primero y luego invoice_id y falla el segundo,
-          // el TTL puede resetear a 'pending' y se genera una segunda boleta duplicada en SUNAT.
-          const invoiceId: string | null = result.documento?.id ?? null;
-          let updateError: Error | null = null;
-
-          for (const batch of chunks(subIds, 500)) {
-            const { error: updErr } = await supabase
-              .from('transactions')
-              .update({
-                billing_status:        'sent',
-                billing_processing_at: null,
-                invoice_id:            invoiceId,
-              })
-              .in('id', batch);
-            if (updErr) { updateError = updErr; break; }
-          }
-
-          if (updateError) {
-            // Boleta YA existe en SUNAT. NO hacer rollback — dejar en 'processing'.
-            // El TTL NO reseteará porque invoice_id ya está seteado en los que sí se actualizaron.
-            logErrorAsync('cierre_mensual', `CRÍTICO — boleta en SUNAT pero BD sin actualizar. invoice_id: ${invoiceId} — ${updateError.message}`, {
-              schoolId: group.schoolId,
-              context: { invoice_id: invoiceId, day: group.day, part: partIdx + 1, total_parts: totalParts, error: updateError.message },
-            });
-            toast({
-              variant: 'destructive',
-              title: '⚠️ Boleta en SUNAT — error de sincronización BD',
-              description: `Parte ${partIdx + 1}/${totalParts}: comprobante emitido. Usar Panel de Rescate para verificar.`,
-            });
-            continue;
-          }
-
-          const serieNum       = `${result.documento.serie}-${String(result.documento.numero).padStart(8, '0')}`;
-          const isProcessing   = result.sunat_status === 'processing' ||
-                                 (result.documento as any)?.sunat_status === 'processing';
-          const partPrefix     = totalParts > 1 ? `(${partIdx + 1}/${totalParts}) ` : '';
-          if (isProcessing) {
-            toast({
-              title:       `⏳ ${partPrefix}Boleta enviada – en cola de SUNAT`,
-              description: `${descripcion} → ${serieNum} | S/ ${totalFinal.toFixed(2)} | El estado se actualizará automáticamente.`,
-            });
-          } else {
-            toast({
-              title:       `✅ ${partPrefix}Boleta emitida`,
-              description: `${descripcion} → ${serieNum} | S/ ${totalFinal.toFixed(2)}`,
-            });
-          }
-
-        } catch (partErr: unknown) {
-          const msg = partErr instanceof Error ? partErr.message : String(partErr);
-          logErrorAsync('cierre_mensual', `Error en parte ${partIdx + 1}/${totalParts}: ${msg}`, {
+        if (result?.error) {
+          logErrorAsync('cierre_mensual', `RPC devolvió error parte ${partIdx + 1}/${totalParts}: ${result.error}`, {
             schoolId: group.schoolId,
-            context: { day: group.day, part: partIdx + 1, total_parts: totalParts, sub_ids: subIds, error: msg },
+            context: { day: group.day, part: partIdx + 1, detail: result.detail },
           });
-          // Rollback SOLO si no tiene invoice_id (nunca llegó a SUNAT)
-          try {
-            for (const batch of chunks(subIds, 500)) {
-              await supabase.from('transactions')
-                .update({ billing_status: 'pending', billing_processing_at: null })
-                .in('id', batch)
-                .eq('billing_status', 'processing')
-                .is('invoice_id', null);
-            }
-          } catch { /* best-effort */ }
-          toast({ variant: 'destructive', title: `Error parte ${partIdx + 1}/${totalParts}`, description: msg });
+          toast({
+            variant: 'destructive',
+            title: `No se pudo encolar parte ${partIdx + 1}/${totalParts}`,
+            description: result.detail ?? result.error,
+          });
+          continue;
         }
-      } // end for finalBatches
 
+        if (result?.status === 'already_enqueued') {
+          alreadyParts++;
+        } else {
+          enqueuedParts++;
+        }
+      }
+
+      const partPrefix = totalParts > 1 ? `${enqueuedParts}/${totalParts} partes` : 'boleta';
+      if (enqueuedParts > 0) {
+        toast({
+          title:       `⏳ ${partPrefix} — En cola de procesamiento`,
+          description: `Resumen ${dayFmt}: ${group.count} ventas encoladas. El worker emitirá el comprobante y notificará el estado.`,
+        });
+      } else if (alreadyParts > 0) {
+        toast({
+          title:       '⏳ Ya estaba en cola',
+          description: `Resumen ${dayFmt}: todas las ventas ya estaban encoladas. El worker las procesará próximamente.`,
+        });
+      }
+
+      // Recargar la tabla para reflejar billing_status='queued' en las txs encoladas
+      await fetchGroups();
       setSentKeys(prev => new Set([...prev, group.key]));
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
-      logErrorAsync('cierre_mensual', `Error general emitiendo boleta resumen: ${msg}`, {
+      logErrorAsync('cierre_mensual', `Error general encolando boleta resumen: ${msg}`, {
         schoolId: group.schoolId,
         context: { day: group.day, error: msg },
       });
-      try {
-        for (const batch of chunks(realIds, 500)) {
-          await supabase.from('transactions')
-            .update({ billing_status: 'pending', billing_processing_at: null })
-            .in('id', batch)
-            .eq('billing_status', 'processing')
-            .is('invoice_id', null);
-        }
-      } catch { /* best-effort */ }
-      toast({ variant: 'destructive', title: 'Error al emitir boleta', description: msg });
+      toast({ variant: 'destructive', title: 'Error al encolar boleta', description: msg });
     } finally {
       if (schoolId) { clearUiLock(schoolId); setUiLockActive(null); }
       setBoletearing(prev => {
@@ -1411,10 +1353,10 @@ export const CierreMensual = () => {
           <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
           <p className="text-xs text-blue-700">
             Cada fila = un día de ventas digitales (Yape, Plin, Transferencia, Tarjeta). Al presionar <strong>Boletear</strong>,
-            se verifica que Nubefact devuelva serie y número antes de marcar las transacciones.
-            Todas las boletas se emiten con la <strong>fecha de emisión</strong> configurada arriba (por defecto = último día del mes).
-            Si hay más de 900 ventas en un día, se emiten múltiples boletas automáticamente.
-            Si algo falla, las transacciones <strong>se revierten automáticamente</strong> a "pending".
+            las transacciones se <strong>encolan de forma segura</strong> en el portón de facturación.
+            El worker asíncrono emite el comprobante en Nubefact y actualiza el estado automáticamente.
+            Todas las boletas se emiten con la <strong>fecha de emisión</strong> configurada arriba (por defecto = hoy).
+            Si hay más de 900 ventas en un día, se encolan múltiples boletas automáticamente.
           </p>
         </CardContent>
       </Card>
@@ -1496,9 +1438,13 @@ export const CierreMensual = () => {
                           <span className="font-bold text-gray-900">S/ {group.total.toFixed(2)}</span>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {isSent ? (
-                            <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
-                              <CheckCircle2 className="h-3 w-3 mr-1" /> Emitida
+                          {isSent || group.billingStatus === 'queued' ? (
+                            <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-xs">
+                              <Clock className="h-3 w-3 mr-1" /> En Cola
+                            </Badge>
+                          ) : group.billingStatus === 'mixed' ? (
+                            <Badge className="bg-yellow-100 text-yellow-700 border-yellow-300 text-xs">
+                              <Loader2 className="h-3 w-3 mr-1" /> Parcial
                             </Badge>
                           ) : group.isExtemporaneo ? (
                             <Badge
@@ -1514,8 +1460,8 @@ export const CierreMensual = () => {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {isSent ? (
-                            <span className="text-xs text-gray-400">—</span>
+                          {isSent || group.billingStatus === 'queued' ? (
+                            <span className="text-xs text-blue-500 font-medium">⏳ Procesando</span>
                           ) : (
                             <Button
                               size="sm"
@@ -1526,7 +1472,7 @@ export const CierreMensual = () => {
                               {isBusy
                                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 : <Receipt  className="h-3.5 w-3.5" />}
-                              {isBusy ? 'Emitiendo...' : 'Boletear'}
+                              {isBusy ? 'Encolando...' : 'Boletear'}
                             </Button>
                           )}
                         </td>

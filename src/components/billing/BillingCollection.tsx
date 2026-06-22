@@ -924,128 +924,63 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
         currentDebtor.school_id ?? undefined
       );
 
-      // ── Emisión inmediata de Boleta/Factura ──────────────────────────────────
-      // El toast de "éxito" se lanza AL FINAL, no antes, para evitar
-      // que el admin vea "todo OK" cuando la parte fiscal todavía no completó.
+      // ── Encolar comprobante al portón seguro (Fase 2B) ──────────────────────
+      // El frontend ya NO llama generate-document ni calcula IGV.
+      // El RPC enqueue_billing_emission_v2 recibe los IDs de la transacción,
+      // calcula el monto y el IGV desde la BD, y encola el job.
+      // El worker asíncrono emite y cierra las transacciones.
       if (invoiceData && (paymentData.document_type === 'boleta' || paymentData.document_type === 'factura')) {
         try {
-          const allTxIds = realTxIds;
-          const tipoNubefact = invoiceData.tipo === 'factura' ? 1 : 2;
+          const clientData = {
+            doc_type:     invoiceData.doc_type === 'sin_documento' ? '-' : invoiceData.doc_type,
+            doc_number:   invoiceData.doc_number || '-',
+            razon_social: invoiceData.razon_social || 'Consumidor Final',
+            direccion:    invoiceData.direccion || '-',
+          };
 
-          // ── IGV en aritmética de ENTEROS (céntimos) ──────────────────────────
-          // Garantía: baseCents + igvCents = totalCents SIEMPRE.
-          // Elimina fugas de ±0.01 que SUNAT rechaza por descuadre.
-          // floor() absorbe el residuo en base; igv recibe el resto exacto.
-          let igvPct = 18;
-          try {
-            if (currentDebtor.school_id) {
-              const { data: bcfg } = await supabase
-                .from('billing_config')
-                .select('igv_porcentaje')
-                .eq('school_id', currentDebtor.school_id)
-                .single();
-              if (bcfg?.igv_porcentaje != null && Number(bcfg.igv_porcentaje) > 0) {
-                igvPct = Number(bcfg.igv_porcentaje);
-              }
+          const { data: rpcEnqueue, error: enqErr } = await supabase.rpc(
+            'enqueue_billing_emission_v2',
+            {
+              p_job_type:            'collection',
+              p_school_id:           currentDebtor.school_id,
+              p_transaction_ids:     realTxIds.length > 1 ? realTxIds : null,
+              p_transaction_id:      realTxIds.length === 1 ? realTxIds[0] : null,
+              p_invoice_client_data: clientData,
+              p_invoice_type:        invoiceData.tipo,
+              p_payment_method:      paymentData.payment_method,
+              p_description:         `Cobro deuda - ${currentDebtor.client_name || 'Cliente'}`,
             }
-          } catch { /* usa 18% de fallback */ }
+          );
 
-          const total       = Math.round(finalPaidAmount * 100) / 100;
-          const totalCents  = Math.round(total * 100);
-          const divisorX100 = 100 + igvPct;
-          const baseCents   = Math.floor(totalCents * 100 / divisorX100);
-          const igvCents    = totalCents - baseCents;
-          const base        = baseCents / 100;
-          const igv         = igvCents  / 100;
+          if (enqErr) throw enqErr;
 
-          const { data: emitResult, error: emitErr } = await supabase.functions.invoke('generate-document', {
-            body: {
-              school_id: currentDebtor.school_id,
-              tipo: tipoNubefact,
-              cliente: {
-                doc_type:     invoiceData.doc_type === 'sin_documento' ? '-' : invoiceData.doc_type,
-                doc_number:   invoiceData.doc_number || '-',
-                razon_social: invoiceData.razon_social || 'Consumidor Final',
-                direccion:    invoiceData.direccion || '-',
-              },
-              items: [{
-                unidad_de_medida: 'NIU',
-                codigo:           'COBRO',
-                descripcion:      `Cobro deuda - ${currentDebtor.client_name || 'Cliente'}`,
-                cantidad:         1,
-                valor_unitario:   base,
-                precio_unitario:  total,
-                descuento:        '',
-                subtotal:         base,
-                tipo_de_igv:      1,
-                igv,
-                total,
-                anticipo_regularizacion: false,
-              }],
-              monto_total:    total,
-              payment_method: paymentData.payment_method,
-            },
-          });
+          const enqResult = rpcEnqueue as { status: string; queue_id?: string; error?: string; detail?: string } | null;
 
-          if (!emitErr && emitResult?.success && emitResult.documento?.id) {
-            if (allTxIds.length > 0) {
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'sent', invoice_id: emitResult.documento.id })
-                .in('id', allTxIds);
-            }
-            // Toast único de éxito total: cobro + boleta confirmados
-            toast({
-              title: '✅ Cobro y comprobante registrados',
-              description: `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ${invoiceData.tipo === 'factura' ? 'Factura' : 'Boleta'} emitida con IGV ${igvPct}%.`,
-            });
-          } else {
-            // Nubefact rechazó o no respondió — marcar como 'failed' para reintento
-            const nubefactError = emitResult?.error || emitResult?.nubefact?.errors || emitErr?.message || 'Error desconocido';
-            console.warn('Emisión fallida (Nubefact):', nubefactError);
-            if (allTxIds.length > 0) {
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'failed' })
-                .in('id', allTxIds)
-                .eq('billing_status', 'pending');
-            }
+          if (enqResult?.error) {
             toast({
               variant: 'destructive',
-              title: '⚠️ Cobro guardado — Error SUNAT',
-              description:
-                `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ` +
-                `La boleta no se pudo emitir (Error: ${nubefactError}). ` +
-                `Marcada como "Error SUNAT" para reintento. ` +
-                `Ve a Facturación → Cierre Mensual → "Reintentar Fallidas".`,
+              title: '⚠️ Cobro guardado — No se pudo encolar comprobante',
+              description: enqResult.detail ?? enqResult.error,
               duration: 12000,
             });
+          } else {
+            toast({
+              title: '✅ Cobro guardado — Comprobante enviado a la cola de procesamiento',
+              description:
+                `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ` +
+                `El comprobante se emitirá automáticamente y quedará vinculado a la deuda.`,
+            });
           }
-        } catch (emitError: any) {
-          // La conexión a Nubefact falló con excepción (timeout, WiFi caído, etc.).
-          // El RPC ya hizo COMMIT → cobro registrado. Marcar como 'failed' para que
-          // el panel "Reintentar Fallidas" lo detecte. NO decir "proceso nocturno".
-          const emitErrMsg = emitError?.message || 'Error de conexión desconocido';
-          console.warn('[BillingCollection] Excepción en emisión Nubefact:', emitErrMsg);
-          if (realTxIds.length > 0) {
-            try {
-              await supabase
-                .from('transactions')
-                .update({ billing_status: 'failed' })
-                .in('id', realTxIds)
-                .eq('billing_status', 'pending');
-            } catch (dbErr) {
-              console.error('[BillingCollection] No se pudo marcar como failed:', dbErr);
-            }
-          }
+        } catch (enqError: any) {
+          const enqErrMsg = enqError?.message || 'Error de conexión desconocido';
+          console.warn('[BillingCollection] Error al encolar comprobante:', enqErrMsg);
           toast({
             variant: 'destructive',
-            title: '⚠️ Cobro guardado en BD — Boleta fallida',
+            title: '⚠️ Cobro guardado en BD — Error al encolar comprobante',
             description:
               `S/ ${finalPaidAmount.toFixed(2)} quedaron registrados correctamente. ` +
-              `La conexión con SUNAT falló (${emitErrMsg}). ` +
-              `La transacción fue marcada como "Error SUNAT". ` +
-              `Reinténtala desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
+              `No se pudo encolar el comprobante (${enqErrMsg}). ` +
+              `Reinténtalo desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
               `NO vuelvas a cobrar.`,
             duration: 15000,
           });
