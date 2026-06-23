@@ -58,11 +58,9 @@ function rowTotal(item: LineItem): number {
   return Math.round(parseNum(item.cantidad) * parseNum(item.precioUnit) * 100) / 100;
 }
 
-/** Hoy en Lima (UTC-5) → 'YYYY-MM-DD' */
-function hoyLima(): string {
-  const d = new Date(Date.now() - 5 * 60 * 60 * 1000);
-  return d.toISOString().split('T')[0];
-}
+// hoyLima() ELIMINADO — Regla 11.C: PROHIBIDO usar new Date() para fechas de
+// documentos fiscales. La fecha de emisión se obtiene de get_lima_today() en
+// PostgreSQL (America/Lima, UTC-5 permanente, sin horario de verano).
 
 /**
  * Construye el array de ítems para Nubefact a partir de cada LineItem.
@@ -117,11 +115,13 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
   const [items, setItems] = useState<LineItem[]>([newItem()]);
 
   // ── Config y UI ───────────────────────────────────────────────────────────
-  const [igvPct,     setIgvPct]     = useState(18);
-  const [loading,    setLoading]    = useState(false);
-  const [searching,  setSearching]  = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
-  const [pdfEmitido, setPdfEmitido] = useState<string | null>(null);
+  const [igvPct,          setIgvPct]          = useState(18);
+  const [loading,         setLoading]         = useState(false);
+  const [searching,       setSearching]       = useState(false);
+  const [error,           setError]           = useState<string | null>(null);
+  const [pdfEmitido,      setPdfEmitido]      = useState<string | null>(null);
+  // Regla 11.C: fecha de emisión desde PostgreSQL (America/Lima), no de new Date().
+  const [emissionDateLima, setEmissionDateLima] = useState<string | null>(null);
 
   // ── Calculos derivados ─────────────────────────────────────────────────────
   const subtotalBruto = isManualMode
@@ -144,6 +144,13 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
     setItems([newItem()]);
     setError(null);
     setPdfEmitido(null);
+    setEmissionDateLima(null);
+
+    // Regla 11.C: obtener la fecha actual desde PostgreSQL (America/Lima).
+    // Se hace en paralelo con la carga del IGV para no bloquear la apertura.
+    supabase.rpc('get_lima_today').then(({ data }) => {
+      setEmissionDateLima(data as string | null);
+    });
 
     if (transaction.school_id) {
       supabase
@@ -232,6 +239,13 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
     const err = validar();
     if (err) { setError(err); return; }
 
+    // Regla 11.C: la fecha de emisión debe venir de la BD (Lima). Si aún no
+    // cargó (latencia) o falló, bloquear en lugar de usar el reloj del cliente.
+    if (!emissionDateLima) {
+      setError('Obteniendo fecha de emisión desde el servidor. Espera un momento e intenta de nuevo.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -274,7 +288,7 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
         body: {
           school_id:      transaction.school_id ?? '',
           tipo:           tipoNubefact,
-          emission_date:  hoyLima(),
+          emission_date:  emissionDateLima,
           cliente: {
             doc_type:     docType === 'sin_documento' ? '-' : docType,
             doc_number:   docType !== 'sin_documento' ? docNumber.replace(/\D/g, '') : '-',
