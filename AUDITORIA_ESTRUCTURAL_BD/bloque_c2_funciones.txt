@@ -1,0 +1,330 @@
+AUDITORIA ESTRUCTURAL — Bloque C2: funciones
+Generado: 2026-06-19T07:07:32.358Z
+Filas: 323
+================================================================================
+
+arguments	function_name	language	security	volatility
+--------------------------------------------------------------------------------
+p_master_id uuid, p_minor_id uuid	absorb_product	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_amount numeric	adjust_student_balance	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_delta numeric	adjust_student_wallet_balance	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_amount numeric, p_session_id uuid, p_gateway_ref_id text, p_gateway_tx_id text, p_payment_method text, p_description text, p_admin_id uuid	apply_gateway_credit	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_id uuid, p_quantity integer, p_reason text	apply_initial_stock_adjustment	plpgsql	SECURITY DEFINER	VOLATILE
+	apply_payment_recharge	plpgsql	SECURITY INVOKER	VOLATILE
+p_receipt_id uuid, p_cost_items jsonb, p_prices_include_igv boolean	approve_branch_supply_receipt	plpgsql	SECURITY DEFINER	VOLATILE
+p_request_id uuid, p_operation_number text, p_admin_notes text	approve_split_payment_voucher	plpgsql	SECURITY DEFINER	VOLATILE
+	auto_close_cash_registers	plpgsql	SECURITY DEFINER	VOLATILE
+	auto_hide_expired_menus	plpgsql	SECURITY INVOKER	VOLATILE
+p_supplier_id uuid, p_doc_type text, p_doc_number text, p_evidence_url text, p_notes text, p_items jsonb	bulk_distribute_purchase	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_desde timestamp with time zone	buscar_sesion_izipay_reciente	sql	SECURITY DEFINER	STABLE
+p_term text, p_role text, p_offset integer, p_limit integer	buscar_usuarios_admin	sql	SECURITY DEFINER	STABLE
+p_school_id uuid, p_date date	calculate_daily_totals	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_original_price numeric, p_category character varying, p_school_id uuid	calculate_discounted_price	plpgsql	SECURITY INVOKER	VOLATILE
+p_order_id uuid	calculate_order_final_price	plpgsql	SECURITY INVOKER	VOLATILE
+p_school_id uuid, p_start_date date, p_end_date date, p_school_ids uuid[]	calculate_range_totals	sql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_target_date date	can_cancel_lunch_order	plpgsql	SECURITY DEFINER	VOLATILE
+p_order_date date	can_modify_lunch_order	plpgsql	SECURITY INVOKER	VOLATILE
+p_school_id uuid, p_target_date date	can_order_lunch	plpgsql	SECURITY DEFINER	VOLATILE
+	can_view_all_schools	sql	SECURITY DEFINER	STABLE
+p_order_id uuid, p_cancelled_by uuid, p_reason text	cancel_lunch_order	plpgsql	SECURITY DEFINER	VOLATILE
+p_order_id uuid, p_parent_id uuid	cancel_lunch_order_as_parent	plpgsql	SECURITY DEFINER	VOLATILE
+p_lunch_order_id uuid, p_reason text	cancel_lunch_order_with_wallet_credit	plpgsql	SECURITY DEFINER	VOLATILE
+p_transaction_id uuid, p_admin_id uuid, p_reason text, p_refund_method text	cancel_pos_sale	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_gateway text	check_active_gateway_session	sql	SECURITY DEFINER	STABLE
+	check_is_admin	plpgsql	SECURITY DEFINER	VOLATILE
+	check_is_superadmin	plpgsql	SECURITY DEFINER	VOLATILE
+p_user_id uuid	check_onboarding_status	plpgsql	SECURITY INVOKER	VOLATILE
+p_target_date date, p_school_id uuid	check_order_eligibility	plpgsql	SECURITY DEFINER	STABLE
+	check_parent_has_school	plpgsql	SECURITY INVOKER	VOLATILE
+p_items jsonb	check_stock_for_request	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_amount numeric	check_student_spending_limit	plpgsql	SECURITY DEFINER	VOLATILE
+p_user_id uuid, p_module character varying, p_action character varying	check_user_permission	plpgsql	SECURITY DEFINER	VOLATILE
+p_user_id uuid, p_permission_name character varying	check_user_permission	plpgsql	SECURITY DEFINER	VOLATILE
+p_operation_number text	check_voucher_usage	sql	SECURITY DEFINER	VOLATILE
+	clean_old_audit_logs	plpgsql	SECURITY DEFINER	VOLATILE
+	cleanup_old_errors	plpgsql	SECURITY INVOKER	VOLATILE
+p_school_id uuid, p_date date	close_lunch_day	plpgsql	SECURITY DEFINER	VOLATILE
+p_combo_id uuid	combo_has_sales	sql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_cashier_id uuid, p_lines jsonb, p_client_mode text, p_student_id uuid, p_teacher_id uuid, p_payment_method text, p_payment_metadata jsonb, p_billing_data jsonb, p_idempotency_key text, p_cash_given numeric, p_payment_splits jsonb, p_cash_session_id uuid	complete_pos_sale_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_status text, p_date_from timestamp with time zone, p_date_to timestamp with time zone, p_search_term text, p_collector_id uuid	count_billing_paid_transactions	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from text, p_date_to text, p_op_number text, p_ticket_number text, p_client_name text, p_reference text, p_payment_method text, p_week_number integer	count_payments_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from text, p_date_to text, p_ticket_code text, p_op_code text, p_payment_ref text, p_client_name text, p_seller_name text, p_payment_method text, p_payment_status text, p_include_deleted boolean	count_sales_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_email text, p_password text, p_full_name text, p_role text, p_school_id uuid, p_pos_number text, p_dmi text, p_phone text	create_admin_user	plpgsql	SECURITY DEFINER	VOLATILE
+p_person_type text, p_person_id uuid, p_order_date date, p_category_id uuid, p_menu_id uuid, p_school_id uuid, p_price numeric, p_created_by uuid, p_description text, p_category_name text, p_payment_method text	create_and_deliver_lunch_order	plpgsql	SECURITY DEFINER	VOLATILE
+p_target_user_id uuid	create_impersonation_token	plpgsql	SECURITY DEFINER	VOLATILE
+p_from_school_id uuid, p_to_school_id uuid, p_items jsonb, p_notes text, p_contact_person text, p_contact_phone text, p_approved_by uuid	create_internal_transfer	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_order_date date, p_delivered_by uuid, p_lunch_price numeric	create_lunch_delivery_no_order	plpgsql	SECURITY DEFINER	VOLATILE
+p_person_type text, p_person_id uuid, p_order_date date, p_category_id uuid, p_menu_id uuid, p_school_id uuid, p_quantity integer, p_base_price numeric, p_final_price numeric, p_created_by uuid, p_source text, p_category_name text, p_description text, p_selected_modifiers jsonb, p_selected_garnishes jsonb, p_configurable_selections jsonb, p_parent_notes text	create_lunch_order_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_person_type text, p_person_id uuid, p_school_id uuid, p_base_price numeric, p_final_price numeric, p_created_by uuid, p_source text, p_category_name text, p_date_menus jsonb	create_lunch_orders_batch_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_name text, p_category text, p_min_stock integer	create_product_fast	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_a_id uuid, p_student_b_id uuid, p_relationship_type text, p_created_by uuid	create_student_link	plpgsql	SECURITY DEFINER	VOLATILE
+p_full_name character varying, p_classroom_name character varying, p_school_id uuid, p_notes text	create_temporary_student	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_pos_user_id uuid, p_prefix text	create_ticket_sequence	plpgsql	SECURITY DEFINER	VOLATILE
+p_from_is_warehouse boolean, p_from_school_id uuid, p_to_is_warehouse boolean, p_to_school_id uuid, p_items jsonb, p_notes text, p_contact_person text, p_contact_phone text, p_approved_by uuid	create_transfer_with_warehouse	plpgsql	SECURITY DEFINER	VOLATILE
+user_email text, user_password text, user_full_name text, user_role text, user_school_id uuid, user_pos_number integer, user_ticket_prefix text, user_dni text, user_phone_1 text, user_address text, user_nickname text	create_user_as_admin	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_id uuid, p_quantity integer, p_reason text	decrement_product_stock_with_kardex	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_id uuid, p_quantity integer	deduct_product_stock	plpgsql	SECURITY DEFINER	VOLATILE
+	ensure_manual_payments_disabled	plpgsql	SECURITY INVOKER	VOLATILE
+p_session_id uuid, p_reconciliation_data jsonb, p_user_id uuid	execute_cash_reconciliation_atomic	plpgsql	SECURITY DEFINER	VOLATILE
+p_sql text	execute_fiobot_query	plpgsql	SECURITY DEFINER	VOLATILE
+	expire_pending_payments	plpgsql	SECURITY INVOKER	VOLATILE
+	expire_stale_gateway_sessions	plpgsql	SECURITY DEFINER	VOLATILE
+t text	f_search_norm_text	sql	SECURITY INVOKER	IMMUTABLE
+t text	f_unaccent	sql	SECURITY INVOKER	IMMUTABLE
+	fn_assert_admin_general	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_assign_report_op_seq	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_assign_transfer_number	plpgsql	SECURITY INVOKER	VOLATILE
+p_student_id uuid, p_school_id uuid, p_admin_id uuid, p_source_request_id uuid, p_payment_method text	fn_auto_apply_balance_to_pending_purchases	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_billing_queue_webhook	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_block_duplicate_debt_payment	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_block_transaction_items_delete	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_block_transaction_items_truncate	plpgsql	SECURITY INVOKER	VOLATILE
+p_queue_id uuid	fn_build_billing_payload	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	fn_calculate_student_prepay_net	plpgsql	SECURITY DEFINER	STABLE
+	fn_check_no_overlapping_payment_ids	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_location_id uuid, p_quantity integer, p_reference_id uuid, p_reason text, p_movement_type text	fn_decrement_location_stock	plpgsql	SECURITY DEFINER	VOLATILE
+p_request_id uuid, p_student_id uuid, p_school_id uuid, p_lunch_ids uuid[], p_payment_method text, p_admin_id uuid, p_voucher_url text, p_reference_code text, p_request_type text, p_is_taxable boolean, p_billing_status text	fn_ensure_paid_purchase_mirrors_for_lunch_voucher_approval	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_get_global_igv_divisor	plpgsql	SECURITY DEFINER	STABLE
+	fn_get_primary_warehouse_location_id	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	fn_get_school_location_id	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	fn_get_student_spendable_prepay	sql	SECURITY DEFINER	STABLE
+	fn_guard_billing_queue_failed_message	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_guard_kiosk_spending_limits	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_guard_payment_sessions_debt_ids	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_guard_product_stock_by_switch	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_guard_product_stock_negative_switch	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_guard_product_stock_non_negative	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_guard_voucher_approval	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_handle_lunch_order_cancellation_cascade	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_handle_prepayment_logic	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_location_id uuid, p_quantity integer, p_reference_id uuid, p_reason text, p_movement_type text	fn_increment_location_stock	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_log_price_change	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_log_price_change_base	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_log_stock_manual_adjustment	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_log_student_balance_change	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_log_transaction_edit_post_approval	plpgsql	SECURITY DEFINER	VOLATILE
+p_val text	fn_looks_like_uuid	sql	SECURITY INVOKER	IMMUTABLE
+	fn_next_branch_supply_id	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_next_ingress_id	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_prevent_modifying_sent_transactions	plpgsql	SECURITY DEFINER	VOLATILE
+p_lunch_order_id uuid, p_source_table text, p_source_id uuid, p_school_id uuid	fn_promote_frozen_order	plpgsql	SECURITY DEFINER	VOLATILE
+p_operation_number text, p_gateway_ref_id text, p_gateway_tx_id text, p_metadata jsonb	fn_readable_payment_ref	sql	SECURITY INVOKER	IMMUTABLE
+p_ttl_minutes integer	fn_reset_billing_queue_zombies	plpgsql	SECURITY DEFINER	VOLATILE
+p_created_by uuid, p_student_id uuid, p_ticket_code text, p_payment_method text, p_gateway_ref_id text, p_metadata jsonb	fn_resolve_registered_by	plpgsql	SECURITY DEFINER	STABLE
+	fn_soft_delete_combo	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_soft_delete_product	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_sync_cancelled_lunch_order_to_transaction	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_sync_combo_active	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_sync_period_spent_after_cancel	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_sync_period_spent_after_purchase	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_sync_product_active	plpgsql	SECURITY INVOKER	VOLATILE
+p_student_id uuid	fn_sync_student_balance	plpgsql	SECURITY DEFINER	VOLATILE
+	fn_system_status_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_touch_app_settings_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	fn_update_auditoria_timestamp	plpgsql	SECURITY INVOKER	VOLATILE
+	force_zero_balance_on_insert	plpgsql	SECURITY DEFINER	VOLATILE
+prefix text, table_name text, column_name text	generate_code	plpgsql	SECURITY INVOKER	VOLATILE
+p_school_id uuid, p_pos_number integer	generate_ticket_prefix	plpgsql	SECURITY INVOKER	VOLATILE
+p_user_id uuid	generate_user_prefix	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_active_combos_for_school	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_active_promotions_for_school	plpgsql	SECURITY INVOKER	VOLATILE
+	get_all_parents_report	plpgsql	SECURITY DEFINER	VOLATILE
+	get_allow_negative_sales	sql	SECURITY DEFINER	STABLE
+	get_allow_negative_stock	sql	SECURITY DEFINER	STABLE
+p_school_id uuid	get_billing_collectors	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_until_date timestamp with time zone, p_transaction_type text, p_search text, p_offset integer, p_limit integer, p_from_date timestamp with time zone	get_billing_consolidated_debtors	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from date, p_date_to date	get_billing_dashboard_stats	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_status text, p_date_from timestamp with time zone, p_date_to timestamp with time zone, p_search_term text, p_collector_id uuid, p_offset integer, p_limit integer	get_billing_paid_transactions	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_days_ago integer	get_billing_payment_stats	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_until_date timestamp with time zone, p_transaction_type text	get_billing_pending_transactions	sql	SECURITY DEFINER	VOLATILE
+p_receipt_id uuid	get_branch_supply_receipt_detail	plpgsql	SECURITY DEFINER	STABLE
+p_category_id uuid, p_start_date date, p_end_date date	get_configurable_plate_stats	plpgsql	SECURITY DEFINER	VOLATILE
+p_source_type text, p_source_id uuid	get_guides_for_source	sql	SECURITY DEFINER	STABLE
+p_school_id uuid, p_date date	get_inventory_movement_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from date, p_date_to date	get_itemized_products_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	get_kiosk_pending_debt_total	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date date	get_kitchen_orders_summary	plpgsql	SECURITY DEFINER	VOLATILE
+	get_lima_today_date	sql	SECURITY DEFINER	STABLE
+p_query text, p_school_id uuid, p_estado text, p_limit integer	get_live_stock_v2	sql	SECURITY DEFINER	STABLE
+p_lunch_order_ids uuid[], p_school_id uuid, p_include_cancelled boolean	get_lunch_order_purchase_tx_summary	sql	SECURITY INVOKER	STABLE
+p_school_id uuid, p_date_from date, p_date_to date	get_modifier_stats	plpgsql	SECURITY DEFINER	VOLATILE
+target_month integer, target_year integer, target_school_ids uuid[]	get_monthly_lunch_menus	plpgsql	SECURITY DEFINER	VOLATILE
+	get_my_role	sql	SECURITY DEFINER	STABLE
+	get_next_calendar_ticket	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_serie text	get_next_invoice_numero	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_next_pos_number	plpgsql	SECURITY INVOKER	VOLATILE
+p_user_id uuid, p_context_school_id uuid	get_next_ticket_number	plpgsql	SECURITY DEFINER	VOLATILE
+p_card_uid text	get_nfc_holder	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_limit integer	get_parent_activity_timeline	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid	get_parent_debts	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid	get_parent_debts_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_since_days integer, p_limit integer	get_parent_gateway_payments_v1	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_days integer	get_parent_metrics	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid	get_parent_rec_total	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_user_id uuid	get_parent_total_debt	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid	get_parent_wallet_total	sql	SECURITY DEFINER	VOLATILE
+p_search text, p_limit integer, p_offset integer	get_payment_history	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from text, p_date_to text, p_op_number text, p_ticket_number text, p_client_name text, p_reference text, p_payment_method text, p_week_number integer, p_limit integer, p_offset integer	get_payments_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_product_ids uuid[]	get_pos_stock_snapshot	sql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_id uuid	get_product_price_for_school	plpgsql	SECURITY INVOKER	VOLATILE
+p_product_id uuid, p_school_id uuid, p_limit integer, p_offset integer	get_product_stock_bitacora	plpgsql	SECURITY INVOKER	STABLE
+p_school_id uuid	get_purchase_visibility_delay	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from text, p_date_to text, p_ticket_code text, p_op_code text, p_payment_ref text, p_client_name text, p_seller_name text, p_payment_method text, p_payment_status text, p_include_deleted boolean, p_limit integer, p_offset integer	get_sales_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_ts timestamp with time zone	get_sales_week_number	sql	SECURITY INVOKER	STABLE
+p_student_id uuid	get_student_debt	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	get_student_debt_total	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_limit integer, p_offset integer	get_student_ledger_movements	sql	SECURITY DEFINER	STABLE
+p_student_id uuid	get_student_ledger_totals	sql	SECURITY DEFINER	STABLE
+p_student_id uuid	get_student_links	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, target_month integer, target_year integer	get_student_lunch_orders	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	get_student_pos_consumptions	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_limit integer, p_offset integer	get_student_purchase_history	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	get_student_recharge_ledger	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid	get_student_spending_summary	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_today_cash_session	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_today_lunch_menu	plpgsql	SECURITY DEFINER	VOLATILE
+	get_user_school_id	sql	SECURITY DEFINER	STABLE
+p_user_id uuid	get_user_sessions	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_date_from date, p_date_to date	get_ventas_periodo_report	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	get_visibility_cutoff_date	plpgsql	SECURITY DEFINER	VOLATILE
+target_school_id uuid, target_date date	get_visible_lunch_menus_for_parent	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_ids uuid[]	get_warehouse_stock_for_products	sql	SECURITY DEFINER	STABLE
+text, internal, smallint, internal, internal, internal, internal	gin_extract_query_trgm	c	SECURITY INVOKER	IMMUTABLE
+text, internal	gin_extract_value_trgm	c	SECURITY INVOKER	IMMUTABLE
+internal, smallint, text, integer, internal, internal, internal, internal	gin_trgm_consistent	c	SECURITY INVOKER	IMMUTABLE
+internal, smallint, text, integer, internal, internal, internal	gin_trgm_triconsistent	c	SECURITY INVOKER	IMMUTABLE
+internal	gtrgm_compress	c	SECURITY INVOKER	IMMUTABLE
+internal, text, smallint, oid, internal	gtrgm_consistent	c	SECURITY INVOKER	IMMUTABLE
+internal	gtrgm_decompress	c	SECURITY INVOKER	IMMUTABLE
+internal, text, smallint, oid, internal	gtrgm_distance	c	SECURITY INVOKER	IMMUTABLE
+cstring	gtrgm_in	c	SECURITY INVOKER	IMMUTABLE
+internal	gtrgm_options	c	SECURITY INVOKER	IMMUTABLE
+gtrgm	gtrgm_out	c	SECURITY INVOKER	IMMUTABLE
+internal, internal, internal	gtrgm_penalty	c	SECURITY INVOKER	IMMUTABLE
+internal, internal	gtrgm_picksplit	c	SECURITY INVOKER	IMMUTABLE
+gtrgm, gtrgm, internal	gtrgm_same	c	SECURITY INVOKER	IMMUTABLE
+internal, internal	gtrgm_union	c	SECURITY INVOKER	IMMUTABLE
+	handle_new_user	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_id uuid, p_quantity integer, p_entry_id uuid, p_reason text, p_uom_id uuid	increment_product_stock	plpgsql	SECURITY DEFINER	VOLATILE
+	is_admin	plpgsql	SECURITY DEFINER	VOLATILE
+	is_admin_general_jwt	sql	SECURITY INVOKER	STABLE
+	is_reports_admin	plpgsql	SECURITY DEFINER	STABLE
+	is_superadmin	plpgsql	SECURITY DEFINER	VOLATILE
+	log_billing_audit_event	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_event_type text, p_event_category text, p_event_data jsonb, p_session_id text, p_duration_seconds integer	log_parent_activity	plpgsql	SECURITY DEFINER	VOLATILE
+p_gateway_ref_id text, p_student_id uuid, p_amount numeric, p_evidence_notes text, p_izipay_dashboard_ref text, p_gateway_tx_id text, p_reconciled_by_email text, p_session_id uuid	manual_gateway_credit	plpgsql	SECURITY DEFINER	VOLATILE
+p_provider_name text, p_event_id text, p_session_id uuid, p_error_message text	mark_webhook_processed	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid	materialize_pending_lunch_debts	plpgsql	SECURITY DEFINER	VOLATILE
+p_old_product_ids uuid[], p_new_product_data jsonb, p_school_prices jsonb	merge_products	plpgsql	SECURITY DEFINER	VOLATILE
+	migrate_student_grades_to_levels	plpgsql	SECURITY INVOKER	VOLATILE
+t text	normalize_search	sql	SECURITY INVOKER	IMMUTABLE
+p_student_id uuid, p_debt_tx_ids uuid[], p_lunch_order_ids uuid[]	pay_debt_with_wallet_only	plpgsql	SECURITY DEFINER	VOLATILE
+	prevent_duplicate_lunch_transaction	plpgsql	SECURITY INVOKER	VOLATILE
+p_declared_total numeric, p_items jsonb	preview_branch_supply_totals	plpgsql	SECURITY DEFINER	STABLE
+p_usuario_id uuid, p_modo character varying, p_items jsonb, p_cliente_id uuid, p_metodo_pago character varying, p_tipo_documento character varying, p_notas text, p_sesion_caja_id uuid	procesar_venta_pos_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_supplier_id uuid, p_vendor_doc_number text, p_doc_type text, p_evidence_url text, p_notes text, p_is_warehouse_only boolean, p_warehouse_school_id uuid, p_items jsonb, p_prices_include_igv boolean	process_ingress_bulk	plpgsql	SECURITY DEFINER	VOLATILE
+p_real_tx_ids uuid[], p_lunch_order_ids uuid[], p_payment_method text, p_operation_number text, p_document_type text, p_school_id uuid, p_amount_paid numeric, p_student_id uuid, p_payment_breakdown jsonb	process_payment_collection	plpgsql	SECURITY DEFINER	VOLATILE
+p_request_id uuid, p_user_id uuid, p_items jsonb	process_supply_request	plpgsql	SECURITY DEFINER	VOLATILE
+p_request_id uuid, p_admin_id uuid	process_traditional_voucher_approval	plpgsql	SECURITY DEFINER	VOLATILE
+p_user_id uuid, p_name text, p_dni text, p_phone text, p_school_id uuid, p_actor_id uuid	provision_teacher_express_v1	plpgsql	SECURITY DEFINER	VOLATILE
+p_target_date date, p_log_note text	reconcile_today_pending_pos_paid	plpgsql	SECURITY DEFINER	VOLATILE
+	refresh_products_school_prices_view	plpgsql	SECURITY INVOKER	VOLATILE
+p_receipt_id uuid, p_rejection_reason text	reject_branch_supply_receipt	plpgsql	SECURITY DEFINER	VOLATILE
+p_start_utc timestamp with time zone, p_end_utc timestamp with time zone, p_school_id uuid, p_movement_type text	report_kardex_movements	sql	SECURITY DEFINER	STABLE
+p_start_utc timestamp with time zone, p_end_utc timestamp with time zone, p_school_id uuid	report_stock_movement	sql	SECURITY DEFINER	STABLE
+p_user_id uuid	reset_ticket_sequence	plpgsql	SECURITY DEFINER	VOLATILE
+p_session_id uuid	revoke_single_session	plpgsql	SECURITY DEFINER	VOLATILE
+p_user_id uuid	revoke_user_sessions	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid	rpc_admin_soft_delete_orphan_parent	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_suspend boolean	rpc_admin_toggle_parent_suspension	plpgsql	SECURITY DEFINER	VOLATILE
+p_parent_id uuid, p_profile parent_behavior_profile, p_notes text	rpc_admin_update_parent_behavior	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_parent_user_id uuid, p_student_full_name text, p_level_id uuid, p_classroom_id uuid, p_actor_user_id uuid, p_account_mode text	rpc_express_enroll_student_v1	plpgsql	SECURITY DEFINER	VOLATILE
+p_product_id uuid, p_school_ids uuid[], p_prices jsonb	save_product_scope_and_prices	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_admin_name text, p_admin_whatsapp text	save_school_support_contact	plpgsql	SECURITY DEFINER	VOLATILE
+p_admin_name text, p_technical_whatsapp text	save_support_technical_contact	plpgsql	SECURITY DEFINER	VOLATILE
+p_query text, p_school_id uuid, p_limit integer	search_inventory_stock_realtime	sql	SECURITY DEFINER	STABLE
+p_type text, p_query text	search_lunch_items	plpgsql	SECURITY DEFINER	VOLATILE
+p_search text, p_start_date date, p_end_date date, p_school_id uuid, p_status text, p_person_type text, p_limit integer, p_offset integer	search_lunch_order_ids	plpgsql	SECURITY INVOKER	STABLE
+p_query text, p_school_id uuid, p_limit integer, p_offset integer	search_parents_v2	plpgsql	SECURITY DEFINER	STABLE
+p_query text, p_school_id uuid, p_limit integer, p_offset integer	search_parents_v3	plpgsql	SECURITY DEFINER	STABLE
+p_query text, p_school_id uuid, p_types text[], p_limit integer	search_persons_v2	plpgsql	SECURITY DEFINER	STABLE
+p_query text, p_limit integer	search_products_pro	sql	SECURITY DEFINER	STABLE
+p_search_text text	search_suppliers_smart	plpgsql	SECURITY DEFINER	STABLE
+p_date date, p_type text, p_school_ids uuid[], p_title text	set_day_state	plpgsql	SECURITY DEFINER	VOLATILE
+p_serie text, p_new_last integer, p_admin_token text	set_invoice_sequence	plpgsql	SECURITY DEFINER	VOLATILE
+real	set_limit	c	SECURITY INVOKER	VOLATILE
+p_clave text	set_master_password	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_new_balance numeric, p_also_set_free_account boolean	set_student_balance	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_target_mode text	set_student_payment_mode	plpgsql	SECURITY DEFINER	VOLATILE
+	set_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	set_updated_at_empadronados	plpgsql	SECURITY INVOKER	VOLATILE
+	set_updated_at_invoices	plpgsql	SECURITY INVOKER	VOLATILE
+	show_limit	c	SECURITY INVOKER	STABLE
+text	show_trgm	c	SECURITY INVOKER	IMMUTABLE
+text, text	similarity	c	SECURITY INVOKER	IMMUTABLE
+text, text	similarity_dist	c	SECURITY INVOKER	IMMUTABLE
+text, text	similarity_op	c	SECURITY INVOKER	STABLE
+text, text	strict_word_similarity	c	SECURITY INVOKER	IMMUTABLE
+text, text	strict_word_similarity_commutator_op	c	SECURITY INVOKER	STABLE
+text, text	strict_word_similarity_dist_commutator_op	c	SECURITY INVOKER	IMMUTABLE
+text, text	strict_word_similarity_dist_op	c	SECURITY INVOKER	IMMUTABLE
+text, text	strict_word_similarity_op	c	SECURITY INVOKER	STABLE
+p_school_id uuid, p_supplier_id uuid, p_doc_type text, p_doc_number text, p_declared_total numeric, p_prices_include_igv boolean, p_notes text, p_evidence_path text, p_items jsonb, p_replaces_receipt_id uuid	submit_branch_supply_receipt	plpgsql	SECURITY DEFINER	VOLATILE
+p_school_id uuid, p_items jsonb, p_notes text	submit_quick_stock_receipt	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_debt_tx_ids uuid[], p_lunch_order_ids uuid[], p_wallet_amount numeric, p_voucher_amount numeric, p_voucher_url text, p_reference_code text, p_invoice_type text, p_invoice_client_data jsonb	submit_voucher_with_split	plpgsql	SECURITY DEFINER	VOLATILE
+p_student_id uuid, p_dry_run boolean	sync_student_balance	plpgsql	SECURITY DEFINER	VOLATILE
+	sync_student_names	plpgsql	SECURITY INVOKER	VOLATILE
+	tg_enforce_spending_limit	plpgsql	SECURITY DEFINER	VOLATILE
+	tg_force_free_account_mode	plpgsql	SECURITY DEFINER	VOLATILE
+	tg_transactions_balance_sync	plpgsql	SECURITY DEFINER	VOLATILE
+	tg_validate_lunch_order_deadline	plpgsql	SECURITY DEFINER	VOLATILE
+	trg_fn_product_school_prices_scope_guard	plpgsql	SECURITY INVOKER	VOLATILE
+	trg_fn_products_scope_prices_deactivate	plpgsql	SECURITY INVOKER	VOLATILE
+	trg_fn_recharge_requests_promote_frozen	plpgsql	SECURITY DEFINER	VOLATILE
+	trg_fn_transactions_promote_frozen	plpgsql	SECURITY DEFINER	VOLATILE
+	trg_logs_pasarela_set_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	trigger_update_order_price	plpgsql	SECURITY INVOKER	VOLATILE
+p_tenant_id uuid, p_sede_id uuid, p_venta_id uuid, p_menu_segundo_id uuid, p_fecha_entrega date, p_cliente_id uuid, p_comentario text, p_tarifa character varying, p_precio_congelado numeric	tuqui_materializar_pedido_almuerzo_pos	plpgsql	SECURITY DEFINER	VOLATILE
+p_notas_item text, p_producto_nombre text	tuqui_nombre_linea_bitacora	plpgsql	SECURITY INVOKER	IMMUTABLE
+p_venta_id uuid	tuqui_obtener_detalle_venta_bitacora	plpgsql	SECURITY DEFINER	VOLATILE
+regdictionary, text	unaccent	c	SECURITY INVOKER	STABLE
+text	unaccent	c	SECURITY INVOKER	STABLE
+internal	unaccent_init	c	SECURITY INVOKER	VOLATILE
+internal, internal, internal, internal	unaccent_lexize	c	SECURITY INVOKER	VOLATILE
+	update_billing_payment_pending	plpgsql	SECURITY INVOKER	VOLATILE
+	update_combos_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_configurable_groups_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_dev_backlog_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+p_deadline_time time without time zone, p_deadline_days integer	update_global_lunch_deadline	plpgsql	SECURITY DEFINER	VOLATILE
+	update_inventory_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_lunch_categories_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_lunch_configuration_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_lunch_orders_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_modifier_favorites_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_modifier_groups_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_nfc_cards_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_parent_profiles_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_printer_configs_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_product_sales_count	plpgsql	SECURITY DEFINER	VOLATILE
+	update_product_school_prices_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_promotions_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_sales_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_school_classrooms_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_school_levels_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_student_balance	plpgsql	SECURITY DEFINER	VOLATILE
+	update_teacher_profiles_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+	update_updated_at_column	plpgsql	SECURITY INVOKER	VOLATILE
+	update_weekly_menus_updated_at	plpgsql	SECURITY INVOKER	VOLATILE
+p_source_type text, p_source_id uuid, p_business_ref text, p_destination_label text, p_storage_bucket text, p_storage_path text, p_content_hash text, p_template_version text	upsert_inventory_guide	plpgsql	SECURITY DEFINER	VOLATILE
+p_type text, p_name text	upsert_lunch_item	plpgsql	SECURITY DEFINER	VOLATILE
+p_password text	validate_admin_password	plpgsql	SECURITY DEFINER	VOLATILE
+	validate_daily_limit	plpgsql	SECURITY INVOKER	VOLATILE
+p_token uuid	validate_impersonation_token	plpgsql	SECURITY DEFINER	VOLATILE
+p_request_id uuid, p_admin_id uuid, p_reason text	void_payment	plpgsql	SECURITY DEFINER	VOLATILE
+p_order_id uuid, p_parent_id uuid	void_pending_lunch_order_v2	plpgsql	SECURITY DEFINER	VOLATILE
+p_transaction_id uuid, p_admin_id uuid, p_reason text	void_pos_sale_with_nc	plpgsql	SECURITY DEFINER	VOLATILE
+text, text	word_similarity	c	SECURITY INVOKER	IMMUTABLE
+text, text	word_similarity_commutator_op	c	SECURITY INVOKER	STABLE
+text, text	word_similarity_dist_commutator_op	c	SECURITY INVOKER	IMMUTABLE
+text, text	word_similarity_dist_op	c	SECURITY INVOKER	IMMUTABLE
+text, text	word_similarity_op	c	SECURITY INVOKER	STABLE

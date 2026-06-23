@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-06-19T07:07:51.808Z",
+  "project": "Lima_cafe_28 (linked)",
+  "blocks": [
+    {
+      "block": "A",
+      "name": "foreign_keys",
+      "count": 229
+    },
+    {
+      "block": "B",
+      "name": "rls_policies",
+      "count": 343
+    },
+    {
+      "block": "C",
+      "name": "triggers",
+      "count": 115
+    },
+    {
+      "block": "C2",
+      "name": "funciones",
+      "count": 323
+    },
+    {
+      "block": "B2",
+      "name": "tablas_sin_rls_o_sin_politicas",
+      "count": 38
+    },
+    {
+      "block": "D",
+      "name": "columnas",
+      "count": 2224
+    }
+  ],
+  "files": [
+    "bloque_a_foreign_keys.txt",
+    "bloque_a_foreign_keys.json",
+    "bloque_a_foreign_keys.sql",
+    "bloque_b_rls_policies.txt",
+    "bloque_b_rls_policies.json",
+    "bloque_b_rls_policies.sql",
+    "bloque_c_triggers.txt",
+    "bloque_c_triggers.json",
+    "bloque_c_triggers.sql",
+    "bloque_c2_funciones.txt",
+    "bloque_c2_funciones.json",
+    "bloque_c2_funciones.sql",
+    "bloque_b2_tablas_rls_huecos.txt",
+    "bloque_b2_tablas_rls_huecos.json",
+    "bloque_b2_tablas_rls_huecos.sql",
+    "bloque_d_columnas.txt",
+    "bloque_d_columnas.json",
+    "bloque_d_columnas.sql"
+  ]
+}

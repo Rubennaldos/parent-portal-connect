@@ -1,0 +1,14 @@
+{
+  "summary": [
+    {
+      "cantidad": 488,
+      "estado": "rejected",
+      "monto_total": "27906.50"
+    },
+    {
+      "cantidad": 31,
+      "estado": "processing",
+      "monto_total": "706.00"
+    }
+  ]
+}

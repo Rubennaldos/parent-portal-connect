@@ -1,0 +1,1006 @@
+AUDITORIA ESTRUCTURAL — Bloque B: rls_policies
+Generado: 2026-06-19T07:07:15.250Z
+Filas: 343
+================================================================================
+
+cmd	permissive	policyname	qual	roles	rowsecurity	tablename	with_check
+--------------------------------------------------------------------------------
+SELECT	PERMISSIVE	app_settings_read_auth	true	{authenticated}	true	app_settings	
+ALL	PERMISSIVE	app_settings_write_admin_general_only	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	app_settings	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))
+DELETE	PERMISSIVE	audit_billing_logs_no_delete	false	{public}	true	audit_billing_logs	
+INSERT	PERMISSIVE	audit_billing_logs_no_insert		{public}	true	audit_billing_logs	false
+UPDATE	PERMISSIVE	audit_billing_logs_no_update	false	{public}	true	audit_billing_logs	
+SELECT	PERMISSIVE	audit_billing_logs_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{public}	true	audit_billing_logs	
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	audit_billing_logs	
+SELECT	PERMISSIVE	Only admins can view audit logs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])))))	{authenticated}	true	audit_logs	
+INSERT	PERMISSIVE	Service role can insert audit logs		{service_role}	true	audit_logs	true
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	audit_logs	
+INSERT	PERMISSIVE	av_insert_admin_general_only		{authenticated}	true	auditoria_vouchers	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	av_select_admin_general_only	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	auditoria_vouchers	
+UPDATE	PERMISSIVE	av_update_admin_general_only	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	auditoria_vouchers	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	auditoria_vouchers	
+SELECT	PERMISSIVE	adv_billing_staff_select_auto_billing_logs	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	auto_billing_logs	
+INSERT	PERMISSIVE	admin_billing_config_insert		{public}	true	billing_config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	admin_billing_config_select	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	billing_config	
+UPDATE	PERMISSIVE	admin_billing_config_update	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	billing_config	
+ALL	PERMISSIVE	billing_config_all	true	{public}	true	billing_config	
+SELECT	PERMISSIVE	adv_billing_staff_select_billing_messages	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	billing_messages	
+SELECT	PERMISSIVE	adv_billing_staff_select_billing_negative_alerts	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	billing_negative_alerts	
+SELECT	PERMISSIVE	adv_billing_staff_select_billing_payments	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	billing_payments	
+SELECT	PERMISSIVE	adv_billing_staff_select_billing_periods	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	billing_periods	
+ALL	PERMISSIVE	billing_queue_admin_all	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{public}	true	billing_queue	
+DELETE	PERMISSIVE	bsri_delete_via_receipt	(EXISTS ( SELECT 1
+   FROM branch_supply_receipts bsr
+  WHERE ((bsr.id = branch_supply_receipt_items.receipt_id) AND (bsr.status = 'pending'::text) AND ((bsr.school_id IN ( SELECT profiles.school_id
+           FROM profiles
+          WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+           FROM profiles
+          WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))))))	{authenticated}	true	branch_supply_receipt_items	
+INSERT	PERMISSIVE	bsri_insert_via_receipt		{authenticated}	true	branch_supply_receipt_items	(EXISTS ( SELECT 1
+   FROM branch_supply_receipts bsr
+  WHERE ((bsr.id = branch_supply_receipt_items.receipt_id) AND (bsr.status = 'pending'::text) AND ((bsr.school_id IN ( SELECT profiles.school_id
+           FROM profiles
+          WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+           FROM profiles
+          WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))))))
+SELECT	PERMISSIVE	bsri_select_via_receipt	(EXISTS ( SELECT 1
+   FROM branch_supply_receipts bsr
+  WHERE ((bsr.id = branch_supply_receipt_items.receipt_id) AND ((bsr.school_id IN ( SELECT profiles.school_id
+           FROM profiles
+          WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+           FROM profiles
+          WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))))))	{authenticated}	true	branch_supply_receipt_items	
+INSERT	PERMISSIVE	bsr_insert_own_school		{authenticated}	true	branch_supply_receipts	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text]))))))
+SELECT	PERMISSIVE	bsr_select_own_school_or_admin	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text]))))))	{authenticated}	true	branch_supply_receipts	
+UPDATE	PERMISSIVE	bsr_update_admin_general	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	branch_supply_receipts	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+INSERT	PERMISSIVE	cancellation_alerts_insert		{public}	true	cancellation_alerts	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))
+SELECT	PERMISSIVE	cancellation_alerts_select	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND ((profiles.role = 'admin_general'::text) OR (profiles.school_id = cancellation_alerts.school_id)))))	{public}	true	cancellation_alerts	
+UPDATE	PERMISSIVE	cancellation_alerts_update	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND ((profiles.role = 'admin_general'::text) OR (profiles.school_id = cancellation_alerts.school_id)))))	{public}	true	cancellation_alerts	
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	cancellation_alerts	
+ALL	PERMISSIVE	Admin general - acceso total a cierres	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	cash_closures	
+INSERT	PERMISSIVE	Crear cierres en su sede o admin general		{authenticated}	true	cash_closures	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))))
+ALL	PERMISSIVE	Gestor unidad - acceso total a cierres de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = cash_closures.school_id))))	{authenticated}	true	cash_closures	
+ALL	PERMISSIVE	Operador caja - acceso total a cierres de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = cash_closures.school_id))))	{authenticated}	true	cash_closures	
+SELECT	PERMISSIVE	Ver cierres de su sede o todas si admin general	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))))	{authenticated}	true	cash_closures	
+INSERT	PERMISSIVE	cash_manual_entries_insert		{public}	true	cash_manual_entries	(auth.uid() IS NOT NULL)
+SELECT	PERMISSIVE	cash_manual_entries_select	true	{public}	true	cash_manual_entries	
+ALL	PERMISSIVE	Admin general - acceso total a movimientos	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	cash_movements	
+INSERT	PERMISSIVE	Crear movimientos en su sede		{authenticated}	true	cash_movements	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))
+ALL	PERMISSIVE	Gestor unidad - acceso total a movimientos de su sede	(EXISTS ( SELECT 1
+   FROM (profiles p
+     JOIN cash_registers cr ON ((cr.school_id = p.school_id)))
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (cr.id = cash_movements.cash_register_id))))	{authenticated}	true	cash_movements	
+ALL	PERMISSIVE	Operador caja - acceso total a movimientos de su caja	(EXISTS ( SELECT 1
+   FROM (profiles p
+     JOIN cash_registers cr ON ((cr.school_id = p.school_id)))
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (cr.id = cash_movements.cash_register_id))))	{authenticated}	true	cash_movements	
+SELECT	PERMISSIVE	Ver movimientos de su sede o todas si admin general	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))))	{authenticated}	true	cash_movements	
+INSERT	PERMISSIVE	cash_movements_insert_policy		{public}	true	cash_movements	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))
+SELECT	PERMISSIVE	cash_movements_select_policy	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))	{public}	true	cash_movements	
+UPDATE	PERMISSIVE	cash_movements_update_policy	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))	{public}	true	cash_movements	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))
+INSERT	PERMISSIVE	cash_reconciliations_insert		{public}	true	cash_reconciliations	(auth.uid() IS NOT NULL)
+SELECT	PERMISSIVE	cash_reconciliations_select	true	{public}	true	cash_reconciliations	
+ALL	PERMISSIVE	Admin general - acceso total a config	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	cash_register_config	
+ALL	PERMISSIVE	Admin puede actualizar config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin'::text, 'admin_general'::text])) AND (profiles.school_id = cash_register_config.school_id))))	{authenticated}	true	cash_register_config	
+ALL	PERMISSIVE	Gestor unidad - acceso total a config de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = cash_register_config.school_id))))	{authenticated}	true	cash_register_config	
+SELECT	PERMISSIVE	Operador caja - ver config de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = cash_register_config.school_id))))	{authenticated}	true	cash_register_config	
+SELECT	PERMISSIVE	Ver config de su sede o todas si admin general	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))))	{authenticated}	true	cash_register_config	
+ALL	PERMISSIVE	Admin general - acceso total a registros	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	cash_registers	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))
+UPDATE	PERMISSIVE	Admin y operadores pueden actualizar cajas de su sede	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid())))	{authenticated}	true	cash_registers	
+INSERT	PERMISSIVE	Admin y operadores pueden crear cajas		{authenticated}	true	cash_registers	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) AND (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin'::text, 'admin_general'::text, 'operador_caja'::text]))))))
+SELECT	PERMISSIVE	Admin y operadores pueden ver cajas de su sede	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin'::text, 'admin_general'::text]))))))	{authenticated}	true	cash_registers	
+ALL	PERMISSIVE	Gestor unidad - acceso total a registros de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = cash_registers.school_id))))	{authenticated}	true	cash_registers	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = p.school_id))))
+ALL	PERMISSIVE	Operador caja - acceso total a registros de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = cash_registers.school_id))))	{authenticated}	true	cash_registers	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = p.school_id))))
+INSERT	PERMISSIVE	cash_sessions_insert_restricted		{authenticated}	true	cash_sessions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR (p.school_id = cash_sessions.school_id)))))
+SELECT	PERMISSIVE	cash_sessions_select_restricted	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR (p.school_id = cash_sessions.school_id)))))	{authenticated}	true	cash_sessions	
+UPDATE	PERMISSIVE	cash_sessions_update_restricted	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR (p.school_id = cash_sessions.school_id)))))	{authenticated}	true	cash_sessions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR (p.school_id = cash_sessions.school_id)))))
+ALL	PERMISSIVE	admins_full_cargos	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))	{public}	true	cobranzas_cargos	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))
+ALL	PERMISSIVE	admins_full_pagos	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))	{public}	true	cobranzas_pagos	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))
+DELETE	PERMISSIVE	combo_items_delete_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combo_items	
+INSERT	PERMISSIVE	combo_items_insert_policy		{authenticated}	true	combo_items	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	combo_items_select_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combo_items	
+UPDATE	PERMISSIVE	combo_items_update_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combo_items	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+DELETE	PERMISSIVE	combos_delete_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combos	
+INSERT	PERMISSIVE	combos_insert_policy		{authenticated}	true	combos	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	combos_select_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combos	
+UPDATE	PERMISSIVE	combos_update_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	combos	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+DELETE	PERMISSIVE	configurable_plate_groups_delete	true	{authenticated}	true	configurable_plate_groups	
+INSERT	PERMISSIVE	configurable_plate_groups_insert		{authenticated}	true	configurable_plate_groups	true
+SELECT	PERMISSIVE	configurable_plate_groups_select	true	{authenticated}	true	configurable_plate_groups	
+UPDATE	PERMISSIVE	configurable_plate_groups_update	true	{authenticated}	true	configurable_plate_groups	
+DELETE	PERMISSIVE	configurable_plate_options_delete	true	{authenticated}	true	configurable_plate_options	
+INSERT	PERMISSIVE	configurable_plate_options_insert		{authenticated}	true	configurable_plate_options	true
+SELECT	PERMISSIVE	configurable_plate_options_select	true	{authenticated}	true	configurable_plate_options	
+UPDATE	PERMISSIVE	configurable_plate_options_update	true	{authenticated}	true	configurable_plate_options	
+INSERT	PERMISSIVE	delivery_sessions_insert		{public}	true	delivery_sessions	true
+SELECT	PERMISSIVE	delivery_sessions_select	true	{public}	true	delivery_sessions	
+UPDATE	PERMISSIVE	delivery_sessions_update	true	{public}	true	delivery_sessions	
+INSERT	PERMISSIVE	authenticated_insert		{authenticated}	true	dev_backlog	(reporter_id = auth.uid())
+ALL	PERMISSIVE	superadmin_full_access	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])))))	{authenticated}	true	dev_backlog	
+SELECT	PERMISSIVE	users_read_own_tickets	(reporter_id = auth.uid())	{authenticated}	true	dev_backlog	
+ALL	PERMISSIVE	electronic_documents_all	true	{public}	true	electronic_documents	
+ALL	PERMISSIVE	admins_full_empadronados	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))	{public}	true	empadronados	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))
+INSERT	PERMISSIVE	error_logs_insert_any_auth		{authenticated}	true	error_logs	true
+SELECT	PERMISSIVE	error_logs_read_staff	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])) OR ((p.school_id = error_logs.school_id) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'contadora'::text])))))))	{authenticated}	true	error_logs	
+UPDATE	PERMISSIVE	error_logs_update_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text])))))	{authenticated}	true	error_logs	
+SELECT	PERMISSIVE	no_public_access_gwhe	false	{authenticated}	true	gateway_webhook_events	
+ALL	PERMISSIVE	service_role_full_access_gwhe	true	{service_role}	true	gateway_webhook_events	true
+INSERT	PERMISSIVE	hdl_insert_authenticated		{authenticated}	true	huella_digital_logs	true
+SELECT	PERMISSIVE	hdl_select_admin_general_only	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	huella_digital_logs	
+ALL	PERMISSIVE	superadmin_manage_tokens	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))	{public}	true	impersonation_tokens	
+ALL	PERMISSIVE	admins_all_notif	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin'::text, 'gestor_unidad'::text, 'admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	in_app_notifications	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin'::text, 'gestor_unidad'::text, 'admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	padres_select_notif	((user_id = auth.uid()) OR ((user_id IS NULL) AND ((school_id IS NULL) OR (school_id IN ( SELECT s.school_id
+   FROM students s
+  WHERE ((s.parent_id = auth.uid()) AND (s.is_active = true)))))))	{authenticated}	true	in_app_notifications	
+UPDATE	PERMISSIVE	padres_update_notif	((user_id = auth.uid()) OR ((user_id IS NULL) AND (school_id IN ( SELECT s.school_id
+   FROM students s
+  WHERE ((s.parent_id = auth.uid()) AND (s.is_active = true))
+ LIMIT 1))))	{public}	true	in_app_notifications	true
+SELECT	PERMISSIVE	transfer_items_read_auth	true	{authenticated}	true	internal_transfer_items	
+ALL	PERMISSIVE	transfer_items_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	internal_transfer_items	
+SELECT	PERMISSIVE	transfers_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])))))	{authenticated}	true	internal_transfers	
+ALL	PERMISSIVE	transfers_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	internal_transfers	
+INSERT	PERMISSIVE	invguides_insert_admin		{public}	true	inventory_guides	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	invguides_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'admin'::text])))))	{public}	true	inventory_guides	
+UPDATE	PERMISSIVE	invguides_update_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{public}	true	inventory_guides	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	ilm_read_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_location_movements	
+INSERT	PERMISSIVE	ilm_write_admin		{authenticated}	true	inventory_location_movements	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	ilti_read_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_location_transfer_items	
+ALL	PERMISSIVE	ilti_write_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_location_transfer_items	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	ilt_read_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_location_transfers	
+ALL	PERMISSIVE	ilt_write_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_location_transfers	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	inventory_locations_read_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	inventory_locations	
+ALL	PERMISSIVE	inventory_locations_write_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	inventory_locations	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	invtx_items_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	inventory_transaction_items	
+ALL	PERMISSIVE	invtx_items_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	inventory_transaction_items	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+SELECT	PERMISSIVE	invtx_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	inventory_transactions	
+ALL	PERMISSIVE	invtx_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	inventory_transactions	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+SELECT	PERMISSIVE	allow_read_invoice_items	(EXISTS ( SELECT 1
+   FROM invoices
+  WHERE ((invoices.id = invoice_items.invoice_id) AND (EXISTS ( SELECT 1
+           FROM profiles
+          WHERE ((profiles.id = auth.uid()) AND ((profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'contadora'::text])) OR ((profiles.role = ANY (ARRAY['gestor_unidad'::text, 'operador_caja'::text])) AND (profiles.school_id = invoices.school_id)))))))))	{authenticated}	true	invoice_items	
+SELECT	PERMISSIVE	invoice_sequences_select_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{authenticated}	true	invoice_sequences	
+INSERT	PERMISSIVE	allow_staff_create_invoices		{authenticated}	true	invoices	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'operador_caja'::text])) AND ((profiles.school_id = invoices.school_id) OR (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text]))))))
+SELECT	PERMISSIVE	allow_staff_read_invoices	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND ((profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'contadora'::text])) OR ((profiles.role = ANY (ARRAY['gestor_unidad'::text, 'operador_caja'::text])) AND (profiles.school_id = invoices.school_id))))))	{authenticated}	true	invoices	
+UPDATE	PERMISSIVE	allow_staff_update_invoices	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND ((profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR ((profiles.role = 'gestor_unidad'::text) AND (profiles.school_id = invoices.school_id))))))	{authenticated}	true	invoices	
+INSERT	PERMISSIVE	invoices_insert_staff		{public}	true	invoices	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])) OR ((p.school_id = invoices.school_id) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'operador_caja'::text])))))))
+SELECT	PERMISSIVE	invoices_read_own_parent	((EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'parent'::text)))) AND (EXISTS ( SELECT 1
+   FROM (transactions t
+     JOIN students s ON ((s.id = t.student_id)))
+  WHERE ((t.invoice_id = invoices.id) AND (s.parent_id = auth.uid())))))	{authenticated}	true	invoices	
+SELECT	PERMISSIVE	invoices_read_staff	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])) OR ((p.school_id = invoices.school_id) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'operador_caja'::text, 'contadora'::text])))))))	{public}	true	invoices	
+UPDATE	PERMISSIVE	invoices_update_staff	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'contadora'::text])))))	{public}	true	invoices	
+SELECT	PERMISSIVE	allow_admin_read_logs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'contadora'::text])))))	{authenticated}	true	invoicing_logs	
+SELECT	PERMISSIVE	Admins pueden ver logs auto-facturación	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	logs_auto_facturacion	
+INSERT	PERMISSIVE	Solo service_role puede insertar logs		{public}	true	logs_auto_facturacion	false
+SELECT	PERMISSIVE	no_public_access_logs_pasarela	false	{authenticated}	true	logs_pasarela	
+ALL	PERMISSIVE	service_role_full_access_logs_pasarela	true	{service_role}	true	logs_pasarela	true
+DELETE	PERMISSIVE	admin_gestor_delete_categories	((auth.uid() IS NOT NULL) AND ((EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = lunch_categories.school_id))))))	{public}	true	lunch_categories	
+INSERT	PERMISSIVE	admin_gestor_insert_categories		{public}	true	lunch_categories	((auth.uid() IS NOT NULL) AND ((EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = lunch_categories.school_id))))))
+UPDATE	PERMISSIVE	admin_gestor_update_categories	((auth.uid() IS NOT NULL) AND ((EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = lunch_categories.school_id))))))	{public}	true	lunch_categories	
+SELECT	PERMISSIVE	authenticated_view_categories	((auth.uid() IS NOT NULL) AND ((EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.school_id = lunch_categories.school_id)))) OR (EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.parent_id = auth.uid()) AND (s.school_id = lunch_categories.school_id)))) OR (EXISTS ( SELECT 1
+   FROM teacher_profiles tp
+  WHERE ((tp.id = auth.uid()) AND ((tp.school_id_1 = lunch_categories.school_id) OR (tp.school_id_2 = lunch_categories.school_id)))))))	{public}	true	lunch_categories	
+ALL	PERMISSIVE	admins_manage_addons	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text])))))	{public}	true	lunch_category_addons	
+SELECT	PERMISSIVE	anyone_view_active_addons	((auth.role() = 'authenticated'::text) AND (is_active = true))	{public}	true	lunch_category_addons	
+DELETE	PERMISSIVE	Admin General can delete lunch configuration	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	lunch_configuration	
+UPDATE	PERMISSIVE	Admin General can update all lunch configuration	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	lunch_configuration	
+DELETE	PERMISSIVE	Admin can delete lunch config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	lunch_configuration	
+INSERT	PERMISSIVE	Admin can insert lunch config		{authenticated}	true	lunch_configuration	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+UPDATE	PERMISSIVE	Admin can update lunch config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	lunch_configuration	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+SELECT	PERMISSIVE	Anyone authenticated can view lunch config	true	{authenticated}	true	lunch_configuration	
+SELECT	PERMISSIVE	Anyone authenticated can view lunch configuration	true	{authenticated}	true	lunch_configuration	
+UPDATE	PERMISSIVE	Gestor can update lunch configuration for their school	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = lunch_configuration.school_id))))	{authenticated}	true	lunch_configuration	
+INSERT	PERMISSIVE	Staff can insert lunch configuration		{authenticated}	true	lunch_configuration	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	adv_authenticated_select_lunch_items_library	true	{authenticated}	true	lunch_items_library	
+SELECT	PERMISSIVE	Admin general puede ver todos los menus de almuerzo	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	lunch_menus	
+SELECT	PERMISSIVE	Gestor puede ver menus de su sede usando school_id	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text) AND (lunch_menus.school_id = profiles.school_id))))	{authenticated}	true	lunch_menus	
+SELECT	PERMISSIVE	Padres pueden ver menus de la sede de sus hijos	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'parent'::text) AND (lunch_menus.school_id IN ( SELECT students.school_id
+           FROM students
+          WHERE (students.parent_id = auth.uid()))))))	{authenticated}	true	lunch_menus	
+SELECT	PERMISSIVE	Profesores pueden ver menus de su sede	(EXISTS ( SELECT 1
+   FROM teacher_profiles
+  WHERE ((teacher_profiles.id = auth.uid()) AND (lunch_menus.school_id = teacher_profiles.school_id_1))))	{authenticated}	true	lunch_menus	
+INSERT	PERMISSIVE	Usuarios autenticados pueden crear menus		{authenticated}	true	lunch_menus	true
+DELETE	PERMISSIVE	allow_admin_delete_lunch_menus	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	lunch_menus	
+INSERT	PERMISSIVE	allow_admin_insert_lunch_menus		{authenticated}	true	lunch_menus	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+UPDATE	PERMISSIVE	allow_admin_update_lunch_menus	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	lunch_menus	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	allow_authenticated_read_lunch_menus	true	{authenticated}	true	lunch_menus	
+SELECT	PERMISSIVE	admins_view_all_order_addons	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{public}	true	lunch_order_addons	
+INSERT	PERMISSIVE	create_own_order_addons		{public}	true	lunch_order_addons	(EXISTS ( SELECT 1
+   FROM lunch_orders lo
+  WHERE ((lo.id = lunch_order_addons.order_id) AND ((lo.teacher_id = auth.uid()) OR (lo.student_id IN ( SELECT s.id
+           FROM (students s
+             JOIN parent_profiles pp ON ((pp.id = s.parent_id)))
+          WHERE (pp.user_id = auth.uid())))))))
+SELECT	PERMISSIVE	view_own_order_addons	(EXISTS ( SELECT 1
+   FROM lunch_orders lo
+  WHERE ((lo.id = lunch_order_addons.order_id) AND ((lo.teacher_id = auth.uid()) OR (lo.student_id IN ( SELECT s.id
+           FROM (students s
+             JOIN parent_profiles pp ON ((pp.id = s.parent_id)))
+          WHERE (pp.user_id = auth.uid())))))))	{public}	true	lunch_order_addons	
+SELECT	PERMISSIVE	Admin General can view all lunch orders v2	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_general'::text))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Admin general puede ver todos los pedidos de almuerzo	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Gestor can view lunch orders from their school	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'gestor_unidad'::text) AND (p.school_id = ( SELECT students.school_id
+           FROM students
+          WHERE (students.id = lunch_orders.student_id))))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Gestor puede ver pedidos de su sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text) AND ((lunch_orders.school_id = profiles.school_id) OR ((lunch_orders.student_id IS NOT NULL) AND (EXISTS ( SELECT 1
+           FROM students
+          WHERE ((students.id = lunch_orders.student_id) AND (students.school_id = profiles.school_id))))) OR ((lunch_orders.teacher_id IS NOT NULL) AND (EXISTS ( SELECT 1
+           FROM teacher_profiles
+          WHERE ((teacher_profiles.id = lunch_orders.teacher_id) AND (teacher_profiles.school_id_1 = profiles.school_id)))))))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Gestor puede ver pedidos de su sede usando school_id	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text) AND ((lunch_orders.school_id = profiles.school_id) OR ((lunch_orders.school_id IS NULL) AND (((lunch_orders.student_id IS NOT NULL) AND (EXISTS ( SELECT 1
+           FROM students
+          WHERE ((students.id = lunch_orders.student_id) AND (students.school_id = profiles.school_id))))) OR ((lunch_orders.teacher_id IS NOT NULL) AND (EXISTS ( SELECT 1
+           FROM teacher_profiles
+          WHERE ((teacher_profiles.id = lunch_orders.teacher_id) AND (teacher_profiles.school_id_1 = profiles.school_id)))))))))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Gestores pueden ver pedidos de alumnos y profesores de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'admin_general'::text])) AND ((p.role = 'admin_general'::text) OR (EXISTS ( SELECT 1
+           FROM students s
+          WHERE ((s.id = lunch_orders.student_id) AND (s.school_id = p.school_id)))) OR (EXISTS ( SELECT 1
+           FROM teacher_profiles t
+          WHERE ((t.id = lunch_orders.teacher_id) AND (t.school_id_1 = p.school_id))))))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Operador caja puede ver pedidos de su sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'operador_caja'::text) AND (lunch_orders.school_id = profiles.school_id))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Operadores de caja pueden ver pedidos de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = lunch_orders.school_id))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Padres pueden ver pedidos de sus hijos	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'parent'::text) AND (lunch_orders.student_id IN ( SELECT students.id
+           FROM students
+          WHERE (students.parent_id = auth.uid()))))))	{authenticated}	true	lunch_orders	
+INSERT	PERMISSIVE	Padres y profesores pueden crear pedidos		{authenticated}	true	lunch_orders	(((student_id IS NOT NULL) AND (teacher_id IS NULL) AND (EXISTS ( SELECT 1
+   FROM (students s
+     JOIN parent_profiles pp ON ((s.parent_id = pp.id)))
+  WHERE ((s.id = lunch_orders.student_id) AND (pp.id = auth.uid()))))) OR ((teacher_id IS NOT NULL) AND (student_id IS NULL) AND (teacher_id = auth.uid())) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'admin_general'::text, 'cajero'::text]))))))
+DELETE	PERMISSIVE	Parents can delete lunch orders of their children	(EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.id = lunch_orders.student_id) AND (s.parent_id = auth.uid()))))	{authenticated}	true	lunch_orders	
+UPDATE	PERMISSIVE	Parents can update lunch orders of their children	(EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.id = lunch_orders.student_id) AND (s.parent_id = auth.uid()))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Parents can view lunch orders of their children	(EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.id = lunch_orders.student_id) AND (s.parent_id = auth.uid()))))	{authenticated}	true	lunch_orders	
+UPDATE	PERMISSIVE	Personal puede actualizar pedidos de su sede	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'admin_general'::text, 'cajero'::text])) AND ((p.role = 'admin_general'::text) OR (EXISTS ( SELECT 1
+           FROM students s
+          WHERE ((s.id = lunch_orders.student_id) AND (s.school_id = p.school_id)))) OR (EXISTS ( SELECT 1
+           FROM teacher_profiles t
+          WHERE ((t.id = lunch_orders.teacher_id) AND (t.school_id_1 = p.school_id))))))))	{authenticated}	true	lunch_orders	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['gestor_unidad'::text, 'admin_general'::text, 'cajero'::text])))))
+SELECT	PERMISSIVE	Profesores pueden ver sus propios pedidos	(teacher_id = auth.uid())	{authenticated}	true	lunch_orders	
+INSERT	PERMISSIVE	Teachers can insert their own lunch orders		{authenticated}	true	lunch_orders	((EXISTS ( SELECT 1
+   FROM teacher_profiles tp
+  WHERE (tp.id = auth.uid()))) AND (student_id IS NULL))
+SELECT	PERMISSIVE	Teachers can view their own lunch orders	((EXISTS ( SELECT 1
+   FROM teacher_profiles tp
+  WHERE (tp.id = auth.uid()))) AND (student_id IS NULL))	{authenticated}	true	lunch_orders	
+INSERT	PERMISSIVE	Users can create lunch orders		{authenticated}	true	lunch_orders	((student_id IN ( SELECT students.id
+   FROM students
+  WHERE (students.parent_id = auth.uid()))) OR (teacher_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'operador_cocina'::text]))))))
+UPDATE	PERMISSIVE	Users can update lunch orders	((student_id IN ( SELECT students.id
+   FROM students
+  WHERE (students.parent_id = auth.uid()))) OR (teacher_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'operador_cocina'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text])) OR (p.school_id = lunch_orders.school_id))))))	{authenticated}	true	lunch_orders	
+SELECT	PERMISSIVE	Users can view lunch orders	((auth.uid() IN ( SELECT profiles.id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (student_id IN ( SELECT students.id
+   FROM students
+  WHERE (students.parent_id = auth.uid()))) OR (teacher_id = auth.uid()) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text, 'operador_cocina'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text])) OR (p.school_id = lunch_orders.school_id))))))	{authenticated}	true	lunch_orders	
+UPDATE	PERMISSIVE	Usuarios autenticados pueden actualizar pedidos	true	{authenticated}	true	lunch_orders	true
+INSERT	PERMISSIVE	Usuarios autenticados pueden crear pedidos		{authenticated}	true	lunch_orders	true
+DELETE	PERMISSIVE	Usuarios autenticados pueden eliminar pedidos	true	{authenticated}	true	lunch_orders	
+INSERT	PERMISSIVE	admins_can_insert_maintenance		{public}	true	maintenance_config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+UPDATE	PERMISSIVE	admins_can_update_maintenance	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	maintenance_config	
+SELECT	PERMISSIVE	authenticated_can_read_maintenance	(auth.uid() IS NOT NULL)	{public}	true	maintenance_config	
+SELECT	PERMISSIVE	adv_billing_staff_select_manual_reconciliation_log	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	manual_reconciliation_log	
+ALL	PERMISSIVE	admins_manage_modifier_groups	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text, 'gestor_unidad'::text, 'admin_sede'::text])))))	{public}	true	menu_modifier_groups	
+SELECT	PERMISSIVE	authenticated_view_modifier_groups	(auth.uid() IS NOT NULL)	{public}	true	menu_modifier_groups	
+ALL	PERMISSIVE	admins_manage_modifier_options	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text, 'gestor_unidad'::text, 'admin_sede'::text])))))	{public}	true	menu_modifier_options	
+SELECT	PERMISSIVE	authenticated_view_modifier_options	(auth.uid() IS NOT NULL)	{public}	true	menu_modifier_options	
+SELECT	PERMISSIVE	admins_view_all_favorites	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'super_admin'::text, 'gestor_unidad'::text])))))	{public}	true	modifier_favorites	
+INSERT	PERMISSIVE	users_create_own_favorites		{public}	true	modifier_favorites	(auth.uid() = user_id)
+DELETE	PERMISSIVE	users_delete_own_favorites	(auth.uid() = user_id)	{public}	true	modifier_favorites	
+UPDATE	PERMISSIVE	users_update_own_favorites	(auth.uid() = user_id)	{public}	true	modifier_favorites	
+SELECT	PERMISSIVE	users_view_own_favorites	(auth.uid() = user_id)	{public}	true	modifier_favorites	
+ALL	PERMISSIVE	nfc_admin_manage	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = 'admin_general'::text) OR ((p.role = 'gestor_unidad'::text) AND (p.school_id = nfc_cards.school_id))))))	{public}	true	nfc_cards	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = 'admin_general'::text) OR ((p.role = 'gestor_unidad'::text) AND (p.school_id = nfc_cards.school_id))))))
+SELECT	PERMISSIVE	nfc_cajero_read	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'operador_caja'::text) AND (p.school_id = nfc_cards.school_id))))	{public}	true	nfc_cards	
+ALL	PERMISSIVE	nfc_superadmin_all	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'superadmin'::text))))	{public}	true	nfc_cards	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'superadmin'::text))))
+ALL	PERMISSIVE	allow_admin_manage_nubefact_config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	nubefact_config	
+SELECT	PERMISSIVE	allow_admin_read_nubefact_config	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'contadora'::text])))))	{authenticated}	true	nubefact_config	
+INSERT	PERMISSIVE	Authenticated users can insert parents		{public}	true	parent_profiles	(auth.uid() IS NOT NULL)
+UPDATE	PERMISSIVE	Authenticated users can update parents	(auth.uid() IS NOT NULL)	{public}	true	parent_profiles	
+SELECT	PERMISSIVE	Authenticated users can view parents	(auth.uid() IS NOT NULL)	{public}	true	parent_profiles	
+SELECT	PERMISSIVE	payment_gateway_config_superadmin_select	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'superadmin'::text))))	{authenticated}	true	payment_gateway_config	
+INSERT	PERMISSIVE	sessions_insert_parent		{authenticated}	true	payment_sessions	(parent_id = auth.uid())
+DELETE	PERMISSIVE	sessions_no_delete	false	{authenticated}	true	payment_sessions	
+SELECT	PERMISSIVE	sessions_select_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'supervisor_red'::text, 'cajero'::text, 'operador_caja'::text, 'superadmin'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'superadmin'::text])) OR (p.school_id = payment_sessions.school_id)))))	{authenticated}	true	payment_sessions	
+SELECT	PERMISSIVE	sessions_select_parent	(parent_id = auth.uid())	{authenticated}	true	payment_sessions	
+UPDATE	PERMISSIVE	sessions_update_admin_review	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'superadmin'::text, 'supervisor_red'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'superadmin'::text])) OR (p.school_id = payment_sessions.school_id)))))	{authenticated}	true	payment_sessions	(status = ANY (ARRAY['completed'::text, 'failed'::text]))
+SELECT	PERMISSIVE	adv_staff_select_permissions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	permissions	
+ALL	PERMISSIVE	pos_idempotency_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])))))	{authenticated}	true	pos_idempotency_keys	
+ALL	PERMISSIVE	psm_immutable	false	{authenticated}	true	pos_stock_movements	
+INSERT	PERMISSIVE	psm_insert_blocked		{authenticated}	true	pos_stock_movements	false
+SELECT	PERMISSIVE	psm_select	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR ((p.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND (p.school_id = pos_stock_movements.school_id))))))	{authenticated}	true	pos_stock_movements	
+ALL	PERMISSIVE	price_change_log_immutable	false	{authenticated}	true	price_change_log	
+INSERT	PERMISSIVE	price_change_log_insert_blocked		{authenticated}	true	price_change_log	false
+SELECT	PERMISSIVE	price_change_log_select	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR ((p.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND (p.school_id = price_change_log.school_id))))))	{authenticated}	true	price_change_log	
+SELECT	PERMISSIVE	admin_general_view_printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text) AND (profiles.school_id = printer_configs.school_id))))	{authenticated}	true	printer_configs	
+SELECT	PERMISSIVE	cajero_view_printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['cajero'::text, 'gestor_unidad'::text])) AND (profiles.school_id = printer_configs.school_id))))	{authenticated}	true	printer_configs	
+DELETE	PERMISSIVE	superadmin_delete_printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))	{authenticated}	true	printer_configs	
+INSERT	PERMISSIVE	superadmin_insert_printer_configs		{authenticated}	true	printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))
+UPDATE	PERMISSIVE	superadmin_update_printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))	{authenticated}	true	printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))
+SELECT	PERMISSIVE	superadmin_view_printer_configs	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))	{authenticated}	true	printer_configs	
+DELETE	PERMISSIVE	product_categories_delete	true	{public}	true	product_categories	
+INSERT	PERMISSIVE	product_categories_insert		{public}	true	product_categories	true
+SELECT	PERMISSIVE	product_categories_select	true	{public}	true	product_categories	
+UPDATE	PERMISSIVE	product_categories_update	true	{public}	true	product_categories	
+SELECT	PERMISSIVE	pch_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	product_cost_history	
+ALL	PERMISSIVE	pch_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	product_cost_history	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+SELECT	PERMISSIVE	families_read_auth	true	{authenticated}	true	product_families	
+ALL	PERMISSIVE	families_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	product_families	
+SELECT	PERMISSIVE	packaging_read_auth	true	{authenticated}	true	product_packaging	
+ALL	PERMISSIVE	packaging_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	product_packaging	
+UPDATE	PERMISSIVE	Usuarios autenticados pueden actualizar precios por sede	true	{authenticated}	true	product_school_prices	true
+DELETE	PERMISSIVE	Usuarios autenticados pueden eliminar precios por sede	true	{authenticated}	true	product_school_prices	
+INSERT	PERMISSIVE	Usuarios autenticados pueden insertar precios por sede		{authenticated}	true	product_school_prices	true
+SELECT	PERMISSIVE	Usuarios autenticados pueden ver precios por sede	true	{authenticated}	true	product_school_prices	
+SELECT	PERMISSIVE	product_stock_read_auth	true	{authenticated}	true	product_stock	
+ALL	PERMISSIVE	product_stock_write_admin_only	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	product_stock	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	psl_read_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	product_stock_locations	
+ALL	PERMISSIVE	psl_write_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	product_stock_locations	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))
+SELECT	PERMISSIVE	subfamilies_read_auth	true	{authenticated}	true	product_subfamilies	
+ALL	PERMISSIVE	subfamilies_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	product_subfamilies	
+ALL	PERMISSIVE	products_admin_all	check_is_admin()	{public}	true	products	
+SELECT	PERMISSIVE	products_public_select	true	{authenticated}	true	products	
+UPDATE	PERMISSIVE	admins_set_temp_password	(EXISTS ( SELECT 1
+   FROM profiles profiles_1
+  WHERE ((profiles_1.id = auth.uid()) AND (profiles_1.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	profiles	true
+ALL	PERMISSIVE	allow_all_authenticated	true	{authenticated}	true	profiles	true
+DELETE	PERMISSIVE	promotions_delete_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	promotions	
+INSERT	PERMISSIVE	promotions_insert_policy		{authenticated}	true	promotions	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	promotions_select_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	promotions	
+UPDATE	PERMISSIVE	promotions_update_policy	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))	{authenticated}	true	promotions	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'gestor_unidad'::text])))))
+SELECT	PERMISSIVE	pdi_read_admin_only	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	purchase_distribution_items	
+ALL	PERMISSIVE	pdi_write_admin_only	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	purchase_distribution_items	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))
+SELECT	PERMISSIVE	purchase_entries_read_school	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text]))))))	{authenticated}	true	purchase_entries	
+ALL	PERMISSIVE	purchase_entries_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	purchase_entries	
+SELECT	PERMISSIVE	purchase_entry_items_read_auth	true	{authenticated}	true	purchase_entry_items	
+ALL	PERMISSIVE	purchase_entry_items_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	purchase_entry_items	
+ALL	PERMISSIVE	Admin General puede editar todas las configuraciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	purchase_visibility_delay	
+SELECT	PERMISSIVE	Admin General puede ver todas las configuraciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	purchase_visibility_delay	
+ALL	PERMISSIVE	Gestor de Unidad puede editar su configuración	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text))))	{authenticated}	true	purchase_visibility_delay	
+SELECT	PERMISSIVE	Gestor de Unidad puede ver su configuración	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text))))	{authenticated}	true	purchase_visibility_delay	
+SELECT	PERMISSIVE	allow_authenticated_read_delay	true	{authenticated}	true	purchase_visibility_delay	
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	recharge_requests	
+INSERT	PERMISSIVE	rr_insert_parent_only		{authenticated}	true	recharge_requests	((parent_id = auth.uid()) AND (student_id IN ( SELECT students.id
+   FROM students
+  WHERE (students.parent_id = auth.uid()))) AND (status = 'pending'::text))
+SELECT	PERMISSIVE	rr_select_admin_sede	(school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'admin_sede'::text])))))	{authenticated}	true	recharge_requests	
+SELECT	PERMISSIVE	rr_select_parent	(parent_id = auth.uid())	{authenticated}	true	recharge_requests	
+SELECT	PERMISSIVE	rr_select_superadmin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	recharge_requests	
+SELECT	PERMISSIVE	rr_select_supervisor_red	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'supervisor_red'::text))))	{authenticated}	true	recharge_requests	
+UPDATE	PERMISSIVE	rr_update_admin_only	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'admin_sede'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text]))))))	{authenticated}	true	recharge_requests	((school_id IN ( SELECT profiles.school_id
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'admin_sede'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text]))))))
+UPDATE	PERMISSIVE	admins_can_update_reclamaciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	reclamaciones	
+SELECT	PERMISSIVE	admins_can_view_reclamaciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{public}	true	reclamaciones	
+INSERT	PERMISSIVE	anyone_can_insert_reclamaciones		{public}	true	reclamaciones	true
+SELECT	PERMISSIVE	adv_staff_select_role_permissions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	role_permissions	
+DELETE	PERMISSIVE	allow_admin_delete_sales	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{authenticated}	true	sales	
+UPDATE	PERMISSIVE	allow_admin_update_sales	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{authenticated}	true	sales	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))
+SELECT	PERMISSIVE	allow_admin_view_all_sales	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{authenticated}	true	sales	
+SELECT	PERMISSIVE	allow_cashier_view_school_sales	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['operador_caja'::text, 'gestor_unidad'::text])) AND (p.school_id = sales.school_id))))	{authenticated}	true	sales	
+INSERT	PERMISSIVE	allow_staff_insert_sales		{authenticated}	true	sales	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text, 'gestor_unidad'::text, 'operador_caja'::text])))))
+SELECT	RESTRICTIVE	reports_select_admin_general_only	is_admin_general_jwt()	{authenticated}	true	sales	
+SELECT	PERMISSIVE	adv_authenticated_select_school_classrooms	true	{authenticated}	true	school_classrooms	
+SELECT	PERMISSIVE	adv_authenticated_select_school_levels	true	{authenticated}	true	school_levels	
+SELECT	PERMISSIVE	adv_authenticated_select_school_prefixes	true	{authenticated}	true	school_prefixes	
+SELECT	PERMISSIVE	adv_authenticated_select_schools	true	{authenticated}	true	schools	
+SELECT	PERMISSIVE	sbsby_read_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	seq_branch_supply_by_year	
+SELECT	PERMISSIVE	seq_ingress_select_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	seq_ingress_by_year	
+INSERT	PERMISSIVE	students_insert_parent		{authenticated}	true	students	((parent_id = auth.uid()) AND (balance = (0)::numeric) AND (free_account = true))
+SELECT	PERMISSIVE	students_select_admin_sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'supervisor_red'::text, 'admin_sede'::text])) AND (profiles.school_id = students.school_id))))	{authenticated}	true	students	
+SELECT	PERMISSIVE	students_select_parent	(parent_id = auth.uid())	{authenticated}	true	students	
+SELECT	PERMISSIVE	students_select_superadmin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	students	
+UPDATE	PERMISSIVE	students_update_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'supervisor_red'::text, 'admin_sede'::text, 'admin_general'::text, 'superadmin'::text])))))	{authenticated}	true	students	
+UPDATE	PERMISSIVE	students_update_parent	(parent_id = auth.uid())	{authenticated}	true	students	(parent_id = auth.uid())
+SELECT	PERMISSIVE	suppliers_read_all	true	{authenticated}	true	suppliers	
+ALL	PERMISSIVE	suppliers_write_admin	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	suppliers	
+SELECT	PERMISSIVE	support_tickets_admin_select_all	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	support_tickets	
+UPDATE	PERMISSIVE	support_tickets_admin_update_all	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))	{authenticated}	true	support_tickets	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'gestor_unidad'::text])))))
+INSERT	PERMISSIVE	support_tickets_insert_own		{authenticated}	true	support_tickets	(parent_id = auth.uid())
+SELECT	PERMISSIVE	support_tickets_select_own	(parent_id = auth.uid())	{authenticated}	true	support_tickets	
+INSERT	PERMISSIVE	system_error_logs_insert_all		{anon,authenticated}	true	system_error_logs	true
+SELECT	PERMISSIVE	system_error_logs_select_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])))))	{authenticated}	true	system_error_logs	
+SELECT	PERMISSIVE	system_status_read_all	true	{authenticated}	true	system_status	
+UPDATE	PERMISSIVE	system_status_write_superadmin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'superadmin'::text))))	{authenticated}	true	system_status	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'superadmin'::text))))
+DELETE	PERMISSIVE	tp_admin_delete	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text])))))	{authenticated}	true	teacher_profiles	
+UPDATE	PERMISSIVE	tp_admin_update_all	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text])))))	{authenticated}	true	teacher_profiles	
+SELECT	PERMISSIVE	tp_admin_view_all	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text, 'supervisor_red'::text])))))	{authenticated}	true	teacher_profiles	
+INSERT	PERMISSIVE	tp_insert_own_or_admin		{authenticated}	true	teacher_profiles	((auth.uid() = id) OR (EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text]))))))
+SELECT	PERMISSIVE	tp_staff_view_by_school	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = ANY (ARRAY['gestor_unidad'::text, 'operador_caja'::text])) AND (profiles.school_id IS NOT NULL) AND ((teacher_profiles.school_id_1 = profiles.school_id) OR (teacher_profiles.school_id_2 = profiles.school_id)))))	{authenticated}	true	teacher_profiles	
+UPDATE	PERMISSIVE	tp_teacher_update_own	(auth.uid() = id)	{authenticated}	true	teacher_profiles	
+SELECT	PERMISSIVE	tp_teacher_view_own	(auth.uid() = id)	{authenticated}	true	teacher_profiles	
+SELECT	PERMISSIVE	adv_authenticated_select_ticket_sequences	true	{authenticated}	true	ticket_sequences	
+SELECT	PERMISSIVE	Teachers can view items of their own transactions	(EXISTS ( SELECT 1
+   FROM transactions t
+  WHERE ((t.id = transaction_items.transaction_id) AND (t.teacher_id = auth.uid()))))	{authenticated}	true	transaction_items	
+INSERT	PERMISSIVE	pos_can_insert_transaction_items		{authenticated}	true	transaction_items	true
+SELECT	PERMISSIVE	pos_can_select_transaction_items	true	{authenticated}	true	transaction_items	
+INSERT	PERMISSIVE	transaction_items_insert_rpc_only		{authenticated}	true	transaction_items	false
+SELECT	PERMISSIVE	transaction_items_select_by_role	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['admin_general'::text, 'superadmin'::text])) OR ((p.role = ANY (ARRAY['gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text])) AND (EXISTS ( SELECT 1
+           FROM transactions t
+          WHERE ((t.id = transaction_items.transaction_id) AND (t.school_id = p.school_id))))) OR ((p.role = 'parent'::text) AND (EXISTS ( SELECT 1
+           FROM (transactions t
+             JOIN students s ON ((s.id = t.student_id)))
+          WHERE ((t.id = transaction_items.transaction_id) AND (s.parent_id = p.id))))) OR ((p.role = 'teacher'::text) AND (EXISTS ( SELECT 1
+           FROM transactions t
+          WHERE ((t.id = transaction_items.transaction_id) AND (t.teacher_id = p.id)))))))))	{authenticated}	true	transaction_items	
+SELECT	PERMISSIVE	Admin general puede ver todas las transacciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'admin_general'::text))))	{authenticated}	true	transactions	
+SELECT	PERMISSIVE	Cajeros pueden ver transacciones de su sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'cajero'::text) AND (transactions.school_id = profiles.school_id))))	{authenticated}	true	transactions	
+SELECT	PERMISSIVE	Gestor puede ver transacciones de su sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'gestor_unidad'::text) AND (transactions.school_id = profiles.school_id))))	{authenticated}	true	transactions	
+SELECT	PERMISSIVE	Operadores de caja pueden ver transacciones de su sede	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'operador_caja'::text) AND (transactions.school_id = profiles.school_id))))	{authenticated}	true	transactions	
+INSERT	PERMISSIVE	Padres pueden insertar sus propias transacciones		{authenticated}	true	transactions	(EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.id = transactions.student_id) AND (s.parent_id = auth.uid()))))
+SELECT	PERMISSIVE	Padres pueden ver sus propias transacciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'parent'::text) AND (transactions.student_id IN ( SELECT students.id
+           FROM students
+          WHERE (students.parent_id = auth.uid()))))))	{authenticated}	true	transactions	
+INSERT	PERMISSIVE	Profesores pueden insertar sus propias transacciones		{authenticated}	true	transactions	(teacher_id = auth.uid())
+SELECT	PERMISSIVE	Profesores pueden ver sus propias transacciones	(teacher_id = auth.uid())	{authenticated}	true	transactions	
+SELECT	PERMISSIVE	Superadmin puede ver todas las transacciones	(EXISTS ( SELECT 1
+   FROM profiles
+  WHERE ((profiles.id = auth.uid()) AND (profiles.role = 'superadmin'::text))))	{authenticated}	true	transactions	
+UPDATE	PERMISSIVE	admin_can_update_transactions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'admin_sede'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'supervisor_red'::text])))))	{authenticated}	true	transactions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'admin_sede'::text, 'gestor_unidad'::text, 'cajero'::text, 'operador_caja'::text, 'supervisor_red'::text])))))
+ALL	PERMISSIVE	gestor_unidad_own_school_transactions_v2	((( SELECT profiles.role
+   FROM profiles
+  WHERE (profiles.id = auth.uid())) = 'gestor_unidad'::text) AND (school_id = ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))))	{authenticated}	true	transactions	((( SELECT profiles.role
+   FROM profiles
+  WHERE (profiles.id = auth.uid())) = 'gestor_unidad'::text) AND (school_id = ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))))
+ALL	PERMISSIVE	operador_caja_own_school_transactions_v2	((( SELECT profiles.role
+   FROM profiles
+  WHERE (profiles.id = auth.uid())) = 'operador_caja'::text) AND (school_id = ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))))	{authenticated}	true	transactions	((( SELECT profiles.role
+   FROM profiles
+  WHERE (profiles.id = auth.uid())) = 'operador_caja'::text) AND (school_id = ( SELECT profiles.school_id
+   FROM profiles
+  WHERE (profiles.id = auth.uid()))))
+SELECT	RESTRICTIVE	reports_select_admin_general_only	(is_admin_general_jwt() OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin'::text, 'admin_general'::text, 'superadmin'::text]))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'parent'::text) AND (transactions.student_id IN ( SELECT st.id
+           FROM students st
+          WHERE (st.parent_id = auth.uid())))))) OR (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_sede'::text, 'gestor_unidad'::text, 'operador_caja'::text, 'cajero'::text])) AND (p.school_id IS NOT NULL) AND (transactions.school_id IS NOT NULL) AND (transactions.school_id = p.school_id)))) OR (teacher_id = auth.uid()))	{authenticated}	true	transactions	
+INSERT	PERMISSIVE	transactions_insert_staff_by_role		{authenticated}	true	transactions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND ((p.role = ANY (ARRAY['admin'::text, 'admin_general'::text, 'superadmin'::text])) OR ((p.role = ANY (ARRAY['admin_sede'::text, 'gestor_unidad'::text, 'operador_caja'::text, 'cajero'::text])) AND (p.school_id IS NOT NULL) AND (transactions.school_id IS NOT NULL) AND (transactions.school_id = p.school_id))))))
+SELECT	PERMISSIVE	transactions_select_admin_sede_own_school	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = 'admin_sede'::text) AND (p.school_id IS NOT NULL) AND (transactions.school_id IS NOT NULL) AND (transactions.school_id = p.school_id))))	{authenticated}	true	transactions	
+INSERT	PERMISSIVE	treasury_transfers_insert		{public}	true	treasury_transfers	(auth.uid() IS NOT NULL)
+SELECT	PERMISSIVE	treasury_transfers_select	true	{public}	true	treasury_transfers	
+UPDATE	PERMISSIVE	treasury_transfers_update	(auth.uid() IS NOT NULL)	{public}	true	treasury_transfers	
+SELECT	PERMISSIVE	adv_staff_select_user_permissions	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['superadmin'::text, 'admin_general'::text, 'gestor_unidad'::text, 'admin_sede'::text, 'supervisor_red'::text, 'operador_caja'::text])))))	{authenticated}	true	user_permissions	
+INSERT	PERMISSIVE	wallet_tx_insert_service_only		{authenticated}	true	wallet_transactions	false
+DELETE	PERMISSIVE	wallet_tx_no_delete	false	{authenticated}	true	wallet_transactions	
+UPDATE	PERMISSIVE	wallet_tx_no_update	false	{authenticated}	true	wallet_transactions	
+SELECT	PERMISSIVE	wallet_tx_select_admin	(EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.role = ANY (ARRAY['admin_general'::text, 'gestor_unidad'::text, 'supervisor_red'::text, 'cajero'::text, 'operador_caja'::text, 'superadmin'::text])) AND ((p.role = ANY (ARRAY['admin_general'::text, 'supervisor_red'::text, 'superadmin'::text])) OR (p.school_id = wallet_transactions.school_id)))))	{authenticated}	true	wallet_transactions	
+SELECT	PERMISSIVE	wallet_tx_select_parent	(EXISTS ( SELECT 1
+   FROM students s
+  WHERE ((s.id = wallet_transactions.student_id) AND (s.parent_id = auth.uid()))))	{authenticated}	true	wallet_transactions	
+SELECT	PERMISSIVE	adv_authenticated_select_weekly_menus	true	{authenticated}	true	weekly_menus	

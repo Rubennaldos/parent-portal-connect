@@ -1,0 +1,196 @@
+{
+  "generated_at": "2026-06-19T07:07:41.774Z",
+  "row_count": 38,
+  "rows": [
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "_backup_profiles_full_name_20260530"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "_rollback_stock_ctrl_20260524"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "allergies"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "alumnos"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "app_config"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "assets_inventory"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "daily_menu"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "inventory_categories"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "inventory_items"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "inventory_movements"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "inventory_stock"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "lunch_menu_config"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "lunch_orders_backup_mayo_09"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "mass_approve_results"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "nutritional_tips"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "parent_activity_log"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "parent_sessions"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "payment_transactions"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "perfiles_padres"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "purchase_order_items"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "purchase_orders"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "special_days"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "staging_sunat_abril_2026"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "student_links"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "student_relationships"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "supply_request_items"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "supply_requests"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "system_secrets"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "terms_and_conditions"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "ticket_sequences_by_school"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "transactions_backup_mayo_09"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_estudiantes_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_items_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_perfiles_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_precios_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_productos_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_transacciones_mayo"
+    },
+    {
+      "policy_count": 0,
+      "rowsecurity": true,
+      "tablename": "z_bk_ventas_mayo"
+    }
+  ]
+}

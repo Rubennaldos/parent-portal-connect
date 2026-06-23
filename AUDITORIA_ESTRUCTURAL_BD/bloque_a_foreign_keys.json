@@ -1,0 +1,1380 @@
+{
+  "generated_at": "2026-06-19T07:07:05.750Z",
+  "row_count": 229,
+  "rows": [
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "allergies"
+    },
+    {
+      "column_name": "padre_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "perfiles_padres",
+      "table_name": "alumnos"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "assets_inventory"
+    },
+    {
+      "column_name": "id_cobranza",
+      "foreign_column_name": "id",
+      "foreign_table_name": "recharge_requests",
+      "table_name": "auditoria_vouchers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "auditoria_vouchers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "auto_billing_logs"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_config"
+    },
+    {
+      "column_name": "updated_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "billing_config"
+    },
+    {
+      "column_name": "billing_period_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "billing_periods",
+      "table_name": "billing_messages"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "billing_messages"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "user_id",
+      "foreign_table_name": "parent_profiles",
+      "table_name": "billing_messages"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_messages"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_negative_alerts"
+    },
+    {
+      "column_name": "billing_period_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "billing_periods",
+      "table_name": "billing_payments"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "billing_payments"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "user_id",
+      "foreign_table_name": "parent_profiles",
+      "table_name": "billing_payments"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_payments"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "billing_payments"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "billing_periods"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_periods"
+    },
+    {
+      "column_name": "recharge_request_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "recharge_requests",
+      "table_name": "billing_queue"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "billing_queue"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "billing_queue"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "billing_queue"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "branch_supply_receipt_items"
+    },
+    {
+      "column_name": "receipt_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "branch_supply_receipts",
+      "table_name": "branch_supply_receipt_items"
+    },
+    {
+      "column_name": "uom_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_packaging",
+      "table_name": "branch_supply_receipt_items"
+    },
+    {
+      "column_name": "replaces_receipt_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "branch_supply_receipts",
+      "table_name": "branch_supply_receipts"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "branch_supply_receipts"
+    },
+    {
+      "column_name": "supplier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "suppliers",
+      "table_name": "branch_supply_receipts"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cancellation_alerts"
+    },
+    {
+      "column_name": "admin_validated_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_closures"
+    },
+    {
+      "column_name": "cash_register_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_registers",
+      "table_name": "cash_closures"
+    },
+    {
+      "column_name": "closed_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_closures"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_closures"
+    },
+    {
+      "column_name": "cash_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_sessions",
+      "table_name": "cash_manual_entries"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_manual_entries"
+    },
+    {
+      "column_name": "cash_register_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_registers",
+      "table_name": "cash_movements"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_movements"
+    },
+    {
+      "column_name": "responsible_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_movements"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_movements"
+    },
+    {
+      "column_name": "cash_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_sessions",
+      "table_name": "cash_reconciliations"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_reconciliations"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_register_config"
+    },
+    {
+      "column_name": "closed_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_registers"
+    },
+    {
+      "column_name": "opened_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "cash_registers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_registers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "cash_sessions"
+    },
+    {
+      "column_name": "empadronado_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "empadronados",
+      "table_name": "cobranzas_cargos"
+    },
+    {
+      "column_name": "cargo_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cobranzas_cargos",
+      "table_name": "cobranzas_pagos"
+    },
+    {
+      "column_name": "empadronado_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "empadronados",
+      "table_name": "cobranzas_pagos"
+    },
+    {
+      "column_name": "combo_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "combos",
+      "table_name": "combo_items"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "combo_items"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "combos"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_categories",
+      "table_name": "configurable_plate_groups"
+    },
+    {
+      "column_name": "group_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "configurable_plate_groups",
+      "table_name": "configurable_plate_options"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "daily_menu"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "delivery_sessions"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "electronic_documents"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "electronic_documents"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "empadronados"
+    },
+    {
+      "column_name": "payment_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "payment_sessions",
+      "table_name": "gateway_webhook_events"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "huella_digital_logs"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "in_app_notifications"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "internal_transfer_items"
+    },
+    {
+      "column_name": "transfer_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "internal_transfers",
+      "table_name": "internal_transfer_items"
+    },
+    {
+      "column_name": "from_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "internal_transfers"
+    },
+    {
+      "column_name": "to_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "internal_transfers"
+    },
+    {
+      "column_name": "superseded_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_guides",
+      "table_name": "inventory_guides"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_categories",
+      "table_name": "inventory_items"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_items"
+    },
+    {
+      "column_name": "location_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_locations",
+      "table_name": "inventory_location_movements"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "inventory_location_movements"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "inventory_location_transfer_items"
+    },
+    {
+      "column_name": "transfer_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_location_transfers",
+      "table_name": "inventory_location_transfer_items"
+    },
+    {
+      "column_name": "from_location_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_locations",
+      "table_name": "inventory_location_transfers"
+    },
+    {
+      "column_name": "to_location_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_locations",
+      "table_name": "inventory_location_transfers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_locations"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "inventory_movements"
+    },
+    {
+      "column_name": "from_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_movements"
+    },
+    {
+      "column_name": "item_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_items",
+      "table_name": "inventory_movements"
+    },
+    {
+      "column_name": "to_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_movements"
+    },
+    {
+      "column_name": "item_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_items",
+      "table_name": "inventory_stock"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_stock"
+    },
+    {
+      "column_name": "updated_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "inventory_stock"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "inventory_transaction_items"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_transactions",
+      "table_name": "inventory_transaction_items"
+    },
+    {
+      "column_name": "uom_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_packaging",
+      "table_name": "inventory_transaction_items"
+    },
+    {
+      "column_name": "supplier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "suppliers",
+      "table_name": "inventory_transactions"
+    },
+    {
+      "column_name": "warehouse_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "inventory_transactions"
+    },
+    {
+      "column_name": "invoice_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "invoices",
+      "table_name": "invoice_items"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "invoice_items"
+    },
+    {
+      "column_name": "cashier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "original_invoice_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "invoices",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "related_invoice_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "invoices",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "sale_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "sales",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "invoices"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "invoicing_logs"
+    },
+    {
+      "column_name": "invoice_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "invoices",
+      "table_name": "invoicing_logs"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "logs_auto_facturacion"
+    },
+    {
+      "column_name": "payment_transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "payment_transactions",
+      "table_name": "logs_pasarela"
+    },
+    {
+      "column_name": "webhook_event_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "gateway_webhook_events",
+      "table_name": "logs_pasarela"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "lunch_categories"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_categories",
+      "table_name": "lunch_category_addons"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "lunch_configuration"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "lunch_menu_config"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_categories",
+      "table_name": "lunch_menus"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "lunch_menus"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "lunch_menus"
+    },
+    {
+      "column_name": "addon_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_category_addons",
+      "table_name": "lunch_order_addons"
+    },
+    {
+      "column_name": "order_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_orders",
+      "table_name": "lunch_order_addons"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_categories",
+      "table_name": "lunch_orders"
+    },
+    {
+      "column_name": "menu_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_menus",
+      "table_name": "lunch_orders"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "lunch_orders"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "lunch_orders"
+    },
+    {
+      "column_name": "teacher_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "teacher_profiles",
+      "table_name": "lunch_orders"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "maintenance_config"
+    },
+    {
+      "column_name": "payment_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "payment_sessions",
+      "table_name": "manual_reconciliation_log"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "manual_reconciliation_log"
+    },
+    {
+      "column_name": "menu_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_menus",
+      "table_name": "menu_modifier_groups"
+    },
+    {
+      "column_name": "group_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "menu_modifier_groups",
+      "table_name": "menu_modifier_options"
+    },
+    {
+      "column_name": "category_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_categories",
+      "table_name": "modifier_favorites"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "modifier_favorites"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "nfc_cards"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "nfc_cards"
+    },
+    {
+      "column_name": "teacher_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "nfc_cards"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "nubefact_config"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "parent_activity_log"
+    },
+    {
+      "column_name": "behavior_updated_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "parent_profiles"
+    },
+    {
+      "column_name": "deleted_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "parent_profiles"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "parent_profiles"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "parent_sessions"
+    },
+    {
+      "column_name": "fiscal_tx_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "payment_sessions"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "payment_sessions"
+    },
+    {
+      "column_name": "wallet_tx_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "wallet_transactions",
+      "table_name": "payment_sessions"
+    },
+    {
+      "column_name": "parent_profile_id",
+      "foreign_column_name": "user_id",
+      "foreign_table_name": "parent_profiles",
+      "table_name": "payment_transactions"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "payment_transactions"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "pos_idempotency_keys"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "pos_stock_movements"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "pos_stock_movements"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "price_change_log"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "price_change_log"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "printer_configs"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "product_cost_history"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_transactions",
+      "table_name": "product_cost_history"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "product_packaging"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "product_school_prices"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "product_school_prices"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "product_stock"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "product_stock"
+    },
+    {
+      "column_name": "location_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_locations",
+      "table_name": "product_stock_locations"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "product_stock_locations"
+    },
+    {
+      "column_name": "family_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_families",
+      "table_name": "product_subfamilies"
+    },
+    {
+      "column_name": "family_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_families",
+      "table_name": "products"
+    },
+    {
+      "column_name": "subfamily_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_subfamilies",
+      "table_name": "products"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "profiles"
+    },
+    {
+      "column_name": "entry_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "purchase_entries",
+      "table_name": "purchase_distribution_items"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "purchase_distribution_items"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "purchase_distribution_items"
+    },
+    {
+      "column_name": "uom_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_packaging",
+      "table_name": "purchase_distribution_items"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "purchase_entries"
+    },
+    {
+      "column_name": "supplier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "suppliers",
+      "table_name": "purchase_entries"
+    },
+    {
+      "column_name": "entry_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "purchase_entries",
+      "table_name": "purchase_entry_items"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "purchase_entry_items"
+    },
+    {
+      "column_name": "uom_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "product_packaging",
+      "table_name": "purchase_entry_items"
+    },
+    {
+      "column_name": "item_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_items",
+      "table_name": "purchase_order_items"
+    },
+    {
+      "column_name": "order_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "purchase_orders",
+      "table_name": "purchase_order_items"
+    },
+    {
+      "column_name": "request_item_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "supply_request_items",
+      "table_name": "purchase_order_items"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "purchase_orders"
+    },
+    {
+      "column_name": "supplier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "suppliers",
+      "table_name": "purchase_orders"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "purchase_visibility_delay"
+    },
+    {
+      "column_name": "updated_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "purchase_visibility_delay"
+    },
+    {
+      "column_name": "approved_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "voided_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "recharge_requests"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "reclamaciones"
+    },
+    {
+      "column_name": "permission_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "permissions",
+      "table_name": "role_permissions"
+    },
+    {
+      "column_name": "cashier_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "sales"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "sales"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "sales"
+    },
+    {
+      "column_name": "teacher_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "teacher_profiles",
+      "table_name": "sales"
+    },
+    {
+      "column_name": "level_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "school_levels",
+      "table_name": "school_classrooms"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "school_classrooms"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "school_levels"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "school_prefixes"
+    },
+    {
+      "column_name": "created_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "special_days"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "special_days"
+    },
+    {
+      "column_name": "student_a_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "student_links"
+    },
+    {
+      "column_name": "student_b_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "student_links"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "student_relationships"
+    },
+    {
+      "column_name": "classroom_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "school_classrooms",
+      "table_name": "students"
+    },
+    {
+      "column_name": "level_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "school_levels",
+      "table_name": "students"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "students"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "students"
+    },
+    {
+      "column_name": "item_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "inventory_items",
+      "table_name": "supply_request_items"
+    },
+    {
+      "column_name": "request_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "supply_requests",
+      "table_name": "supply_request_items"
+    },
+    {
+      "column_name": "processed_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "supply_requests"
+    },
+    {
+      "column_name": "requested_by",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "supply_requests"
+    },
+    {
+      "column_name": "requesting_school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "supply_requests"
+    },
+    {
+      "column_name": "parent_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "support_tickets"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "support_tickets"
+    },
+    {
+      "column_name": "school_id_1",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "teacher_profiles"
+    },
+    {
+      "column_name": "school_id_2",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "teacher_profiles"
+    },
+    {
+      "column_name": "profile_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "ticket_sequences"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "ticket_sequences_by_school"
+    },
+    {
+      "column_name": "product_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "products",
+      "table_name": "transaction_items"
+    },
+    {
+      "column_name": "transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "transaction_items"
+    },
+    {
+      "column_name": "billing_payment_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "billing_payments",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "cash_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_sessions",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "invoice_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "invoices",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "payment_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "payment_sessions",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "teacher_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "teacher_profiles",
+      "table_name": "transactions"
+    },
+    {
+      "column_name": "cash_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "cash_sessions",
+      "table_name": "treasury_transfers"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "treasury_transfers"
+    },
+    {
+      "column_name": "permission_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "permissions",
+      "table_name": "user_permissions"
+    },
+    {
+      "column_name": "user_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "profiles",
+      "table_name": "user_permissions"
+    },
+    {
+      "column_name": "applied_to_session_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "payment_sessions",
+      "table_name": "wallet_transactions"
+    },
+    {
+      "column_name": "applied_to_tx_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "wallet_transactions"
+    },
+    {
+      "column_name": "origin_lunch_order_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "lunch_orders",
+      "table_name": "wallet_transactions"
+    },
+    {
+      "column_name": "origin_transaction_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "transactions",
+      "table_name": "wallet_transactions"
+    },
+    {
+      "column_name": "student_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "students",
+      "table_name": "wallet_transactions"
+    },
+    {
+      "column_name": "school_id",
+      "foreign_column_name": "id",
+      "foreign_table_name": "schools",
+      "table_name": "weekly_menus"
+    }
+  ]
+}

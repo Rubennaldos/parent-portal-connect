@@ -1,0 +1,2242 @@
+AUDITORIA ESTRUCTURAL — Bloque D: columnas
+Generado: 2026-06-19T07:07:51.802Z
+Filas: 2224
+================================================================================
+
+column_default	column_name	data_type	is_nullable	table_name
+--------------------------------------------------------------------------------
+	id	uuid	NO	_backup_profiles_full_name_20260530
+	email	text	YES	_backup_profiles_full_name_20260530
+	full_name	text	YES	_backup_profiles_full_name_20260530
+	updated_at	timestamp with time zone	YES	_backup_profiles_full_name_20260530
+	backup_at	timestamp with time zone	NO	_backup_profiles_full_name_20260530
+	product_id	uuid	NO	_rollback_stock_ctrl_20260524
+	product_name	text	NO	_rollback_stock_ctrl_20260524
+	stock_control_enabled	boolean	NO	_rollback_stock_ctrl_20260524
+now()	snapshot_at	timestamp with time zone	NO	_rollback_stock_ctrl_20260524
+uuid_generate_v4()	id	uuid	NO	allergies
+	student_id	uuid	YES	allergies
+	allergy_type	character varying	NO	allergies
+	severity	character varying	YES	allergies
+	notes	text	YES	allergies
+	created_by	uuid	YES	allergies
+now()	created_at	timestamp without time zone	YES	allergies
+gen_random_uuid()	id	uuid	NO	alumnos
+	padre_id	uuid	NO	alumnos
+	nombres	text	NO	alumnos
+	grado	text	NO	alumnos
+	seccion	text	YES	alumnos
+	codigo_interno	text	YES	alumnos
+0.00	saldo_actual	numeric	YES	alumnos
+	alergias	text	YES	alumnos
+	tope_diario	numeric	YES	alumnos
+	foto_url	text	YES	alumnos
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	alumnos
+	key	text	NO	app_config
+'{}'::jsonb	value_json	jsonb	NO	app_config
+clock_timestamp()	updated_at	timestamp with time zone	NO	app_config
+	key	text	NO	app_settings
+'{}'::jsonb	value	jsonb	NO	app_settings
+	description	text	YES	app_settings
+clock_timestamp()	updated_at	timestamp with time zone	NO	app_settings
+uuid_generate_v4()	id	uuid	NO	assets_inventory
+	code	text	YES	assets_inventory
+	name	text	NO	assets_inventory
+	category	text	YES	assets_inventory
+	brand	text	YES	assets_inventory
+	model	text	YES	assets_inventory
+	serial_number	text	YES	assets_inventory
+	school_id	uuid	YES	assets_inventory
+	purchase_date	date	YES	assets_inventory
+	purchase_price	numeric	YES	assets_inventory
+'operational'::text	status	text	YES	assets_inventory
+	notes	text	YES	assets_inventory
+	image_url	text	YES	assets_inventory
+now()	created_at	timestamp with time zone	YES	assets_inventory
+now()	updated_at	timestamp with time zone	YES	assets_inventory
+gen_random_uuid()	id	uuid	NO	audit_billing_logs
+	table_name	text	NO	audit_billing_logs
+	record_id	uuid	NO	audit_billing_logs
+	action_type	text	NO	audit_billing_logs
+	old_data	jsonb	YES	audit_billing_logs
+	new_data	jsonb	YES	audit_billing_logs
+	changed_by_user_id	uuid	YES	audit_billing_logs
+	school_id	uuid	YES	audit_billing_logs
+now()	created_at	timestamp with time zone	NO	audit_billing_logs
+gen_random_uuid()	id	uuid	NO	audit_logs
+	action	character varying	NO	audit_logs
+	admin_user_id	uuid	YES	audit_logs
+	target_user_email	character varying	YES	audit_logs
+	target_user_id	uuid	YES	audit_logs
+now()	timestamp	timestamp with time zone	YES	audit_logs
+	details	text	YES	audit_logs
+now()	created_at	timestamp with time zone	YES	audit_logs
+	id	uuid	YES	audit_logs_with_details
+	action	character varying	YES	audit_logs_with_details
+	timestamp	timestamp with time zone	YES	audit_logs_with_details
+	details	text	YES	audit_logs_with_details
+	admin_name	text	YES	audit_logs_with_details
+	admin_email	text	YES	audit_logs_with_details
+	admin_role	text	YES	audit_logs_with_details
+	target_user_email	character varying	YES	audit_logs_with_details
+	target_user_id	uuid	YES	audit_logs_with_details
+gen_random_uuid()	id	uuid	NO	auditoria_vouchers
+	id_cobranza	uuid	YES	auditoria_vouchers
+	url_imagen	text	NO	auditoria_vouchers
+	banco_detectado	character varying	YES	auditoria_vouchers
+	monto_detectado	numeric	YES	auditoria_vouchers
+	nro_operacion	character varying	YES	auditoria_vouchers
+	fecha_pago_detectada	timestamp with time zone	YES	auditoria_vouchers
+	hash_imagen	text	YES	auditoria_vouchers
+'SOSPECHOSO'::estado_ia_enum	estado_ia	USER-DEFINED	NO	auditoria_vouchers
+	analisis_ia	jsonb	YES	auditoria_vouchers
+	school_id	uuid	YES	auditoria_vouchers
+	subido_por	uuid	YES	auditoria_vouchers
+now()	creado_at	timestamp with time zone	YES	auditoria_vouchers
+now()	actualizado_at	timestamp with time zone	YES	auditoria_vouchers
+uuid_generate_v4()	id	uuid	NO	auto_billing_logs
+	school_id	uuid	YES	auto_billing_logs
+now()	executed_at	timestamp with time zone	YES	auto_billing_logs
+0	groups_processed	integer	YES	auto_billing_logs
+0	total_amount	numeric	YES	auto_billing_logs
+'{}'::text[]	errors	ARRAY	YES	auto_billing_logs
+'success'::text	status	text	NO	auto_billing_logs
+gen_random_uuid()	id	uuid	NO	billing_config
+	school_id	uuid	NO	billing_config
+'🔔 *COBRANZA LIMA CAFÉ 28*
+
+Estimado(a) {nombre_padre}
+
+El alumno *{nombre_estudiante}* tiene un consumo pendiente del período: {periodo}
+
+💰 Monto Total: S/ {monto}
+
+📎 Adjuntamos el detalle completo.
+
+Para pagar, contacte con administración.
+Gracias.'::text	message_template	text	NO	billing_config
+	bank_account_info	text	YES	billing_config
+	yape_number	text	YES	billing_config
+	plin_number	text	YES	billing_config
+false	enable_auto_reminders	boolean	YES	billing_config
+3	reminder_days_before	integer	YES	billing_config
+	updated_by	uuid	YES	billing_config
+now()	updated_at	timestamp with time zone	YES	billing_config
+false	show_payment_info	boolean	YES	billing_config
+true	activo	boolean	YES	billing_config
+18	igv_porcentaje	numeric	YES	billing_config
+'B001'::text	serie_boleta	text	YES	billing_config
+'F001'::text	serie_factura	text	YES	billing_config
+'BC01'::text	serie_nc_boleta	text	YES	billing_config
+'FC01'::text	serie_nc_factura	text	YES	billing_config
+''::text	direccion	text	YES	billing_config
+''::text	razon_social	text	YES	billing_config
+''::text	ruc	text	YES	billing_config
+''::text	nubefact_ruta	text	YES	billing_config
+''::text	nubefact_token	text	YES	billing_config
+true	demo_mode	boolean	YES	billing_config
+	bank_account_holder	text	YES	billing_config
+	yape_holder	text	YES	billing_config
+	plin_holder	text	YES	billing_config
+true	yape_enabled	boolean	YES	billing_config
+true	plin_enabled	boolean	YES	billing_config
+true	transferencia_enabled	boolean	YES	billing_config
+	bank_name	text	YES	billing_config
+	bank_account_number	text	YES	billing_config
+	bank_cci	text	YES	billing_config
+	lunch_message_template	text	YES	billing_config
+	cafeteria_message_template	text	YES	billing_config
+	student_message_template	text	YES	billing_config
+	teacher_message_template	text	YES	billing_config
+false	auto_billing_enabled	boolean	YES	billing_config
+true	disable_voucher_ai	boolean	NO	billing_config
+false	izipay_enabled	boolean	NO	billing_config
+gen_random_uuid()	id	uuid	NO	billing_messages
+	school_id	uuid	NO	billing_messages
+	billing_period_id	uuid	YES	billing_messages
+	parent_id	uuid	NO	billing_messages
+	parent_phone	text	NO	billing_messages
+	student_name	text	NO	billing_messages
+	message_text	text	NO	billing_messages
+	amount	numeric	NO	billing_messages
+	pdf_url	text	YES	billing_messages
+'pending'::text	status	text	NO	billing_messages
+	sent_at	timestamp with time zone	YES	billing_messages
+	error_message	text	YES	billing_messages
+	scheduled_delay_seconds	integer	YES	billing_messages
+	created_by	uuid	NO	billing_messages
+now()	created_at	timestamp with time zone	YES	billing_messages
+now()	updated_at	timestamp with time zone	YES	billing_messages
+uuid_generate_v4()	id	uuid	NO	billing_negative_alerts
+	school_id	uuid	YES	billing_negative_alerts
+now()	detected_at	timestamp with time zone	YES	billing_negative_alerts
+	tx_ids	ARRAY	NO	billing_negative_alerts
+	total_amount	numeric	NO	billing_negative_alerts
+'pending_review'::text	status	text	YES	billing_negative_alerts
+	notes	text	YES	billing_negative_alerts
+gen_random_uuid()	id	uuid	NO	billing_payments
+	parent_id	uuid	NO	billing_payments
+	student_id	uuid	NO	billing_payments
+	school_id	uuid	NO	billing_payments
+	billing_period_id	uuid	YES	billing_payments
+0.00	total_amount	numeric	NO	billing_payments
+0.00	paid_amount	numeric	NO	billing_payments
+0.00	pending_amount	numeric	NO	billing_payments
+	payment_method	text	YES	billing_payments
+	operation_number	text	YES	billing_payments
+	paid_at	timestamp with time zone	YES	billing_payments
+'ticket'::text	document_type	text	YES	billing_payments
+	document_number	text	YES	billing_payments
+'pending'::text	status	text	NO	billing_payments
+'[]'::jsonb	transaction_ids	jsonb	YES	billing_payments
+	notes	text	YES	billing_payments
+	created_by	uuid	NO	billing_payments
+now()	created_at	timestamp with time zone	YES	billing_payments
+now()	updated_at	timestamp with time zone	YES	billing_payments
+gen_random_uuid()	id	uuid	NO	billing_periods
+	school_id	uuid	NO	billing_periods
+	period_name	text	NO	billing_periods
+	start_date	date	NO	billing_periods
+	end_date	date	NO	billing_periods
+'draft'::text	status	text	NO	billing_periods
+false	visible_to_parents	boolean	YES	billing_periods
+	notes	text	YES	billing_periods
+	created_by	uuid	NO	billing_periods
+now()	created_at	timestamp with time zone	YES	billing_periods
+now()	updated_at	timestamp with time zone	YES	billing_periods
+gen_random_uuid()	id	uuid	NO	billing_queue
+	recharge_request_id	uuid	YES	billing_queue
+	student_id	uuid	NO	billing_queue
+	school_id	uuid	YES	billing_queue
+	amount	numeric	NO	billing_queue
+	invoice_type	text	NO	billing_queue
+	invoice_client_data	jsonb	YES	billing_queue
+'pending'::text	status	text	NO	billing_queue
+now()	created_at	timestamp with time zone	NO	billing_queue
+	processed_at	timestamp with time zone	YES	billing_queue
+	error_message	text	YES	billing_queue
+0	emit_attempts	integer	NO	billing_queue
+	nubefact_ticket	text	YES	billing_queue
+	pdf_url	text	YES	billing_queue
+	sunat_status	text	YES	billing_queue
+	processing_started_at	timestamp with time zone	YES	billing_queue
+	transaction_id	uuid	YES	billing_queue
+gen_random_uuid()	id	uuid	NO	branch_supply_receipt_items
+	receipt_id	uuid	NO	branch_supply_receipt_items
+	product_id	uuid	NO	branch_supply_receipt_items
+	quantity	integer	NO	branch_supply_receipt_items
+	unit_cost	numeric	NO	branch_supply_receipt_items
+	uom_id	uuid	YES	branch_supply_receipt_items
+0	sort_order	smallint	NO	branch_supply_receipt_items
+gen_random_uuid()	id	uuid	NO	branch_supply_receipts
+	receipt_number	text	YES	branch_supply_receipts
+	school_id	uuid	NO	branch_supply_receipts
+	supplier_id	uuid	YES	branch_supply_receipts
+	submitted_by	uuid	NO	branch_supply_receipts
+	doc_type	text	NO	branch_supply_receipts
+	doc_number	text	YES	branch_supply_receipts
+	declared_total	numeric	NO	branch_supply_receipts
+false	prices_include_igv	boolean	NO	branch_supply_receipts
+	notes	text	YES	branch_supply_receipts
+	evidence_path	text	YES	branch_supply_receipts
+	match_score	jsonb	YES	branch_supply_receipts
+'pending'::text	status	text	NO	branch_supply_receipts
+	reviewed_by	uuid	YES	branch_supply_receipts
+	reviewed_at	timestamp with time zone	YES	branch_supply_receipts
+	rejection_reason	text	YES	branch_supply_receipts
+	replaces_receipt_id	uuid	YES	branch_supply_receipts
+clock_timestamp()	submitted_at	timestamp with time zone	NO	branch_supply_receipts
+clock_timestamp()	updated_at	timestamp with time zone	NO	branch_supply_receipts
+false	is_quick	boolean	NO	branch_supply_receipts
+	stock_applied_at	timestamp with time zone	YES	branch_supply_receipts
+gen_random_uuid()	id	uuid	NO	cancellation_alerts
+	school_id	uuid	YES	cancellation_alerts
+	transaction_id	uuid	YES	cancellation_alerts
+	lunch_order_id	uuid	YES	cancellation_alerts
+'sale_cancelled'::text	alert_type	text	NO	cancellation_alerts
+0	amount	numeric	NO	cancellation_alerts
+	payment_method	text	YES	cancellation_alerts
+	refund_method	text	YES	cancellation_alerts
+	cancelled_by	uuid	YES	cancellation_alerts
+	cancellation_reason	text	YES	cancellation_alerts
+	client_name	text	YES	cancellation_alerts
+	ticket_code	text	YES	cancellation_alerts
+false	is_read	boolean	YES	cancellation_alerts
+	read_by	uuid	YES	cancellation_alerts
+	read_at	timestamp with time zone	YES	cancellation_alerts
+now()	created_at	timestamp with time zone	YES	cancellation_alerts
+gen_random_uuid()	id	uuid	NO	cash_closures
+	cash_register_id	uuid	NO	cash_closures
+	school_id	uuid	NO	cash_closures
+	closure_date	date	NO	cash_closures
+0	pos_cash	numeric	YES	cash_closures
+0	pos_card	numeric	YES	cash_closures
+0	pos_yape	numeric	YES	cash_closures
+0	pos_yape_qr	numeric	YES	cash_closures
+0	pos_credit	numeric	YES	cash_closures
+0	pos_mixed_cash	numeric	YES	cash_closures
+0	pos_mixed_card	numeric	YES	cash_closures
+0	pos_mixed_yape	numeric	YES	cash_closures
+0	pos_total	numeric	YES	cash_closures
+0	lunch_cash	numeric	YES	cash_closures
+0	lunch_credit	numeric	YES	cash_closures
+0	lunch_card	numeric	YES	cash_closures
+0	lunch_yape	numeric	YES	cash_closures
+0	lunch_total	numeric	YES	cash_closures
+0	total_cash	numeric	YES	cash_closures
+0	total_card	numeric	YES	cash_closures
+0	total_yape	numeric	YES	cash_closures
+0	total_yape_qr	numeric	YES	cash_closures
+0	total_credit	numeric	YES	cash_closures
+0	total_sales	numeric	YES	cash_closures
+0	total_ingresos	numeric	YES	cash_closures
+0	total_egresos	numeric	YES	cash_closures
+0	initial_amount	numeric	YES	cash_closures
+0	expected_final	numeric	YES	cash_closures
+0	actual_final	numeric	YES	cash_closures
+0	difference	numeric	YES	cash_closures
+	closed_by	uuid	NO	cash_closures
+	admin_validated_by	uuid	YES	cash_closures
+false	exported_to_excel	boolean	YES	cash_closures
+false	exported_to_pdf	boolean	YES	cash_closures
+false	sent_to_whatsapp	boolean	YES	cash_closures
+	whatsapp_phone	character varying	YES	cash_closures
+false	printed	boolean	YES	cash_closures
+now()	created_at	timestamp with time zone	YES	cash_closures
+gen_random_uuid()	id	uuid	NO	cash_manual_entries
+	cash_session_id	uuid	NO	cash_manual_entries
+	school_id	uuid	NO	cash_manual_entries
+	entry_type	text	NO	cash_manual_entries
+	amount	numeric	NO	cash_manual_entries
+CURRENT_DATE	entry_date	date	NO	cash_manual_entries
+	category	text	NO	cash_manual_entries
+	description	text	NO	cash_manual_entries
+	created_by	uuid	NO	cash_manual_entries
+now()	created_at	timestamp with time zone	NO	cash_manual_entries
+'cash'::text	payment_method	text	NO	cash_manual_entries
+gen_random_uuid()	id	uuid	NO	cash_movements
+	cash_register_id	uuid	NO	cash_movements
+	school_id	uuid	NO	cash_movements
+	type	character varying	NO	cash_movements
+	amount	numeric	NO	cash_movements
+	reason	text	NO	cash_movements
+	responsible_name	character varying	NO	cash_movements
+	responsible_id	uuid	YES	cash_movements
+	created_by	uuid	NO	cash_movements
+true	requires_signature	boolean	YES	cash_movements
+false	signature_validated	boolean	YES	cash_movements
+false	voucher_printed	boolean	YES	cash_movements
+now()	created_at	timestamp with time zone	YES	cash_movements
+gen_random_uuid()	id	uuid	NO	cash_reconciliations
+	cash_session_id	uuid	NO	cash_reconciliations
+	school_id	uuid	NO	cash_reconciliations
+0	system_cash	numeric	NO	cash_reconciliations
+0	system_yape	numeric	NO	cash_reconciliations
+0	system_plin	numeric	NO	cash_reconciliations
+0	system_transferencia	numeric	NO	cash_reconciliations
+0	system_tarjeta	numeric	NO	cash_reconciliations
+0	system_mixto	numeric	NO	cash_reconciliations
+0	system_total	numeric	NO	cash_reconciliations
+0	physical_cash	numeric	NO	cash_reconciliations
+0	physical_yape	numeric	NO	cash_reconciliations
+0	physical_plin	numeric	NO	cash_reconciliations
+0	physical_transferencia	numeric	NO	cash_reconciliations
+0	physical_tarjeta	numeric	NO	cash_reconciliations
+0	physical_mixto	numeric	NO	cash_reconciliations
+0	physical_total	numeric	NO	cash_reconciliations
+0	variance_cash	numeric	NO	cash_reconciliations
+0	variance_yape	numeric	NO	cash_reconciliations
+0	variance_plin	numeric	NO	cash_reconciliations
+0	variance_transferencia	numeric	NO	cash_reconciliations
+0	variance_tarjeta	numeric	NO	cash_reconciliations
+0	variance_mixto	numeric	NO	cash_reconciliations
+0	variance_total	numeric	NO	cash_reconciliations
+0	declared_overage	numeric	NO	cash_reconciliations
+0	declared_deficit	numeric	NO	cash_reconciliations
+	reconciled_by	uuid	NO	cash_reconciliations
+now()	created_at	timestamp with time zone	NO	cash_reconciliations
+gen_random_uuid()	id	uuid	NO	cash_register_config
+	school_id	uuid	NO	cash_register_config
+false	auto_close_enabled	boolean	YES	cash_register_config
+'18:00:00'::time without time zone	auto_close_time	time without time zone	YES	cash_register_config
+'991236870'::character varying	whatsapp_phone	character varying	YES	cash_register_config
+true	require_admin_password	boolean	YES	cash_register_config
+true	alert_on_difference	boolean	YES	cash_register_config
+10.00	difference_threshold	numeric	YES	cash_register_config
+now()	created_at	timestamp with time zone	YES	cash_register_config
+now()	updated_at	timestamp with time zone	YES	cash_register_config
+gen_random_uuid()	id	uuid	NO	cash_registers
+	school_id	uuid	NO	cash_registers
+	opened_by	uuid	NO	cash_registers
+now()	opened_at	timestamp with time zone	YES	cash_registers
+0	initial_amount	numeric	NO	cash_registers
+0	expected_amount	numeric	YES	cash_registers
+	actual_amount	numeric	YES	cash_registers
+	difference	numeric	YES	cash_registers
+'open'::character varying	status	character varying	YES	cash_registers
+	closed_by	uuid	YES	cash_registers
+	closed_at	timestamp with time zone	YES	cash_registers
+false	admin_password_validated	boolean	YES	cash_registers
+	notes	text	YES	cash_registers
+now()	created_at	timestamp with time zone	YES	cash_registers
+now()	updated_at	timestamp with time zone	YES	cash_registers
+gen_random_uuid()	id	uuid	NO	cash_sessions
+	school_id	uuid	NO	cash_sessions
+	session_date	date	NO	cash_sessions
+'open'::text	status	text	NO	cash_sessions
+	opened_by	uuid	NO	cash_sessions
+now()	opened_at	timestamp with time zone	NO	cash_sessions
+0	initial_cash	numeric	NO	cash_sessions
+0	initial_yape	numeric	NO	cash_sessions
+0	initial_plin	numeric	NO	cash_sessions
+0	initial_other	numeric	NO	cash_sessions
+	closed_by	uuid	YES	cash_sessions
+	closed_at	timestamp with time zone	YES	cash_sessions
+	cashier_name	text	YES	cash_sessions
+	cashier_dni	text	YES	cash_sessions
+	cashier_signature	text	YES	cash_sessions
+	closure_notes	text	YES	cash_sessions
+now()	created_at	timestamp with time zone	NO	cash_sessions
+now()	updated_at	timestamp with time zone	NO	cash_sessions
+	declared_cash	numeric	YES	cash_sessions
+	declared_tarjeta	numeric	YES	cash_sessions
+	system_cash	numeric	YES	cash_sessions
+	system_tarjeta	numeric	YES	cash_sessions
+	variance_cash	numeric	YES	cash_sessions
+	variance_tarjeta	numeric	YES	cash_sessions
+	variance_total	numeric	YES	cash_sessions
+	variance_justification	text	YES	cash_sessions
+	reported_cash_amount	numeric	YES	cash_sessions
+gen_random_uuid()	id	uuid	NO	cobranzas_cargos
+	empadronado_id	uuid	NO	cobranzas_cargos
+	periodo	character varying	NO	cobranzas_cargos
+	monto	numeric	NO	cobranzas_cargos
+	saldo	numeric	NO	cobranzas_cargos
+	fecha_vencimiento	date	YES	cobranzas_cargos
+'pendiente'::character varying	estado	character varying	NO	cobranzas_cargos
+	school_id	uuid	YES	cobranzas_cargos
+now()	created_at	timestamp with time zone	NO	cobranzas_cargos
+gen_random_uuid()	id	uuid	NO	cobranzas_pagos
+	empadronado_id	uuid	NO	cobranzas_pagos
+	cargo_id	uuid	YES	cobranzas_pagos
+	metodo_pago	character varying	NO	cobranzas_pagos
+	numero_operacion	character varying	YES	cobranzas_pagos
+	monto	numeric	NO	cobranzas_pagos
+	archivo_comprobante	text	YES	cobranzas_pagos
+	notas	text	YES	cobranzas_pagos
+	created_by	uuid	YES	cobranzas_pagos
+now()	created_at	timestamp with time zone	NO	cobranzas_pagos
+gen_random_uuid()	id	uuid	NO	combo_items
+	combo_id	uuid	NO	combo_items
+	product_id	uuid	NO	combo_items
+1	quantity	integer	NO	combo_items
+now()	created_at	timestamp with time zone	YES	combo_items
+gen_random_uuid()	id	uuid	NO	combos
+	name	character varying	NO	combos
+	description	text	YES	combos
+	combo_price	numeric	NO	combos
+	image_url	text	YES	combos
+true	active	boolean	YES	combos
+	valid_from	date	YES	combos
+	valid_until	date	YES	combos
+	school_ids	ARRAY	YES	combos
+now()	created_at	timestamp with time zone	YES	combos
+now()	updated_at	timestamp with time zone	YES	combos
+	school_id	uuid	YES	combos
+true	is_active	boolean	NO	combos
+false	is_archived	boolean	NO	combos
+gen_random_uuid()	id	uuid	NO	configurable_plate_groups
+	category_id	uuid	NO	configurable_plate_groups
+	name	text	NO	configurable_plate_groups
+true	is_required	boolean	YES	configurable_plate_groups
+1	max_selections	integer	YES	configurable_plate_groups
+0	display_order	integer	YES	configurable_plate_groups
+now()	created_at	timestamp with time zone	YES	configurable_plate_groups
+now()	updated_at	timestamp with time zone	YES	configurable_plate_groups
+gen_random_uuid()	id	uuid	NO	configurable_plate_options
+	group_id	uuid	NO	configurable_plate_options
+	name	text	NO	configurable_plate_options
+true	is_active	boolean	YES	configurable_plate_options
+0	display_order	integer	YES	configurable_plate_options
+now()	created_at	timestamp with time zone	YES	configurable_plate_options
+uuid_generate_v4()	id	uuid	NO	daily_menu
+	school_id	uuid	YES	daily_menu
+	menu_date	date	NO	daily_menu
+	meal_type	character varying	NO	daily_menu
+	entry_dish	character varying	YES	daily_menu
+	main_dish	character varying	YES	daily_menu
+	dessert_or_drink	character varying	YES	daily_menu
+	calories	integer	YES	daily_menu
+	protein	numeric	YES	daily_menu
+	carbs	numeric	YES	daily_menu
+	fats	numeric	YES	daily_menu
+	ingredients	text	YES	daily_menu
+	allergen_warnings	text	YES	daily_menu
+	created_by	uuid	YES	daily_menu
+now()	created_at	timestamp without time zone	YES	daily_menu
+uuid_generate_v4()	id	uuid	NO	delivery_sessions
+	school_id	uuid	NO	delivery_sessions
+	session_date	date	NO	delivery_sessions
+now()	started_at	timestamp with time zone	NO	delivery_sessions
+	ended_at	timestamp with time zone	YES	delivery_sessions
+	started_by	uuid	YES	delivery_sessions
+	ended_by	uuid	YES	delivery_sessions
+'in_progress'::text	status	text	YES	delivery_sessions
+0	total_orders	integer	YES	delivery_sessions
+0	total_delivered	integer	YES	delivery_sessions
+0	total_not_collected	integer	YES	delivery_sessions
+0	total_modified	integer	YES	delivery_sessions
+0	total_added_without_order	integer	YES	delivery_sessions
+0	total_students	integer	YES	delivery_sessions
+0	total_teachers	integer	YES	delivery_sessions
+	report_data	jsonb	YES	delivery_sessions
+now()	created_at	timestamp with time zone	YES	delivery_sessions
+gen_random_uuid()	id	uuid	NO	dev_backlog
+	reporter_id	uuid	YES	dev_backlog
+	reporter_email	text	YES	dev_backlog
+	reporter_role	text	YES	dev_backlog
+	reporter_school_id	uuid	YES	dev_backlog
+	reporter_school_name	text	YES	dev_backlog
+	page_url	text	YES	dev_backlog
+'[]'::jsonb	console_errors	jsonb	YES	dev_backlog
+	user_message	text	NO	dev_backlog
+	screenshot_url	text	YES	dev_backlog
+	ai_classification	text	YES	dev_backlog
+	ai_response	text	YES	dev_backlog
+	ai_technical_analysis	text	YES	dev_backlog
+	cursor_fix_prompt	text	YES	dev_backlog
+'open'::text	status	text	YES	dev_backlog
+'medium'::text	priority	text	YES	dev_backlog
+now()	created_at	timestamp with time zone	YES	dev_backlog
+now()	updated_at	timestamp with time zone	YES	dev_backlog
+	resolved_at	timestamp with time zone	YES	dev_backlog
+	resolved_by	uuid	YES	dev_backlog
+gen_random_uuid()	id	uuid	NO	electronic_documents
+	school_id	uuid	YES	electronic_documents
+	transaction_id	uuid	YES	electronic_documents
+	tipo_comprobante	integer	NO	electronic_documents
+	serie	text	NO	electronic_documents
+	numero	integer	NO	electronic_documents
+	enlace_pdf	text	YES	electronic_documents
+	enlace_xml	text	YES	electronic_documents
+'pendiente'::text	estado	text	YES	electronic_documents
+	cliente_nombre	text	YES	electronic_documents
+	cliente_documento	text	YES	electronic_documents
+	monto_total	numeric	YES	electronic_documents
+	igv	numeric	YES	electronic_documents
+	doc_ref_serie	text	YES	electronic_documents
+	doc_ref_numero	integer	YES	electronic_documents
+	respuesta_sunat	jsonb	YES	electronic_documents
+now()	created_at	timestamp with time zone	YES	electronic_documents
+gen_random_uuid()	id	uuid	NO	empadronados
+	numero_padron	character varying	NO	empadronados
+	nombre_completo	text	NO	empadronados
+	dni	character varying	YES	empadronados
+	telefono	character varying	YES	empadronados
+	email	text	YES	empadronados
+'habilitado'::character varying	estado	character varying	NO	empadronados
+	school_id	uuid	YES	empadronados
+	notas	text	YES	empadronados
+now()	created_at	timestamp with time zone	NO	empadronados
+now()	updated_at	timestamp with time zone	NO	empadronados
+	page_url	text	YES	error_hotspots
+	component	text	YES	error_hotspots
+	error_count	bigint	YES	error_hotspots
+	affected_users	bigint	YES	error_hotspots
+	error_types	ARRAY	YES	error_hotspots
+gen_random_uuid()	id	uuid	NO	error_logs
+	user_id	uuid	YES	error_logs
+	user_email	text	YES	error_logs
+	user_role	text	YES	error_logs
+	error_type	text	NO	error_logs
+	error_code	text	YES	error_logs
+	error_message	text	NO	error_logs
+	error_translated	text	YES	error_logs
+	page_url	text	YES	error_logs
+	component	text	YES	error_logs
+	action	text	YES	error_logs
+	user_agent	text	YES	error_logs
+	stack_trace	text	YES	error_logs
+	metadata	jsonb	YES	error_logs
+false	is_resolved	boolean	YES	error_logs
+	resolved_at	timestamp with time zone	YES	error_logs
+	resolved_by	uuid	YES	error_logs
+	resolution_notes	text	YES	error_logs
+now()	created_at	timestamp with time zone	YES	error_logs
+	school_id	uuid	YES	error_logs
+	module	text	NO	error_logs
+	message	text	NO	error_logs
+	context	jsonb	YES	error_logs
+false	resolved	boolean	NO	error_logs
+	error_type	text	YES	error_statistics
+	total_count	bigint	YES	error_statistics
+	affected_users	bigint	YES	error_statistics
+	last_occurrence	timestamp with time zone	YES	error_statistics
+	avg_hours_ago	numeric	YES	error_statistics
+gen_random_uuid()	id	uuid	NO	gateway_webhook_events
+	provider_name	text	NO	gateway_webhook_events
+	external_event_id	text	NO	gateway_webhook_events
+'{}'::jsonb	payload	jsonb	NO	gateway_webhook_events
+'pending'::gateway_payment_status	gateway_status	USER-DEFINED	NO	gateway_webhook_events
+	processed_at	timestamp with time zone	YES	gateway_webhook_events
+	processing_error	text	YES	gateway_webhook_events
+	payment_session_id	uuid	YES	gateway_webhook_events
+	school_id	uuid	YES	gateway_webhook_events
+now()	created_at	timestamp with time zone	NO	gateway_webhook_events
+gen_random_uuid()	id	uuid	NO	huella_digital_logs
+	usuario_id	uuid	YES	huella_digital_logs
+	accion	character varying	NO	huella_digital_logs
+	modulo	character varying	NO	huella_digital_logs
+	detalles_tecnicos	jsonb	YES	huella_digital_logs
+	contexto	jsonb	YES	huella_digital_logs
+	school_id	uuid	YES	huella_digital_logs
+now()	creado_at	timestamp with time zone	YES	huella_digital_logs
+gen_random_uuid()	id	uuid	NO	impersonation_tokens
+gen_random_uuid()	token	uuid	NO	impersonation_tokens
+	created_by	uuid	NO	impersonation_tokens
+	target_user_id	uuid	NO	impersonation_tokens
+	target_email	text	NO	impersonation_tokens
+	target_role	text	NO	impersonation_tokens
+	target_school_id	uuid	YES	impersonation_tokens
+	target_name	text	YES	impersonation_tokens
+false	used	boolean	NO	impersonation_tokens
+(now() + '02:00:00'::interval)	expires_at	timestamp with time zone	NO	impersonation_tokens
+now()	created_at	timestamp with time zone	NO	impersonation_tokens
+gen_random_uuid()	id	uuid	NO	in_app_notifications
+	school_id	uuid	YES	in_app_notifications
+	user_id	uuid	YES	in_app_notifications
+	title	character varying	NO	in_app_notifications
+	message	text	NO	in_app_notifications
+'info'::character varying	type	character varying	NO	in_app_notifications
+false	is_read	boolean	NO	in_app_notifications
+now()	created_at	timestamp with time zone	NO	in_app_notifications
+	sent_by	uuid	YES	in_app_notifications
+	expiration_date	timestamp with time zone	YES	in_app_notifications
+gen_random_uuid()	id	uuid	NO	internal_transfer_items
+	transfer_id	uuid	NO	internal_transfer_items
+	product_id	uuid	NO	internal_transfer_items
+	quantity	integer	NO	internal_transfer_items
+gen_random_uuid()	id	uuid	NO	internal_transfers
+	from_school_id	uuid	NO	internal_transfers
+	to_school_id	uuid	NO	internal_transfers
+'completed'::text	status	text	NO	internal_transfers
+	notes	text	YES	internal_transfers
+	created_by	uuid	YES	internal_transfers
+clock_timestamp()	created_at	timestamp with time zone	NO	internal_transfers
+	transfer_number	text	YES	internal_transfers
+	contact_person	text	YES	internal_transfers
+	contact_phone	text	YES	internal_transfers
+	approved_by	uuid	YES	internal_transfers
+uuid_generate_v4()	id	uuid	NO	inventory_categories
+	name	text	NO	inventory_categories
+	icon	text	YES	inventory_categories
+	color	text	YES	inventory_categories
+now()	created_at	timestamp with time zone	YES	inventory_categories
+now()	updated_at	timestamp with time zone	YES	inventory_categories
+gen_random_uuid()	id	uuid	NO	inventory_guides
+	source_type	text	NO	inventory_guides
+	source_id	uuid	NO	inventory_guides
+	business_ref	text	NO	inventory_guides
+'Almacén Central'::text	destination_label	text	NO	inventory_guides
+'logistic_documents'::text	storage_bucket	text	NO	inventory_guides
+	storage_path	text	NO	inventory_guides
+	content_hash	text	NO	inventory_guides
+'1.0'::text	template_version	text	NO	inventory_guides
+'active'::text	status	text	NO	inventory_guides
+	superseded_by	uuid	YES	inventory_guides
+	generated_by	uuid	YES	inventory_guides
+clock_timestamp()	generated_at	timestamp with time zone	NO	inventory_guides
+uuid_generate_v4()	id	uuid	NO	inventory_items
+	category_id	uuid	YES	inventory_items
+	code	text	YES	inventory_items
+	name	text	NO	inventory_items
+	description	text	YES	inventory_items
+	unit	text	NO	inventory_items
+0	min_stock	numeric	YES	inventory_items
+0	cost_per_unit	numeric	YES	inventory_items
+	barcode	text	YES	inventory_items
+	image_url	text	YES	inventory_items
+true	is_active	boolean	YES	inventory_items
+now()	created_at	timestamp with time zone	YES	inventory_items
+now()	updated_at	timestamp with time zone	YES	inventory_items
+	school_id	uuid	YES	inventory_items
+gen_random_uuid()	id	uuid	NO	inventory_location_movements
+	product_id	uuid	NO	inventory_location_movements
+	location_id	uuid	NO	inventory_location_movements
+	movement_type	text	NO	inventory_location_movements
+	quantity_delta	integer	NO	inventory_location_movements
+	stock_before	integer	NO	inventory_location_movements
+	stock_after	integer	NO	inventory_location_movements
+	reference_id	uuid	YES	inventory_location_movements
+	reason	text	YES	inventory_location_movements
+	created_by	uuid	YES	inventory_location_movements
+clock_timestamp()	created_at	timestamp with time zone	NO	inventory_location_movements
+gen_random_uuid()	id	uuid	NO	inventory_location_transfer_items
+	transfer_id	uuid	NO	inventory_location_transfer_items
+	product_id	uuid	NO	inventory_location_transfer_items
+	quantity	integer	NO	inventory_location_transfer_items
+gen_random_uuid()	id	uuid	NO	inventory_location_transfers
+	transfer_number	text	NO	inventory_location_transfers
+	from_location_id	uuid	NO	inventory_location_transfers
+	to_location_id	uuid	NO	inventory_location_transfers
+'completed'::text	status	text	NO	inventory_location_transfers
+	notes	text	YES	inventory_location_transfers
+	contact_person	text	YES	inventory_location_transfers
+	contact_phone	text	YES	inventory_location_transfers
+	approved_by	uuid	YES	inventory_location_transfers
+	created_by	uuid	YES	inventory_location_transfers
+clock_timestamp()	created_at	timestamp with time zone	NO	inventory_location_transfers
+gen_random_uuid()	id	uuid	NO	inventory_locations
+	code	text	NO	inventory_locations
+	name	text	NO	inventory_locations
+	location_type	text	NO	inventory_locations
+	school_id	uuid	YES	inventory_locations
+false	is_primary	boolean	NO	inventory_locations
+true	is_active	boolean	NO	inventory_locations
+clock_timestamp()	created_at	timestamp with time zone	NO	inventory_locations
+uuid_generate_v4()	id	uuid	NO	inventory_movements
+	item_id	uuid	YES	inventory_movements
+	from_school_id	uuid	YES	inventory_movements
+	to_school_id	uuid	YES	inventory_movements
+	quantity	numeric	NO	inventory_movements
+	movement_type	text	NO	inventory_movements
+	reference_id	uuid	YES	inventory_movements
+	reference_type	text	YES	inventory_movements
+	notes	text	YES	inventory_movements
+	created_by	uuid	YES	inventory_movements
+now()	created_at	timestamp with time zone	YES	inventory_movements
+uuid_generate_v4()	id	uuid	NO	inventory_stock
+	item_id	uuid	YES	inventory_stock
+	school_id	uuid	YES	inventory_stock
+0	quantity	numeric	YES	inventory_stock
+now()	last_updated	timestamp with time zone	YES	inventory_stock
+	updated_by	uuid	YES	inventory_stock
+gen_random_uuid()	id	uuid	NO	inventory_transaction_items
+	transaction_id	uuid	NO	inventory_transaction_items
+	product_id	uuid	NO	inventory_transaction_items
+	total_quantity	integer	NO	inventory_transaction_items
+0	unit_cost	numeric	NO	inventory_transaction_items
+	uom_id	uuid	YES	inventory_transaction_items
+gen_random_uuid()	id	uuid	NO	inventory_transactions
+	internal_transaction_id	text	NO	inventory_transactions
+	vendor_doc_number	text	YES	inventory_transactions
+'factura'::text	doc_type	text	NO	inventory_transactions
+	supplier_id	uuid	YES	inventory_transactions
+false	is_warehouse_only	boolean	NO	inventory_transactions
+	warehouse_school_id	uuid	YES	inventory_transactions
+	evidence_url	text	YES	inventory_transactions
+0	total_amount	numeric	NO	inventory_transactions
+'completed'::text	status	text	NO	inventory_transactions
+	notes	text	YES	inventory_transactions
+	created_by	uuid	YES	inventory_transactions
+clock_timestamp()	created_at	timestamp with time zone	NO	inventory_transactions
+uuid_generate_v4()	id	uuid	NO	invoice_items
+	invoice_id	uuid	NO	invoice_items
+	product_id	uuid	YES	invoice_items
+	product_code	text	YES	invoice_items
+	description	text	NO	invoice_items
+'NIU'::text	unit_type	text	YES	invoice_items
+	quantity	numeric	NO	invoice_items
+	unit_price	numeric	NO	invoice_items
+	subtotal	numeric	NO	invoice_items
+	igv_amount	numeric	NO	invoice_items
+	total	numeric	NO	invoice_items
+0	discount_percentage	numeric	YES	invoice_items
+0	discount_amount	numeric	YES	invoice_items
+'gravada'::text	tax_type	text	YES	invoice_items
+now()	created_at	timestamp with time zone	NO	invoice_items
+	school_id	uuid	NO	invoice_sequences
+	serie	text	NO	invoice_sequences
+0	last_numero	integer	NO	invoice_sequences
+now()	updated_at	timestamp with time zone	NO	invoice_sequences
+uuid_generate_v4()	id	uuid	NO	invoices
+	school_id	uuid	NO	invoices
+	sale_id	uuid	YES	invoices
+	payment_id	uuid	YES	invoices
+	cashier_id	uuid	YES	invoices
+	invoice_type	text	NO	invoices
+	document_type_code	text	NO	invoices
+	serie	text	NO	invoices
+	numero	integer	NO	invoices
+	full_number	text	YES	invoices
+	client_document_type	text	YES	invoices
+	client_document_number	text	YES	invoices
+	client_name	text	NO	invoices
+	client_address	text	YES	invoices
+	client_email	text	YES	invoices
+'PEN'::text	currency	text	NO	invoices
+	subtotal	numeric	NO	invoices
+0.18	igv_rate	numeric	NO	invoices
+	igv_amount	numeric	NO	invoices
+0	discount_amount	numeric	YES	invoices
+	total_amount	numeric	NO	invoices
+	items	jsonb	NO	invoices
+'pending'::text	sunat_status	text	YES	invoices
+	sunat_response_code	text	YES	invoices
+	sunat_response_message	text	YES	invoices
+	nubefact_id	text	YES	invoices
+	external_reference	text	YES	invoices
+	pdf_url	text	YES	invoices
+	xml_url	text	YES	invoices
+	cdr_url	text	YES	invoices
+	hash_signature	text	YES	invoices
+	qr_code	text	YES	invoices
+	related_invoice_id	uuid	YES	invoices
+	cancellation_reason	text	YES	invoices
+	notes	text	YES	invoices
+	payment_method	text	YES	invoices
+CURRENT_DATE	emission_date	date	NO	invoices
+	due_date	date	YES	invoices
+	sent_to_sunat_at	timestamp with time zone	YES	invoices
+	cancelled_at	timestamp with time zone	YES	invoices
+now()	created_at	timestamp with time zone	NO	invoices
+now()	updated_at	timestamp with time zone	NO	invoices
+	created_by	uuid	YES	invoices
+	transaction_id	uuid	YES	invoices
+	nubefact_response	jsonb	YES	invoices
+true	is_demo	boolean	NO	invoices
+	original_invoice_id	uuid	YES	invoices
+	nubefact_ticket	text	YES	invoices
+0	evidence_retry_count	smallint	NO	invoices
+uuid_generate_v4()	id	uuid	NO	invoicing_logs
+	invoice_id	uuid	YES	invoicing_logs
+	event_type	text	NO	invoicing_logs
+	event_message	text	YES	invoicing_logs
+	request_payload	jsonb	YES	invoicing_logs
+	response_payload	jsonb	YES	invoicing_logs
+	error_code	text	YES	invoicing_logs
+	error_message	text	YES	invoicing_logs
+now()	created_at	timestamp with time zone	NO	invoicing_logs
+	created_by	uuid	YES	invoicing_logs
+	ip_address	inet	YES	invoicing_logs
+	user_agent	text	YES	invoicing_logs
+	action	text	YES	invoicing_logs
+	status	text	YES	invoicing_logs
+uuid_generate_v4()	id	uuid	NO	logs_auto_facturacion
+	school_id	uuid	NO	logs_auto_facturacion
+	fecha_proceso	date	NO	logs_auto_facturacion
+	estado	text	NO	logs_auto_facturacion
+0	dias_emitidos	integer	NO	logs_auto_facturacion
+0	monto_total	numeric	NO	logs_auto_facturacion
+	detalle	jsonb	YES	logs_auto_facturacion
+now()	created_at	timestamp with time zone	NO	logs_auto_facturacion
+gen_random_uuid()	id	uuid	NO	logs_pasarela
+	provider_name	text	NO	logs_pasarela
+	gateway_reference_id	text	NO	logs_pasarela
+	gateway_transaction_id	text	YES	logs_pasarela
+	payment_transaction_id	uuid	YES	logs_pasarela
+	webhook_event_id	uuid	YES	logs_pasarela
+'webhook'::text	event_type	text	NO	logs_pasarela
+'received'::text	status	text	NO	logs_pasarela
+'{}'::jsonb	payload	jsonb	NO	logs_pasarela
+	error_message	text	YES	logs_pasarela
+	processed_at	timestamp with time zone	YES	logs_pasarela
+1	attempt_count	integer	NO	logs_pasarela
+now()	created_at	timestamp with time zone	NO	logs_pasarela
+now()	updated_at	timestamp with time zone	NO	logs_pasarela
+	student_id	uuid	YES	low_balance_students
+	student_name	text	YES	low_balance_students
+	balance	numeric	YES	low_balance_students
+	grade	text	YES	low_balance_students
+	parent_name	text	YES	low_balance_students
+	parent_phone	text	YES	low_balance_students
+	parent_email	text	YES	low_balance_students
+gen_random_uuid()	id	uuid	NO	lunch_categories
+	school_id	uuid	YES	lunch_categories
+	name	character varying	NO	lunch_categories
+	description	text	YES	lunch_categories
+	target_type	character varying	NO	lunch_categories
+'#3B82F6'::character varying	color	character varying	YES	lunch_categories
+'utensils'::character varying	icon	character varying	YES	lunch_categories
+	price	numeric	YES	lunch_categories
+true	is_active	boolean	YES	lunch_categories
+0	display_order	integer	YES	lunch_categories
+now()	created_at	timestamp with time zone	YES	lunch_categories
+now()	updated_at	timestamp with time zone	YES	lunch_categories
+false	is_kitchen_sale	boolean	YES	lunch_categories
+true	allows_addons	boolean	YES	lunch_categories
+'standard'::text	menu_mode	text	NO	lunch_categories
+gen_random_uuid()	id	uuid	NO	lunch_category_addons
+	category_id	uuid	NO	lunch_category_addons
+	name	character varying	NO	lunch_category_addons
+	description	text	YES	lunch_category_addons
+	price	numeric	NO	lunch_category_addons
+true	is_active	boolean	YES	lunch_category_addons
+0	display_order	integer	YES	lunch_category_addons
+now()	created_at	timestamp with time zone	YES	lunch_category_addons
+now()	updated_at	timestamp with time zone	YES	lunch_category_addons
+	created_by	uuid	YES	lunch_category_addons
+uuid_generate_v4()	id	uuid	NO	lunch_configuration
+	school_id	uuid	NO	lunch_configuration
+7.50	lunch_price	numeric	NO	lunch_configuration
+'20:00:00'::time without time zone	order_deadline_time	time without time zone	NO	lunch_configuration
+1	order_deadline_days	integer	NO	lunch_configuration
+'07:00:00'::time without time zone	cancellation_deadline_time	time without time zone	NO	lunch_configuration
+0	cancellation_deadline_days	integer	NO	lunch_configuration
+true	orders_enabled	boolean	NO	lunch_configuration
+now()	created_at	timestamp with time zone	YES	lunch_configuration
+now()	updated_at	timestamp with time zone	YES	lunch_configuration
+'07:00:00'::time without time zone	delivery_start_time	time without time zone	YES	lunch_configuration
+'17:00:00'::time without time zone	delivery_end_time	time without time zone	YES	lunch_configuration
+true	auto_close_day	boolean	YES	lunch_configuration
+true	auto_mark_as_delivered	boolean	YES	lunch_configuration
+false	force_prepayment	boolean	NO	lunch_configuration
+uuid_generate_v4()	id	uuid	NO	lunch_items_library
+	type	text	NO	lunch_items_library
+	name	text	NO	lunch_items_library
+1	use_count	integer	YES	lunch_items_library
+now()	last_used	timestamp with time zone	YES	lunch_items_library
+uuid_generate_v4()	id	uuid	NO	lunch_menu_config
+	school_id	uuid	NO	lunch_menu_config
+7	days_visible_ahead	integer	YES	lunch_menu_config
+true	show_past_menus	boolean	YES	lunch_menu_config
+now()	created_at	timestamp with time zone	YES	lunch_menu_config
+now()	updated_at	timestamp with time zone	YES	lunch_menu_config
+uuid_generate_v4()	id	uuid	NO	lunch_menus
+	school_id	uuid	NO	lunch_menus
+	date	date	NO	lunch_menus
+	starter	text	YES	lunch_menus
+	main_course	text	NO	lunch_menus
+	beverage	text	YES	lunch_menus
+	dessert	text	YES	lunch_menus
+	notes	text	YES	lunch_menus
+	created_by	uuid	YES	lunch_menus
+now()	created_at	timestamp with time zone	YES	lunch_menus
+now()	updated_at	timestamp with time zone	YES	lunch_menus
+	category_id	uuid	YES	lunch_menus
+'students'::character varying	target_type	character varying	YES	lunch_menus
+false	is_kitchen_product	boolean	YES	lunch_menus
+	product_name	character varying	YES	lunch_menus
+	product_price	numeric	YES	lunch_menus
+false	allows_modifiers	boolean	YES	lunch_menus
+'[]'::jsonb	garnishes	jsonb	YES	lunch_menus
+	month	timestamp with time zone	YES	lunch_monthly_summary
+	school_id	uuid	YES	lunch_monthly_summary
+	total_menus	bigint	YES	lunch_monthly_summary
+	days_with_menu	bigint	YES	lunch_monthly_summary
+	menus_with_starter	bigint	YES	lunch_monthly_summary
+	menus_with_dessert	bigint	YES	lunch_monthly_summary
+gen_random_uuid()	id	uuid	NO	lunch_order_addons
+	order_id	uuid	NO	lunch_order_addons
+	addon_id	uuid	NO	lunch_order_addons
+	addon_name	character varying	NO	lunch_order_addons
+	addon_price	numeric	NO	lunch_order_addons
+1	quantity	integer	NO	lunch_order_addons
+	subtotal	numeric	NO	lunch_order_addons
+now()	created_at	timestamp with time zone	YES	lunch_order_addons
+gen_random_uuid()	id	uuid	NO	lunch_orders
+	student_id	uuid	YES	lunch_orders
+	order_date	date	NO	lunch_orders
+'pending'::text	status	text	NO	lunch_orders
+now()	created_at	timestamp with time zone	YES	lunch_orders
+now()	updated_at	timestamp with time zone	YES	lunch_orders
+	created_by	uuid	YES	lunch_orders
+	notes	text	YES	lunch_orders
+	teacher_id	uuid	YES	lunch_orders
+	delivered_at	timestamp with time zone	YES	lunch_orders
+	cancelled_at	timestamp with time zone	YES	lunch_orders
+	postponed_at	timestamp with time zone	YES	lunch_orders
+	cancellation_reason	text	YES	lunch_orders
+	postponement_reason	text	YES	lunch_orders
+	delivered_by	uuid	YES	lunch_orders
+	cancelled_by	uuid	YES	lunch_orders
+	postponed_by	uuid	YES	lunch_orders
+false	is_no_order_delivery	boolean	YES	lunch_orders
+	category_id	uuid	YES	lunch_orders
+	menu_id	uuid	YES	lunch_orders
+	manual_name	character varying	YES	lunch_orders
+	payment_method	character varying	YES	lunch_orders
+	payment_details	jsonb	YES	lunch_orders
+	school_id	uuid	YES	lunch_orders
+false	is_cancelled	boolean	NO	lunch_orders
+0	base_price	numeric	YES	lunch_orders
+0	addons_total	numeric	YES	lunch_orders
+0	final_price	numeric	YES	lunch_orders
+1	quantity	integer	YES	lunch_orders
+'[]'::jsonb	selected_garnishes	jsonb	YES	lunch_orders
+'[]'::jsonb	configurable_selections	jsonb	YES	lunch_orders
+	parent_notes	text	YES	lunch_orders
+	selected_modifiers	jsonb	YES	lunch_orders
+'confirmed_paid'::lunch_order_payment_state	payment_flow_state	USER-DEFINED	NO	lunch_orders
+	id	uuid	YES	lunch_orders_backup_mayo_09
+	student_id	uuid	YES	lunch_orders_backup_mayo_09
+	order_date	date	YES	lunch_orders_backup_mayo_09
+	status	text	YES	lunch_orders_backup_mayo_09
+	created_at	timestamp with time zone	YES	lunch_orders_backup_mayo_09
+	updated_at	timestamp with time zone	YES	lunch_orders_backup_mayo_09
+	created_by	uuid	YES	lunch_orders_backup_mayo_09
+	notes	text	YES	lunch_orders_backup_mayo_09
+	teacher_id	uuid	YES	lunch_orders_backup_mayo_09
+	delivered_at	timestamp with time zone	YES	lunch_orders_backup_mayo_09
+	cancelled_at	timestamp with time zone	YES	lunch_orders_backup_mayo_09
+	postponed_at	timestamp with time zone	YES	lunch_orders_backup_mayo_09
+	cancellation_reason	text	YES	lunch_orders_backup_mayo_09
+	postponement_reason	text	YES	lunch_orders_backup_mayo_09
+	delivered_by	uuid	YES	lunch_orders_backup_mayo_09
+	cancelled_by	uuid	YES	lunch_orders_backup_mayo_09
+	postponed_by	uuid	YES	lunch_orders_backup_mayo_09
+	is_no_order_delivery	boolean	YES	lunch_orders_backup_mayo_09
+	category_id	uuid	YES	lunch_orders_backup_mayo_09
+	menu_id	uuid	YES	lunch_orders_backup_mayo_09
+	manual_name	character varying	YES	lunch_orders_backup_mayo_09
+	payment_method	character varying	YES	lunch_orders_backup_mayo_09
+	payment_details	jsonb	YES	lunch_orders_backup_mayo_09
+	school_id	uuid	YES	lunch_orders_backup_mayo_09
+	is_cancelled	boolean	YES	lunch_orders_backup_mayo_09
+	base_price	numeric	YES	lunch_orders_backup_mayo_09
+	addons_total	numeric	YES	lunch_orders_backup_mayo_09
+	final_price	numeric	YES	lunch_orders_backup_mayo_09
+	quantity	integer	YES	lunch_orders_backup_mayo_09
+	selected_garnishes	jsonb	YES	lunch_orders_backup_mayo_09
+	configurable_selections	jsonb	YES	lunch_orders_backup_mayo_09
+	parent_notes	text	YES	lunch_orders_backup_mayo_09
+	selected_modifiers	jsonb	YES	lunch_orders_backup_mayo_09
+gen_random_uuid()	id	uuid	NO	maintenance_config
+	school_id	uuid	NO	maintenance_config
+	module_key	text	NO	maintenance_config
+false	enabled	boolean	NO	maintenance_config
+'Módulo en Mantenimiento'::text	title	text	NO	maintenance_config
+'Estamos trabajando para ofrecerte la mejor experiencia. Pronto estará disponible.'::text	message	text	NO	maintenance_config
+'{}'::text[]	bypass_emails	ARRAY	NO	maintenance_config
+	updated_by	uuid	YES	maintenance_config
+now()	created_at	timestamp with time zone	YES	maintenance_config
+now()	updated_at	timestamp with time zone	YES	maintenance_config
+	schedule_start	time without time zone	YES	maintenance_config
+	schedule_end	time without time zone	YES	maintenance_config
+'America/Lima'::text	schedule_timezone	text	YES	maintenance_config
+gen_random_uuid()	id	uuid	NO	manual_reconciliation_log
+now()	created_at	timestamp with time zone	NO	manual_reconciliation_log
+	reconciled_by	uuid	YES	manual_reconciliation_log
+	reconciled_by_email	text	YES	manual_reconciliation_log
+'izipay'::text	gateway_name	text	NO	manual_reconciliation_log
+	gateway_ref_id	text	NO	manual_reconciliation_log
+	gateway_tx_id	text	YES	manual_reconciliation_log
+	student_id	uuid	NO	manual_reconciliation_log
+	amount	numeric	NO	manual_reconciliation_log
+'PEN'::text	currency	text	NO	manual_reconciliation_log
+	payment_session_id	uuid	YES	manual_reconciliation_log
+	new_transaction_id	uuid	YES	manual_reconciliation_log
+false	was_idempotent	boolean	NO	manual_reconciliation_log
+	evidence_notes	text	YES	manual_reconciliation_log
+	izipay_dashboard_ref	text	YES	manual_reconciliation_log
+'webhook_not_received'::text	failure_reason	text	YES	manual_reconciliation_log
+nextval('mass_approve_results_id_seq'::regclass)	id	bigint	NO	mass_approve_results
+gen_random_uuid()	batch_id	uuid	NO	mass_approve_results
+	request_id	uuid	NO	mass_approve_results
+	ok	boolean	NO	mass_approve_results
+	message	text	YES	mass_approve_results
+	billing_queue_id	uuid	YES	mass_approve_results
+now()	processed_at	timestamp with time zone	NO	mass_approve_results
+gen_random_uuid()	id	uuid	NO	menu_modifier_groups
+	menu_id	uuid	NO	menu_modifier_groups
+	name	character varying	NO	menu_modifier_groups
+true	is_required	boolean	YES	menu_modifier_groups
+1	max_selections	integer	YES	menu_modifier_groups
+0	display_order	integer	YES	menu_modifier_groups
+now()	created_at	timestamp with time zone	YES	menu_modifier_groups
+now()	updated_at	timestamp with time zone	YES	menu_modifier_groups
+gen_random_uuid()	id	uuid	NO	menu_modifier_options
+	group_id	uuid	NO	menu_modifier_options
+	name	character varying	NO	menu_modifier_options
+false	is_default	boolean	YES	menu_modifier_options
+0	display_order	integer	YES	menu_modifier_options
+now()	created_at	timestamp with time zone	YES	menu_modifier_options
+gen_random_uuid()	id	uuid	NO	modifier_favorites
+	user_id	uuid	NO	modifier_favorites
+	student_id	uuid	YES	modifier_favorites
+	category_id	uuid	NO	modifier_favorites
+'Mi Favorito'::character varying	favorite_name	character varying	YES	modifier_favorites
+'[]'::jsonb	modifiers	jsonb	NO	modifier_favorites
+0	use_count	integer	YES	modifier_favorites
+	last_used_at	timestamp with time zone	YES	modifier_favorites
+now()	created_at	timestamp with time zone	YES	modifier_favorites
+now()	updated_at	timestamp with time zone	YES	modifier_favorites
+	error_message	text	YES	most_frequent_errors
+	error_translated	text	YES	most_frequent_errors
+	occurrences	bigint	YES	most_frequent_errors
+	affected_users	bigint	YES	most_frequent_errors
+	last_seen	timestamp with time zone	YES	most_frequent_errors
+	page_url	text	YES	most_frequent_errors
+	component	text	YES	most_frequent_errors
+gen_random_uuid()	id	uuid	NO	nfc_cards
+	card_uid	text	NO	nfc_cards
+	card_number	text	YES	nfc_cards
+	holder_type	text	YES	nfc_cards
+	student_id	uuid	YES	nfc_cards
+	teacher_id	uuid	YES	nfc_cards
+	school_id	uuid	NO	nfc_cards
+true	is_active	boolean	NO	nfc_cards
+	notes	text	YES	nfc_cards
+	assigned_at	timestamp with time zone	YES	nfc_cards
+	assigned_by	uuid	YES	nfc_cards
+now()	created_at	timestamp with time zone	NO	nfc_cards
+now()	updated_at	timestamp with time zone	NO	nfc_cards
+uuid_generate_v4()	id	uuid	NO	nubefact_config
+	school_id	uuid	NO	nubefact_config
+	ruc	text	NO	nubefact_config
+	razon_social	text	NO	nubefact_config
+	direccion_fiscal	text	NO	nubefact_config
+	ubigeo	text	YES	nubefact_config
+	nubefact_token	text	NO	nubefact_config
+true	is_sandbox	boolean	YES	nubefact_config
+'B001'::text	serie_boleta	text	YES	nubefact_config
+'F001'::text	serie_factura	text	YES	nubefact_config
+'BC01'::text	serie_nota_credito_boleta	text	YES	nubefact_config
+'FC01'::text	serie_nota_credito_factura	text	YES	nubefact_config
+'BD01'::text	serie_nota_debito_boleta	text	YES	nubefact_config
+'FD01'::text	serie_nota_debito_factura	text	YES	nubefact_config
+'T001'::text	serie_guia_remision	text	YES	nubefact_config
+0	current_boleta_number	integer	YES	nubefact_config
+0	current_factura_number	integer	YES	nubefact_config
+0	current_nc_boleta_number	integer	YES	nubefact_config
+0	current_nc_factura_number	integer	YES	nubefact_config
+0	current_nd_boleta_number	integer	YES	nubefact_config
+0	current_nd_factura_number	integer	YES	nubefact_config
+0	current_guia_number	integer	YES	nubefact_config
+	logo_url	text	YES	nubefact_config
+	email_envio	text	YES	nubefact_config
+	telefono	text	YES	nubefact_config
+	website	text	YES	nubefact_config
+true	is_active	boolean	YES	nubefact_config
+now()	created_at	timestamp with time zone	NO	nubefact_config
+now()	updated_at	timestamp with time zone	NO	nubefact_config
+uuid_generate_v4()	id	uuid	NO	nutritional_tips
+	title	character varying	NO	nutritional_tips
+	content	text	NO	nutritional_tips
+	category	character varying	YES	nutritional_tips
+true	is_active	boolean	YES	nutritional_tips
+now()	created_at	timestamp without time zone	YES	nutritional_tips
+uuid_generate_v4()	id	uuid	NO	parent_activity_log
+	parent_id	uuid	NO	parent_activity_log
+	event_type	text	NO	parent_activity_log
+	event_category	text	NO	parent_activity_log
+	event_data	jsonb	YES	parent_activity_log
+	session_id	text	YES	parent_activity_log
+	duration_seconds	integer	YES	parent_activity_log
+now()	created_at	timestamp with time zone	YES	parent_activity_log
+uuid_generate_v4()	id	uuid	NO	parent_profiles
+	user_id	uuid	YES	parent_profiles
+	school_id	uuid	YES	parent_profiles
+	full_name	character varying	YES	parent_profiles
+	dni	character varying	YES	parent_profiles
+	address	text	YES	parent_profiles
+	phone_1	character varying	YES	parent_profiles
+	phone_2	character varying	YES	parent_profiles
+false	phone_1_verified	boolean	YES	parent_profiles
+false	phone_2_verified	boolean	YES	parent_profiles
+true	payment_responsible	boolean	YES	parent_profiles
+	terms_accepted_at	timestamp without time zone	YES	parent_profiles
+	terms_version	character varying	YES	parent_profiles
+false	onboarding_completed	boolean	YES	parent_profiles
+true	approved_by_admin	boolean	YES	parent_profiles
+now()	created_at	timestamp without time zone	YES	parent_profiles
+	nickname	text	YES	parent_profiles
+'free_account'::text	account_type	text	YES	parent_profiles
+NULL::numeric	daily_limit	numeric	YES	parent_profiles
+0.00	current_balance	numeric	YES	parent_profiles
+false	photo_consent	boolean	YES	parent_profiles
+	photo_consent_date	timestamp with time zone	YES	parent_profiles
+'dni'::text	document_type	character varying	YES	parent_profiles
+	registration_metadata	jsonb	YES	parent_profiles
+	registration_ip	text	YES	parent_profiles
+	email	text	YES	parent_profiles
+	document_number	text	YES	parent_profiles
+	full_name_2	text	YES	parent_profiles
+	email_2	text	YES	parent_profiles
+	dni_2	text	YES	parent_profiles
+	address_2	text	YES	parent_profiles
+'DNI'::text	document_type_2	text	YES	parent_profiles
+	document_number_2	text	YES	parent_profiles
+false	legal_acceptance	boolean	YES	parent_profiles
+	legal_acceptance_date	timestamp with time zone	YES	parent_profiles
+	browser_info	text	YES	parent_profiles
+	os_info	text	YES	parent_profiles
+	screen_resolution	text	YES	parent_profiles
+	timezone	text	YES	parent_profiles
+	language	text	YES	parent_profiles
+now()	registration_timestamp	timestamp with time zone	YES	parent_profiles
+now()	updated_at	timestamp with time zone	YES	parent_profiles
+	responsible_2_full_name	character varying	YES	parent_profiles
+	responsible_2_email	character varying	YES	parent_profiles
+'DNI'::character varying	responsible_2_document_type	character varying	YES	parent_profiles
+	responsible_2_dni	character varying	YES	parent_profiles
+	responsible_2_phone_1	character varying	YES	parent_profiles
+	responsible_2_address	text	YES	parent_profiles
+	legal_acceptance_timestamp	timestamp with time zone	YES	parent_profiles
+'neutro'::parent_behavior_profile	behavior_profile	USER-DEFINED	NO	parent_profiles
+	behavior_notes	text	YES	parent_profiles
+false	is_suspended	boolean	NO	parent_profiles
+false	is_deleted	boolean	NO	parent_profiles
+	deleted_at	timestamp with time zone	YES	parent_profiles
+	deleted_by	uuid	YES	parent_profiles
+	behavior_updated_at	timestamp with time zone	YES	parent_profiles
+	behavior_updated_by	uuid	YES	parent_profiles
+uuid_generate_v4()	id	uuid	NO	parent_sessions
+	parent_id	uuid	NO	parent_sessions
+	session_id	text	NO	parent_sessions
+now()	started_at	timestamp with time zone	YES	parent_sessions
+	ended_at	timestamp with time zone	YES	parent_sessions
+	duration_seconds	integer	YES	parent_sessions
+0	pages_viewed	integer	YES	parent_sessions
+0	actions_taken	integer	YES	parent_sessions
+	device_info	jsonb	YES	parent_sessions
+gen_random_uuid()	id	uuid	NO	payment_gateway_config
+	gateway_name	text	NO	payment_gateway_config
+false	is_active	boolean	YES	payment_gateway_config
+false	is_production	boolean	YES	payment_gateway_config
+	merchant_id	text	YES	payment_gateway_config
+	api_key	text	YES	payment_gateway_config
+	api_secret	text	YES	payment_gateway_config
+	webhook_secret	text	YES	payment_gateway_config
+	api_url	text	YES	payment_gateway_config
+	webhook_url	text	YES	payment_gateway_config
+	callback_url	text	YES	payment_gateway_config
+	settings	jsonb	YES	payment_gateway_config
+1.00	min_amount	numeric	YES	payment_gateway_config
+10000.00	max_amount	numeric	YES	payment_gateway_config
+0.00	commission_percentage	numeric	YES	payment_gateway_config
+0.00	commission_fixed	numeric	YES	payment_gateway_config
+now()	created_at	timestamp with time zone	YES	payment_gateway_config
+now()	updated_at	timestamp with time zone	YES	payment_gateway_config
+gen_random_uuid()	id	uuid	NO	payment_sessions
+	parent_id	uuid	NO	payment_sessions
+	student_id	uuid	NO	payment_sessions
+	school_id	uuid	NO	payment_sessions
+'{}'::uuid[]	debt_tx_ids	ARRAY	NO	payment_sessions
+	total_debt_amount	numeric	NO	payment_sessions
+0	wallet_amount	numeric	NO	payment_sessions
+	gateway_amount	numeric	NO	payment_sessions
+	invoice_type	text	YES	payment_sessions
+	invoice_client_data	jsonb	YES	payment_sessions
+	voucher_url	text	YES	payment_sessions
+	admin_notes	text	YES	payment_sessions
+	reviewed_by	uuid	YES	payment_sessions
+	reviewed_at	timestamp with time zone	YES	payment_sessions
+'voucher'::text	gateway_name	text	YES	payment_sessions
+	gateway_reference	text	YES	payment_sessions
+	gateway_payload	jsonb	YES	payment_sessions
+'initiated'::text	status	text	NO	payment_sessions
+	fiscal_tx_id	uuid	YES	payment_sessions
+	wallet_tx_id	uuid	YES	payment_sessions
+now()	created_at	timestamp with time zone	NO	payment_sessions
+	completed_at	timestamp with time zone	YES	payment_sessions
+(now() + '00:30:00'::interval)	expires_at	timestamp with time zone	NO	payment_sessions
+'pending'::gateway_payment_status	gateway_status	USER-DEFINED	YES	payment_sessions
+'recharge'::text	request_type	text	YES	payment_sessions
+'{}'::uuid[]	lunch_order_ids	ARRAY	NO	payment_sessions
+	payment_gateway	text	YES	payment_statistics
+	status	text	YES	payment_statistics
+	total_transactions	bigint	YES	payment_statistics
+	total_amount	numeric	YES	payment_statistics
+	avg_amount	numeric	YES	payment_statistics
+	unique_users	bigint	YES	payment_statistics
+	first_transaction	timestamp with time zone	YES	payment_statistics
+	last_transaction	timestamp with time zone	YES	payment_statistics
+gen_random_uuid()	id	uuid	NO	payment_transactions
+	user_id	uuid	NO	payment_transactions
+	parent_profile_id	uuid	YES	payment_transactions
+	amount	numeric	NO	payment_transactions
+'PEN'::text	currency	text	YES	payment_transactions
+	payment_gateway	text	NO	payment_transactions
+	transaction_reference	text	YES	payment_transactions
+	authorization_code	text	YES	payment_transactions
+'pending'::text	status	text	NO	payment_transactions
+	payment_method	text	YES	payment_transactions
+	card_brand	text	YES	payment_transactions
+	card_last_four	text	YES	payment_transactions
+	gateway_response	jsonb	YES	payment_transactions
+	gateway_request	jsonb	YES	payment_transactions
+now()	created_at	timestamp with time zone	YES	payment_transactions
+	processed_at	timestamp with time zone	YES	payment_transactions
+	approved_at	timestamp with time zone	YES	payment_transactions
+	expired_at	timestamp with time zone	YES	payment_transactions
+	student_id	uuid	YES	payment_transactions
+false	recharge_applied	boolean	YES	payment_transactions
+	ip_address	text	YES	payment_transactions
+	user_agent	text	YES	payment_transactions
+	device_info	jsonb	YES	payment_transactions
+	notes	text	YES	payment_transactions
+	id	uuid	NO	perfiles_padres
+	nombre_completo	text	YES	perfiles_padres
+	dni	text	YES	perfiles_padres
+	celular	text	YES	perfiles_padres
+	email	text	YES	perfiles_padres
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	perfiles_padres
+gen_random_uuid()	id	uuid	NO	permissions
+	module	character varying	NO	permissions
+	action	character varying	NO	permissions
+	name	character varying	NO	permissions
+	description	text	YES	permissions
+now()	created_at	timestamp with time zone	YES	permissions
+gen_random_uuid()	id	uuid	NO	pos_idempotency_keys
+	school_id	uuid	NO	pos_idempotency_keys
+	idempotency_key	text	NO	pos_idempotency_keys
+	transaction_id	uuid	YES	pos_idempotency_keys
+now()	created_at	timestamp with time zone	YES	pos_idempotency_keys
+gen_random_uuid()	id	uuid	NO	pos_stock_movements
+	product_id	uuid	NO	pos_stock_movements
+	school_id	uuid	NO	pos_stock_movements
+	movement_type	character varying	NO	pos_stock_movements
+	quantity_delta	integer	NO	pos_stock_movements
+	stock_before	integer	NO	pos_stock_movements
+	stock_after	integer	NO	pos_stock_movements
+	reference_id	uuid	YES	pos_stock_movements
+	created_by	uuid	YES	pos_stock_movements
+clock_timestamp()	created_at	timestamp with time zone	NO	pos_stock_movements
+	reason	text	YES	pos_stock_movements
+gen_random_uuid()	id	uuid	NO	price_change_log
+	product_id	uuid	NO	price_change_log
+	school_id	uuid	YES	price_change_log
+'product_school_prices'::text	table_origin	text	NO	price_change_log
+	old_price	numeric	NO	price_change_log
+	new_price	numeric	NO	price_change_log
+	changed_by	uuid	YES	price_change_log
+clock_timestamp()	changed_at	timestamp with time zone	NO	price_change_log
+gen_random_uuid()	id	uuid	NO	printer_configs
+	school_id	uuid	NO	printer_configs
+'Impresora Principal'::character varying	printer_name	character varying	NO	printer_configs
+true	is_active	boolean	YES	printer_configs
+	logo_url	text	YES	printer_configs
+120	logo_width	integer	YES	printer_configs
+60	logo_height	integer	YES	printer_configs
+80	paper_width	integer	YES	printer_configs
+true	print_header	boolean	YES	printer_configs
+true	print_footer	boolean	YES	printer_configs
+'Recibo de Compra'::text	header_text	text	YES	printer_configs
+'Gracias por su preferencia'::text	footer_text	text	YES	printer_configs
+	business_name	text	YES	printer_configs
+	business_address	text	YES	printer_configs
+	business_phone	character varying	YES	printer_configs
+	business_ruc	character varying	YES	printer_configs
+'normal'::character varying	font_size	character varying	YES	printer_configs
+'monospace'::character varying	font_family	character varying	YES	printer_configs
+false	show_qr_code	boolean	YES	printer_configs
+false	show_barcode	boolean	YES	printer_configs
+false	auto_print	boolean	YES	printer_configs
+1	copies	integer	YES	printer_configs
+	custom_template	jsonb	YES	printer_configs
+now()	created_at	timestamp with time zone	YES	printer_configs
+now()	updated_at	timestamp with time zone	YES	printer_configs
+	created_by	uuid	YES	printer_configs
+	updated_by	uuid	YES	printer_configs
+true	print_comanda	boolean	YES	printer_configs
+'COMANDA DE COCINA'::text	comanda_header	text	YES	printer_configs
+1	comanda_copies	integer	YES	printer_configs
+true	auto_generate_qr	boolean	YES	printer_configs
+'ORD'::character varying	qr_prefix	character varying	YES	printer_configs
+true	print_separate_comanda	boolean	YES	printer_configs
+'usb'::character varying	connection_type	character varying	YES	printer_configs
+	printer_device_name	text	YES	printer_configs
+	network_ip	character varying	YES	printer_configs
+9100	network_port	integer	YES	printer_configs
+	bluetooth_address	character varying	YES	printer_configs
+	wifi_ssid	character varying	YES	printer_configs
+true	is_thermal_printer	boolean	YES	printer_configs
+5000	connection_timeout	integer	YES	printer_configs
+true	auto_cut_paper	boolean	YES	printer_configs
+'partial'::character varying	cut_mode	character varying	YES	printer_configs
+true	print_ticket_general	boolean	YES	printer_configs
+true	print_comanda_general	boolean	YES	printer_configs
+false	print_ticket_credit	boolean	YES	printer_configs
+true	print_comanda_credit	boolean	YES	printer_configs
+false	print_ticket_teacher	boolean	YES	printer_configs
+true	print_comanda_teacher	boolean	YES	printer_configs
+true	open_cash_drawer	boolean	YES	printer_configs
+2	cash_drawer_pin	integer	YES	printer_configs
+true	open_drawer_on_general	boolean	YES	printer_configs
+false	open_drawer_on_credit	boolean	YES	printer_configs
+false	open_drawer_on_teacher	boolean	YES	printer_configs
+gen_random_uuid()	id	uuid	NO	product_categories
+	name	text	NO	product_categories
+now()	created_at	timestamp with time zone	YES	product_categories
+gen_random_uuid()	id	uuid	NO	product_cost_history
+	product_id	uuid	NO	product_cost_history
+	transaction_id	uuid	YES	product_cost_history
+	unit_cost	numeric	NO	product_cost_history
+'PEN'::text	currency	text	NO	product_cost_history
+clock_timestamp()	effective_at	timestamp with time zone	NO	product_cost_history
+	created_by	uuid	YES	product_cost_history
+gen_random_uuid()	id	uuid	NO	product_families
+	name	text	NO	product_families
+	description	text	YES	product_families
+true	active	boolean	NO	product_families
+now()	created_at	timestamp with time zone	YES	product_families
+gen_random_uuid()	id	uuid	NO	product_packaging
+	product_id	uuid	NO	product_packaging
+	uom_name	text	NO	product_packaging
+1	conversion_factor	integer	NO	product_packaging
+	barcode	text	YES	product_packaging
+true	is_branch_order_allowed	boolean	NO	product_packaging
+now()	created_at	timestamp with time zone	YES	product_packaging
+gen_random_uuid()	id	uuid	NO	product_school_prices
+	product_id	uuid	NO	product_school_prices
+	school_id	uuid	NO	product_school_prices
+	price_sale	numeric	NO	product_school_prices
+	price_cost	numeric	YES	product_school_prices
+true	is_available	boolean	YES	product_school_prices
+now()	created_at	timestamp with time zone	YES	product_school_prices
+now()	updated_at	timestamp with time zone	YES	product_school_prices
+gen_random_uuid()	id	uuid	NO	product_stock
+	product_id	uuid	NO	product_stock
+	school_id	uuid	NO	product_stock
+0	current_stock	integer	NO	product_stock
+now()	last_updated	timestamp with time zone	YES	product_stock
+true	is_enabled	boolean	NO	product_stock
+gen_random_uuid()	id	uuid	NO	product_stock_locations
+	product_id	uuid	NO	product_stock_locations
+	location_id	uuid	NO	product_stock_locations
+0	current_stock	integer	NO	product_stock_locations
+clock_timestamp()	last_updated	timestamp with time zone	NO	product_stock_locations
+gen_random_uuid()	id	uuid	NO	product_subfamilies
+	family_id	uuid	NO	product_subfamilies
+	name	text	NO	product_subfamilies
+true	active	boolean	NO	product_subfamilies
+now()	created_at	timestamp with time zone	YES	product_subfamilies
+gen_random_uuid()	id	uuid	NO	products
+	name	text	NO	products
+	price	numeric	NO	products
+	category	text	YES	products
+	image_url	text	YES	products
+true	active	boolean	YES	products
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	products
+	price_cost	numeric	YES	products
+	price_sale	numeric	YES	products
+false	has_stock	boolean	YES	products
+true	has_igv	boolean	YES	products
+	wholesale_qty	integer	YES	products
+	wholesale_price	numeric	YES	products
+	school_ids	ARRAY	YES	products
+	stock_initial	integer	YES	products
+	stock_min	integer	YES	products
+false	has_expiry	boolean	YES	products
+	expiry_days	integer	YES	products
+false	has_wholesale	boolean	YES	products
+0	total_sales	integer	YES	products
+	code	text	YES	products
+	description	text	YES	products
+false	stock_control_enabled	boolean	NO	products
+false	is_verified	boolean	NO	products
+	family_id	uuid	YES	products
+	subfamily_id	uuid	YES	products
+1	moq	integer	NO	products
+0	min_stock	integer	NO	products
+true	is_active	boolean	NO	products
+now()	updated_at	timestamp with time zone	YES	products
+0	stock	integer	YES	products
+	id	uuid	NO	profiles
+	email	text	YES	profiles
+	full_name	text	YES	profiles
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	profiles
+'parent'::text	role	text	YES	profiles
+	phone	text	YES	profiles
+	pos_number	integer	YES	profiles
+	ticket_prefix	text	YES	profiles
+	school_id	uuid	YES	profiles
+false	free_account_onboarding_completed	boolean	YES	profiles
+	phone_1	text	YES	profiles
+	address	text	YES	profiles
+	document_type	text	YES	profiles
+	document_number	text	YES	profiles
+now()	updated_at	timestamp with time zone	YES	profiles
+'{}'::uuid[]	custom_schools	ARRAY	YES	profiles
+	admin_password	text	YES	profiles
+true	is_active	boolean	YES	profiles
+false	is_temp_password	boolean	YES	profiles
+	saved_ruc	text	YES	profiles
+	saved_razon_social	text	YES	profiles
+	saved_direccion_fiscal	text	YES	profiles
+	saved_email_fiscal	text	YES	profiles
+'boleta'::text	preferred_invoice_type	text	YES	profiles
+gen_random_uuid()	id	uuid	NO	promotions
+	name	character varying	NO	promotions
+	description	text	YES	promotions
+	discount_type	character varying	NO	promotions
+	discount_value	numeric	NO	promotions
+	applies_to	character varying	NO	promotions
+	target_ids	ARRAY	YES	promotions
+true	active	boolean	YES	promotions
+	valid_from	date	YES	promotions
+	valid_until	date	YES	promotions
+	school_ids	ARRAY	YES	promotions
+0	priority	integer	YES	promotions
+now()	created_at	timestamp with time zone	YES	promotions
+now()	updated_at	timestamp with time zone	YES	promotions
+gen_random_uuid()	id	uuid	NO	purchase_distribution_items
+	entry_id	uuid	NO	purchase_distribution_items
+	product_id	uuid	NO	purchase_distribution_items
+	school_id	uuid	NO	purchase_distribution_items
+	quantity	integer	NO	purchase_distribution_items
+0	unit_cost	numeric	NO	purchase_distribution_items
+	uom_id	uuid	YES	purchase_distribution_items
+clock_timestamp()	created_at	timestamp with time zone	NO	purchase_distribution_items
+gen_random_uuid()	id	uuid	NO	purchase_entries
+	supplier_id	uuid	YES	purchase_entries
+	school_id	uuid	YES	purchase_entries
+	user_id	uuid	NO	purchase_entries
+	doc_type	text	NO	purchase_entries
+	doc_number	text	YES	purchase_entries
+0	total_amount	numeric	NO	purchase_entries
+	notes	text	YES	purchase_entries
+now()	created_at	timestamp with time zone	YES	purchase_entries
+	evidence_url	text	YES	purchase_entries
+gen_random_uuid()	id	uuid	NO	purchase_entry_items
+	entry_id	uuid	NO	purchase_entry_items
+	product_id	uuid	NO	purchase_entry_items
+1	quantity	integer	NO	purchase_entry_items
+0	unit_cost	numeric	NO	purchase_entry_items
+	uom_id	uuid	YES	purchase_entry_items
+	uom_quantity	numeric	YES	purchase_entry_items
+uuid_generate_v4()	id	uuid	NO	purchase_order_items
+	order_id	uuid	YES	purchase_order_items
+	item_id	uuid	YES	purchase_order_items
+	quantity	numeric	NO	purchase_order_items
+	unit_price	numeric	YES	purchase_order_items
+	total_price	numeric	YES	purchase_order_items
+	request_item_id	uuid	YES	purchase_order_items
+uuid_generate_v4()	id	uuid	NO	purchase_orders
+	order_number	text	YES	purchase_orders
+	supplier_id	uuid	YES	purchase_orders
+	created_by	uuid	YES	purchase_orders
+'draft'::text	status	text	YES	purchase_orders
+0	total_amount	numeric	YES	purchase_orders
+	notes	text	YES	purchase_orders
+	sent_at	timestamp with time zone	YES	purchase_orders
+	received_at	timestamp with time zone	YES	purchase_orders
+now()	created_at	timestamp with time zone	YES	purchase_orders
+now()	updated_at	timestamp with time zone	YES	purchase_orders
+gen_random_uuid()	id	uuid	NO	purchase_visibility_delay
+	school_id	uuid	YES	purchase_visibility_delay
+2	delay_days	integer	NO	purchase_visibility_delay
+'purchases'::text	applies_to	text	NO	purchase_visibility_delay
+	updated_by	uuid	YES	purchase_visibility_delay
+now()	created_at	timestamp without time zone	YES	purchase_visibility_delay
+now()	updated_at	timestamp without time zone	YES	purchase_visibility_delay
+gen_random_uuid()	id	uuid	NO	recharge_requests
+	student_id	uuid	YES	recharge_requests
+	parent_id	uuid	YES	recharge_requests
+	school_id	uuid	YES	recharge_requests
+	amount	numeric	NO	recharge_requests
+	payment_method	text	NO	recharge_requests
+	reference_code	text	YES	recharge_requests
+	voucher_url	text	YES	recharge_requests
+	notes	text	YES	recharge_requests
+'pending'::text	status	text	YES	recharge_requests
+	rejection_reason	text	YES	recharge_requests
+	approved_by	uuid	YES	recharge_requests
+	approved_at	timestamp with time zone	YES	recharge_requests
+	transaction_id	uuid	YES	recharge_requests
+(now() + '7 days'::interval)	expires_at	timestamp with time zone	YES	recharge_requests
+now()	created_at	timestamp with time zone	YES	recharge_requests
+'recharge'::text	request_type	text	YES	recharge_requests
+	description	text	YES	recharge_requests
+	lunch_order_ids	ARRAY	YES	recharge_requests
+	paid_transaction_ids	ARRAY	YES	recharge_requests
+	invoice_type	text	YES	recharge_requests
+	invoice_client_data	jsonb	YES	recharge_requests
+0	wallet_amount	numeric	NO	recharge_requests
+	voided_by	uuid	YES	recharge_requests
+	voided_at	timestamp with time zone	YES	recharge_requests
+	void_reason	text	YES	recharge_requests
+gen_random_uuid()	id	uuid	NO	reclamaciones
+nextval('reclamaciones_numero_seq'::regclass)	numero	integer	NO	reclamaciones
+CURRENT_DATE	fecha	date	NO	reclamaciones
+'UFRASAC CATERING S.AC'::text	proveedor	text	NO	reclamaciones
+'20603916060'::text	ruc	text	NO	reclamaciones
+'CALLE LOS CIPRESES 165 URB EL REMANSO LA MOLINA'::text	domicilio_proveedor	text	NO	reclamaciones
+	nombre_consumidor	text	NO	reclamaciones
+	dni_ce	text	NO	reclamaciones
+	domicilio_consumidor	text	NO	reclamaciones
+	telefono	text	NO	reclamaciones
+	email	text	NO	reclamaciones
+	nombre_apoderado	text	YES	reclamaciones
+	tipo_bien	text	NO	reclamaciones
+	monto_reclamado	numeric	NO	reclamaciones
+	descripcion_bien	text	NO	reclamaciones
+	tipo_reclamacion	text	NO	reclamaciones
+	detalle	text	NO	reclamaciones
+	pedido_consumidor	text	NO	reclamaciones
+'pendiente'::text	estado	text	NO	reclamaciones
+	respuesta_proveedor	text	YES	reclamaciones
+	fecha_respuesta	date	YES	reclamaciones
+	school_id	uuid	NO	reclamaciones
+now()	created_at	timestamp with time zone	YES	reclamaciones
+now()	updated_at	timestamp with time zone	YES	reclamaciones
+gen_random_uuid()	id	uuid	NO	role_permissions
+	role	character varying	NO	role_permissions
+	permission_id	uuid	YES	role_permissions
+true	granted	boolean	YES	role_permissions
+now()	created_at	timestamp with time zone	YES	role_permissions
+gen_random_uuid()	id	uuid	NO	sales
+	transaction_id	text	NO	sales
+	student_id	uuid	YES	sales
+	school_id	uuid	NO	sales
+	cashier_id	uuid	NO	sales
+0	total	numeric	NO	sales
+0	subtotal	numeric	NO	sales
+0	discount	numeric	YES	sales
+	payment_method	text	NO	sales
+	cash_received	numeric	YES	sales
+	change_given	numeric	YES	sales
+'[]'::jsonb	items	jsonb	NO	sales
+now()	created_at	timestamp with time zone	NO	sales
+now()	updated_at	timestamp with time zone	NO	sales
+	teacher_id	uuid	YES	sales
+gen_random_uuid()	id	uuid	NO	school_classrooms
+	school_id	uuid	NO	school_classrooms
+	level_id	uuid	NO	school_classrooms
+	name	character varying	NO	school_classrooms
+0	order_index	integer	NO	school_classrooms
+true	is_active	boolean	YES	school_classrooms
+now()	created_at	timestamp with time zone	YES	school_classrooms
+now()	updated_at	timestamp with time zone	YES	school_classrooms
+gen_random_uuid()	id	uuid	NO	school_levels
+	school_id	uuid	NO	school_levels
+	name	character varying	NO	school_levels
+0	order_index	integer	NO	school_levels
+true	is_active	boolean	YES	school_levels
+now()	created_at	timestamp with time zone	YES	school_levels
+now()	updated_at	timestamp with time zone	YES	school_levels
+gen_random_uuid()	id	uuid	NO	school_prefixes
+	school_id	uuid	YES	school_prefixes
+	prefix_base	text	NO	school_prefixes
+now()	created_at	timestamp with time zone	YES	school_prefixes
+uuid_generate_v4()	id	uuid	NO	schools
+	name	character varying	NO	schools
+	code	character varying	NO	schools
+	address	text	YES	schools
+	phone	character varying	YES	schools
+	email	character varying	YES	schools
+	warehouse_id	uuid	YES	schools
+true	is_active	boolean	YES	schools
+now()	created_at	timestamp without time zone	YES	schools
+'#10B981'::text	color	text	YES	schools
+NULL::character varying	manager_pin	character varying	YES	schools
+false	auto_facturacion_activa	boolean	NO	schools
+'23:00:00'::time without time zone	hora_cierre_diario	time without time zone	YES	schools
+	admin_whatsapp	character varying	YES	schools
+	admin_name	character varying	YES	schools
+	year	integer	NO	seq_branch_supply_by_year
+0	last_seq	integer	NO	seq_branch_supply_by_year
+	year	integer	NO	seq_ingress_by_year
+0	last_seq	integer	NO	seq_ingress_by_year
+uuid_generate_v4()	id	uuid	NO	special_days
+	date	date	NO	special_days
+	type	text	NO	special_days
+	title	text	NO	special_days
+	description	text	YES	special_days
+	school_id	uuid	YES	special_days
+	created_by	uuid	YES	special_days
+now()	created_at	timestamp with time zone	YES	special_days
+	serie	text	NO	staging_sunat_abril_2026
+	numero	integer	NO	staging_sunat_abril_2026
+	fecha_emision	date	YES	staging_sunat_abril_2026
+	importe_total	numeric	YES	staging_sunat_abril_2026
+	raw_line	text	YES	staging_sunat_abril_2026
+uuid_generate_v4()	id	uuid	NO	student_links
+	student_a_id	uuid	NO	student_links
+	student_b_id	uuid	NO	student_links
+	relationship_type	text	NO	student_links
+now()	created_at	timestamp with time zone	YES	student_links
+	created_by	uuid	YES	student_links
+uuid_generate_v4()	id	uuid	NO	student_relationships
+	student_id	uuid	YES	student_relationships
+	parent_id	uuid	YES	student_relationships
+	relationship	character varying	NO	student_relationships
+false	is_primary	boolean	YES	student_relationships
+now()	created_at	timestamp without time zone	YES	student_relationships
+gen_random_uuid()	id	uuid	NO	students
+	parent_id	uuid	NO	students
+	full_name	text	NO	students
+	grade	text	YES	students
+0.00	balance	numeric	YES	students
+10.00	daily_limit	numeric	YES	students
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	students
+	photo_url	text	YES	students
+	section	character varying	YES	students
+true	is_active	boolean	YES	students
+	name	character varying	YES	students
+	school_id	uuid	YES	students
+true	free_account	boolean	YES	students
+	level_id	uuid	YES	students
+	classroom_id	uuid	YES	students
+0	weekly_limit	numeric	YES	students
+0	monthly_limit	numeric	YES	students
+'daily'::character varying	limit_type	character varying	YES	students
+false	is_temporary	boolean	YES	students
+	temporary_classroom_name	character varying	YES	students
+	temporary_notes	text	YES	students
+false	kiosk_disabled	boolean	NO	students
+0	wallet_balance	numeric	NO	students
+0	current_period_spent	numeric	NO	students
+	next_reset_date	timestamp with time zone	YES	students
+false	recharge_enabled	boolean	NO	students
+uuid_generate_v4()	id	uuid	NO	suppliers
+	code	text	YES	suppliers
+	name	text	NO	suppliers
+	ruc	text	YES	suppliers
+	contact_name	text	YES	suppliers
+	phone	text	YES	suppliers
+	email	text	YES	suppliers
+	address	text	YES	suppliers
+true	is_active	boolean	YES	suppliers
+now()	created_at	timestamp with time zone	YES	suppliers
+now()	updated_at	timestamp with time zone	YES	suppliers
+	contact_person	text	YES	suppliers
+	payment_terms	text	YES	suppliers
+	website	text	YES	suppliers
+	notes	text	YES	suppliers
+uuid_generate_v4()	id	uuid	NO	supply_request_items
+	request_id	uuid	YES	supply_request_items
+	item_id	uuid	YES	supply_request_items
+	quantity_requested	numeric	NO	supply_request_items
+0	quantity_available	numeric	YES	supply_request_items
+0	quantity_approved	numeric	YES	supply_request_items
+0	quantity_pending	numeric	YES	supply_request_items
+'pending'::text	status	text	YES	supply_request_items
+	notes	text	YES	supply_request_items
+uuid_generate_v4()	id	uuid	NO	supply_requests
+	request_number	text	YES	supply_requests
+	requesting_school_id	uuid	YES	supply_requests
+	requested_by	uuid	YES	supply_requests
+'pending'::text	status	text	YES	supply_requests
+	notes	text	YES	supply_requests
+now()	created_at	timestamp with time zone	YES	supply_requests
+	processed_at	timestamp with time zone	YES	supply_requests
+	processed_by	uuid	YES	supply_requests
+gen_random_uuid()	id	uuid	NO	support_tickets
+	parent_id	uuid	NO	support_tickets
+	student_id	uuid	YES	support_tickets
+	parent_name	text	YES	support_tickets
+	student_name	text	YES	support_tickets
+	subject	text	NO	support_tickets
+	message	text	NO	support_tickets
+'open'::text	status	text	NO	support_tickets
+'parent_portal'::text	source	text	NO	support_tickets
+now()	created_at	timestamp with time zone	NO	support_tickets
+now()	updated_at	timestamp with time zone	NO	support_tickets
+gen_random_uuid()	id	uuid	NO	system_error_logs
+now()	created_at	timestamp with time zone	NO	system_error_logs
+	user_id	uuid	YES	system_error_logs
+	error_message	text	NO	system_error_logs
+	stack_trace	text	YES	system_error_logs
+	component_name	text	YES	system_error_logs
+'{}'::jsonb	metadata	jsonb	YES	system_error_logs
+	key	text	NO	system_secrets
+	value	text	NO	system_secrets
+1	id	integer	NO	system_status
+true	is_parent_portal_enabled	boolean	NO	system_status
+true	is_admin_panel_enabled	boolean	NO	system_status
+'Estamos realizando mejoras para ti. Volvemos pronto.'::text	parent_maintenance_msg	text	YES	system_status
+'Sistema en mantenimiento programado. Contacta al SuperAdmin.'::text	admin_maintenance_msg	text	YES	system_status
+now()	updated_at	timestamp with time zone	NO	system_status
+	updated_by	uuid	YES	system_status
+'{}'::text[]	parent_bypass_emails	ARRAY	YES	system_status
+'{}'::text[]	admin_bypass_emails	ARRAY	YES	system_status
+'{"plin_active": true, "yape_active": true, "izipay_active": true, "transferencia_active": true}'::jsonb	payment_methods_config	jsonb	NO	system_status
+false	yape_manual_active	boolean	NO	system_status
+	yape_manual_phone	text	YES	system_status
+'Hola, soy {parent_name} y estoy pagando un total de S/ {total_amount} por el comprobante #{ticket_code} de la fecha {date}. Adjunto el comprobante, por favor confirmen mi abono. Muchas gracias.'::text	yape_manual_template	text	YES	system_status
+'09:15:00'::time without time zone	global_lunch_deadline_time	time without time zone	NO	system_status
+0	global_lunch_deadline_days	integer	NO	system_status
+	id	uuid	NO	teacher_profiles
+	full_name	character varying	NO	teacher_profiles
+	dni	character varying	YES	teacher_profiles
+	corporate_email	character varying	YES	teacher_profiles
+	personal_email	character varying	YES	teacher_profiles
+	phone_1	character varying	YES	teacher_profiles
+	corporate_phone	character varying	YES	teacher_profiles
+	area	character varying	YES	teacher_profiles
+	school_id_1	uuid	YES	teacher_profiles
+	school_id_2	uuid	YES	teacher_profiles
+true	free_account	boolean	YES	teacher_profiles
+false	onboarding_completed	boolean	YES	teacher_profiles
+now()	created_at	timestamp with time zone	YES	teacher_profiles
+now()	updated_at	timestamp with time zone	YES	teacher_profiles
+0.00	balance	numeric	NO	teacher_profiles
+	daily_limit	numeric	YES	teacher_profiles
+true	is_active	boolean	NO	teacher_profiles
+	id	uuid	YES	teacher_profiles_with_schools
+	full_name	character varying	YES	teacher_profiles_with_schools
+	dni	character varying	YES	teacher_profiles_with_schools
+	corporate_email	character varying	YES	teacher_profiles_with_schools
+	personal_email	character varying	YES	teacher_profiles_with_schools
+	phone_1	character varying	YES	teacher_profiles_with_schools
+	corporate_phone	character varying	YES	teacher_profiles_with_schools
+	area	character varying	YES	teacher_profiles_with_schools
+	free_account	boolean	YES	teacher_profiles_with_schools
+	onboarding_completed	boolean	YES	teacher_profiles_with_schools
+	created_at	timestamp with time zone	YES	teacher_profiles_with_schools
+	updated_at	timestamp with time zone	YES	teacher_profiles_with_schools
+	school_1_id	uuid	YES	teacher_profiles_with_schools
+	school_1_name	character varying	YES	teacher_profiles_with_schools
+	school_1_code	character varying	YES	teacher_profiles_with_schools
+	school_2_id	uuid	YES	teacher_profiles_with_schools
+	school_2_name	character varying	YES	teacher_profiles_with_schools
+	school_2_code	character varying	YES	teacher_profiles_with_schools
+uuid_generate_v4()	id	uuid	NO	terms_and_conditions
+	user_id	uuid	YES	terms_and_conditions
+	version	character varying	NO	terms_and_conditions
+	content	text	NO	terms_and_conditions
+	accepted_at	timestamp without time zone	NO	terms_and_conditions
+	ip_address	character varying	YES	terms_and_conditions
+	signature_data	jsonb	YES	terms_and_conditions
+now()	created_at	timestamp without time zone	YES	terms_and_conditions
+	profile_id	uuid	NO	ticket_sequences
+0	current_number	integer	YES	ticket_sequences
+	prefix	text	YES	ticket_sequences
+now()	created_at	timestamp without time zone	YES	ticket_sequences
+now()	updated_at	timestamp without time zone	YES	ticket_sequences
+	school_id	uuid	NO	ticket_sequences_by_school
+0	current_number	bigint	NO	ticket_sequences_by_school
+	prefix	text	NO	ticket_sequences_by_school
+now()	created_at	timestamp with time zone	NO	ticket_sequences_by_school
+now()	updated_at	timestamp with time zone	NO	ticket_sequences_by_school
+gen_random_uuid()	id	uuid	NO	transaction_items
+	transaction_id	uuid	NO	transaction_items
+	product_id	uuid	YES	transaction_items
+	product_name	text	NO	transaction_items
+1	quantity	integer	NO	transaction_items
+	unit_price	numeric	NO	transaction_items
+	subtotal	numeric	NO	transaction_items
+now()	created_at	timestamp with time zone	YES	transaction_items
+false	is_custom_sale	boolean	NO	transaction_items
+gen_random_uuid()	id	uuid	NO	transactions
+	student_id	uuid	YES	transactions
+	type	text	NO	transactions
+	amount	numeric	NO	transactions
+	description	text	YES	transactions
+timezone('utc'::text, now())	created_at	timestamp with time zone	NO	transactions
+	ticket_code	text	YES	transactions
+	balance_after	numeric	YES	transactions
+	created_by	uuid	YES	transactions
+false	is_deleted	boolean	YES	transactions
+false	has_error	boolean	YES	transactions
+	error_message	text	YES	transactions
+	school_id	uuid	YES	transactions
+false	is_billed	boolean	YES	transactions
+	billing_payment_id	uuid	YES	transactions
+	payment_status	text	YES	transactions
+	payment_method	text	YES	transactions
+	teacher_id	uuid	YES	transactions
+	manual_client_name	character varying	YES	transactions
+	metadata	jsonb	YES	transactions
+NULL::character varying	operation_number	character varying	YES	transactions
+false	paid_with_mixed	boolean	YES	transactions
+0	cash_amount	numeric	YES	transactions
+0	card_amount	numeric	YES	transactions
+0	yape_amount	numeric	YES	transactions
+	ticket_number	character varying	YES	transactions
+'ticket'::character varying	document_type	character varying	YES	transactions
+	invoice_client_name	text	YES	transactions
+	invoice_client_dni_ruc	character varying	YES	transactions
+	invoice_id	uuid	YES	transactions
+true	is_taxable	boolean	NO	transactions
+'pending'::text	billing_status	text	NO	transactions
+	billing_processing_at	timestamp with time zone	YES	transactions
+	cash_session_id	uuid	YES	transactions
+	payment_session_id	uuid	YES	transactions
+	gateway_reference_id	text	YES	transactions
+	gateway_transaction_id	text	YES	transactions
+	report_op_seq	bigint	YES	transactions
+	id	uuid	YES	transactions_backup_mayo_09
+	student_id	uuid	YES	transactions_backup_mayo_09
+	type	text	YES	transactions_backup_mayo_09
+	amount	numeric	YES	transactions_backup_mayo_09
+	description	text	YES	transactions_backup_mayo_09
+	created_at	timestamp with time zone	YES	transactions_backup_mayo_09
+	ticket_code	text	YES	transactions_backup_mayo_09
+	balance_after	numeric	YES	transactions_backup_mayo_09
+	created_by	uuid	YES	transactions_backup_mayo_09
+	is_deleted	boolean	YES	transactions_backup_mayo_09
+	has_error	boolean	YES	transactions_backup_mayo_09
+	error_message	text	YES	transactions_backup_mayo_09
+	school_id	uuid	YES	transactions_backup_mayo_09
+	is_billed	boolean	YES	transactions_backup_mayo_09
+	billing_payment_id	uuid	YES	transactions_backup_mayo_09
+	payment_status	text	YES	transactions_backup_mayo_09
+	payment_method	text	YES	transactions_backup_mayo_09
+	teacher_id	uuid	YES	transactions_backup_mayo_09
+	manual_client_name	character varying	YES	transactions_backup_mayo_09
+	metadata	jsonb	YES	transactions_backup_mayo_09
+	operation_number	character varying	YES	transactions_backup_mayo_09
+	paid_with_mixed	boolean	YES	transactions_backup_mayo_09
+	cash_amount	numeric	YES	transactions_backup_mayo_09
+	card_amount	numeric	YES	transactions_backup_mayo_09
+	yape_amount	numeric	YES	transactions_backup_mayo_09
+	ticket_number	character varying	YES	transactions_backup_mayo_09
+	document_type	character varying	YES	transactions_backup_mayo_09
+	invoice_client_name	text	YES	transactions_backup_mayo_09
+	invoice_client_dni_ruc	character varying	YES	transactions_backup_mayo_09
+	invoice_id	uuid	YES	transactions_backup_mayo_09
+	is_taxable	boolean	YES	transactions_backup_mayo_09
+	billing_status	text	YES	transactions_backup_mayo_09
+	billing_processing_at	timestamp with time zone	YES	transactions_backup_mayo_09
+	cash_session_id	uuid	YES	transactions_backup_mayo_09
+	payment_session_id	uuid	YES	transactions_backup_mayo_09
+	gateway_reference_id	text	YES	transactions_backup_mayo_09
+	gateway_transaction_id	text	YES	transactions_backup_mayo_09
+	report_op_seq	bigint	YES	transactions_backup_mayo_09
+gen_random_uuid()	id	uuid	NO	treasury_transfers
+	cash_session_id	uuid	NO	treasury_transfers
+	school_id	uuid	NO	treasury_transfers
+0	amount_cash	numeric	NO	treasury_transfers
+0	amount_yape	numeric	NO	treasury_transfers
+0	amount_plin	numeric	NO	treasury_transfers
+0	amount_transferencia	numeric	NO	treasury_transfers
+0	amount_total	numeric	NO	treasury_transfers
+'created'::text	status	text	NO	treasury_transfers
+	sender_id	uuid	NO	treasury_transfers
+	sender_name	text	NO	treasury_transfers
+	sender_signature	text	YES	treasury_transfers
+	receiver_id	uuid	YES	treasury_transfers
+	receiver_name	text	YES	treasury_transfers
+	receiver_signature	text	YES	treasury_transfers
+	received_at	timestamp with time zone	YES	treasury_transfers
+	pdf_url	text	YES	treasury_transfers
+	notes	text	YES	treasury_transfers
+now()	created_at	timestamp with time zone	NO	treasury_transfers
+now()	updated_at	timestamp with time zone	NO	treasury_transfers
+	id	text	YES	unified_system_monitor
+	source_id	uuid	YES	unified_system_monitor
+	source_table	text	YES	unified_system_monitor
+	created_at	timestamp with time zone	YES	unified_system_monitor
+	user_id	uuid	YES	unified_system_monitor
+	user_email	text	YES	unified_system_monitor
+	user_role	text	YES	unified_system_monitor
+	error_type	text	YES	unified_system_monitor
+	error_message	text	YES	unified_system_monitor
+	error_translated	text	YES	unified_system_monitor
+	stack_trace	text	YES	unified_system_monitor
+	component	text	YES	unified_system_monitor
+	page_url	text	YES	unified_system_monitor
+	action	text	YES	unified_system_monitor
+	metadata	jsonb	YES	unified_system_monitor
+	is_resolved	boolean	YES	unified_system_monitor
+	is_live_error	boolean	YES	unified_system_monitor
+gen_random_uuid()	id	uuid	NO	user_permissions
+	user_id	uuid	YES	user_permissions
+	permission_id	uuid	YES	user_permissions
+true	granted	boolean	YES	user_permissions
+now()	created_at	timestamp with time zone	YES	user_permissions
+	id	uuid	YES	v_billing_masivo_pending
+	school_id	uuid	YES	v_billing_masivo_pending
+	created_at	timestamp with time zone	YES	v_billing_masivo_pending
+	payment_method	text	YES	v_billing_masivo_pending
+	amount	numeric	YES	v_billing_masivo_pending
+	dia_venta_lima	date	YES	v_billing_masivo_pending
+	monto_boleteable	numeric	YES	v_billing_masivo_pending
+	dias_desde_venta	integer	YES	v_billing_masivo_pending
+	es_extemporaneo	boolean	YES	v_billing_masivo_pending
+	metadata	jsonb	YES	v_billing_masivo_pending
+	id	uuid	YES	v_branch_supply_receipts_summary
+	receipt_number	text	YES	v_branch_supply_receipts_summary
+	school_id	uuid	YES	v_branch_supply_receipts_summary
+	school_name	character varying	YES	v_branch_supply_receipts_summary
+	supplier_id	uuid	YES	v_branch_supply_receipts_summary
+	supplier_name	text	YES	v_branch_supply_receipts_summary
+	supplier_ruc	text	YES	v_branch_supply_receipts_summary
+	submitted_by	uuid	YES	v_branch_supply_receipts_summary
+	doc_type	text	YES	v_branch_supply_receipts_summary
+	doc_number	text	YES	v_branch_supply_receipts_summary
+	declared_total	numeric	YES	v_branch_supply_receipts_summary
+	prices_include_igv	boolean	YES	v_branch_supply_receipts_summary
+	evidence_path	text	YES	v_branch_supply_receipts_summary
+	match_matched	boolean	YES	v_branch_supply_receipts_summary
+	match_delta_cents	numeric	YES	v_branch_supply_receipts_summary
+	match_lines_sum	numeric	YES	v_branch_supply_receipts_summary
+	status	text	YES	v_branch_supply_receipts_summary
+	notes	text	YES	v_branch_supply_receipts_summary
+	reviewed_by	uuid	YES	v_branch_supply_receipts_summary
+	reviewed_at	timestamp with time zone	YES	v_branch_supply_receipts_summary
+	rejection_reason	text	YES	v_branch_supply_receipts_summary
+	replaces_receipt_id	uuid	YES	v_branch_supply_receipts_summary
+	submitted_at	timestamp with time zone	YES	v_branch_supply_receipts_summary
+	updated_at	timestamp with time zone	YES	v_branch_supply_receipts_summary
+	items_count	bigint	YES	v_branch_supply_receipts_summary
+	items_sum_live	numeric	YES	v_branch_supply_receipts_summary
+	is_quick	boolean	YES	v_branch_supply_receipts_summary
+	id	uuid	YES	v_cash_reconciliation
+	school_id	uuid	YES	v_cash_reconciliation
+	status	text	YES	v_cash_reconciliation
+	opened_at	timestamp with time zone	YES	v_cash_reconciliation
+	closed_at	timestamp with time zone	YES	v_cash_reconciliation
+	monto_declarado	numeric	YES	v_cash_reconciliation
+	monto_sistema_efectivo	numeric	YES	v_cash_reconciliation
+	diferencia_caja	numeric	YES	v_cash_reconciliation
+	estado_arqueo	text	YES	v_cash_reconciliation
+	justificacion	text	YES	v_cash_reconciliation
+	id	uuid	YES	v_combos_runtime_status
+	name	character varying	YES	v_combos_runtime_status
+	active	boolean	YES	v_combos_runtime_status
+	is_archived	boolean	YES	v_combos_runtime_status
+	valid_from	date	YES	v_combos_runtime_status
+	valid_until	date	YES	v_combos_runtime_status
+	runtime_status	text	YES	v_combos_runtime_status
+	is_sellable_now	boolean	YES	v_combos_runtime_status
+	id	uuid	YES	v_lunch_orders_unified
+	student_id	uuid	YES	v_lunch_orders_unified
+	order_date	date	YES	v_lunch_orders_unified
+	status	text	YES	v_lunch_orders_unified
+	created_at	timestamp with time zone	YES	v_lunch_orders_unified
+	updated_at	timestamp with time zone	YES	v_lunch_orders_unified
+	created_by	uuid	YES	v_lunch_orders_unified
+	notes	text	YES	v_lunch_orders_unified
+	teacher_id	uuid	YES	v_lunch_orders_unified
+	delivered_at	timestamp with time zone	YES	v_lunch_orders_unified
+	cancelled_at	timestamp with time zone	YES	v_lunch_orders_unified
+	postponed_at	timestamp with time zone	YES	v_lunch_orders_unified
+	cancellation_reason	text	YES	v_lunch_orders_unified
+	postponement_reason	text	YES	v_lunch_orders_unified
+	delivered_by	uuid	YES	v_lunch_orders_unified
+	cancelled_by	uuid	YES	v_lunch_orders_unified
+	postponed_by	uuid	YES	v_lunch_orders_unified
+	is_no_order_delivery	boolean	YES	v_lunch_orders_unified
+	category_id	uuid	YES	v_lunch_orders_unified
+	menu_id	uuid	YES	v_lunch_orders_unified
+	manual_name	character varying	YES	v_lunch_orders_unified
+	payment_method	character varying	YES	v_lunch_orders_unified
+	payment_details	jsonb	YES	v_lunch_orders_unified
+	school_id	uuid	YES	v_lunch_orders_unified
+	is_cancelled	boolean	YES	v_lunch_orders_unified
+	base_price	numeric	YES	v_lunch_orders_unified
+	addons_total	numeric	YES	v_lunch_orders_unified
+	final_price	numeric	YES	v_lunch_orders_unified
+	quantity	integer	YES	v_lunch_orders_unified
+	selected_garnishes	jsonb	YES	v_lunch_orders_unified
+	configurable_selections	jsonb	YES	v_lunch_orders_unified
+	parent_notes	text	YES	v_lunch_orders_unified
+	selected_modifiers	jsonb	YES	v_lunch_orders_unified
+	payment_flow_state	USER-DEFINED	YES	v_lunch_orders_unified
+	final_target_type	text	YES	v_lunch_orders_unified
+	category_name_resolved	character varying	YES	v_lunch_orders_unified
+	category_icon_resolved	character varying	YES	v_lunch_orders_unified
+	category_color_resolved	character varying	YES	v_lunch_orders_unified
+	category_target_type	character varying	YES	v_lunch_orders_unified
+	is_active_unified	boolean	YES	v_lunch_orders_unified
+	parent_id	uuid	YES	v_parent_unread_count
+	unread_count	bigint	YES	v_parent_unread_count
+	id	uuid	YES	v_product_stock_bitacora
+	product_id	uuid	YES	v_product_stock_bitacora
+	school_id	uuid	YES	v_product_stock_bitacora
+	quantity_delta	integer	YES	v_product_stock_bitacora
+	delta_label	text	YES	v_product_stock_bitacora
+	occurred_at_lima	text	YES	v_product_stock_bitacora
+	created_at	timestamp with time zone	YES	v_product_stock_bitacora
+	id	uuid	YES	v_promotions_runtime_status
+	name	character varying	YES	v_promotions_runtime_status
+	active	boolean	YES	v_promotions_runtime_status
+	valid_from	date	YES	v_promotions_runtime_status
+	valid_until	date	YES	v_promotions_runtime_status
+	runtime_status	text	YES	v_promotions_runtime_status
+	is_active_now	boolean	YES	v_promotions_runtime_status
+	transaction_id	uuid	YES	v_transaction_detail_view
+	detail_json	jsonb	YES	v_transaction_detail_view
+	recharge_request_id	uuid	YES	view_recharge_ledger
+	auditoria_voucher_id	uuid	YES	view_recharge_ledger
+	student_id	uuid	YES	view_recharge_ledger
+	parent_id	uuid	YES	view_recharge_ledger
+	school_id	uuid	YES	view_recharge_ledger
+	recharge_status	text	YES	view_recharge_ledger
+	request_type	text	YES	view_recharge_ledger
+	reference_code	text	YES	view_recharge_ledger
+	recharge_payment_method	text	YES	view_recharge_ledger
+	voucher_url	text	YES	view_recharge_ledger
+	nro_operacion	character varying	YES	view_recharge_ledger
+	monto_detectado	numeric	YES	view_recharge_ledger
+	fecha_pago_detectada	timestamp with time zone	YES	view_recharge_ledger
+	estado_ia	USER-DEFINED	YES	view_recharge_ledger
+	voucher_subido_por	uuid	YES	view_recharge_ledger
+	recharge_created_at	timestamp with time zone	YES	view_recharge_ledger
+	recharge_approved_at	timestamp with time zone	YES	view_recharge_ledger
+	recharge_effective_at	timestamp with time zone	YES	view_recharge_ledger
+	recharge_amount	numeric	YES	view_recharge_ledger
+	consumed_from_this_recharge	numeric	YES	view_recharge_ledger
+	recharge_remaining	numeric	YES	view_recharge_ledger
+	consumed_total_student	numeric	YES	view_recharge_ledger
+	recharge_remaining_student	numeric	YES	view_recharge_ledger
+	deuda_id	text	YES	view_student_debts
+	student_id	uuid	YES	view_student_debts
+	teacher_id	uuid	YES	view_student_debts
+	manual_client_name	text	YES	view_student_debts
+	school_id	uuid	YES	view_student_debts
+	monto	numeric	YES	view_student_debts
+	descripcion	text	YES	view_student_debts
+	fecha	timestamp with time zone	YES	view_student_debts
+	fuente	text	YES	view_student_debts
+	es_almuerzo	boolean	YES	view_student_debts
+	metadata	jsonb	YES	view_student_debts
+	ticket_code	text	YES	view_student_debts
+gen_random_uuid()	id	uuid	NO	wallet_transactions
+	student_id	uuid	NO	wallet_transactions
+	school_id	uuid	NO	wallet_transactions
+	amount	numeric	NO	wallet_transactions
+	type	text	NO	wallet_transactions
+	origin_transaction_id	uuid	YES	wallet_transactions
+	origin_lunch_order_id	uuid	YES	wallet_transactions
+	applied_to_session_id	uuid	YES	wallet_transactions
+	applied_to_tx_id	uuid	YES	wallet_transactions
+	description	text	YES	wallet_transactions
+	created_by	uuid	YES	wallet_transactions
+now()	created_at	timestamp with time zone	NO	wallet_transactions
+gen_random_uuid()	id	uuid	NO	weekly_menus
+	school_id	uuid	NO	weekly_menus
+	date	date	NO	weekly_menus
+	day_name	character varying	NO	weekly_menus
+	breakfast	text	YES	weekly_menus
+	snack_morning	text	YES	weekly_menus
+	lunch	text	YES	weekly_menus
+	snack_afternoon	text	YES	weekly_menus
+true	is_visible	boolean	YES	weekly_menus
+	visible_until	date	YES	weekly_menus
+now()	created_at	timestamp with time zone	YES	weekly_menus
+now()	updated_at	timestamp with time zone	YES	weekly_menus
+	id	uuid	YES	z_bk_estudiantes_mayo
+	parent_id	uuid	YES	z_bk_estudiantes_mayo
+	full_name	text	YES	z_bk_estudiantes_mayo
+	grade	text	YES	z_bk_estudiantes_mayo
+	balance	numeric	YES	z_bk_estudiantes_mayo
+	daily_limit	numeric	YES	z_bk_estudiantes_mayo
+	created_at	timestamp with time zone	YES	z_bk_estudiantes_mayo
+	photo_url	text	YES	z_bk_estudiantes_mayo
+	section	character varying	YES	z_bk_estudiantes_mayo
+	is_active	boolean	YES	z_bk_estudiantes_mayo
+	name	character varying	YES	z_bk_estudiantes_mayo
+	school_id	uuid	YES	z_bk_estudiantes_mayo
+	free_account	boolean	YES	z_bk_estudiantes_mayo
+	level_id	uuid	YES	z_bk_estudiantes_mayo
+	classroom_id	uuid	YES	z_bk_estudiantes_mayo
+	weekly_limit	numeric	YES	z_bk_estudiantes_mayo
+	monthly_limit	numeric	YES	z_bk_estudiantes_mayo
+	limit_type	character varying	YES	z_bk_estudiantes_mayo
+	is_temporary	boolean	YES	z_bk_estudiantes_mayo
+	temporary_classroom_name	character varying	YES	z_bk_estudiantes_mayo
+	temporary_notes	text	YES	z_bk_estudiantes_mayo
+	kiosk_disabled	boolean	YES	z_bk_estudiantes_mayo
+	wallet_balance	numeric	YES	z_bk_estudiantes_mayo
+	current_period_spent	numeric	YES	z_bk_estudiantes_mayo
+	next_reset_date	timestamp with time zone	YES	z_bk_estudiantes_mayo
+	recharge_enabled	boolean	YES	z_bk_estudiantes_mayo
+	id	uuid	YES	z_bk_items_mayo
+	transaction_id	uuid	YES	z_bk_items_mayo
+	product_id	uuid	YES	z_bk_items_mayo
+	product_name	text	YES	z_bk_items_mayo
+	quantity	integer	YES	z_bk_items_mayo
+	unit_price	numeric	YES	z_bk_items_mayo
+	subtotal	numeric	YES	z_bk_items_mayo
+	created_at	timestamp with time zone	YES	z_bk_items_mayo
+	is_custom_sale	boolean	YES	z_bk_items_mayo
+	id	uuid	YES	z_bk_perfiles_mayo
+	email	text	YES	z_bk_perfiles_mayo
+	full_name	text	YES	z_bk_perfiles_mayo
+	created_at	timestamp with time zone	YES	z_bk_perfiles_mayo
+	role	text	YES	z_bk_perfiles_mayo
+	phone	text	YES	z_bk_perfiles_mayo
+	pos_number	integer	YES	z_bk_perfiles_mayo
+	ticket_prefix	text	YES	z_bk_perfiles_mayo
+	school_id	uuid	YES	z_bk_perfiles_mayo
+	free_account_onboarding_completed	boolean	YES	z_bk_perfiles_mayo
+	phone_1	text	YES	z_bk_perfiles_mayo
+	address	text	YES	z_bk_perfiles_mayo
+	document_type	text	YES	z_bk_perfiles_mayo
+	document_number	text	YES	z_bk_perfiles_mayo
+	updated_at	timestamp with time zone	YES	z_bk_perfiles_mayo
+	custom_schools	ARRAY	YES	z_bk_perfiles_mayo
+	admin_password	text	YES	z_bk_perfiles_mayo
+	is_active	boolean	YES	z_bk_perfiles_mayo
+	is_temp_password	boolean	YES	z_bk_perfiles_mayo
+	saved_ruc	text	YES	z_bk_perfiles_mayo
+	saved_razon_social	text	YES	z_bk_perfiles_mayo
+	saved_direccion_fiscal	text	YES	z_bk_perfiles_mayo
+	saved_email_fiscal	text	YES	z_bk_perfiles_mayo
+	preferred_invoice_type	text	YES	z_bk_perfiles_mayo
+	id	uuid	YES	z_bk_precios_mayo
+	product_id	uuid	YES	z_bk_precios_mayo
+	school_id	uuid	YES	z_bk_precios_mayo
+	price_sale	numeric	YES	z_bk_precios_mayo
+	price_cost	numeric	YES	z_bk_precios_mayo
+	is_available	boolean	YES	z_bk_precios_mayo
+	created_at	timestamp with time zone	YES	z_bk_precios_mayo
+	updated_at	timestamp with time zone	YES	z_bk_precios_mayo
+	id	uuid	YES	z_bk_productos_mayo
+	name	text	YES	z_bk_productos_mayo
+	price	numeric	YES	z_bk_productos_mayo
+	category	text	YES	z_bk_productos_mayo
+	image_url	text	YES	z_bk_productos_mayo
+	active	boolean	YES	z_bk_productos_mayo
+	created_at	timestamp with time zone	YES	z_bk_productos_mayo
+	price_cost	numeric	YES	z_bk_productos_mayo
+	price_sale	numeric	YES	z_bk_productos_mayo
+	has_stock	boolean	YES	z_bk_productos_mayo
+	has_igv	boolean	YES	z_bk_productos_mayo
+	wholesale_qty	integer	YES	z_bk_productos_mayo
+	wholesale_price	numeric	YES	z_bk_productos_mayo
+	school_ids	ARRAY	YES	z_bk_productos_mayo
+	stock_initial	integer	YES	z_bk_productos_mayo
+	stock_min	integer	YES	z_bk_productos_mayo
+	has_expiry	boolean	YES	z_bk_productos_mayo
+	expiry_days	integer	YES	z_bk_productos_mayo
+	has_wholesale	boolean	YES	z_bk_productos_mayo
+	total_sales	integer	YES	z_bk_productos_mayo
+	code	text	YES	z_bk_productos_mayo
+	description	text	YES	z_bk_productos_mayo
+	stock_control_enabled	boolean	YES	z_bk_productos_mayo
+	is_verified	boolean	YES	z_bk_productos_mayo
+	family_id	uuid	YES	z_bk_productos_mayo
+	subfamily_id	uuid	YES	z_bk_productos_mayo
+	moq	integer	YES	z_bk_productos_mayo
+	min_stock	integer	YES	z_bk_productos_mayo
+	is_active	boolean	YES	z_bk_productos_mayo
+	updated_at	timestamp with time zone	YES	z_bk_productos_mayo
+	id	uuid	YES	z_bk_transacciones_mayo
+	student_id	uuid	YES	z_bk_transacciones_mayo
+	type	text	YES	z_bk_transacciones_mayo
+	amount	numeric	YES	z_bk_transacciones_mayo
+	description	text	YES	z_bk_transacciones_mayo
+	created_at	timestamp with time zone	YES	z_bk_transacciones_mayo
+	ticket_code	text	YES	z_bk_transacciones_mayo
+	balance_after	numeric	YES	z_bk_transacciones_mayo
+	created_by	uuid	YES	z_bk_transacciones_mayo
+	is_deleted	boolean	YES	z_bk_transacciones_mayo
+	has_error	boolean	YES	z_bk_transacciones_mayo
+	error_message	text	YES	z_bk_transacciones_mayo
+	school_id	uuid	YES	z_bk_transacciones_mayo
+	is_billed	boolean	YES	z_bk_transacciones_mayo
+	billing_payment_id	uuid	YES	z_bk_transacciones_mayo
+	payment_status	text	YES	z_bk_transacciones_mayo
+	payment_method	text	YES	z_bk_transacciones_mayo
+	teacher_id	uuid	YES	z_bk_transacciones_mayo
+	manual_client_name	character varying	YES	z_bk_transacciones_mayo
+	metadata	jsonb	YES	z_bk_transacciones_mayo
+	operation_number	character varying	YES	z_bk_transacciones_mayo
+	paid_with_mixed	boolean	YES	z_bk_transacciones_mayo
+	cash_amount	numeric	YES	z_bk_transacciones_mayo
+	card_amount	numeric	YES	z_bk_transacciones_mayo
+	yape_amount	numeric	YES	z_bk_transacciones_mayo
+	ticket_number	character varying	YES	z_bk_transacciones_mayo
+	document_type	character varying	YES	z_bk_transacciones_mayo
+	invoice_client_name	text	YES	z_bk_transacciones_mayo
+	invoice_client_dni_ruc	character varying	YES	z_bk_transacciones_mayo
+	invoice_id	uuid	YES	z_bk_transacciones_mayo
+	is_taxable	boolean	YES	z_bk_transacciones_mayo
+	billing_status	text	YES	z_bk_transacciones_mayo
+	billing_processing_at	timestamp with time zone	YES	z_bk_transacciones_mayo
+	cash_session_id	uuid	YES	z_bk_transacciones_mayo
+	payment_session_id	uuid	YES	z_bk_transacciones_mayo
+	gateway_reference_id	text	YES	z_bk_transacciones_mayo
+	gateway_transaction_id	text	YES	z_bk_transacciones_mayo
+	report_op_seq	bigint	YES	z_bk_transacciones_mayo
+	id	uuid	YES	z_bk_ventas_mayo
+	transaction_id	text	YES	z_bk_ventas_mayo
+	student_id	uuid	YES	z_bk_ventas_mayo
+	school_id	uuid	YES	z_bk_ventas_mayo
+	cashier_id	uuid	YES	z_bk_ventas_mayo
+	total	numeric	YES	z_bk_ventas_mayo
+	subtotal	numeric	YES	z_bk_ventas_mayo
+	discount	numeric	YES	z_bk_ventas_mayo
+	payment_method	text	YES	z_bk_ventas_mayo
+	cash_received	numeric	YES	z_bk_ventas_mayo
+	change_given	numeric	YES	z_bk_ventas_mayo
+	items	jsonb	YES	z_bk_ventas_mayo
+	created_at	timestamp with time zone	YES	z_bk_ventas_mayo
+	updated_at	timestamp with time zone	YES	z_bk_ventas_mayo
+	teacher_id	uuid	YES	z_bk_ventas_mayo

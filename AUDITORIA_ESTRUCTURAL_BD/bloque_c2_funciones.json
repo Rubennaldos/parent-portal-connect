@@ -1,0 +1,2267 @@
+{
+  "generated_at": "2026-06-19T07:07:32.357Z",
+  "row_count": 323,
+  "rows": [
+    {
+      "arguments": "p_master_id uuid, p_minor_id uuid",
+      "function_name": "absorb_product",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_amount numeric",
+      "function_name": "adjust_student_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_delta numeric",
+      "function_name": "adjust_student_wallet_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_amount numeric, p_session_id uuid, p_gateway_ref_id text, p_gateway_tx_id text, p_payment_method text, p_description text, p_admin_id uuid",
+      "function_name": "apply_gateway_credit",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid, p_quantity integer, p_reason text",
+      "function_name": "apply_initial_stock_adjustment",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "apply_payment_recharge",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_receipt_id uuid, p_cost_items jsonb, p_prices_include_igv boolean",
+      "function_name": "approve_branch_supply_receipt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_request_id uuid, p_operation_number text, p_admin_notes text",
+      "function_name": "approve_split_payment_voucher",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "auto_close_cash_registers",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "auto_hide_expired_menus",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_supplier_id uuid, p_doc_type text, p_doc_number text, p_evidence_url text, p_notes text, p_items jsonb",
+      "function_name": "bulk_distribute_purchase",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_desde timestamp with time zone",
+      "function_name": "buscar_sesion_izipay_reciente",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_term text, p_role text, p_offset integer, p_limit integer",
+      "function_name": "buscar_usuarios_admin",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date date",
+      "function_name": "calculate_daily_totals",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_original_price numeric, p_category character varying, p_school_id uuid",
+      "function_name": "calculate_discounted_price",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_order_id uuid",
+      "function_name": "calculate_order_final_price",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_start_date date, p_end_date date, p_school_ids uuid[]",
+      "function_name": "calculate_range_totals",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_target_date date",
+      "function_name": "can_cancel_lunch_order",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_order_date date",
+      "function_name": "can_modify_lunch_order",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_target_date date",
+      "function_name": "can_order_lunch",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "can_view_all_schools",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_order_id uuid, p_cancelled_by uuid, p_reason text",
+      "function_name": "cancel_lunch_order",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_order_id uuid, p_parent_id uuid",
+      "function_name": "cancel_lunch_order_as_parent",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_lunch_order_id uuid, p_reason text",
+      "function_name": "cancel_lunch_order_with_wallet_credit",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_transaction_id uuid, p_admin_id uuid, p_reason text, p_refund_method text",
+      "function_name": "cancel_pos_sale",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_gateway text",
+      "function_name": "check_active_gateway_session",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "check_is_admin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "check_is_superadmin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid",
+      "function_name": "check_onboarding_status",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_target_date date, p_school_id uuid",
+      "function_name": "check_order_eligibility",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "check_parent_has_school",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_items jsonb",
+      "function_name": "check_stock_for_request",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_amount numeric",
+      "function_name": "check_student_spending_limit",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid, p_module character varying, p_action character varying",
+      "function_name": "check_user_permission",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid, p_permission_name character varying",
+      "function_name": "check_user_permission",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_operation_number text",
+      "function_name": "check_voucher_usage",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "clean_old_audit_logs",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "cleanup_old_errors",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date date",
+      "function_name": "close_lunch_day",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_combo_id uuid",
+      "function_name": "combo_has_sales",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_cashier_id uuid, p_lines jsonb, p_client_mode text, p_student_id uuid, p_teacher_id uuid, p_payment_method text, p_payment_metadata jsonb, p_billing_data jsonb, p_idempotency_key text, p_cash_given numeric, p_payment_splits jsonb, p_cash_session_id uuid",
+      "function_name": "complete_pos_sale_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_status text, p_date_from timestamp with time zone, p_date_to timestamp with time zone, p_search_term text, p_collector_id uuid",
+      "function_name": "count_billing_paid_transactions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from text, p_date_to text, p_op_number text, p_ticket_number text, p_client_name text, p_reference text, p_payment_method text, p_week_number integer",
+      "function_name": "count_payments_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from text, p_date_to text, p_ticket_code text, p_op_code text, p_payment_ref text, p_client_name text, p_seller_name text, p_payment_method text, p_payment_status text, p_include_deleted boolean",
+      "function_name": "count_sales_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_email text, p_password text, p_full_name text, p_role text, p_school_id uuid, p_pos_number text, p_dmi text, p_phone text",
+      "function_name": "create_admin_user",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_person_type text, p_person_id uuid, p_order_date date, p_category_id uuid, p_menu_id uuid, p_school_id uuid, p_price numeric, p_created_by uuid, p_description text, p_category_name text, p_payment_method text",
+      "function_name": "create_and_deliver_lunch_order",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_target_user_id uuid",
+      "function_name": "create_impersonation_token",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_from_school_id uuid, p_to_school_id uuid, p_items jsonb, p_notes text, p_contact_person text, p_contact_phone text, p_approved_by uuid",
+      "function_name": "create_internal_transfer",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_order_date date, p_delivered_by uuid, p_lunch_price numeric",
+      "function_name": "create_lunch_delivery_no_order",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_person_type text, p_person_id uuid, p_order_date date, p_category_id uuid, p_menu_id uuid, p_school_id uuid, p_quantity integer, p_base_price numeric, p_final_price numeric, p_created_by uuid, p_source text, p_category_name text, p_description text, p_selected_modifiers jsonb, p_selected_garnishes jsonb, p_configurable_selections jsonb, p_parent_notes text",
+      "function_name": "create_lunch_order_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_person_type text, p_person_id uuid, p_school_id uuid, p_base_price numeric, p_final_price numeric, p_created_by uuid, p_source text, p_category_name text, p_date_menus jsonb",
+      "function_name": "create_lunch_orders_batch_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_name text, p_category text, p_min_stock integer",
+      "function_name": "create_product_fast",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_a_id uuid, p_student_b_id uuid, p_relationship_type text, p_created_by uuid",
+      "function_name": "create_student_link",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_full_name character varying, p_classroom_name character varying, p_school_id uuid, p_notes text",
+      "function_name": "create_temporary_student",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_pos_user_id uuid, p_prefix text",
+      "function_name": "create_ticket_sequence",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_from_is_warehouse boolean, p_from_school_id uuid, p_to_is_warehouse boolean, p_to_school_id uuid, p_items jsonb, p_notes text, p_contact_person text, p_contact_phone text, p_approved_by uuid",
+      "function_name": "create_transfer_with_warehouse",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "user_email text, user_password text, user_full_name text, user_role text, user_school_id uuid, user_pos_number integer, user_ticket_prefix text, user_dni text, user_phone_1 text, user_address text, user_nickname text",
+      "function_name": "create_user_as_admin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid, p_quantity integer, p_reason text",
+      "function_name": "decrement_product_stock_with_kardex",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid, p_quantity integer",
+      "function_name": "deduct_product_stock",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "ensure_manual_payments_disabled",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_session_id uuid, p_reconciliation_data jsonb, p_user_id uuid",
+      "function_name": "execute_cash_reconciliation_atomic",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_sql text",
+      "function_name": "execute_fiobot_query",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "expire_pending_payments",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "expire_stale_gateway_sessions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "t text",
+      "function_name": "f_search_norm_text",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "t text",
+      "function_name": "f_unaccent",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_assert_admin_general",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_assign_report_op_seq",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_assign_transfer_number",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_school_id uuid, p_admin_id uuid, p_source_request_id uuid, p_payment_method text",
+      "function_name": "fn_auto_apply_balance_to_pending_purchases",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_billing_queue_webhook",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_block_duplicate_debt_payment",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_block_transaction_items_delete",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_block_transaction_items_truncate",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_queue_id uuid",
+      "function_name": "fn_build_billing_payload",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "fn_calculate_student_prepay_net",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_check_no_overlapping_payment_ids",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_location_id uuid, p_quantity integer, p_reference_id uuid, p_reason text, p_movement_type text",
+      "function_name": "fn_decrement_location_stock",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_request_id uuid, p_student_id uuid, p_school_id uuid, p_lunch_ids uuid[], p_payment_method text, p_admin_id uuid, p_voucher_url text, p_reference_code text, p_request_type text, p_is_taxable boolean, p_billing_status text",
+      "function_name": "fn_ensure_paid_purchase_mirrors_for_lunch_voucher_approval",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_get_global_igv_divisor",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_get_primary_warehouse_location_id",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "fn_get_school_location_id",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "fn_get_student_spendable_prepay",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_billing_queue_failed_message",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_kiosk_spending_limits",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_payment_sessions_debt_ids",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_product_stock_by_switch",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_product_stock_negative_switch",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_product_stock_non_negative",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_guard_voucher_approval",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_handle_lunch_order_cancellation_cascade",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_handle_prepayment_logic",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_location_id uuid, p_quantity integer, p_reference_id uuid, p_reason text, p_movement_type text",
+      "function_name": "fn_increment_location_stock",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_log_price_change",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_log_price_change_base",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_log_stock_manual_adjustment",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_log_student_balance_change",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_log_transaction_edit_post_approval",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_val text",
+      "function_name": "fn_looks_like_uuid",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_next_branch_supply_id",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_next_ingress_id",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_prevent_modifying_sent_transactions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_lunch_order_id uuid, p_source_table text, p_source_id uuid, p_school_id uuid",
+      "function_name": "fn_promote_frozen_order",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_operation_number text, p_gateway_ref_id text, p_gateway_tx_id text, p_metadata jsonb",
+      "function_name": "fn_readable_payment_ref",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "p_ttl_minutes integer",
+      "function_name": "fn_reset_billing_queue_zombies",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_created_by uuid, p_student_id uuid, p_ticket_code text, p_payment_method text, p_gateway_ref_id text, p_metadata jsonb",
+      "function_name": "fn_resolve_registered_by",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_soft_delete_combo",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_soft_delete_product",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_sync_cancelled_lunch_order_to_transaction",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_sync_combo_active",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_sync_period_spent_after_cancel",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_sync_period_spent_after_purchase",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_sync_product_active",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "fn_sync_student_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_system_status_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_touch_app_settings_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "fn_update_auditoria_timestamp",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "force_zero_balance_on_insert",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "prefix text, table_name text, column_name text",
+      "function_name": "generate_code",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_pos_number integer",
+      "function_name": "generate_ticket_prefix",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid",
+      "function_name": "generate_user_prefix",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_active_combos_for_school",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_active_promotions_for_school",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_all_parents_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_allow_negative_sales",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_allow_negative_stock",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_billing_collectors",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_until_date timestamp with time zone, p_transaction_type text, p_search text, p_offset integer, p_limit integer, p_from_date timestamp with time zone",
+      "function_name": "get_billing_consolidated_debtors",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from date, p_date_to date",
+      "function_name": "get_billing_dashboard_stats",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_status text, p_date_from timestamp with time zone, p_date_to timestamp with time zone, p_search_term text, p_collector_id uuid, p_offset integer, p_limit integer",
+      "function_name": "get_billing_paid_transactions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_days_ago integer",
+      "function_name": "get_billing_payment_stats",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_until_date timestamp with time zone, p_transaction_type text",
+      "function_name": "get_billing_pending_transactions",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_receipt_id uuid",
+      "function_name": "get_branch_supply_receipt_detail",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_category_id uuid, p_start_date date, p_end_date date",
+      "function_name": "get_configurable_plate_stats",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_source_type text, p_source_id uuid",
+      "function_name": "get_guides_for_source",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date date",
+      "function_name": "get_inventory_movement_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from date, p_date_to date",
+      "function_name": "get_itemized_products_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_kiosk_pending_debt_total",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date date",
+      "function_name": "get_kitchen_orders_summary",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_lima_today_date",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_query text, p_school_id uuid, p_estado text, p_limit integer",
+      "function_name": "get_live_stock_v2",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_lunch_order_ids uuid[], p_school_id uuid, p_include_cancelled boolean",
+      "function_name": "get_lunch_order_purchase_tx_summary",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from date, p_date_to date",
+      "function_name": "get_modifier_stats",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "target_month integer, target_year integer, target_school_ids uuid[]",
+      "function_name": "get_monthly_lunch_menus",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_my_role",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_next_calendar_ticket",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_serie text",
+      "function_name": "get_next_invoice_numero",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_next_pos_number",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid, p_context_school_id uuid",
+      "function_name": "get_next_ticket_number",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_card_uid text",
+      "function_name": "get_nfc_holder",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_limit integer",
+      "function_name": "get_parent_activity_timeline",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid",
+      "function_name": "get_parent_debts",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid",
+      "function_name": "get_parent_debts_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_since_days integer, p_limit integer",
+      "function_name": "get_parent_gateway_payments_v1",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_days integer",
+      "function_name": "get_parent_metrics",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid",
+      "function_name": "get_parent_rec_total",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_user_id uuid",
+      "function_name": "get_parent_total_debt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid",
+      "function_name": "get_parent_wallet_total",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_search text, p_limit integer, p_offset integer",
+      "function_name": "get_payment_history",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from text, p_date_to text, p_op_number text, p_ticket_number text, p_client_name text, p_reference text, p_payment_method text, p_week_number integer, p_limit integer, p_offset integer",
+      "function_name": "get_payments_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_product_ids uuid[]",
+      "function_name": "get_pos_stock_snapshot",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid",
+      "function_name": "get_product_price_for_school",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid, p_limit integer, p_offset integer",
+      "function_name": "get_product_stock_bitacora",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_purchase_visibility_delay",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from text, p_date_to text, p_ticket_code text, p_op_code text, p_payment_ref text, p_client_name text, p_seller_name text, p_payment_method text, p_payment_status text, p_include_deleted boolean, p_limit integer, p_offset integer",
+      "function_name": "get_sales_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_ts timestamp with time zone",
+      "function_name": "get_sales_week_number",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_debt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_debt_total",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_limit integer, p_offset integer",
+      "function_name": "get_student_ledger_movements",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_ledger_totals",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_links",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, target_month integer, target_year integer",
+      "function_name": "get_student_lunch_orders",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_pos_consumptions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_limit integer, p_offset integer",
+      "function_name": "get_student_purchase_history",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_recharge_ledger",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid",
+      "function_name": "get_student_spending_summary",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_today_cash_session",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_today_lunch_menu",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "get_user_school_id",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_user_id uuid",
+      "function_name": "get_user_sessions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_date_from date, p_date_to date",
+      "function_name": "get_ventas_periodo_report",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "get_visibility_cutoff_date",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "target_school_id uuid, target_date date",
+      "function_name": "get_visible_lunch_menus_for_parent",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_ids uuid[]",
+      "function_name": "get_warehouse_stock_for_products",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text, internal, smallint, internal, internal, internal, internal",
+      "function_name": "gin_extract_query_trgm",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, internal",
+      "function_name": "gin_extract_value_trgm",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, smallint, text, integer, internal, internal, internal, internal",
+      "function_name": "gin_trgm_consistent",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, smallint, text, integer, internal, internal, internal",
+      "function_name": "gin_trgm_triconsistent",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal",
+      "function_name": "gtrgm_compress",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, text, smallint, oid, internal",
+      "function_name": "gtrgm_consistent",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal",
+      "function_name": "gtrgm_decompress",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, text, smallint, oid, internal",
+      "function_name": "gtrgm_distance",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "cstring",
+      "function_name": "gtrgm_in",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal",
+      "function_name": "gtrgm_options",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "gtrgm",
+      "function_name": "gtrgm_out",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, internal, internal",
+      "function_name": "gtrgm_penalty",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, internal",
+      "function_name": "gtrgm_picksplit",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "gtrgm, gtrgm, internal",
+      "function_name": "gtrgm_same",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "internal, internal",
+      "function_name": "gtrgm_union",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "handle_new_user",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_id uuid, p_quantity integer, p_entry_id uuid, p_reason text, p_uom_id uuid",
+      "function_name": "increment_product_stock",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "is_admin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "is_admin_general_jwt",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "is_reports_admin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "",
+      "function_name": "is_superadmin",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "log_billing_audit_event",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_event_type text, p_event_category text, p_event_data jsonb, p_session_id text, p_duration_seconds integer",
+      "function_name": "log_parent_activity",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_gateway_ref_id text, p_student_id uuid, p_amount numeric, p_evidence_notes text, p_izipay_dashboard_ref text, p_gateway_tx_id text, p_reconciled_by_email text, p_session_id uuid",
+      "function_name": "manual_gateway_credit",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_provider_name text, p_event_id text, p_session_id uuid, p_error_message text",
+      "function_name": "mark_webhook_processed",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid",
+      "function_name": "materialize_pending_lunch_debts",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_old_product_ids uuid[], p_new_product_data jsonb, p_school_prices jsonb",
+      "function_name": "merge_products",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "migrate_student_grades_to_levels",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "t text",
+      "function_name": "normalize_search",
+      "language": "sql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_debt_tx_ids uuid[], p_lunch_order_ids uuid[]",
+      "function_name": "pay_debt_with_wallet_only",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "prevent_duplicate_lunch_transaction",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_declared_total numeric, p_items jsonb",
+      "function_name": "preview_branch_supply_totals",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_usuario_id uuid, p_modo character varying, p_items jsonb, p_cliente_id uuid, p_metodo_pago character varying, p_tipo_documento character varying, p_notas text, p_sesion_caja_id uuid",
+      "function_name": "procesar_venta_pos_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_supplier_id uuid, p_vendor_doc_number text, p_doc_type text, p_evidence_url text, p_notes text, p_is_warehouse_only boolean, p_warehouse_school_id uuid, p_items jsonb, p_prices_include_igv boolean",
+      "function_name": "process_ingress_bulk",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_real_tx_ids uuid[], p_lunch_order_ids uuid[], p_payment_method text, p_operation_number text, p_document_type text, p_school_id uuid, p_amount_paid numeric, p_student_id uuid, p_payment_breakdown jsonb",
+      "function_name": "process_payment_collection",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_request_id uuid, p_user_id uuid, p_items jsonb",
+      "function_name": "process_supply_request",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_request_id uuid, p_admin_id uuid",
+      "function_name": "process_traditional_voucher_approval",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid, p_name text, p_dni text, p_phone text, p_school_id uuid, p_actor_id uuid",
+      "function_name": "provision_teacher_express_v1",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_target_date date, p_log_note text",
+      "function_name": "reconcile_today_pending_pos_paid",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "refresh_products_school_prices_view",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_receipt_id uuid, p_rejection_reason text",
+      "function_name": "reject_branch_supply_receipt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_start_utc timestamp with time zone, p_end_utc timestamp with time zone, p_school_id uuid, p_movement_type text",
+      "function_name": "report_kardex_movements",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_start_utc timestamp with time zone, p_end_utc timestamp with time zone, p_school_id uuid",
+      "function_name": "report_stock_movement",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_user_id uuid",
+      "function_name": "reset_ticket_sequence",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_session_id uuid",
+      "function_name": "revoke_single_session",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_user_id uuid",
+      "function_name": "revoke_user_sessions",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid",
+      "function_name": "rpc_admin_soft_delete_orphan_parent",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_suspend boolean",
+      "function_name": "rpc_admin_toggle_parent_suspension",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_parent_id uuid, p_profile parent_behavior_profile, p_notes text",
+      "function_name": "rpc_admin_update_parent_behavior",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_parent_user_id uuid, p_student_full_name text, p_level_id uuid, p_classroom_id uuid, p_actor_user_id uuid, p_account_mode text",
+      "function_name": "rpc_express_enroll_student_v1",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_product_id uuid, p_school_ids uuid[], p_prices jsonb",
+      "function_name": "save_product_scope_and_prices",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_admin_name text, p_admin_whatsapp text",
+      "function_name": "save_school_support_contact",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_admin_name text, p_technical_whatsapp text",
+      "function_name": "save_support_technical_contact",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_query text, p_school_id uuid, p_limit integer",
+      "function_name": "search_inventory_stock_realtime",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_type text, p_query text",
+      "function_name": "search_lunch_items",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_search text, p_start_date date, p_end_date date, p_school_id uuid, p_status text, p_person_type text, p_limit integer, p_offset integer",
+      "function_name": "search_lunch_order_ids",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_query text, p_school_id uuid, p_limit integer, p_offset integer",
+      "function_name": "search_parents_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_query text, p_school_id uuid, p_limit integer, p_offset integer",
+      "function_name": "search_parents_v3",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_query text, p_school_id uuid, p_types text[], p_limit integer",
+      "function_name": "search_persons_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_query text, p_limit integer",
+      "function_name": "search_products_pro",
+      "language": "sql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_search_text text",
+      "function_name": "search_suppliers_smart",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_date date, p_type text, p_school_ids uuid[], p_title text",
+      "function_name": "set_day_state",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_serie text, p_new_last integer, p_admin_token text",
+      "function_name": "set_invoice_sequence",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "real",
+      "function_name": "set_limit",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_clave text",
+      "function_name": "set_master_password",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_new_balance numeric, p_also_set_free_account boolean",
+      "function_name": "set_student_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_target_mode text",
+      "function_name": "set_student_payment_mode",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "set_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "set_updated_at_empadronados",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "set_updated_at_invoices",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "show_limit",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text",
+      "function_name": "show_trgm",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "similarity",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "similarity_dist",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "similarity_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "strict_word_similarity",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "strict_word_similarity_commutator_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "strict_word_similarity_dist_commutator_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "strict_word_similarity_dist_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "strict_word_similarity_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_supplier_id uuid, p_doc_type text, p_doc_number text, p_declared_total numeric, p_prices_include_igv boolean, p_notes text, p_evidence_path text, p_items jsonb, p_replaces_receipt_id uuid",
+      "function_name": "submit_branch_supply_receipt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_school_id uuid, p_items jsonb, p_notes text",
+      "function_name": "submit_quick_stock_receipt",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_debt_tx_ids uuid[], p_lunch_order_ids uuid[], p_wallet_amount numeric, p_voucher_amount numeric, p_voucher_url text, p_reference_code text, p_invoice_type text, p_invoice_client_data jsonb",
+      "function_name": "submit_voucher_with_split",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_student_id uuid, p_dry_run boolean",
+      "function_name": "sync_student_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "sync_student_names",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "tg_enforce_spending_limit",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "tg_force_free_account_mode",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "tg_transactions_balance_sync",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "tg_validate_lunch_order_deadline",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trg_fn_product_school_prices_scope_guard",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trg_fn_products_scope_prices_deactivate",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trg_fn_recharge_requests_promote_frozen",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trg_fn_transactions_promote_frozen",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trg_logs_pasarela_set_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "trigger_update_order_price",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_tenant_id uuid, p_sede_id uuid, p_venta_id uuid, p_menu_segundo_id uuid, p_fecha_entrega date, p_cliente_id uuid, p_comentario text, p_tarifa character varying, p_precio_congelado numeric",
+      "function_name": "tuqui_materializar_pedido_almuerzo_pos",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_notas_item text, p_producto_nombre text",
+      "function_name": "tuqui_nombre_linea_bitacora",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "p_venta_id uuid",
+      "function_name": "tuqui_obtener_detalle_venta_bitacora",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "regdictionary, text",
+      "function_name": "unaccent",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text",
+      "function_name": "unaccent",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "internal",
+      "function_name": "unaccent_init",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "internal, internal, internal, internal",
+      "function_name": "unaccent_lexize",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_billing_payment_pending",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_combos_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_configurable_groups_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_dev_backlog_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_deadline_time time without time zone, p_deadline_days integer",
+      "function_name": "update_global_lunch_deadline",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_inventory_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_lunch_categories_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_lunch_configuration_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_lunch_orders_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_modifier_favorites_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_modifier_groups_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_nfc_cards_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_parent_profiles_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_printer_configs_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_product_sales_count",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_product_school_prices_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_promotions_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_sales_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_school_classrooms_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_school_levels_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_student_balance",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_teacher_profiles_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_updated_at_column",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "update_weekly_menus_updated_at",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_source_type text, p_source_id uuid, p_business_ref text, p_destination_label text, p_storage_bucket text, p_storage_path text, p_content_hash text, p_template_version text",
+      "function_name": "upsert_inventory_guide",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_type text, p_name text",
+      "function_name": "upsert_lunch_item",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_password text",
+      "function_name": "validate_admin_password",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "",
+      "function_name": "validate_daily_limit",
+      "language": "plpgsql",
+      "security": "SECURITY INVOKER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_token uuid",
+      "function_name": "validate_impersonation_token",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_request_id uuid, p_admin_id uuid, p_reason text",
+      "function_name": "void_payment",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_order_id uuid, p_parent_id uuid",
+      "function_name": "void_pending_lunch_order_v2",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "p_transaction_id uuid, p_admin_id uuid, p_reason text",
+      "function_name": "void_pos_sale_with_nc",
+      "language": "plpgsql",
+      "security": "SECURITY DEFINER",
+      "volatility": "VOLATILE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "word_similarity",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "word_similarity_commutator_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "word_similarity_dist_commutator_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "word_similarity_dist_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "IMMUTABLE"
+    },
+    {
+      "arguments": "text, text",
+      "function_name": "word_similarity_op",
+      "language": "c",
+      "security": "SECURITY INVOKER",
+      "volatility": "STABLE"
+    }
+  ]
+}

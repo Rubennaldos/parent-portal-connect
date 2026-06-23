@@ -1,0 +1,105 @@
+AUDITORIA ESTRUCTURAL — HALLAZGOS PRELIMINARES
+Proyecto: Lima_cafe_28 (duxqzozoahvrvqseinji)
+Generado: 2026-06-19
+
+================================================================================
+1. MAGNITUD DEL "MONSTRUO"
+================================================================================
+- 169 objetos con columnas en schema public (tablas + vistas)
+- 11 vistas (v_*, view_*)
+- ~12 tablas de backup/staging (z_bk_*, *_backup_*, staging_*)
+- 229 foreign keys activas
+- 343 politicas RLS definidas
+- 115 triggers
+- 323 funciones en public
+- 2224 columnas catalogadas
+
+================================================================================
+2. SEGURIDAD (RLS) — ALERTA ROJA
+================================================================================
+38 tablas tienen RLS ACTIVADO pero CERO politicas (bloque_b2).
+
+Eso significa: nadie entra por API normal (anon/authenticated) salvo service_role
+o funciones SECURITY DEFINER. Puede ser intencional o un hueco operativo.
+
+Tablas criticas en esa lista:
+- alumnos (legacy?) — sin politicas
+- payment_transactions — sin politicas
+- system_secrets — sin politicas (bien si solo backend)
+- perfiles_padres, parent_sessions, student_links
+- inventory_* (varias)
+- Tablas backup mayo (_backup, z_bk_*)
+
+Mientras tanto, "students" SI tiene politicas RLS (tabla operativa actual).
+Hipotesis: conviven tablas legacy (alumnos) y operativas (students).
+
+Accion sugerida para PDF:
+- Inventariar tabla canonica por dominio (students vs alumnos, etc.)
+- Decidir: migrar, archivar o borrar legacy
+- Documentar que tablas solo se acceden via RPC/service_role
+
+================================================================================
+3. SALDO / TRANSACCIONES — RIESGO DE DOBLE CAMINO
+================================================================================
+En "transactions" hay 18 triggers. Dos rutas de sincronizacion de saldo:
+
+  a) on_transaction_created -> update_student_balance()  (AFTER INSERT)
+  b) trg_transactions_balance_sync -> tg_transactions_balance_sync() (INSERT/UPDATE/DELETE)
+
+Segun reglas del proyecto, el SSOT oficial es fn_sync_student_balance via
+trg_transactions_balance_sync. El trigger "on_transaction_created" es candidato
+a duplicidad o logica obsoleta — PRIORIDAD ALTA para el PDF forense.
+
+Otras funciones sensibles detectadas (bloque_c2):
+- apply_gateway_credit (SECURITY DEFINER)
+- fn_sync_student_balance (SECURITY DEFINER)
+- + ~14 funciones con balance/saldo/gateway en el nombre
+
+================================================================================
+4. ALMUERZOS — CADENA DE TRIGGERS
+================================================================================
+lunch_orders concentra logica automatica:
+- trg_lunch_orders_prepayment (BEFORE INSERT)
+- trg_validate_lunch_order_deadline (BEFORE INSERT)
+- trg_sync_cancelled_lunch_to_transaction (AFTER UPDATE)
+- trg_lunch_order_cancellation_cascade (AFTER UPDATE)
+- trg_audit_lunch_orders (AFTER)
+
+Accion sugerida: diagrama de flujo cancelacion/prepago para el PDF.
+
+================================================================================
+5. COLUMNAS FINANCIERAS NULLABLE (bloque_d)
+================================================================================
+Campos sensibles que aceptan NULL (muestra):
+- auditoria_vouchers.monto_detectado
+- students.balance (default 0 pero nullable)
+- transactions.balance_after
+- lunch_orders.base_price, addons_total, final_price
+- invoices.discount_amount
+
+Accion sugerida: revisar cuales deberian ser NOT NULL + CHECK > 0 donde aplique.
+
+================================================================================
+6. CORRECCION APLICADA AL BLOQUE B ORIGINAL
+================================================================================
+La consulta original usaba rowsecurity en pg_policies (columna inexistente).
+Se corrigio con JOIN a pg_tables. Los bloques B2 y C2 se agregaron como
+complemento (huecos RLS + catalogo de funciones).
+
+================================================================================
+7. ARCHIVOS GENERADOS (carpeta AUDITORIA_ESTRUCTURAL_BD/)
+================================================================================
+Por bloque: .sql (consulta), .txt (legible), .json (para Cursor/scripts)
+RESUMEN_AUDITORIA.txt / .json — indice general
+
+Re-ejecutar en cualquier momento:
+  node scripts/auditoria-estructural-bd-cli.mjs
+
+================================================================================
+8. PROXIMO PASO (PASO 4 sugerido)
+================================================================================
+Con estos archivos, Cursor puede:
+1. Armar mapa entidad-relacion limpio (sin backups)
+2. Clasificar debilidades por severidad (dinero > seguridad > deuda tecnica)
+3. Generar PDF de hallazgos y hoja de ruta
+4. Proponer esqueleto definitivo de tablas canon

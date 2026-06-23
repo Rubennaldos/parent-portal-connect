@@ -1,0 +1,811 @@
+{
+  "generated_at": "2026-06-19T07:07:23.657Z",
+  "row_count": 115,
+  "rows": [
+    {
+      "action": "EXECUTE FUNCTION fn_touch_app_settings_updated_at()",
+      "event": "UPDATE",
+      "table_name": "app_settings",
+      "timing": "BEFORE",
+      "trigger_name": "trg_touch_app_settings_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_inventory_updated_at()",
+      "event": "UPDATE",
+      "table_name": "assets_inventory",
+      "timing": "BEFORE",
+      "trigger_name": "trg_assets_updated"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_update_auditoria_timestamp()",
+      "event": "UPDATE",
+      "table_name": "auditoria_vouchers",
+      "timing": "BEFORE",
+      "trigger_name": "trg_auditoria_vouchers_updated"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_billing_payment_pending()",
+      "event": "UPDATE",
+      "table_name": "billing_payments",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_billing_payment_pending"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_billing_payment_pending()",
+      "event": "INSERT",
+      "table_name": "billing_payments",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_billing_payment_pending"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_billing_queue_webhook()",
+      "event": "INSERT",
+      "table_name": "billing_queue",
+      "timing": "AFTER",
+      "trigger_name": "tg_billing_queue_realtime"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_billing_queue_failed_message()",
+      "event": "UPDATE",
+      "table_name": "billing_queue",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_billing_queue_failed_message"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_billing_queue_failed_message()",
+      "event": "INSERT",
+      "table_name": "billing_queue",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_billing_queue_failed_message"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "cash_manual_entries",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_manual"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "cash_manual_entries",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_manual"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "cash_manual_entries",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_manual"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "cash_reconciliations",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_recon"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "cash_reconciliations",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_recon"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_updated_at_column()",
+      "event": "UPDATE",
+      "table_name": "cash_register_config",
+      "timing": "BEFORE",
+      "trigger_name": "update_cash_config_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_updated_at_column()",
+      "event": "UPDATE",
+      "table_name": "cash_registers",
+      "timing": "BEFORE",
+      "trigger_name": "update_cash_registers_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "cash_sessions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_sessions"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "cash_sessions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_sessions"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "cash_sessions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_cash_sessions"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_soft_delete_combo()",
+      "event": "DELETE",
+      "table_name": "combos",
+      "timing": "BEFORE",
+      "trigger_name": "trg_soft_delete_combo"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_sync_combo_active()",
+      "event": "UPDATE",
+      "table_name": "combos",
+      "timing": "BEFORE",
+      "trigger_name": "trg_sync_combo_active"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_combos_updated_at()",
+      "event": "UPDATE",
+      "table_name": "combos",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_combos_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_configurable_groups_updated_at()",
+      "event": "UPDATE",
+      "table_name": "configurable_plate_groups",
+      "timing": "BEFORE",
+      "trigger_name": "configurable_plate_groups_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_dev_backlog_updated_at()",
+      "event": "UPDATE",
+      "table_name": "dev_backlog",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_dev_backlog_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION set_updated_at_empadronados()",
+      "event": "UPDATE",
+      "table_name": "empadronados",
+      "timing": "BEFORE",
+      "trigger_name": "trg_empadronados_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_assign_transfer_number()",
+      "event": "INSERT",
+      "table_name": "internal_transfers",
+      "timing": "BEFORE",
+      "trigger_name": "trg_assign_transfer_number"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_inventory_updated_at()",
+      "event": "UPDATE",
+      "table_name": "inventory_items",
+      "timing": "BEFORE",
+      "trigger_name": "trg_inventory_items_updated"
+    },
+    {
+      "action": "EXECUTE FUNCTION set_updated_at()",
+      "event": "UPDATE",
+      "table_name": "invoices",
+      "timing": "BEFORE",
+      "trigger_name": "set_invoices_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION set_updated_at_invoices()",
+      "event": "UPDATE",
+      "table_name": "invoices",
+      "timing": "BEFORE",
+      "trigger_name": "trg_invoices_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_logs_pasarela_set_updated_at()",
+      "event": "UPDATE",
+      "table_name": "logs_pasarela",
+      "timing": "BEFORE",
+      "trigger_name": "trg_logs_pasarela_set_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_lunch_categories_updated_at()",
+      "event": "UPDATE",
+      "table_name": "lunch_categories",
+      "timing": "BEFORE",
+      "trigger_name": "lunch_categories_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_lunch_configuration_updated_at()",
+      "event": "UPDATE",
+      "table_name": "lunch_configuration",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_lunch_configuration_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_updated_at_column()",
+      "event": "UPDATE",
+      "table_name": "lunch_menu_config",
+      "timing": "BEFORE",
+      "trigger_name": "update_lunch_menu_config_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "lunch_menus",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_lunch_menus"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "lunch_menus",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_lunch_menus"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "lunch_menus",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_lunch_menus"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_updated_at_column()",
+      "event": "UPDATE",
+      "table_name": "lunch_menus",
+      "timing": "BEFORE",
+      "trigger_name": "update_lunch_menus_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION trigger_update_order_price()",
+      "event": "DELETE",
+      "table_name": "lunch_order_addons",
+      "timing": "AFTER",
+      "trigger_name": "update_order_price_on_addon_change"
+    },
+    {
+      "action": "EXECUTE FUNCTION trigger_update_order_price()",
+      "event": "UPDATE",
+      "table_name": "lunch_order_addons",
+      "timing": "AFTER",
+      "trigger_name": "update_order_price_on_addon_change"
+    },
+    {
+      "action": "EXECUTE FUNCTION trigger_update_order_price()",
+      "event": "INSERT",
+      "table_name": "lunch_order_addons",
+      "timing": "AFTER",
+      "trigger_name": "update_order_price_on_addon_change"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "lunch_orders",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_lunch_orders"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_handle_lunch_order_cancellation_cascade()",
+      "event": "UPDATE",
+      "table_name": "lunch_orders",
+      "timing": "AFTER",
+      "trigger_name": "trg_lunch_order_cancellation_cascade"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_handle_prepayment_logic()",
+      "event": "INSERT",
+      "table_name": "lunch_orders",
+      "timing": "BEFORE",
+      "trigger_name": "trg_lunch_orders_prepayment"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_sync_cancelled_lunch_order_to_transaction()",
+      "event": "UPDATE",
+      "table_name": "lunch_orders",
+      "timing": "AFTER",
+      "trigger_name": "trg_sync_cancelled_lunch_to_transaction"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_validate_lunch_order_deadline()",
+      "event": "INSERT",
+      "table_name": "lunch_orders",
+      "timing": "BEFORE",
+      "trigger_name": "trg_validate_lunch_order_deadline"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_lunch_orders_updated_at()",
+      "event": "UPDATE",
+      "table_name": "lunch_orders",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_lunch_orders_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_modifier_groups_updated_at()",
+      "event": "UPDATE",
+      "table_name": "menu_modifier_groups",
+      "timing": "BEFORE",
+      "trigger_name": "modifier_groups_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_modifier_favorites_updated_at()",
+      "event": "UPDATE",
+      "table_name": "modifier_favorites",
+      "timing": "BEFORE",
+      "trigger_name": "modifier_favorites_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_nfc_cards_updated_at()",
+      "event": "UPDATE",
+      "table_name": "nfc_cards",
+      "timing": "BEFORE",
+      "trigger_name": "trg_nfc_cards_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION set_updated_at()",
+      "event": "UPDATE",
+      "table_name": "nubefact_config",
+      "timing": "BEFORE",
+      "trigger_name": "set_nubefact_config_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_parent_profiles_updated_at()",
+      "event": "UPDATE",
+      "table_name": "parent_profiles",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_parent_profiles_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION check_parent_has_school()",
+      "event": "UPDATE",
+      "table_name": "parent_profiles",
+      "timing": "BEFORE",
+      "trigger_name": "validate_parent_school"
+    },
+    {
+      "action": "EXECUTE FUNCTION check_parent_has_school()",
+      "event": "INSERT",
+      "table_name": "parent_profiles",
+      "timing": "BEFORE",
+      "trigger_name": "validate_parent_school"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_payment_sessions_debt_ids()",
+      "event": "INSERT",
+      "table_name": "payment_sessions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_payment_sessions_debt_ids"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_payment_sessions_debt_ids()",
+      "event": "UPDATE",
+      "table_name": "payment_sessions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_payment_sessions_debt_ids"
+    },
+    {
+      "action": "EXECUTE FUNCTION apply_payment_recharge()",
+      "event": "UPDATE",
+      "table_name": "payment_transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_apply_payment_recharge"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_printer_configs_updated_at()",
+      "event": "UPDATE",
+      "table_name": "printer_configs",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_printer_configs_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_log_price_change()",
+      "event": "UPDATE",
+      "table_name": "product_school_prices",
+      "timing": "AFTER",
+      "trigger_name": "trg_log_price_change_school"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_product_school_prices_scope_guard()",
+      "event": "INSERT",
+      "table_name": "product_school_prices",
+      "timing": "BEFORE",
+      "trigger_name": "trg_product_school_prices_scope_guard"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_product_school_prices_scope_guard()",
+      "event": "UPDATE",
+      "table_name": "product_school_prices",
+      "timing": "BEFORE",
+      "trigger_name": "trg_product_school_prices_scope_guard"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_product_school_prices_updated_at()",
+      "event": "UPDATE",
+      "table_name": "product_school_prices",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_product_school_prices_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_product_stock_negative_switch()",
+      "event": "UPDATE",
+      "table_name": "product_stock",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_product_stock_negative_switch"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_product_stock_negative_switch()",
+      "event": "INSERT",
+      "table_name": "product_stock",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_product_stock_negative_switch"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_log_stock_manual_adjustment()",
+      "event": "UPDATE",
+      "table_name": "product_stock",
+      "timing": "AFTER",
+      "trigger_name": "trg_log_stock_manual_adjustment"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_updated_at_column()",
+      "event": "UPDATE",
+      "table_name": "products",
+      "timing": "BEFORE",
+      "trigger_name": "set_updated_at_products"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_log_price_change_base()",
+      "event": "UPDATE",
+      "table_name": "products",
+      "timing": "AFTER",
+      "trigger_name": "trg_log_price_change_base"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_products_scope_prices_deactivate()",
+      "event": "UPDATE",
+      "table_name": "products",
+      "timing": "AFTER",
+      "trigger_name": "trg_products_scope_prices_deactivate"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_soft_delete_product()",
+      "event": "DELETE",
+      "table_name": "products",
+      "timing": "BEFORE",
+      "trigger_name": "trg_soft_delete_product"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_sync_product_active()",
+      "event": "UPDATE",
+      "table_name": "products",
+      "timing": "BEFORE",
+      "trigger_name": "trg_sync_product_active"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_promotions_updated_at()",
+      "event": "UPDATE",
+      "table_name": "promotions",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_promotions_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_inventory_updated_at()",
+      "event": "UPDATE",
+      "table_name": "purchase_orders",
+      "timing": "BEFORE",
+      "trigger_name": "trg_purchase_orders_updated"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_block_duplicate_debt_payment()",
+      "event": "INSERT",
+      "table_name": "recharge_requests",
+      "timing": "BEFORE",
+      "trigger_name": "tg_block_duplicate_debt_payment"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "recharge_requests",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_recharge_requests"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "recharge_requests",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_recharge_requests"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "recharge_requests",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_recharge_requests"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_check_no_overlapping_payment_ids()",
+      "event": "INSERT",
+      "table_name": "recharge_requests",
+      "timing": "BEFORE",
+      "trigger_name": "trg_check_no_overlapping_payment_ids"
+    },
+    {
+      "action": "EXECUTE FUNCTION ensure_manual_payments_disabled()",
+      "event": "INSERT",
+      "table_name": "recharge_requests",
+      "timing": "BEFORE",
+      "trigger_name": "trg_ensure_manual_payments_disabled"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_voucher_approval()",
+      "event": "UPDATE",
+      "table_name": "recharge_requests",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_voucher_approval"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_recharge_requests_promote_frozen()",
+      "event": "UPDATE",
+      "table_name": "recharge_requests",
+      "timing": "AFTER",
+      "trigger_name": "trg_recharge_requests_promote_frozen"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_sales_updated_at()",
+      "event": "UPDATE",
+      "table_name": "sales",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_sales_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_school_classrooms_updated_at()",
+      "event": "UPDATE",
+      "table_name": "school_classrooms",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_school_classrooms_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_school_levels_updated_at()",
+      "event": "UPDATE",
+      "table_name": "school_levels",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_school_levels_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION sync_student_names()",
+      "event": "UPDATE",
+      "table_name": "students",
+      "timing": "BEFORE",
+      "trigger_name": "sync_student_names_trigger"
+    },
+    {
+      "action": "EXECUTE FUNCTION sync_student_names()",
+      "event": "INSERT",
+      "table_name": "students",
+      "timing": "BEFORE",
+      "trigger_name": "sync_student_names_trigger"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "students",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_students_balance"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_force_free_account_mode()",
+      "event": "UPDATE",
+      "table_name": "students",
+      "timing": "BEFORE",
+      "trigger_name": "trg_force_free_account_mode"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_force_free_account_mode()",
+      "event": "INSERT",
+      "table_name": "students",
+      "timing": "BEFORE",
+      "trigger_name": "trg_force_free_account_mode"
+    },
+    {
+      "action": "EXECUTE FUNCTION force_zero_balance_on_insert()",
+      "event": "INSERT",
+      "table_name": "students",
+      "timing": "BEFORE",
+      "trigger_name": "trg_force_zero_balance_on_insert"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_log_student_balance_change()",
+      "event": "UPDATE",
+      "table_name": "students",
+      "timing": "AFTER",
+      "trigger_name": "trg_log_student_balance_change"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_inventory_updated_at()",
+      "event": "UPDATE",
+      "table_name": "suppliers",
+      "timing": "BEFORE",
+      "trigger_name": "trg_suppliers_updated"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_system_status_updated_at()",
+      "event": "UPDATE",
+      "table_name": "system_status",
+      "timing": "BEFORE",
+      "trigger_name": "trg_system_status_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_teacher_profiles_updated_at()",
+      "event": "UPDATE",
+      "table_name": "teacher_profiles",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_teacher_profiles_updated_at"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_block_transaction_items_delete()",
+      "event": "DELETE",
+      "table_name": "transaction_items",
+      "timing": "BEFORE",
+      "trigger_name": "trg_block_transaction_items_delete"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_product_sales_count()",
+      "event": "INSERT",
+      "table_name": "transaction_items",
+      "timing": "AFTER",
+      "trigger_name": "trigger_update_product_sales"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_student_balance()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "on_transaction_created"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_transactions"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_transactions"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_transactions"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_enforce_spending_limit()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_enforce_spending_limit"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_guard_kiosk_spending_limits()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_guard_kiosk_spending_limits"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_log_transaction_edit_post_approval()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_log_transaction_edit_post_approval"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_prevent_modifying_sent_transactions()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_protect_sent_transactions"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_prevent_modifying_sent_transactions()",
+      "event": "DELETE",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_protect_sent_transactions"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_sync_period_spent_after_purchase()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_sync_period_spent"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_sync_period_spent_after_cancel()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_sync_period_spent_on_cancel"
+    },
+    {
+      "action": "EXECUTE FUNCTION fn_assign_report_op_seq()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trg_transactions_assign_op_seq"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_transactions_balance_sync()",
+      "event": "DELETE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_transactions_balance_sync"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_transactions_balance_sync()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_transactions_balance_sync"
+    },
+    {
+      "action": "EXECUTE FUNCTION tg_transactions_balance_sync()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_transactions_balance_sync"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_transactions_promote_frozen()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_transactions_promote_frozen"
+    },
+    {
+      "action": "EXECUTE FUNCTION trg_fn_transactions_promote_frozen()",
+      "event": "UPDATE",
+      "table_name": "transactions",
+      "timing": "AFTER",
+      "trigger_name": "trg_transactions_promote_frozen"
+    },
+    {
+      "action": "EXECUTE FUNCTION prevent_duplicate_lunch_transaction()",
+      "event": "INSERT",
+      "table_name": "transactions",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_prevent_duplicate_lunch_transaction"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "INSERT",
+      "table_name": "treasury_transfers",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_treasury"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "UPDATE",
+      "table_name": "treasury_transfers",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_treasury"
+    },
+    {
+      "action": "EXECUTE FUNCTION log_billing_audit_event()",
+      "event": "DELETE",
+      "table_name": "treasury_transfers",
+      "timing": "AFTER",
+      "trigger_name": "trg_audit_treasury"
+    },
+    {
+      "action": "EXECUTE FUNCTION update_weekly_menus_updated_at()",
+      "event": "UPDATE",
+      "table_name": "weekly_menus",
+      "timing": "BEFORE",
+      "trigger_name": "trigger_update_weekly_menus_updated_at"
+    }
+  ]
+}

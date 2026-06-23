@@ -1,0 +1,45 @@
+AUDITORIA ESTRUCTURAL — Bloque B2: tablas_sin_rls_o_sin_politicas
+Generado: 2026-06-19T07:07:41.776Z
+Filas: 38
+================================================================================
+
+policy_count	rowsecurity	tablename
+--------------------------------------------------------------------------------
+0	true	_backup_profiles_full_name_20260530
+0	true	_rollback_stock_ctrl_20260524
+0	true	allergies
+0	true	alumnos
+0	true	app_config
+0	true	assets_inventory
+0	true	daily_menu
+0	true	inventory_categories
+0	true	inventory_items
+0	true	inventory_movements
+0	true	inventory_stock
+0	true	lunch_menu_config
+0	true	lunch_orders_backup_mayo_09
+0	true	mass_approve_results
+0	true	nutritional_tips
+0	true	parent_activity_log
+0	true	parent_sessions
+0	true	payment_transactions
+0	true	perfiles_padres
+0	true	purchase_order_items
+0	true	purchase_orders
+0	true	special_days
+0	true	staging_sunat_abril_2026
+0	true	student_links
+0	true	student_relationships
+0	true	supply_request_items
+0	true	supply_requests
+0	true	system_secrets
+0	true	terms_and_conditions
+0	true	ticket_sequences_by_school
+0	true	transactions_backup_mayo_09
+0	true	z_bk_estudiantes_mayo
+0	true	z_bk_items_mayo
+0	true	z_bk_perfiles_mayo
+0	true	z_bk_precios_mayo
+0	true	z_bk_productos_mayo
+0	true	z_bk_transacciones_mayo
+0	true	z_bk_ventas_mayo
