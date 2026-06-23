@@ -4,9 +4,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  // cache-control: el SDK de Supabase JS lo envía automáticamente; sin este header
-  // el preflight CORS falla cuando la función se invoca desde el browser.
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, cache-control",
+  // resilientFetch (supabase.ts) inyecta cache-control y pragma en cada request.
+  // Sin estos headers el preflight CORS falla al invocar desde el browser.
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, cache-control, pragma",
 };
 
 serve(async (req) => {

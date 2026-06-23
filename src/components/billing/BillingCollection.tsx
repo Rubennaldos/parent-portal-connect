@@ -930,12 +930,23 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
       // calcula el monto y el IGV desde la BD, y encola el job.
       // El worker asíncrono emite y cierra las transacciones.
       if (invoiceData && (paymentData.document_type === 'boleta' || paymentData.document_type === 'factura')) {
+        if (realTxIds.length === 0) {
+          toast({
+            variant: 'destructive',
+            title: '⚠️ Cobro guardado — Sin transacciones para facturar',
+            description:
+              'El cobro quedó registrado, pero no hay transacciones UUID vinculadas para encolar el comprobante. ' +
+              'Revisa desde Cierre Mensual si aplica.',
+            duration: 12000,
+          });
+        } else {
         try {
           const clientData = {
             doc_type:     invoiceData.doc_type === 'sin_documento' ? '-' : invoiceData.doc_type,
             doc_number:   invoiceData.doc_number || '-',
             razon_social: invoiceData.razon_social || 'Consumidor Final',
             direccion:    invoiceData.direccion || '-',
+            email:        invoiceData.email || '',
           };
 
           const { data: rpcEnqueue, error: enqErr } = await supabase.rpc(
@@ -943,8 +954,10 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             {
               p_job_type:            'collection',
               p_school_id:           currentDebtor.school_id,
-              p_transaction_ids:     realTxIds.length > 1 ? realTxIds : null,
-              p_transaction_id:      realTxIds.length === 1 ? realTxIds[0] : null,
+              // collection SIEMPRE exige p_transaction_ids (array), incluso con 1 tx.
+              // p_transaction_id es solo para pos_sale — pasarlo null evitaba el encolado.
+              p_transaction_ids:     realTxIds,
+              p_transaction_id:      null,
               p_invoice_client_data: clientData,
               p_invoice_type:        invoiceData.tipo,
               p_payment_method:      paymentData.payment_method,
@@ -952,20 +965,26 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
             }
           );
 
-          if (enqErr) throw enqErr;
+          const enqResult = rpcEnqueue as { status?: string; queue_id?: string; error?: string; detail?: string } | null;
 
-          const enqResult = rpcEnqueue as { status: string; queue_id?: string; error?: string; detail?: string } | null;
-
-          if (enqResult?.error) {
+          if (enqErr || enqResult?.error) {
+            const errMsg = enqResult?.detail ?? enqResult?.error ?? enqErr?.message ?? 'Error desconocido';
             toast({
               variant: 'destructive',
               title: '⚠️ Cobro guardado — No se pudo encolar comprobante',
-              description: enqResult.detail ?? enqResult.error,
+              description: errMsg,
               duration: 12000,
+            });
+          } else if (enqResult?.status === 'already_enqueued') {
+            toast({
+              title: '✅ Cobro guardado con éxito - Comprobante enviado a la cola de procesamiento',
+              description:
+                `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ` +
+                `El comprobante ya estaba en cola; no se creó duplicado.`,
             });
           } else {
             toast({
-              title: '✅ Cobro guardado — Comprobante enviado a la cola de procesamiento',
+              title: '✅ Cobro guardado con éxito - Comprobante enviado a la cola de procesamiento',
               description:
                 `S/ ${finalPaidAmount.toFixed(2)} cobrados con ${methodLabel}. ` +
                 `El comprobante se emitirá automáticamente y quedará vinculado a la deuda.`,
@@ -984,6 +1003,7 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
               `NO vuelvas a cobrar.`,
             duration: 15000,
           });
+        }
         }
       } else {
         // Sin comprobante solicitado: toast de cobro simple

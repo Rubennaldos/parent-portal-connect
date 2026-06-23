@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { consultarDNIRUC } from '@/services/consultDocumentService';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -188,15 +189,14 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
     setSearching(true);
     setError(null);
     try {
-      const res  = await fetch('/api/consult-dni', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ tipo: docType, numero: docNumber }),
-      });
-      const data: Record<string, any> = await res.json();
+      const data = await consultarDNIRUC(
+        docType as 'dni' | 'ruc',
+        docNumber,
+        transaction.school_id ?? null,
+      );
       if (data.success) {
         setNombre(data.razon_social || data.nombre || '');
-        if (data.direccion) setDireccion(data.direccion);
+        if (data.direccion) setDireccion(String(data.direccion));
       } else {
         toast({
           variant:     'destructive',

@@ -13,55 +13,7 @@ import {
   User, Building2, MapPin, X, ChevronRight, Info, Save,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { supabaseConfig } from '@/config/supabase.config';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Consulta DNI/RUC via fetch directo a la Edge Function 'consult-document'.
-// Usamos fetch() en vez de supabase.functions.invoke() porque en algunas
-// versiones del SDK los headers personalizados REEMPLAZAN los defaults (en vez
-// de fusionarse), eliminando el header 'apikey' que Supabase Gateway requiere.
-// Con fetch() tenemos control total: enviamos Authorization + apikey siempre.
-// ─────────────────────────────────────────────────────────────────────────────
-async function consultarDNIRUCPublico(
-  tipo: 'dni' | 'ruc',
-  numero: string,
-  schoolId?: string,
-): Promise<Record<string, any>> {
-  // Construir URL y clave anon desde la config activa (dev o prod según entorno)
-  const supabaseUrl  = supabaseConfig.url.replace(/\/$/, '');
-  const anonKey      = supabaseConfig.anonKey;
-  const functionUrl  = `${supabaseUrl}/functions/v1/consult-document`;
-
-  // Usar siempre el anon key (HS256) como Bearer.
-  // Los tokens de sesión de usuario usan ES256 (algoritmo nuevo de Supabase)
-  // pero la Edge Function solo acepta HS256 → usar el anon key garantiza HS256.
-  // Esta función solo consulta SUNAT/RENIEC — no requiere identidad de usuario.
-  const authToken = anonKey;
-
-  try {
-    const res = await fetch(functionUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${authToken}`,
-        'apikey':        anonKey,          // Supabase Gateway lo exige siempre
-      },
-      body: JSON.stringify({ tipo, numero, school_id: schoolId ?? null }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn(`[consult-document] HTTP ${res.status}:`, text);
-      return { success: false, error: `Servicio no disponible (${res.status}). Escribe tu nombre manualmente.` };
-    }
-
-    const data = await res.json();
-    return data ?? { success: false, error: 'Respuesta vacía del servidor.' };
-  } catch (err) {
-    console.warn('[consult-document] Error de red:', err);
-    return { success: false, error: 'No se pudo conectar con el servicio de consulta.' };
-  }
-}
+import { consultarDNIRUC } from '@/services/consultDocumentService';
 
 export type InvoiceType = 'boleta' | 'factura';
 
@@ -228,7 +180,7 @@ export const InvoiceClientModal = ({
     setSunatResult(null);
     setSearching(true);
     try {
-      const result = await consultarDNIRUCPublico(docType as 'dni' | 'ruc', numero, schoolId);
+      const result = await consultarDNIRUC(docType as 'dni' | 'ruc', numero, schoolId);
       if (!result.success) {
         const errorMsg = result.error || `No se encontró el ${docType === 'ruc' ? 'RUC' : 'DNI'} en los registros oficiales.`;
         // Log para auditoría del administrador (no visible al padre)
