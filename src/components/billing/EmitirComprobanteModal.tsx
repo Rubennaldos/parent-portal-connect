@@ -63,38 +63,11 @@ function rowTotal(item: LineItem): number {
 // documentos fiscales. La fecha de emisión se obtiene de get_lima_today() en
 // PostgreSQL (America/Lima, UTC-5 permanente, sin horario de verano).
 
-/**
- * Construye el array de ítems para Nubefact a partir de cada LineItem.
- * Para modo normal (una sola transacción) conserva el helper original.
- */
-function buildNubefactItems(items: LineItem[], igvPct: number) {
-  return items.map((item) => {
-    const total       = rowTotal(item);
-    const totalCents  = Math.round(total * 100);
-    const divisorX100 = 100 + igvPct;
-    const baseCents   = Math.floor(totalCents * 100 / divisorX100);
-    const igvCents    = totalCents - baseCents;
-    const base        = baseCents / 100;
-    const igv         = igvCents  / 100;
-    const qty         = parseNum(item.cantidad);
-    const unitPrice   = parseNum(item.precioUnit);
-
-    return {
-      unidad_de_medida:        'NIU',
-      codigo:                  'SERV',
-      descripcion:             item.descripcion.trim() || 'Servicio',
-      cantidad:                qty,
-      valor_unitario:          Math.round((base / qty) * 100) / 100,
-      precio_unitario:         unitPrice,
-      descuento:               '',
-      subtotal:                base,
-      tipo_de_igv:             1,
-      igv,
-      total,
-      anticipo_regularizacion: false,
-    };
-  });
-}
+// buildNubefactItems() ELIMINADO — Regla 11.A: el cálculo de base imponible e IGV
+// pertenece al servidor. La Edge Function generate-document ya recalcula cada ítem
+// con la tasa de billing_config.igv_porcentaje (líneas 382-421 del worker).
+// El modal envía items raw { descripcion, cantidad, precio_unitario } y delega
+// el split base/IGV a la Edge Function.
 
 // ── Componente ────────────────────────────────────────────────────────────────
 
@@ -250,34 +223,33 @@ export function EmitirComprobanteModal({ open, onClose, transaction, onSuccess }
     setError(null);
 
     try {
-      // Construir los items para Nubefact
-      let nubefactItems;
+      // Construir los items RAW para la Edge Function.
+      // Regla 11.A: PROHIBIDO calcular base imponible o IGV aquí.
+      // generate-document recalcula base+IGV con billing_config.igv_porcentaje.
+      let nubefactItems: { unidad_de_medida: string; codigo: string; descripcion: string; cantidad: number; precio_unitario: number }[];
       let montoTotal: number;
 
       if (isManualMode) {
-        nubefactItems = buildNubefactItems(items, igvPct);
-        montoTotal    = totalFinal;
+        nubefactItems = items
+          .filter(i => i.descripcion.trim() && parseNum(i.cantidad) > 0 && parseNum(i.precioUnit) > 0)
+          .map((item, idx) => ({
+            unidad_de_medida: 'NIU',
+            codigo:           String(idx + 1).padStart(3, '0'),
+            descripcion:      item.descripcion.trim(),
+            cantidad:         parseNum(item.cantidad),
+            precio_unitario:  parseNum(item.precioUnit),
+          }));
+        montoTotal = totalFinal;
       } else {
-        // Modo normal: una sola línea con los datos de la transacción
-        const monto      = Math.round(Math.abs(transaction.amount) * 100) / 100;
+        // Modo normal: ítem raw desde la transacción — Edge Function calcula IGV
+        const monto       = Math.round(Math.abs(transaction.amount) * 100) / 100;
         const descripcion = (transaction.description || `Ticket ${transaction.ticket_code ?? ''}`.trim() || 'Consumo').slice(0, 200);
-        const tCents     = Math.round(monto * 100);
-        const div100     = 100 + igvPct;
-        const baseCents  = Math.floor(tCents * 100 / div100);
-        const igvCents   = tCents - baseCents;
-        nubefactItems    = [{
-          unidad_de_medida:        'NIU',
-          codigo:                  'SERV',
+        nubefactItems = [{
+          unidad_de_medida: 'NIU',
+          codigo:           'SERV',
           descripcion,
-          cantidad:                1,
-          valor_unitario:          baseCents / 100,
-          precio_unitario:         monto,
-          descuento:               '',
-          subtotal:                baseCents / 100,
-          tipo_de_igv:             1,
-          igv:                     igvCents / 100,
-          total:                   monto,
-          anticipo_regularizacion: false,
+          cantidad:         1,
+          precio_unitario:  monto,
         }];
         montoTotal = monto;
       }

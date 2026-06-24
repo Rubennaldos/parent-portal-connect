@@ -1186,7 +1186,7 @@ export const VoucherApproval = () => {
         .update({
           status:      'approved',
           approved_by: user.id,
-          approved_at: new Date().toISOString(),
+          // approved_at asignado por trigger trg_recharge_requests_approved_at (Regla 11.C)
         })
         .eq('id', req.id)
         .eq('status', 'pending')
@@ -1525,10 +1525,10 @@ export const VoucherApproval = () => {
       const { data: rejectResult, error } = await supabase
         .from('recharge_requests')
         .update({
-          status: 'rejected',
+          status:           'rejected',
           rejection_reason: reason,
-          approved_by: user.id,
-          approved_at: new Date().toISOString(),
+          approved_by:      user.id,
+          // approved_at asignado por trigger trg_recharge_requests_approved_at (Regla 11.C)
         })
         .eq('id', req.id)
         .eq('status', 'pending')
@@ -1549,9 +1549,9 @@ export const VoucherApproval = () => {
       // 2. Marcar rechazo en metadata de transacciones (lunch y debt)
       const rejectionMeta = {
         last_payment_rejected: true,
-        rejection_reason: reason,
-        rejected_at: new Date().toISOString(),
-        rejected_request_id: req.id,
+        rejection_reason:      reason,
+        // rejected_at omitido — la fuente de verdad temporal es recharge_requests.approved_at (Regla 11.C)
+        rejected_request_id:   req.id,
       };
 
       // A) Lunch orders
@@ -1618,7 +1618,7 @@ export const VoucherApproval = () => {
                 motivo: `[RECHAZADO POR ADMIN] ${reason || 'Comprobante no válido'}`,
                 rechazo_manual: true,
                 rechazado_por: user.id,
-                rechazado_at: new Date().toISOString(),
+                // rechazado_at omitido — la fuente de verdad temporal es recharge_requests.approved_at (Regla 11.C)
               },
             })
             .eq('id', auditRow.id);

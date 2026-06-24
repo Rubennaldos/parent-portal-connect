@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { executeCheckout, type CheckoutOutcome } from '@/features/pos/services/checkoutService';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
@@ -333,6 +334,13 @@ const POS = () => {
   // Estados de carrito y venta
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  // Estado de error del último intento de checkout.
+  // null = sin error. Se preserva entre reintentos para que el modal no desaparezca.
+  // Solo se limpia en éxito (finalizeSuccessfulCheckout) o en "Descartar intento".
+  const [checkoutError, setCheckoutError] = useState<{
+    errorType: 'retryable' | 'business';
+    message: string;
+  } | null>(null);
   const [insufficientBalance, setInsufficientBalance] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null); // 'efectivo', 'yape_qr', 'yape_numero', 'plin_qr', 'plin_numero', 'tarjeta', 'transferencia', 'mixto'
   const [yapeNumber, setYapeNumber] = useState('');
@@ -1505,15 +1513,33 @@ const POS = () => {
     setPlinNumber('');
     setTransactionCode('');
     setRequiresInvoice(false);
-    // Limpiar búsqueda unificada
     setShowRegisteredSearch(false);
     setRegisteredSearch('');
     setRegisteredResults([]);
     setIsGlobalSearch(false);
-    // Resetear clave de idempotencia (la próxima venta genera la suya propia)
     setSaleIdempotencyKey(null);
     console.log('✅ Estado limpio - Modal de selección debe aparecer');
   };
+
+  /**
+   * Único punto de limpieza post-venta exitosa (P0 fix).
+   *
+   * SOLO debe llamarse cuando el backend confirmó la venta con un transactionId real.
+   * Combina resetClient + cierre de modales + refresco de stock en un lugar.
+   * Ninguna otra función debe limpiar el carrito después de un checkout.
+   */
+  const finalizeSuccessfulCheckout = useCallback(() => {
+    setCheckoutError(null);
+    setShowPaymentDialog(false);
+    setShowConfirmDialog(false);
+    setShowCreditConfirmDialog(false);
+    resetClient();
+    // P1: refrescar catálogo inmediatamente para que el stock bajado sea visible.
+    // Realtime sigue activo como reconciliación de otras cajas; este fetch
+    // garantiza que el cajero que acaba de vender vea el número correcto al acto.
+    fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ══════════════════════════════════════════════════════════
   // 📡 NFC: listener global en la pantalla de selección
@@ -1801,37 +1827,59 @@ const POS = () => {
   const handleCheckoutClick = () => {
     if (!canCheckout()) return;
 
-    // Generar la clave de idempotencia UNA SOLA VEZ por intento de cobro.
+    // Limpiar error del intento anterior al abrir el modal de cobro.
+    // (Si el cajero cierra el modal y vuelve a cobrar, no debe ver el error viejo.)
+    // Si llega aquí SIN haber descartado, la idempotency key se conserva
+    // deliberadamente para poder reintentar sin doble cobro.
+    setCheckoutError(null);
+
+    // Generar clave de idempotencia UNA SOLA VEZ por intento de cobro.
     // Si el cajero presiona COBRAR de nuevo tras un error de red, conserva la
     // misma clave para que el RPC detecte el duplicado y no doble-cobre.
-    // La clave ya se reseteó si el carrito fue modificado.
+    // La clave se resetea solo cuando el cajero modifica el carrito o descarta.
     if (!saleIdempotencyKey) {
       setSaleIdempotencyKey(`${userSchoolId}-${user?.id}-${Date.now()}`);
     }
 
-    // Decidir qué modal mostrar según el tipo de cliente
     if (clientMode === 'student' || clientMode === 'teacher') {
-      // Cuenta de crédito (estudiante o profesor): Modal simple de confirmación (sin métodos de pago)
       setShowCreditConfirmDialog(true);
     } else {
-      // Cliente genérico: Modal de selección de método de pago
       setShowConfirmDialog(true);
     }
   };
 
   const handleConfirmCheckout = async (shouldPrint: boolean = true) => {
-    // Guarda contra doble-clic: si ya estamos procesando, ignorar llamadas adicionales
     if (isProcessing) return;
-    // Procesar directamente (ya no hay segundo modal)
-    await processCheckout(undefined, shouldPrint);
-    
-    // La impresión ahora la maneja posPrinterService automáticamente
-    // No necesitamos window.print() aquí ya que interfiere con el ticket HTML
-      
-    // Después de procesar, resetear automáticamente
-    setShowConfirmDialog(false);
-    setShowCreditConfirmDialog(false);
-    resetClient();
+
+    // Limpiar error previo al iniciar un nuevo intento
+    setCheckoutError(null);
+
+    const outcome = await processCheckout(undefined, shouldPrint);
+
+    switch (outcome.status) {
+      case 'success':
+      case 'offline_queued':
+        // Único camino que autoriza limpiar pantalla
+        finalizeSuccessfulCheckout();
+        break;
+
+      case 'retryable':
+      case 'in_progress':
+        // Red caída o idempotencia en vuelo: conservar carrito + clave intactos.
+        // El modal se queda abierto mostrando el banner de reintento.
+        setCheckoutError({ errorType: 'retryable', message: outcome.message });
+        break;
+
+      case 'business_error':
+      case 'session_error':
+        // Error de negocio (stock, tope, kiosco…): el toast ya fue mostrado.
+        // Modal queda abierto; cajera ve el error y puede corregir el carrito.
+        setCheckoutError({
+          errorType: 'business',
+          message:   (outcome as { message?: string }).message ?? '',
+        });
+        break;
+    }
   };
 
   /** Genera comprobante electrónico (boleta/factura) después de procesar la venta */
@@ -1839,32 +1887,47 @@ const POS = () => {
     setInvoiceClientData(clientData);
     setShowInvoiceClientModal(false);
     setIsGeneratingInvoice(true);
+    setCheckoutError(null);
 
-    // Capturamos carrito ANTES de que processCheckout resetee el carrito.
-    // resetClient() ocurre en un setTimeout 500 ms.
+    // Snapshot del carrito ANTES de processar, ya que processCheckout
+    // puede limpiar la pantalla si hay éxito (via finalizeSuccessfulCheckout).
     const cartSnapshot = [...cart];
 
+    let ventaExitosa = false;
+    let transactionId: string | null = null;
+
     try {
-      // ── PASO 1: Procesar la venta ─────────────────────────────────────────
-      // processCheckout guarda document_type y datos del cliente en transactions
-      // y retorna el UUID de la transacción. El monto está en la BD desde aquí.
-      const transactionId = await processCheckout({
+      // ── PASO 1: Registrar la venta ─────────────────────────────────────────
+      const outcome = await processCheckout({
         document_type: clientData.tipo,
-        client_name: clientData.razon_social || undefined,
+        client_name:   clientData.razon_social || undefined,
         client_dni_ruc:
           clientData.doc_number && clientData.doc_number !== '-'
             ? clientData.doc_number
             : undefined,
       });
 
-      // Si processCheckout falló internamente (ya mostró su propio toast de error),
-      // salimos sin encolar. La venta no existe, nada que facturar.
-      if (!transactionId) return;
+      // Si la venta no se confirmó en BD, no hay nada que facturar.
+      if (outcome.status !== 'success') {
+        // El toast de error ya fue mostrado por processCheckout.
+        // Tratar el outcome igual que handleConfirmCheckout para mantener
+        // consistencia en la UI (retryable = banner; business = banner leve).
+        if (outcome.status === 'retryable' || outcome.status === 'in_progress') {
+          setCheckoutError({ errorType: 'retryable', message: outcome.message });
+        } else {
+          setCheckoutError({
+            errorType: 'business',
+            message:   (outcome as { message?: string }).message ?? '',
+          });
+        }
+        return;
+      }
 
-      // ── PASO 2: Encolar al portón seguro (Fase 2B) ───────────────────────
-      // El frontend NO calcula IGV. Pasa solo los datos raw del carrito;
-      // el RPC recalcula montos y construye el payload para Nubefact.
-      // Los campos que espera p_items_raw: { name, qty, unit_price, uom?, code? }
+      ventaExitosa  = true;
+      transactionId = outcome.transactionId;
+
+      // ── PASO 2: Encolar comprobante electrónico ───────────────────────────
+      // El frontend NO calcula IGV — pasa datos raw; el RPC recalcula montos.
       const itemsRaw = cartSnapshot.map((ci, idx) => ({
         name:       ci.product.name,
         qty:        ci.quantity,
@@ -1901,37 +1964,37 @@ const POS = () => {
       if (enqResult?.error) {
         console.error('⚠️ [POS] RPC enqueue devolvió error:', enqResult.error, enqResult.detail);
         toast({
-          variant: 'destructive',
-          title: '⚠️ Venta guardada — Error al encolar comprobante',
+          variant:  'destructive',
+          title:    '⚠️ Venta guardada — Error al encolar comprobante',
           description:
             `La venta se registró en la base de datos. ` +
             `No se pudo encolar el comprobante (${enqResult.detail ?? enqResult.error}). ` +
-            `Reinténtalo desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
-            `NO vuelvas a cobrar.`,
+            `Reintentalo desde Facturación → Cierre Mensual → "Reintentar Fallidas". ` +
+            `NO volvás a cobrar.`,
           duration: 12000,
         });
       } else {
         toast({
-          title: `⏳ Venta registrada — Comprobante en cola`,
-          description:
-            `La venta fue guardada. El ${clientData.tipo === 'factura' ? 'factura' : 'boleta'} ` +
-            `se emitirá automáticamente y quedará vinculada a la transacción.`,
+          title:       '⏳ Venta registrada — Comprobante en cola',
+          description: `La venta fue guardada. El ${clientData.tipo === 'factura' ? 'factura' : 'boleta'} se emitirá automáticamente.`,
         });
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('❌ Error en handleGenerateInvoice:', err);
       toast({
-        title: 'Error al procesar',
-        description: err.message || 'Ocurrió un error inesperado. Verifica si la venta fue registrada.',
-        variant: 'destructive',
+        title:       'Error al procesar',
+        description: (err as Error)?.message || 'Ocurrió un error inesperado. Verificá si la venta fue registrada.',
+        variant:     'destructive',
       });
     } finally {
       setIsGeneratingInvoice(false);
-      setShowConfirmDialog(false);
-      setShowCreditConfirmDialog(false);
       setShowDocumentTypeDialog(false);
-      resetClient();
+      // Solo limpiar pantalla si la venta efectivamente se registró en BD.
+      // Si falló, los modales quedan abiertos y el carrito se preserva.
+      if (ventaExitosa) {
+        finalizeSuccessfulCheckout();
+      }
     }
   };
 
@@ -2016,76 +2079,66 @@ const POS = () => {
     client_dni_ruc?: string;
   }
 
-  const processCheckout = async (billingData?: BillingData, shouldPrint: boolean = true) => {
-    /** Normaliza el método de pago al formato que espera la tabla `sales` (en inglés) */
-    const toSalesMethod = (method: string | null): string => {
-      const map: Record<string, string> = {
-        efectivo: 'cash', tarjeta: 'card', transferencia: 'transfer',
-        yape: 'yape', mixto: 'mixto', saldo: 'saldo',
-        debt: 'debt', teacher_account: 'teacher_account',
-      };
-      return map[method || ''] ?? method ?? 'cash';
-    };
+  const processCheckout = async (billingData?: BillingData, shouldPrint: boolean = true): Promise<CheckoutOutcome> => {
+    // ── Guard de sesión ──────────────────────────────────────────────────────
     if (!user?.id) {
       toast({
         variant: 'destructive',
         title: 'Error de sesión',
-        description: 'No se puede procesar la venta sin un usuario autenticado. Cierra sesión y vuelve a iniciar.',
+        description: 'No se puede procesar la venta sin un usuario autenticado. Cerrá sesión y volvé a ingresar.',
       });
-      return;
+      return { status: 'session_error', message: 'Sin usuario autenticado.' };
     }
 
     setIsProcessing(true);
-    // ID de la transacción creada — se retorna al final para que el flujo
-    // de facturación electrónica pueda vincular el comprobante.
-    let createdTransactionId: string | null = null;
 
     try {
-      const total = getTotal();
-
+      // ── Offline: encolar y devolver outcome inmediato ──────────────────────
       if (!isOnline) {
         await processOfflineCheckout();
-        return;
+        // processOfflineCheckout limpia carrito y muestra toast propio.
+        // El caller (handleConfirmCheckout) lo trata igual que un success para
+        // poder llamar finalizeSuccessfulCheckout().
+        return { status: 'offline_queued', offlineId: 'pending', tempTicket: 'pending' };
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // 🔒 VERIFICACIÓN DE PRODUCTOS ACTIVOS
-      // Antes de procesar el pago, confirmar que todos los productos del
-      // carrito siguen activos en la BD (pudieron ser fusionados o
-      // desactivados por logística mientras el cajero preparaba la venta).
-      // ─────────────────────────────────────────────────────────────────────
-      const cartProductIds = cart.map(item => item.product.id);
-      const { data: activeCheck } = await supabase
-        .from('products')
-        .select('id, name, active')
-        .in('id', cartProductIds);
+      // ── Pre-flight: productos activos ─────────────────────────────────────
+      // Verificar ANTES de enviar al RPC que todos los ítems del carrito siguen
+      // activos en la BD (logística pudo desactivarlos mientras el cajero armaba la venta).
+      const cartProductIds = cart
+        .filter(item => !item.product.id.startsWith('combo_') && !(item.is_custom))
+        .map(item => item.product.id);
 
-      const inactiveItems = (activeCheck || []).filter(p => !p.active);
-      if (inactiveItems.length > 0) {
-        const names = inactiveItems.map(p => `"${p.name}"`).join(', ');
-        toast({
-          variant: 'destructive',
-          title: '⛔ Producto(s) no disponibles',
-          description: `${names} ya no está disponible. Retíralo del carrito antes de cobrar.`,
-        });
-        setIsProcessing(false);
-        return;
+      if (cartProductIds.length > 0) {
+        const { data: activeCheck } = await supabase
+          .from('products')
+          .select('id, name, active')
+          .in('id', cartProductIds);
+
+        const inactiveItems = (activeCheck || []).filter(p => !p.active);
+        if (inactiveItems.length > 0) {
+          const names = inactiveItems.map(p => `"${p.name}"`).join(', ');
+          toast({
+            variant: 'destructive',
+            title: '⛔ Producto(s) no disponibles',
+            description: `${names} ya no está disponible. Retiralo del carrito antes de cobrar.`,
+          });
+          return {
+            status: 'business_error',
+            errorType: 'INACTIVE_PRODUCT',
+            message: `Producto(s) inactivos: ${names}`,
+          };
+        }
       }
 
-      // ticketCode y createdTransactionId son rellenados por el RPC atómico (ver abajo)
-      let ticketCode = '';
-
-      // Obtener school_id del cajero (para impresión y para la validación de códigos duplicados)
+      // Obtener school_id del cajero (para impresión y anti-duplicidad de código)
       const { data: cashierProfile } = await supabase
         .from('profiles')
         .select('school_id')
-        .eq('id', user?.id)
+        .eq('id', user.id)
         .single();
 
-      // ─────────────────────────────────────────────────────────────────────
-      // 🔒 PASO 3 — Anti-duplicidad de códigos de operación
-      // Verificar ANTES de crear cualquier transacción que el código no exista.
-      // ─────────────────────────────────────────────────────────────────────
+      // ── Pre-flight: anti-duplicidad de códigos de operación ────────────────
       const schoolIdForCheck =
         cashierProfile?.school_id ||
         selectedStudent?.school_id ||
@@ -2094,9 +2147,7 @@ const POS = () => {
 
       const codigosDigitales: string[] = [];
       if (['yape', 'tarjeta', 'transferencia'].includes(paymentMethod || '')) {
-        if (transactionCode?.trim()) {
-          codigosDigitales.push(transactionCode.trim().toUpperCase());
-        }
+        if (transactionCode?.trim()) codigosDigitales.push(transactionCode.trim().toUpperCase());
       } else if (paymentMethod === 'mixto') {
         paymentSplits
           .filter(s => s.operationCode?.trim() && ['yape', 'tarjeta', 'transferencia'].includes(s.method))
@@ -2104,24 +2155,19 @@ const POS = () => {
       }
 
       if (codigosDigitales.length > 0 && schoolIdForCheck) {
-        // 1) Códigos duplicados dentro del mismo pago mixto
         if (new Set(codigosDigitales).size < codigosDigitales.length) {
           toast({
             variant: 'destructive',
             title: '⛔ Códigos Repetidos',
             description: 'Dos métodos del pago mixto tienen el mismo código de operación.',
           });
-          setIsProcessing(false);
-          return;
+          return { status: 'business_error', errorType: 'DUPLICATE_CODE', message: 'Códigos repetidos en pago mixto.' };
         }
 
-        // 2) Verificar contra la BD — rango del día actual en Lima (UTC-5)
-        const limaOffsetMs = 5 * 60 * 60 * 1000;
-        const nowLima = new Date(Date.now() - limaOffsetMs);
-        // Medianoche Lima → 05:00 UTC del mismo día
-        const limaMidnightUTC = new Date(Date.UTC(
-          nowLima.getUTCFullYear(), nowLima.getUTCMonth(), nowLima.getUTCDate(), 5, 0, 0
-        ));
+        // Verificar contra BD — ventana del día Lima (UTC-5 fijo)
+        const limaOffsetMs   = 5 * 60 * 60 * 1000;
+        const nowLima        = new Date(Date.now() - limaOffsetMs);
+        const limaMidnightUTC = new Date(Date.UTC(nowLima.getUTCFullYear(), nowLima.getUTCMonth(), nowLima.getUTCDate(), 5, 0, 0));
         const limaEndOfDayUTC = new Date(limaMidnightUTC.getTime() + 24 * 60 * 60 * 1000);
 
         for (const codigo of codigosDigitales) {
@@ -2139,37 +2185,19 @@ const POS = () => {
             toast({
               variant: 'destructive',
               title: '⛔ Código de Operación Duplicado',
-              description: `El código "${codigo}" ya fue registrado hoy${ref}. Si es otra venta, usa un código diferente.`,
+              description: `El código "${codigo}" ya fue registrado hoy${ref}. Si es otra venta, usá un código diferente.`,
               duration: 7000,
             });
-            setIsProcessing(false);
-            return;
+            return { status: 'business_error', errorType: 'DUPLICATE_CODE', message: `Código duplicado: ${codigo}` };
           }
         }
       }
-      // ─────────────────────────────────────────────────────────────────────
 
-      // ══════════════════════════════════════════════════════════════════
-      // 🎯 RPC ATÓMICO: complete_pos_sale_v2
-      //
-      // Reemplaza las 5 llamadas anteriores (ticket + balance + transaction
-      // + items + stock) por UNA sola transacción en la base de datos.
-      //
-      // Garantías:
-      //  • Precios recalculados en BD (no del navegador)
-      //  • SELECT FOR UPDATE → sin race conditions de stock ni saldo
-      //  • Todo-o-nada: si falla el stock → rollback del cobro y del ticket
-      //  • Fecha del servidor en America/Lima, no el reloj de la cajera
-      // ══════════════════════════════════════════════════════════════════
-
-      // Construir líneas del carrito (solo lo mínimo necesario; precios los calcula el RPC)
+      // ── Construir líneas del carrito (precios los calcula el RPC en BD) ────
       const rpcLines = cart.map(item => {
-        const isComboItem = item.product.id.startsWith('combo_');
+        const isComboItem  = item.product.id.startsWith('combo_');
         const lineIsCustom = (item.is_custom ?? false) || isComboItem;
-        // Para combos: extraer el UUID real (quitar prefijo "combo_") y enviar
-        // combo_id + combo_name para que el RPC expanda los componentes en stock.
-        // Ventas libres puras (is_custom sin isComboItem) no envían combo_id.
-        const comboRawId = isComboItem ? item.product.id.replace(/^combo_/, '') : undefined;
+        const comboRawId   = isComboItem ? item.product.id.replace(/^combo_/, '') : undefined;
         return {
           ...(lineIsCustom ? {} : { product_id: item.product.id }),
           ...(comboRawId ? {
@@ -2178,326 +2206,203 @@ const POS = () => {
           } : {}),
           quantity:     item.quantity,
           is_custom:    lineIsCustom,
-          custom_name:  lineIsCustom ? item.product.name : undefined,
+          custom_name:  lineIsCustom ? item.product.name  : undefined,
           custom_price: lineIsCustom ? item.product.price : undefined,
         };
       });
 
-      // Metadata de pago (no monetaria — solo auditoría)
-      const paymentMeta: Record<string, any> = {};
-      if (paymentMethod) paymentMeta.payment_method_detail = paymentMethod;
-      if (transactionCode) paymentMeta.operation_number = transactionCode.trim().toUpperCase();
-      if (yapeNumber) paymentMeta.yape_number = yapeNumber;
-      if (plinNumber) paymentMeta.plin_number = plinNumber;
-      if (cashGiven) paymentMeta.cash_given = parseFloat(cashGiven);
-      if (paymentSplits.length > 0) paymentMeta.payment_splits = paymentSplits;
+      // Metadata de pago (auditoría únicamente — ningún campo monetario)
+      const paymentMeta: Record<string, unknown> = {};
+      if (paymentMethod)              paymentMeta.payment_method_detail = paymentMethod;
+      if (transactionCode)            paymentMeta.operation_number      = transactionCode.trim().toUpperCase();
+      if (yapeNumber)                 paymentMeta.yape_number            = yapeNumber;
+      if (plinNumber)                 paymentMeta.plin_number            = plinNumber;
+      if (cashGiven)                  paymentMeta.cash_given             = parseFloat(cashGiven);
+      if (paymentSplits.length > 0)   paymentMeta.payment_splits         = paymentSplits;
 
-      // Clave de idempotencia: generada en handleCheckoutClick y persistida en estado.
-      // Si el cajero reintenta tras un error de RED, el RPC detecta el duplicado y
-      // devuelve el resultado anterior (sin volver a cobrar).
-      // Si el error fue de LÓGICA (saldo, stock) se debe usar la misma clave porque
-      // el carrito no cambió; solo se resetea si el cajero modifica el carrito.
+      // Clave de idempotencia persistida desde handleCheckoutClick.
+      // Si el cajero reintenta tras un error de red, se reutiliza la misma clave
+      // y el RPC detecta el duplicado en pos_idempotency_keys sin volver a cobrar.
       const idempotencyKey = saleIdempotencyKey ?? `${userSchoolId}-${user.id}-${Date.now()}`;
 
-      const { data: rpcResult, error: rpcError } = await supabase.rpc('complete_pos_sale_v2', {
-        p_school_id:        userSchoolId,
-        p_cashier_id:       user.id,          // El RPC lo ignora y usa auth.uid() internamente
-        p_lines:            rpcLines,
-        p_client_mode:      clientMode,
-        p_student_id:       clientMode === 'student' ? (selectedStudent?.id ?? null) : null,
-        p_teacher_id:       clientMode === 'teacher' ? (selectedTeacher?.id ?? null) : null,
-        // Para alumnos y profesores el método lo resuelve el RPC por p_client_mode
-        // (saldo, debt, teacher_account). Pasar null evita que se clasifique como efectivo.
-        // Para clientes genéricos, paymentMethod siempre está seteado desde el selector.
-        p_payment_method:   (clientMode === 'student' || clientMode === 'teacher')
-                              ? null
-                              : (paymentMethod || 'efectivo'),
-        p_payment_metadata: paymentMeta,
-        p_billing_data: billingData
+      // ── Llamada al RPC a través de la capa anti-corrupción ─────────────────
+      const outcome = await executeCheckout({
+        schoolId:       userSchoolId!,
+        cashierId:      user.id,
+        lines:          rpcLines,
+        clientMode:     clientMode!,
+        studentId:      selectedStudent?.id,
+        teacherId:      (selectedTeacher as any)?.id,
+        paymentMethod,
+        paymentMetadata: paymentMeta,
+        billingData:    billingData
           ? { document_type: billingData.document_type, client_name: billingData.client_name, client_dni_ruc: billingData.client_dni_ruc }
           : { document_type: 'ticket' },
-        p_idempotency_key:  idempotencyKey,
-        p_cash_given:       cashGiven ? parseFloat(cashGiven) : null,
-        p_payment_splits:   paymentSplits.length > 0 ? paymentSplits : [],
-        // Admin global / superadmin: nunca enviar sesión de caja (evita UUID viejo + fuerza bypass en RPC).
-        // Cajeros y gestores: deben amarrar venta a la caja abierta.
-        p_cash_session_id:
-          role === 'admin_general' || role === 'superadmin'
-            ? null
-            : (posOpenRegister?.id ?? null),
+        idempotencyKey,
+        cashGiven:      cashGiven ? parseFloat(cashGiven) : null,
+        paymentSplits:  paymentSplits.length > 0 ? paymentSplits : [],
+        cashSessionId:  (role === 'admin_general' || role === 'superadmin')
+                          ? null
+                          : (posOpenRegister?.id ?? null),
       });
 
-      if (rpcError) {
-        const msg = rpcError.message || '';
-        if (msg.includes('INSUFFICIENT_STOCK')) {
+      // ── Manejo de outcomes no exitosos — mostrar feedback y retornar ───────
+      if (outcome.status !== 'success') {
+        const msg = (outcome as { message?: string }).message ?? '';
+
+        if (outcome.status === 'retryable') {
           toast({
-            variant: 'destructive',
-            title: '⛔ Sin Stock',
-            description: msg.split('INSUFFICIENT_STOCK: ')[1] || 'Stock insuficiente para completar la venta.',
+            variant:     'destructive',
+            title:       '📶 Sin conexión',
+            description: 'No hay internet. El carrito se conserva intacto. Cuando vuelva la conexión, presioná "Reintentar" con el mismo carrito.',
+            duration:    10000,
           });
-        } else if (msg.includes('INSUFFICIENT_BALANCE')) {
-          const detail = msg.split('INSUFFICIENT_BALANCE: ')[1] || '';
+        } else if (outcome.status === 'in_progress') {
           toast({
-            variant: 'destructive',
-            title: '💳 Saldo Insuficiente',
-            description: detail || 'El alumno no tiene saldo suficiente. Recarga la cuenta.',
+            variant:     'destructive',
+            title:       '⏳ Procesando...',
+            description: outcome.message,
+            duration:    6000,
           });
-        } else if (msg.includes('SPENDING_LIMIT')) {
-          const detail = msg.split('SPENDING_LIMIT: ')[1] || '';
+        } else if (outcome.status === 'session_error') {
           toast({
-            variant: 'destructive',
-            title: '🛡️ Límite de Consumo Alcanzado',
-            description: detail || 'Este alumno ha llegado a su tope de consumo para el período. El padre puede ajustar el tope desde el portal.',
+            variant:     'destructive',
+            title:       '🔒 Sesión Inválida',
+            description: 'Tu sesión ha expirado. Cerrá sesión, volvé a ingresar e intentá de nuevo.',
           });
-        } else if (msg.includes('KIOSK_DISABLED')) {
-          toast({
-            variant: 'destructive',
-            title: '⛔ Kiosco Desactivado',
-            description: 'Este alumno tiene el kiosco desactivado. Solo puede pedir almuerzos.',
-          });
-        } else if (msg.includes('PRODUCT_NOT_FOUND')) {
-          toast({
-            variant: 'destructive',
-            title: '⛔ Producto No Disponible',
-            description: 'Uno o más productos ya no están disponibles. Refresca el catálogo.',
-          });
-        } else if (msg.includes('STUDENT_NOT_FOUND')) {
-          toast({
-            variant: 'destructive',
-            title: '⛔ Alumno No Encontrado',
-            description: 'No se pudo verificar el alumno en la base de datos.',
-          });
-        } else if (msg.includes('NO_OPEN_SESSION')) {
-          toast({
-            variant: 'destructive',
-            title: '🔒 Sin Sesión de Caja',
-            description: 'No hay una sesión de caja abierta. Abre la caja antes de registrar ventas.',
-          });
-        } else if (msg.includes('SPLITS_MISMATCH')) {
-          toast({
-            variant: 'destructive',
-            title: '⚠️ Pago Mixto Descuadrado',
-            description: msg.split('SPLITS_MISMATCH: ')[1] || 'La suma del pago mixto no coincide con el total. Revisa los montos.',
-          });
-        } else if (msg.includes('UNAUTHORIZED_SCHOOL')) {
-          toast({
-            variant: 'destructive',
-            title: '⛔ Sede No Autorizada',
-            description: 'Tu usuario no está habilitado para registrar ventas en esta sede.',
-          });
-        } else if (msg.includes('UNAUTHORIZED_CUSTOM_SALE')) {
-          toast({
-            variant: 'destructive',
-            title: '⛔ Sin Permiso',
-            description: 'Las ventas libres solo las puede registrar un administrador.',
-          });
-        } else if (msg.includes('UNAUTHORIZED')) {
-          toast({
-            variant: 'destructive',
-            title: '🔒 Sesión Inválida',
-            description: 'Tu sesión ha expirado. Cierra sesión, vuelve a ingresar e intenta de nuevo.',
-          });
-        } else {
-          throw rpcError;
+        } else if (outcome.status === 'business_error') {
+          // Mapear prefijos del RPC a mensajes amigables
+          const et = outcome.errorType;
+          if (et === 'INSUFFICIENT_STOCK') {
+            toast({ variant: 'destructive', title: '⛔ Sin Stock', description: msg.split('INSUFFICIENT_STOCK: ')[1] || 'Stock insuficiente.' });
+          } else if (et === 'INSUFFICIENT_BALANCE') {
+            toast({ variant: 'destructive', title: '💳 Saldo Insuficiente', description: msg.split('INSUFFICIENT_BALANCE: ')[1] || 'El alumno no tiene saldo suficiente. Recargá la cuenta.' });
+          } else if (et === 'SPENDING_LIMIT') {
+            toast({ variant: 'destructive', title: '🛡️ Límite de Consumo', description: msg.split('SPENDING_LIMIT: ')[1] || 'Este alumno alcanzó su tope de consumo. El padre puede ajustarlo desde el portal.' });
+          } else if (et === 'KIOSK_DISABLED') {
+            toast({ variant: 'destructive', title: '⛔ Kiosco Desactivado', description: 'Este alumno tiene el kiosco desactivado.' });
+          } else if (et === 'PRODUCT_NOT_FOUND') {
+            toast({ variant: 'destructive', title: '⛔ Producto No Disponible', description: 'Uno o más productos ya no están disponibles. Refrescá el catálogo.' });
+          } else if (et === 'STUDENT_NOT_FOUND') {
+            toast({ variant: 'destructive', title: '⛔ Alumno No Encontrado', description: 'No se pudo verificar el alumno en la base de datos.' });
+          } else if (et === 'NO_OPEN_SESSION') {
+            toast({ variant: 'destructive', title: '🔒 Sin Sesión de Caja', description: 'No hay una sesión de caja abierta. Abrí la caja antes de registrar ventas.' });
+          } else if (et === 'SPLITS_MISMATCH') {
+            toast({ variant: 'destructive', title: '⚠️ Pago Mixto Descuadrado', description: msg.split('SPLITS_MISMATCH: ')[1] || 'La suma del pago mixto no coincide con el total.' });
+          } else if (et === 'UNAUTHORIZED_SCHOOL') {
+            toast({ variant: 'destructive', title: '⛔ Sede No Autorizada', description: 'Tu usuario no está habilitado para registrar ventas en esta sede.' });
+          } else if (et === 'UNAUTHORIZED_CUSTOM_SALE') {
+            toast({ variant: 'destructive', title: '⛔ Sin Permiso', description: 'Las ventas libres solo las puede registrar un administrador.' });
+          } else if (et === 'UNAUTHORIZED') {
+            toast({ variant: 'destructive', title: '🔒 Sesión Inválida', description: 'Tu sesión ha expirado. Cerrá sesión y volvé a ingresar.' });
+          } else {
+            toast({ variant: 'destructive', title: 'Error al procesar venta', description: msg || 'Ocurrió un error inesperado. Contactá soporte si persiste.' });
+          }
         }
-        setIsProcessing(false);
-        return;
+        return outcome;
       }
 
-      const rpcData = rpcResult as any;
-      if (!rpcData?.ok) {
-        throw new Error(rpcData?.error || 'Error desconocido del servidor al procesar la venta.');
-      }
+      // ── Éxito confirmado: post-procesamiento ──────────────────────────────
+      const { ticketCode, total: serverTotal, balanceAfter: actualNewBalance, paymentStatus: serverPayStatus } = outcome;
+      const paidFromBalance = serverPayStatus === 'paid' && clientMode === 'student';
 
-      // Extraer resultados del RPC (valores calculados en la BD, nunca en el navegador)
-      ticketCode             = rpcData.ticket_code   as string;
-      createdTransactionId   = rpcData.transaction_id as string;
-      const serverTotal      = rpcData.total          as number;
-      const serverPayStatus  = rpcData.payment_status as string;
-      const paidFromBalance  = serverPayStatus === 'paid' && clientMode === 'student';
-      const actualNewBalance = rpcData.balance_after  as number;
+      console.log('🎫 VENTA COMPLETADA [v2 atómica]', { ticketCode, total: serverTotal });
 
-      // Actualizar saldo local para que la UI refleje el descuento sin recargar
       if (clientMode === 'student' && paidFromBalance && selectedStudent) {
         setSelectedStudent({ ...selectedStudent, balance: actualNewBalance });
       }
 
-      const clientName = clientMode === 'student' ? selectedStudent?.full_name :
-                         clientMode === 'teacher' ? selectedTeacher?.full_name :
-                         'CLIENTE GENÉRICO';
+      const clientName =
+        clientMode === 'student' ? selectedStudent?.full_name :
+        clientMode === 'teacher' ? selectedTeacher?.full_name :
+        'CLIENTE GENÉRICO';
 
-      const ticketInfo: any = {
-        code:           ticketCode,
-        clientName,
-        clientType:     clientMode,
-        items:          cart,
-        total:          serverTotal,      // ← total del servidor, no del navegador
-        paymentMethod:  clientMode === 'generic'
-          ? paymentMethod
-          : clientMode === 'student'
-            ? (paidFromBalance ? 'saldo' : 'deuda')
-            : 'credito',
-        documentType:   billingData?.document_type || 'ticket',
-        timestamp:      new Date(),
-        cashierEmail:   user?.email || 'No disponible',
-        newBalance:     actualNewBalance,
-        amountToDeduct: paidFromBalance ? serverTotal : 0,
-        isFreeAccount:  clientMode === 'student',
-        paidFromBalance,
-        teacherName:    clientMode === 'teacher' ? selectedTeacher?.full_name : undefined,
-      };
-
-      // Notificación y sincronización
-      console.log('🎫 VENTA COMPLETADA [v2 atómica]', { ticketCode, clientName, total: serverTotal });
-
-      /* ====================================================================
-         CÓDIGO ANTERIOR COMENTADO — no borrar hasta confirmar que el RPC
-         funciona en producción. Para reactivar: descomentar este bloque y
-         comentar el bloque "RPC ATÓMICO" de arriba.
-         ====================================================================
-
-      // Preparar datos del ticket (VIEJO — total venía del cliente, no del servidor)
-      // const clientName = clientMode === 'student' ? selectedStudent?.full_name :
-      //                   clientMode === 'teacher' ? selectedTeacher?.full_name :
-      //                   'CLIENTE GENÉRICO';
-      // const ticketInfo: any = {
-      //   code: ticketCode,   // ticketCode generado aquí antes del insert
-      //   clientName: clientName,
-      //   clientType: clientMode,
-      //   items: cart,
-      //   total: total,       // ← PROBLEMA: total calculado en el navegador
-      //   ...
-      // };
-
-         ====================================================================
-         FIN CÓDIGO ANTERIOR COMENTADO
-         ==================================================================== */
-
-      /* ====================================================================
-         CÓDIGO ANTERIOR (flujo multi-paso) — COMENTADO.
-         Reemplazado por el RPC atómico complete_pos_sale_v2 de arriba.
-         No borrar hasta confirmar que el RPC funciona en producción.
-         ====================================================================
-
-      // Si es estudiante
-      // if (clientMode === 'student' && selectedStudent) {
-      //   const { data: freshStudent, error: freshErr } = await supabase
-      //     .from('students')
-      //     .select('balance, free_account, kiosk_disabled')
-      //     .eq('id', selectedStudent.id)
-      //     .single();
-
-      //   if (freshErr) { throw ... }
-      //   ... (todo el flujo estudiante/profesor/genérico comentado aquí)
-      //   Ver historial de git para el código completo si necesitas revertir.
-         ==================================================================== */
-
-      // Notificación y sincronización (el stock ya se descontó dentro del RPC)
       const successToast =
         clientMode !== 'student'
           ? { title: '✅ Venta Realizada', description: `Ticket: ${ticketCode}` }
           : paidFromBalance
-            ? {
-                title: '✅ Venta pagada con saldo',
-                description: `Ticket: ${ticketCode} · Saldo actualizado automáticamente.`,
-              }
-            : {
-                title: '✅ Venta registrada como deuda',
-                description: `Ticket: ${ticketCode} · Saldo no descontado (pago pendiente).`,
-              };
+            ? { title: '✅ Venta pagada con saldo', description: `Ticket: ${ticketCode} · Saldo actualizado automáticamente.` }
+            : { title: '✅ Venta registrada como deuda', description: `Ticket: ${ticketCode} · Saldo no descontado (pago pendiente).` };
 
-      toast({
-        title: successToast.title,
-        description: successToast.description,
-        duration: 2600,
-      });
+      toast({ title: successToast.title, description: successToast.description, duration: 2600 });
       emitSync(['transactions', 'balances', 'dashboard', 'debtors']);
 
-      // 🖨️ IMPRIMIR AUTOMÁTICAMENTE según configuración
-      const schoolIdForPrint = selectedStudent?.school_id || selectedTeacher?.school_1_id || cashierProfile?.school_id;
+      // ── Impresión ──────────────────────────────────────────────────────────
+      const schoolIdForPrint =
+        selectedStudent?.school_id ||
+        (selectedTeacher as any)?.school_1_id ||
+        cashierProfile?.school_id;
 
-      // Determinar tipo de venta y método de pago (se calcula aquí para usar también en reimpresión)
       let resolvedSaleType: 'general' | 'credit' | 'teacher';
       let resolvedPaymentMethod: 'cash' | 'card' | 'yape' | 'transferencia' | 'mixto' | 'credit' | 'teacher';
 
       if (clientMode === 'teacher') {
-        resolvedSaleType = 'teacher';
-        resolvedPaymentMethod = 'teacher';
+        resolvedSaleType = 'teacher';   resolvedPaymentMethod = 'teacher';
       } else if (clientMode === 'student') {
-        resolvedSaleType = 'credit';
-        resolvedPaymentMethod = 'credit';
+        resolvedSaleType = 'credit';    resolvedPaymentMethod = 'credit';
       } else {
         resolvedSaleType = 'general';
-        if (paymentMethod === 'tarjeta') resolvedPaymentMethod = 'card';
-        else if (paymentMethod === 'yape') resolvedPaymentMethod = 'yape';
+        if (paymentMethod === 'tarjeta')        resolvedPaymentMethod = 'card';
+        else if (paymentMethod === 'yape')       resolvedPaymentMethod = 'yape';
         else if (paymentMethod === 'transferencia') resolvedPaymentMethod = 'transferencia';
-        else if (paymentMethod === 'mixto') resolvedPaymentMethod = 'mixto';
-        else resolvedPaymentMethod = 'cash';
+        else if (paymentMethod === 'mixto')      resolvedPaymentMethod = 'mixto';
+        else                                     resolvedPaymentMethod = 'cash';
       }
 
-      // Snapshot del carrito antes de que resetClient() lo vacíe
+      // Snapshot del carrito ANTES de que finalizeSuccessfulCheckout() lo vacíe
       const cartSnapshot = [...cart];
 
       if (schoolIdForPrint && shouldPrint) {
         printPOSSale({
           ticketCode,
-          clientName: ticketInfo.clientName,
+          clientName:     clientName ?? 'CLIENTE GENÉRICO',
           clientDocument: billingData?.client_dni_ruc,
-          cashierLabel: ticketInfo.cashierEmail,
-          documentType: ticketInfo.documentType,
-          cart: cartSnapshot,
-          total: serverTotal,
-          paymentMethod: resolvedPaymentMethod,
-          saleType: resolvedSaleType,
-          schoolId: schoolIdForPrint
+          cashierLabel:   user?.email || undefined,
+          documentType:   billingData?.document_type || 'ticket',
+          cart:           cartSnapshot,
+          total:          serverTotal,
+          paymentMethod:  resolvedPaymentMethod,
+          saleType:       resolvedSaleType,
+          schoolId:       schoolIdForPrint,
         }).catch(err => console.error('Error en impresión:', err));
       }
 
-      // Guardar datos para botón "Reimprimir Último Ticket"
       if (schoolIdForPrint) {
         setLastSalePrintData({
           ticketCode,
-          clientName: ticketInfo.clientName,
+          clientName:     clientName ?? 'CLIENTE GENÉRICO',
           clientDocument: billingData?.client_dni_ruc,
-          cashierLabel: ticketInfo.cashierEmail,
-          documentType: ticketInfo.documentType,
-          cart: cartSnapshot,
-          total: serverTotal,
-          paymentMethod: resolvedPaymentMethod,
-          saleType: resolvedSaleType,
-          schoolId: schoolIdForPrint,
+          cashierLabel:   user?.email || undefined,
+          documentType:   billingData?.document_type || 'ticket',
+          cart:           cartSnapshot,
+          total:          serverTotal,
+          paymentMethod:  resolvedPaymentMethod,
+          saleType:       resolvedSaleType,
+          schoolId:       schoolIdForPrint,
         });
       }
-      
-      // Cerrar modales
-      setShowPaymentDialog(false);
-      
-      // Venta confirmada: la clave de idempotencia ya cumplió su propósito.
-      // Resetearla aquí antes de que resetClient() lo haga por las dudas.
-      setSaleIdempotencyKey(null);
 
-      // Resetear POS automáticamente para siguiente venta
-      setTimeout(() => {
-        resetClient();
-      }, 500);
+      return outcome;
 
-      return createdTransactionId;
-
-    } catch (error: any) {
-      console.error('Error processing checkout:', error);
+    } catch (error: unknown) {
+      // Solo llega aquí si ocurrió un error inesperado en el pre-flight
+      // (no en executeCheckout, que ya captura internamente).
+      const msg = (error as Error)?.message ?? '';
       const isNetworkError =
         !navigator.onLine ||
-        error?.message?.toLowerCase().includes('failed to fetch') ||
-        error?.message?.toLowerCase().includes('network') ||
-        error?.code === 'NETWORK_ERROR';
+        msg.toLowerCase().includes('failed to fetch') ||
+        msg.toLowerCase().includes('network');
       toast({
         variant: 'destructive',
-        title: isNetworkError ? '📶 Sin conexión' : 'Error al procesar venta',
+        title:   isNetworkError ? '📶 Sin conexión' : 'Error al procesar venta',
         description: isNetworkError
-          ? 'No hay internet. El carrito se conserva tal como está. Cuando vuelva la conexión, intenta cobrar de nuevo con el mismo código.'
-          : 'No se pudo completar la venta: ' + error.message,
+          ? 'No hay internet. El carrito se conserva intacto. Cuando vuelva la conexión, intentá de nuevo.'
+          : 'No se pudo completar la venta: ' + msg,
         duration: isNetworkError ? 10000 : 5000,
       });
+      return isNetworkError
+        ? { status: 'retryable', errorType: 'NETWORK', message: msg }
+        : { status: 'business_error', errorType: 'UNKNOWN', message: msg };
     } finally {
       setIsProcessing(false);
     }
@@ -4205,60 +4110,115 @@ const POS = () => {
               </div>
             </div>
 
-            {/* Botones de Acción */}
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                onClick={async () => {
-                  await handleConfirmCheckout(false);
-                }}
-                disabled={isProcessing}
-                className="h-14 text-base font-bold bg-emerald-500 hover:bg-emerald-600"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Procesando...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-5 w-5 mr-2" />
-                    Confirmar
-                  </>
-                )}
-              </Button>
+            {/* Banner de error post-intento (P0 fix): visible SOLO si el último intento falló */}
+            {checkoutError && (
+              <div className={`rounded-xl border-2 p-4 space-y-3 ${
+                checkoutError.errorType === 'retryable'
+                  ? 'bg-amber-50 border-amber-400'
+                  : 'bg-red-50 border-red-300'
+              }`}>
+                <div className="flex items-start gap-2">
+                  <AlertCircle className={`h-5 w-5 flex-shrink-0 mt-0.5 ${
+                    checkoutError.errorType === 'retryable' ? 'text-amber-600' : 'text-red-600'
+                  }`} />
+                  <div>
+                    <p className={`text-sm font-bold ${
+                      checkoutError.errorType === 'retryable' ? 'text-amber-800' : 'text-red-800'
+                    }`}>
+                      {checkoutError.errorType === 'retryable'
+                        ? '📶 Sin conexión — el carrito se conservó intacto'
+                        : '⛔ No se pudo registrar la venta'}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {checkoutError.errorType === 'retryable'
+                        ? 'Presioná "Reintentar" cuando vuelva internet. El mismo carrito + misma clave → sin doble cobro.'
+                        : 'Corregí el carrito (retirá el producto con problema) y volvé a intentar.'}
+                    </p>
+                  </div>
+                </div>
 
-              <Button
-                onClick={async () => {
-                  await handleConfirmCheckout(true);
-                }}
-                disabled={isProcessing}
-                variant="outline"
-                className="h-14 text-base font-bold border-2 border-blue-500 text-blue-600 hover:bg-blue-50"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Procesando...
-                  </>
-                ) : (
-                  <>
-                    <Printer className="h-5 w-5 mr-2" />
-                    Confirmar e Imprimir
-                  </>
+                {/* Botón Reintentar: solo cuando es error de red/timeout */}
+                {checkoutError.errorType === 'retryable' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      onClick={() => handleConfirmCheckout(false)}
+                      disabled={isProcessing}
+                      className="h-10 text-sm font-bold bg-amber-500 hover:bg-amber-600"
+                    >
+                      {isProcessing
+                        ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Procesando...</>
+                        : <><RefreshCw className="h-4 w-4 mr-1" />Reintentar</>}
+                    </Button>
+                    <Button
+                      onClick={() => handleConfirmCheckout(true)}
+                      disabled={isProcessing}
+                      variant="outline"
+                      className="h-10 text-sm font-bold border-amber-400 text-amber-700 hover:bg-amber-50"
+                    >
+                      {isProcessing
+                        ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Procesando...</>
+                        : <><Printer className="h-4 w-4 mr-1" />Reintentar + Imprimir</>}
+                    </Button>
+                  </div>
                 )}
-              </Button>
-            </div>
 
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowCreditConfirmDialog(false);
-              }}
-              disabled={isProcessing}
-              className="w-full"
-            >
-              Cancelar
-            </Button>
+                {/* Descartar intento: disponible siempre que no esté procesando */}
+                <Button
+                  variant="ghost"
+                  disabled={isProcessing}
+                  onClick={() => {
+                    // Descartar explícito: cajera confirma que NO se vendió y quiere empezar de cero.
+                    // Borra la clave de idempotencia (próxima venta tendrá nueva clave).
+                    setCheckoutError(null);
+                    setSaleIdempotencyKey(null);
+                    setShowCreditConfirmDialog(false);
+                    // NO llamamos resetClient() — la cajera puede decidir si mantener el carrito.
+                  }}
+                  className="w-full text-xs text-gray-500 hover:text-red-600"
+                >
+                  Descartar este intento y cerrar
+                </Button>
+              </div>
+            )}
+
+            {/* Botones de Acción normales (visibles cuando no hay error activo) */}
+            {!checkoutError && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    onClick={async () => { await handleConfirmCheckout(false); }}
+                    disabled={isProcessing}
+                    className="h-14 text-base font-bold bg-emerald-500 hover:bg-emerald-600"
+                  >
+                    {isProcessing ? (
+                      <><Loader2 className="h-5 w-5 mr-2 animate-spin" />Procesando...</>
+                    ) : (
+                      <><CheckCircle2 className="h-5 w-5 mr-2" />Confirmar</>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={async () => { await handleConfirmCheckout(true); }}
+                    disabled={isProcessing}
+                    variant="outline"
+                    className="h-14 text-base font-bold border-2 border-blue-500 text-blue-600 hover:bg-blue-50"
+                  >
+                    {isProcessing ? (
+                      <><Loader2 className="h-5 w-5 mr-2 animate-spin" />Procesando...</>
+                    ) : (
+                      <><Printer className="h-5 w-5 mr-2" />Confirmar e Imprimir</>
+                    )}
+                  </Button>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => { setShowCreditConfirmDialog(false); }}
+                  disabled={isProcessing}
+                  className="w-full"
+                >
+                  Cancelar
+                </Button>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

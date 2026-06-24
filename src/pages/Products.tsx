@@ -516,10 +516,6 @@ const Products = () => {
           if (codeStatus === 'exists') return false;
           if (isCheckingCode) return false;
         }
-        if (f.has_stock && !f.stock_initial) return false;
-        if (!editingProductId && f.has_stock && !f.initial_stock_school_id) return false;
-        if (f.has_stock && !f.stock_min) return false;
-        if (f.has_expiry && !f.expiry_days) return false;
         return true;
       case 4:
         return true;
@@ -565,6 +561,7 @@ const Products = () => {
         selectedSchools = userSchoolId ? [userSchoolId] : [];
       }
 
+      const isEditing = !!editingProductId;
       const productData = {
         name: f.name,
         description: f.description || null,
@@ -574,17 +571,18 @@ const Products = () => {
         active: true,
         price_cost: parseFloat(f.price_cost),
         price_sale: parseFloat(f.price_sale),
-        has_stock: f.has_stock,
-        stock_initial: f.has_stock ? parseInt(f.stock_initial) : null,
-        stock_min: f.has_stock ? parseInt(f.stock_min) : null,
-        has_expiry: f.has_expiry,
-        expiry_days: f.has_expiry ? parseInt(f.expiry_days) : null,
+        // Creación: stock se gestiona en Logística. Edición: preserva valores existentes.
+        has_stock: isEditing ? f.has_stock : false,
+        stock_initial: isEditing && f.has_stock ? parseInt(f.stock_initial) : null,
+        stock_min: isEditing && f.has_stock ? parseInt(f.stock_min) : null,
+        has_expiry: isEditing ? f.has_expiry : false,
+        expiry_days: isEditing && f.has_expiry ? parseInt(f.expiry_days) : null,
         has_igv: f.has_igv,
         has_wholesale: f.has_wholesale,
         wholesale_qty: f.has_wholesale ? parseInt(f.wholesale_qty) : null,
         wholesale_price: f.has_wholesale ? parseFloat(f.wholesale_price) : null,
         school_ids: selectedSchools,
-        stock_control_enabled: f.stock_control_enabled,
+        stock_control_enabled: isEditing ? f.stock_control_enabled : false,
       };
 
       /** Admin / supervisor al editar: alcance + precios por sede en un solo RPC tras guardar el resto (sin school_ids duplicado). */
@@ -643,29 +641,16 @@ const Products = () => {
         if (error) throw error;
         toast({ title: '✅ Producto actualizado', description: 'Los cambios se han guardado correctamente' });
       } else {
-        const { data: createdProduct, error } = await supabase
+        const { error } = await supabase
           .from('products')
           .insert(productData)
           .select('id')
           .single();
         if (error) throw error;
 
-        // Flujo de creación: registrar stock inicial por sede como ajuste_inicial en Kardex.
-        if (f.has_stock && f.initial_stock_school_id && (parseInt(f.stock_initial) || 0) > 0) {
-          const { error: initStockErr } = await supabase.rpc('apply_initial_stock_adjustment', {
-            p_product_id: createdProduct.id,
-            p_school_id: f.initial_stock_school_id,
-            p_quantity: parseInt(f.stock_initial) || 0,
-            p_reason: 'Stock inicial al crear producto',
-          });
-          if (initStockErr) throw initStockErr;
-        }
-
         toast({
           title: '✅ Producto creado',
-          description: f.has_stock && f.initial_stock_school_id
-            ? 'Producto creado con stock inicial registrado en Kardex.'
-            : 'El producto se ha guardado correctamente',
+          description: 'Producto guardado. El stock se gestiona desde Logística (Movimientos/Inventario).',
         });
       }
 
@@ -950,7 +935,7 @@ const Products = () => {
       case 3:
         return (
           <div className="space-y-4">
-            <h3 className="text-lg font-bold">🏷️ Código y Stock</h3>
+            <h3 className="text-lg font-bold">🏷️ Código de Barras</h3>
             <div>
               <Label>¿Tiene Código de Barras?</Label>
               <Select 
@@ -1007,82 +992,8 @@ const Products = () => {
                 )}
               </div>
             )}
-            <div className="border rounded p-3">
-              <div className="flex items-center gap-2 mb-3">
-                <Switch
-                  checked={f.has_stock}
-                  disabled={!!editingProductId}
-                  onCheckedChange={v => { f.has_stock = v; forceUpdate({}); }}
-                />
-                <Label className="font-semibold">Controlar Stock</Label>
-              </div>
-              {f.has_stock && (
-                <div className="space-y-3">
-                  {!editingProductId && (
-                    <div className="space-y-2">
-                      <Label className="text-xs">Sede para Stock Inicial *</Label>
-                      <Select
-                        value={f.initial_stock_school_id || '__none__'}
-                        onValueChange={v => { f.initial_stock_school_id = v === '__none__' ? '' : v; forceUpdate({}); }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar sede..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Seleccionar sede</SelectItem>
-                          {schools.map(s => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-slate-400">
-                        Al guardar, se registrará un movimiento <strong>ajuste_inicial</strong> en Kardex.
-                      </p>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-xs">
-                        Stock Inicial {editingProductId ? '(solo lectura)' : '*'}
-                      </Label>
-                      <Input 
-                        type="number" 
-                        value={f.stock_initial}
-                        readOnly={!!editingProductId}
-                        disabled={!!editingProductId}
-                        onChange={e => { f.stock_initial = e.target.value; forceUpdate({}); }}
-                        placeholder="100" 
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Stock Mínimo (Alerta) *</Label>
-                      <Input 
-                        type="number" 
-                        defaultValue={f.stock_min}
-                        onChange={e => { f.stock_min = e.target.value; forceUpdate({}); }}
-                        placeholder="10" 
-                      />
-                    </div>
-                  </div>
-                  <div className="border-t pt-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Switch checked={f.has_expiry} onCheckedChange={v => { f.has_expiry = v; forceUpdate({}); }} />
-                      <Label className="text-sm">Controlar Tiempo de Vida</Label>
-                    </div>
-                    {f.has_expiry && (
-                      <div>
-                        <Label className="text-xs">Días de Vida Útil *</Label>
-                        <Input 
-                          type="number" 
-                          defaultValue={f.expiry_days}
-                          onChange={e => { f.expiry_days = e.target.value; forceUpdate({}); }}
-                          placeholder="30" 
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+            <div className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
+              El stock se administra en Logística (Movimientos/Inventario), no en este asistente.
             </div>
           </div>
         );

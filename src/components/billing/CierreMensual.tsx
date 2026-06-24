@@ -181,31 +181,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Construye el array de items para Nubefact asegurando que base + igv = total exacto.
-// Usa aritmética de centavos (enteros) para evitar ruido IEEE 754.
-function buildItems(totalRedondeado: number, descripcion: string, igvPct = 18) {
-  const totalCents  = Math.round(totalRedondeado * 100);
-  const divisorX100 = 100 + igvPct;                          // ej. 110.5 para 10.5%
-  const baseCents   = Math.floor(totalCents * 100 / divisorX100);
-  const igvCents    = totalCents - baseCents;
-  const base        = baseCents / 100;
-  const igv         = igvCents  / 100;
-  return [{
-    unidad_de_medida:        'NIU',
-    codigo:                  'RESUMEN',
-    descripcion,
-    cantidad:                1,
-    valor_unitario:          base,
-    precio_unitario:         totalRedondeado,
-    descuento:               '',
-    subtotal:                base,
-    tipo_de_igv:             1,        // 1 = Gravado – Operación Onerosa (Nubefact API)
-    igv,
-    total:                   totalRedondeado,
-    anticipo_regularizacion: false,
-  }];
-}
-
 // ── Componente principal ──────────────────────────────────────────────────────
 export const CierreMensual = () => {
   const { user }  = useAuth();
