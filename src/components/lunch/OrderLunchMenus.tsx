@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/supabase';
-import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { 
   UtensilsCrossed, 
@@ -450,49 +449,62 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
         return;
       }
 
-      // Crear el pedido
       const basePrice = selectedMenu.category?.price || 0;
       const addonsPrice = availableAddons
         .filter(addon => selectedAddons.has(addon.id))
         .reduce((sum, addon) => sum + addon.price, 0);
       const totalPrice = basePrice + addonsPrice;
 
-      const orderData: any = {
-        menu_id: selectedMenu.id,
-        order_date: selectedMenu.date,
-        status: 'pending',
-        category_id: selectedMenu.category_id,
-        school_id: userSchoolId || selectedMenu.school_id,
-        base_price: basePrice,
-        addons_total: addonsPrice,
-        final_price: totalPrice,
-      };
-
-      if (userType === 'parent') {
-        orderData.student_id = studentId;
-      } else {
-        orderData.teacher_id = teacherId;
+      let description = `Almuerzo - ${selectedMenu.category?.name || 'Menú'} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`;
+      if (selectedAddons.size > 0) {
+        const addonNames = availableAddons
+          .filter(addon => selectedAddons.has(addon.id))
+          .map(addon => addon.name)
+          .join(', ');
+        description += ` + Agregados: ${addonNames}`;
       }
 
-      const { data: insertedOrder, error } = await supabase
-        .from('lunch_orders')
-        .insert([orderData])
-        .select()
-        .single();
+      // ── Llamada atómica al RPC (pedido + deuda en un solo paso) ──────────
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        'create_lunch_order_v2',
+        {
+          p_person_type:    userType === 'parent' ? 'student' : 'teacher',
+          p_person_id:      userType === 'parent' ? studentId  : teacherId,
+          p_order_date:     selectedMenu.date,
+          p_category_id:    selectedMenu.category_id,
+          p_menu_id:        selectedMenu.id,
+          p_school_id:      userSchoolId || selectedMenu.school_id,
+          p_quantity:       1,
+          p_base_price:     basePrice,
+          p_final_price:    totalPrice,
+          p_created_by:     userId,
+          p_source:         userType === 'parent' ? 'order_lunch_menus_parent' : 'order_lunch_menus_teacher',
+          p_category_name:  selectedMenu.category?.name || 'Menú',
+          p_description:    description,
+        }
+      );
 
-      if (error) throw error;
+      if (rpcError) {
+        const msg = rpcError.message ?? '';
+        if (msg.includes('LUNCH_DUPLICATE')) {
+          throw new Error('Ya tienes un pedido registrado para este día.');
+        }
+        throw new Error(`No se pudo registrar el pedido: ${msg}`);
+      }
 
-      // Guardar agregados seleccionados
-      if (selectedAddons.size > 0 && insertedOrder) {
+      const insertedOrderId = (rpcData as any)?.lunch_order_id;
+
+      // Guardar agregados seleccionados (no son financieros, van por separado)
+      if (selectedAddons.size > 0 && insertedOrderId) {
         const addonsToInsert = availableAddons
           .filter(addon => selectedAddons.has(addon.id))
           .map(addon => ({
-            order_id: insertedOrder.id,
-            addon_id: addon.id,
-            addon_name: addon.name,
+            order_id:    insertedOrderId,
+            addon_id:    addon.id,
+            addon_name:  addon.name,
             addon_price: addon.price,
-            quantity: 1,
-            subtotal: addon.price
+            quantity:    1,
+            subtotal:    addon.price,
           }));
 
         const { error: addonsError } = await supabase
@@ -501,78 +513,6 @@ export function OrderLunchMenus({ userType, userId, userSchoolId }: OrderLunchMe
 
         if (addonsError) {
           console.error('Error inserting addons:', addonsError);
-          // No lanzar error, el pedido ya se creó
-        }
-      }
-
-      // Crear transacción (cargo) si hay categoría con precio
-      if (totalPrice > 0) {
-        let description = `Almuerzo - ${selectedMenu.category?.name || 'Menú'} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`;
-        
-        // Agregar detalles de agregados a la descripción
-        if (selectedAddons.size > 0) {
-          const addonNames = availableAddons
-            .filter(addon => selectedAddons.has(addon.id))
-            .map(addon => addon.name)
-            .join(', ');
-          description += ` + Agregados: ${addonNames}`;
-        }
-
-        // 🎫 Generar ticket_code
-        let ticketCode: string | null = null;
-        try {
-          const { data: ticketNumber, error: ticketErr } = await supabase
-            .rpc('get_next_ticket_number', { p_user_id: userId });
-          if (!ticketErr && ticketNumber) {
-            ticketCode = ticketNumber;
-          }
-        } catch (err) {
-          console.warn('⚠️ No se pudo generar ticket_code:', err);
-        }
-
-        console.log('🔍 [OrderLunchMenus] Creando transacción con payment_status: pending, lunch_order_id:', insertedOrder.id);
-        const transactionData: any = {
-          type: 'purchase',
-          amount: -Math.abs(totalPrice),
-          description,
-          created_by: userId,
-          school_id: userSchoolId || selectedMenu.school_id,
-          payment_status: 'pending',
-          payment_method: null,
-          ticket_code: ticketCode,
-          metadata: {
-            lunch_order_id: insertedOrder.id,
-            source: userType === 'parent' ? 'unified_calendar_v2_parent' : 'unified_calendar_v2_teacher',
-            order_date: selectedMenu.date,
-            menu_name: selectedMenu.category?.name || 'Menú'
-          },
-          ...BILLING_EXCLUDED,
-        };
-
-        if (userType === 'parent') {
-          transactionData.student_id = studentId;
-        } else {
-          transactionData.teacher_id = teacherId;
-        }
-
-        const { error: transactionError } = await supabase
-          .from('transactions')
-          .insert([transactionData]);
-
-        if (transactionError) {
-          console.error('Error creating transaction:', transactionError);
-          // Sin transacción no dejamos pedido activo (evita huérfanos y mezcla con topes)
-          await supabase
-            .from('lunch_orders')
-            .update({
-              is_cancelled: true,
-              status: 'cancelled',
-              cancellation_reason: 'AUTO: transacción de almuerzo fallida al crear pedido'
-            })
-            .eq('id', insertedOrder.id);
-          throw new Error(
-            'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Intenta nuevamente.'
-          );
         }
       }
 

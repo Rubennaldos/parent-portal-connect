@@ -15,6 +15,63 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * Hard-reset completo de sesión: limpia tokens de Supabase, sessionStorage,
+ * cookies de sesión y desregistra Service Workers activos.
+ * Se usa cuando se detecta JWT expirado o refresh token inválido.
+ * Redirige al login para que el padre ingrese desde cero.
+ * Preserva preferencias de UI (claves que no empiezan con "sb-").
+ */
+async function forceSessionReset(): Promise<void> {
+  console.warn('[Auth] ⚠️ Sesión inválida o expirada — ejecutando hard-reset de caché');
+
+  // 1. Limpiar tokens de Supabase en localStorage
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-')) keysToRemove.push(key);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    sessionStorage.clear();
+  } catch { /* silencioso */ }
+
+  // 2. Limpiar cookies de sesión de Supabase
+  try {
+    document.cookie.split(';').forEach(cookie => {
+      const [name] = cookie.split('=');
+      if (name && (name.trim().startsWith('sb-') || name.trim().startsWith('supabase'))) {
+        document.cookie = `${name.trim()}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+      }
+    });
+  } catch { /* silencioso */ }
+
+  // 3. Desregistrar Service Workers para que el padre descargue el bundle nuevo
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(r => r.unregister()));
+      console.log(`[Auth] ${registrations.length} Service Worker(s) desregistrado(s)`);
+    }
+  } catch { /* silencioso */ }
+
+  // 4. Limpiar caché del Service Worker
+  try {
+    if ('caches' in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map(name => caches.delete(name)));
+    }
+  } catch { /* silencioso */ }
+
+  // 5. Cerrar sesión en Supabase si aún está disponible
+  try {
+    if (supabase) await supabase.auth.signOut();
+  } catch { /* silencioso — la sesión ya puede ser inválida */ }
+
+  // 6. Redirigir al login con recarga forzada (descarga el bundle nuevo desde el servidor)
+  window.location.replace(`${window.location.origin}/auth`);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -37,6 +94,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!mounted) return;
       if (error) {
         console.error('❌ Error recuperando sesión:', error);
+        // JWT inválido o sesión corrupta en el arranque → hard-reset
+        const msg = (error as any)?.message ?? '';
+        if (
+          msg.includes('JWT expired') ||
+          msg.includes('invalid JWT') ||
+          msg.includes('Invalid Refresh Token') ||
+          msg.includes('refresh_token_not_found')
+        ) {
+          await forceSessionReset();
+          return;
+        }
       }
       if (session) {
         setSession(session);
@@ -73,6 +141,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('[Auth] 🔄 Token refrescado — actualizando session y user');
         setSession(session);
         setUser(session?.user ?? null);
+        return;
+      }
+
+      // Supabase emite este evento cuando el refresh token es inválido o expiró.
+      // Es la señal definitiva de "sesión muerta" — el padre necesita re-loguearse.
+      if (event === 'TOKEN_REFRESH_FAILED' as any) {
+        console.warn('[Auth] TOKEN_REFRESH_FAILED — iniciando hard-reset de sesión');
+        forceSessionReset();
         return;
       }
 

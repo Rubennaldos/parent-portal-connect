@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/lib/supabase';
-import { calcBillingFlags, BILLING_EXCLUDED } from '@/lib/billingUtils';
+
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
@@ -623,343 +623,164 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     }
 
     try {
-      // 🆕 Calcular precio total basado en cantidad
       const totalPrice = (selectedCategory.price || 0) * quantity;
+      const orderDate = typeof selectedMenu.date === 'string'
+        ? selectedMenu.date
+        : format(selectedMenu.date, 'yyyy-MM-dd');
 
-      // ── 🔍 VERIFICAR SI YA EXISTE UN PEDIDO para esta persona + fecha + categoría ──
-      let existingOrderForCategory: any = null;
+      const descDateStr = format(new Date(orderDate + 'T00:00:00'), "d 'de' MMMM", { locale: es });
+      const qtyLabel    = quantity > 1 ? ` (${quantity}x)` : '';
+      const personLabel = paymentType === 'credit' ? selectedPerson?.full_name ?? '' : manualName;
+
+      // ── Construir descripción según modo de pago ─────────────────────────
+      const description = paymentType === 'credit'
+        ? `Almuerzo - ${selectedCategory.name}${qtyLabel} - ${descDateStr}`
+        : `Almuerzo - ${selectedCategory.name}${qtyLabel} - ${descDateStr} - ${personLabel}`;
+
+      // ── Detectar si ya existe pedido (para UPDATE atómico en el RPC) ─────
+      let existingOrderId: string | null   = null;
+      let existingOrderQty: number | null  = null;
+
       if (paymentType === 'credit' && selectedPerson) {
         const personField = targetType === 'students' ? 'student_id' : 'teacher_id';
-        const targetDate = typeof selectedMenu.date === 'string' ? selectedMenu.date : format(new Date(selectedMenu.date), 'yyyy-MM-dd');
-        
-        const { data: existingData } = await supabase
+        const { data: existing } = await supabase
           .from('lunch_orders')
-          .select('id, quantity, base_price, final_price')
+          .select('id, quantity')
           .eq(personField, selectedPerson.id)
-          .eq('order_date', targetDate)
+          .eq('order_date', orderDate)
           .eq('category_id', selectedCategory.id)
           .eq('is_cancelled', false)
           .maybeSingle();
-        
-        existingOrderForCategory = existingData;
+        if (existing) {
+          existingOrderId  = existing.id;
+          existingOrderQty = existing.quantity ?? 1;
+        }
       } else if (paymentType === 'cash' && manualName.trim()) {
-        // Para pedidos sin crédito con nombre manual, verificar también
-        const targetDate = typeof selectedMenu.date === 'string' ? selectedMenu.date : format(new Date(selectedMenu.date), 'yyyy-MM-dd');
-        
-        const { data: existingData } = await supabase
+        const { data: existing } = await supabase
           .from('lunch_orders')
-          .select('id, quantity, base_price, final_price')
+          .select('id, quantity')
           .eq('manual_name', manualName.trim())
-          .eq('order_date', targetDate)
+          .eq('order_date', orderDate)
           .eq('category_id', selectedCategory.id)
           .eq('is_cancelled', false)
           .maybeSingle();
-        
-        existingOrderForCategory = existingData;
-      }
-
-      let insertedOrderId: string;
-
-      // ── Si ya existe, ACTUALIZAR CANTIDAD en vez de crear nuevo ──
-      if (existingOrderForCategory) {
-        const newQuantity = (existingOrderForCategory.quantity || 1) + quantity;
-        const newFinalPrice = (selectedCategory.price || 0) * newQuantity;
-
-        const { error: updateError } = await supabase
-          .from('lunch_orders')
-          .update({
-            quantity: newQuantity,
-            final_price: newFinalPrice,
-            menu_id: selectedMenu.id, // Actualizar al menú más reciente
-          })
-          .eq('id', existingOrderForCategory.id);
-
-        if (updateError) throw updateError;
-        
-        insertedOrderId = existingOrderForCategory.id;
-      } else {
-        // ── Crear pedido NUEVO ──
-        // Solo incluir columnas opcionales si tienen datos (evita error si la migración no se ejecutó)
-        const orderData: any = {
-          menu_id: selectedMenu.id,
-          order_date: selectedMenu.date,
-          status: 'confirmed',
-          category_id: selectedCategory.id,
-          school_id: schoolId,
-          quantity,
-          base_price: selectedCategory.price || 0,
-          final_price: totalPrice,
-        };
-        if (selectedModifiers.length > 0) {
-          orderData.selected_modifiers = selectedModifiers;
-        }
-        if (selectedGarnishes.size > 0) {
-          orderData.selected_garnishes = Array.from(selectedGarnishes);
-        }
-        if (configSelections.length > 0) {
-          orderData.configurable_selections = configSelections;
-        }
-
-        if (paymentType === 'credit') {
-          if (targetType === 'students') {
-            orderData.student_id = selectedPerson?.id;
-          } else {
-            orderData.teacher_id = selectedPerson?.id;
-          }
-        } else {
-          orderData.manual_name = manualName;
-          orderData.payment_method = cashPaymentMethod;
-          
-          if (cashPaymentMethod !== 'pagar_luego') {
-            orderData.payment_details = paymentDetails;
-          }
-        }
-
-        let insertedOrderResult: { id: string } | null = null;
-        const { data: insertedOrder, error: orderError } = await supabase
-          .from('lunch_orders')
-          .insert([orderData])
-          .select('id')
-          .single();
-
-        if (orderError) {
-          // 🔧 Si falla por columna no encontrada (migración no ejecutada), reintentar sin columnas opcionales
-          if (orderError.code === 'PGRST204' || orderError.message?.includes('column')) {
-            delete orderData.selected_modifiers;
-            delete orderData.selected_garnishes;
-            delete orderData.configurable_selections;
-
-            const { data: retryData, error: retryError } = await supabase
-              .from('lunch_orders')
-              .insert([orderData])
-              .select('id')
-              .single();
-
-            if (retryError) throw retryError;
-            insertedOrderResult = retryData;
-          } else {
-            throw orderError;
-          }
-        } else {
-          insertedOrderResult = insertedOrder;
-        }
-        if (!insertedOrderResult) throw new Error('No se pudo crear el pedido');
-        insertedOrderId = insertedOrderResult.id;
-      }
-
-      // 🎫 Generar ticket_code ANTES de cualquier insert.
-      // Regla #12: si la generación falla, el pedido NO se registra para evitar
-      // transacciones sin trazabilidad de ticket.
-      let ticketCode: string | null = null;
-      if (totalPrice > 0) {
-        const { data: ticketNumber, error: ticketErr } = await supabase
-          .rpc('get_next_ticket_number', { p_user_id: user.id });
-        if (ticketErr || !ticketNumber) {
-          // No abortar por ticket — registrar advertencia y continuar sin ticket
-          // (el ticket es trazabilidad, no un bloqueo de venta)
-          console.warn('[PhysicalOrderWizard] ticket_code no generado:', ticketErr?.message ?? 'sin respuesta');
-        } else {
-          ticketCode = ticketNumber;
+        if (existing) {
+          existingOrderId  = existing.id;
+          existingOrderQty = existing.quantity ?? 1;
         }
       }
 
-      // Crear transacción si es con crédito
-      if (paymentType === 'credit' && selectedPerson && totalPrice > 0) {
-        // Si actualizamos un pedido existente, actualizar la transacción existente
-        if (existingOrderForCategory) {
-          const newTotalAmount = (selectedCategory.price || 0) * ((existingOrderForCategory.quantity || 1) + quantity);
-          
-          // Buscar transacción existente vinculada a este pedido
-          const { data: existingTx } = await supabase
-            .from('transactions')
-            .select('id, amount, metadata')
-            .eq('metadata->>lunch_order_id', existingOrderForCategory.id)
-            .maybeSingle();
-          
-          if (existingTx) {
-            await supabase
-              .from('transactions')
-              .update({
-                amount: -Math.abs(newTotalAmount),
-                description: `Almuerzo - ${selectedCategory.name} (${(existingOrderForCategory.quantity || 1) + quantity}x) - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
-                metadata: {
-                  ...(existingTx.metadata || {}),
-                  quantity: (existingOrderForCategory.quantity || 1) + quantity,
-                  updated_at: new Date().toISOString(),
-                }
-              })
-              .eq('id', existingTx.id);
+      // ── Determinar person_type y payment_mode para el RPC ────────────────
+      const personType: string = paymentType === 'credit'
+        ? (targetType === 'students' ? 'student' : 'teacher')
+        : 'manual';
 
-            // Rastro de auditoría: edición de monto en transacción existente
-            registrarHuella(
-              'ALERTA_EDICION_POST_PAGO',
-              'ALMUERZO_WIZARD',
-              {
-                admin_id: user?.id,
-                transaction_id: existingTx.id,
-                monto_antes: existingTx.amount,
-                monto_despues: -Math.abs(newTotalAmount),
-                diferencia: -Math.abs(newTotalAmount) - existingTx.amount,
-                categoria: selectedCategory?.name ?? null,
-                menu_fecha: selectedMenu?.date ?? null,
-                alumno_id: selectedPerson?.id ?? null,
-                alumno_nombre: selectedPerson?.full_name ?? null,
-                motivo: 'Adición de unidades a pedido existente en PhysicalOrderWizard',
-              },
-              undefined,
-              schoolId ?? undefined
-            );
-          } else {
-            const transactionData: any = {
-              type: 'purchase',
-              amount: -Math.abs(totalPrice),
-              description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} (adicional)`,
-              payment_status: 'pending',
-              school_id: schoolId,
-              ticket_code: ticketCode,
-              created_by: user.id,
-              metadata: {
-                lunch_order_id: insertedOrderId,
-                source: 'physical_order_wizard',
-                order_date: selectedMenu.date,
-                category_name: selectedCategory.name,
-                quantity,
-                is_additional: true,
-              },
-              ...BILLING_EXCLUDED,
-            };
-            if (targetType === 'students') transactionData.student_id = selectedPerson.id;
-            else transactionData.teacher_id = selectedPerson.id;
-            const { error: txErrAdd } = await supabase.from('transactions').insert([transactionData]);
-            if (txErrAdd) {
-              console.error('[PhysicalOrderWizard] Error insert tx adicional:', txErrAdd);
-              throw new Error(`Error al guardar transacción adicional: ${txErrAdd.message ?? txErrAdd.code ?? 'sin detalle'}`);
-            }
-          }
-        } else {
-          const transactionData: any = {
-            type: 'purchase',
-            amount: -Math.abs(totalPrice),
-            description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })}`,
-            payment_status: 'pending',
-            school_id: schoolId,
-            ticket_code: ticketCode,
-            created_by: user.id,
-            metadata: {
-              lunch_order_id: insertedOrderId,
-              source: 'physical_order_wizard',
-              order_date: selectedMenu.date,
-              category_name: selectedCategory.name,
-              quantity
-            },
-            ...BILLING_EXCLUDED,
-          };
+      const paymentMode: string = paymentType === 'credit'
+        ? 'credit'
+        : cashPaymentMethod === 'pagar_luego'
+          ? 'pagar_luego'
+          : 'paid';
 
-          if (targetType === 'students') {
-            transactionData.student_id = selectedPerson.id;
-          } else {
-            transactionData.teacher_id = selectedPerson.id;
-          }
+      const opNumber = paymentType === 'cash' && cashPaymentMethod && cashPaymentMethod !== 'pagar_luego'
+        ? (paymentDetails.operationNumber?.trim().toUpperCase() || null)
+        : null;
 
-          const { error: txErrNew } = await supabase.from('transactions').insert([transactionData]);
-          if (txErrNew) {
-            console.error('[PhysicalOrderWizard] Error insert tx crédito:', txErrNew);
-            throw new Error(`Error al guardar transacción: campo faltante o inválido. Detalle: ${txErrNew.message ?? txErrNew.code ?? 'sin detalle'}`);
-          }
+      // ── Llamada atómica al RPC (UN solo viaje, todo o nada) ──────────────
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        'create_lunch_order_presencial',
+        {
+          p_school_id:               schoolId,
+          p_menu_id:                 selectedMenu.id,
+          p_order_date:              orderDate,
+          p_category_id:             selectedCategory.id,
+          p_category_name:           selectedCategory.name,
+          p_base_price:              selectedCategory.price || 0,
+          p_final_price:             totalPrice,
+          p_quantity:                quantity,
+          p_created_by:              user.id,
+          p_description:             description,
+          p_person_type:             personType,
+          p_person_id:               (paymentType === 'credit' && selectedPerson)
+                                       ? selectedPerson.id
+                                       : null,
+          p_manual_name:             paymentType === 'cash' ? manualName.trim() || null : null,
+          p_payment_mode:            paymentMode,
+          p_payment_method:          (paymentMode === 'paid') ? cashPaymentMethod : null,
+          p_operation_number:        opNumber,
+          p_payment_details:         (paymentMode === 'paid') ? paymentDetails : null,
+          p_selected_modifiers:      selectedModifiers.length > 0 ? selectedModifiers : null,
+          p_selected_garnishes:      selectedGarnishes.size > 0 ? Array.from(selectedGarnishes) : null,
+          p_configurable_selections: configSelections.length > 0 ? configSelections : null,
+          p_existing_order_id:       existingOrderId,
+          p_existing_order_qty:      existingOrderQty,
         }
+      );
+
+      if (rpcError) {
+        const msg = rpcError.message ?? '';
+        if (msg.includes('LUNCH_DUPLICATE')) {
+          throw new Error('Este pedido ya existe para el mismo día y categoría.');
+        }
+        if (msg.includes('PRESENCIAL_ORDER_NOT_FOUND')) {
+          throw new Error('El pedido a actualizar ya fue cancelado. Recarga y vuelve a intentar.');
+        }
+        throw new Error(`No se pudo guardar el pedido: ${msg}`);
       }
 
-      // 🆕 Crear transacción pendiente si es "Pagar Luego"
-      if (paymentType === 'cash' && cashPaymentMethod === 'pagar_luego' && totalPrice > 0) {
-        const transactionData: any = {
-          type: 'purchase',
-          amount: -Math.abs(totalPrice),
-          description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} - ${manualName}`,
-          payment_status: 'pending',
-          school_id: schoolId,
-          manual_client_name: manualName,
-          ticket_code: ticketCode,
-          created_by: user.id,
-          metadata: {
-            lunch_order_id: insertedOrderId,
-            source: 'physical_order_wizard_fiado',
-            order_date: selectedMenu.date,
-            category_name: selectedCategory.name,
-            quantity
+      const result     = rpcData as { lunch_order_id: string; transaction_id: string; ticket_code: string | null; is_update: boolean; new_quantity?: number };
+      const isUpdate   = result?.is_update ?? false;
+      const ticketCode = result?.ticket_code ?? null;
+      const newQty     = result?.new_quantity ?? quantity;
+
+      // Auditoría para el caso de actualización (igual que antes, pero después del éxito)
+      if (isUpdate && existingOrderId) {
+        const prevAmount = -Math.abs((selectedCategory.price || 0) * (existingOrderQty ?? 1));
+        const newAmount  = -Math.abs((selectedCategory.price || 0) * newQty);
+        registrarHuella(
+          'ALERTA_EDICION_POST_PAGO',
+          'ALMUERZO_WIZARD',
+          {
+            admin_id:       user?.id,
+            transaction_id: result?.transaction_id,
+            monto_antes:    prevAmount,
+            monto_despues:  newAmount,
+            diferencia:     newAmount - prevAmount,
+            categoria:      selectedCategory?.name ?? null,
+            menu_fecha:     orderDate,
+            alumno_id:      selectedPerson?.id ?? null,
+            alumno_nombre:  selectedPerson?.full_name ?? null,
+            motivo:         'Adición de unidades a pedido existente en PhysicalOrderWizard',
           },
-          ...BILLING_EXCLUDED,
-        };
-
-        const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);
-        
-        if (transactionError) {
-          console.error('❌ Error creando transacción de fiado:', transactionError);
-          throw new Error(`Error al guardar transacción (fiado): ${transactionError.message ?? transactionError.code ?? 'sin detalle — verifica school_id y created_by'}`);
-        }
-
+          undefined,
+          schoolId ?? undefined
+        );
       }
 
-      // 🆕 Crear transacción PAGADA para pagos inmediatos (efectivo, tarjeta, yape, transferencia)
-      if (paymentType === 'cash' && cashPaymentMethod && cashPaymentMethod !== 'pagar_luego' && totalPrice > 0) {
-        // Extraer número de operación para la columna dedicada (Parte 1 Opción A)
-        const wizardOpNumber = paymentDetails.operationNumber?.trim().toUpperCase() || null;
-
-        const transactionData: any = {
-          type: 'purchase',
-          amount: -Math.abs(totalPrice),
-          description: `Almuerzo - ${selectedCategory.name}${quantity > 1 ? ` (${quantity}x)` : ''} - ${format(new Date(selectedMenu.date + 'T00:00:00'), "d 'de' MMMM", { locale: es })} - ${manualName}`,
-          payment_status: 'paid',
-          payment_method: cashPaymentMethod,
-          school_id: schoolId,
-          manual_client_name: manualName,
-          ticket_code: ticketCode,
-          created_by: user.id,
-          // Columna dedicada para búsqueda y auditoría
-          operation_number: wizardOpNumber,
-          metadata: {
-            lunch_order_id: insertedOrderId,
-            source: 'physical_order_wizard_paid',
-            order_date: selectedMenu.date,
-            category_name: selectedCategory.name,
-            quantity,
-            payment_details: {
-              ...paymentDetails,
-              operationNumber: wizardOpNumber || '',
-            }
-          },
-          ...calcBillingFlags('ticket', cashPaymentMethod),
-        };
-
-        const { error: transactionError } = await supabase.from('transactions').insert([transactionData]);
-        
-        if (transactionError) {
-          console.error('❌ Error creando transacción pagada:', transactionError);
-          throw new Error(`Error al guardar transacción (pago inmediato): ${transactionError.message ?? transactionError.code ?? 'sin detalle — verifica school_id y created_by'}`);
-        }
-      }
-
-      const wasUpdated = !!existingOrderForCategory;
       toast({
-        title: wasUpdated ? '✅ Pedido actualizado' : '✅ Pedido registrado',
-        description: wasUpdated
-          ? `Se agregó ${quantity} menú(s) al pedido de ${selectedCategory.name} para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}. Nuevo total: ${(existingOrderForCategory.quantity || 1) + quantity} menú(s)`
-          : `${quantity}x ${selectedCategory.name} para ${paymentType === 'credit' ? selectedPerson?.full_name : manualName}${
-            cashPaymentMethod === 'pagar_luego' ? ' (Pago pendiente)' : ticketCode ? ` (Ticket: ${ticketCode})` : ''
-          }`
+        title: isUpdate ? '✅ Pedido actualizado' : '✅ Pedido registrado',
+        description: isUpdate
+          ? `Se agregó ${quantity} menú(s) al pedido de ${selectedCategory.name} para ${personLabel}. Nuevo total: ${newQty} menú(s).`
+          : `${quantity}x ${selectedCategory.name} para ${personLabel}${
+              cashPaymentMethod === 'pagar_luego'
+                ? ' — Pago pendiente'
+                : ticketCode
+                  ? ` (Ticket: ${ticketCode})`
+                  : ''
+            }`,
       });
 
       handleClose();
       onSuccess();
     } catch (error: any) {
-      console.error('Error creating order:', error);
+      console.error('[PhysicalOrderWizard] Error en handleSubmit:', error);
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: error.message || 'No se pudo registrar el pedido'
+        title: 'Error al registrar pedido',
+        description: error.message || 'No se pudo guardar el pedido. Intenta nuevamente.',
       });
     } finally {
       setLoading(false);
-      isSubmittingRef.current = false; // 🔓 Liberar lock
+      isSubmittingRef.current = false;
     }
   };
 

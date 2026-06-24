@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
-import { BILLING_EXCLUDED } from '@/lib/billingUtils';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -489,88 +488,41 @@ export function UnifiedLunchCalendar({ userType, userId, userSchoolId }: Unified
       let totalOrders = 0;
 
       for (const item of cart) {
-        for (let i = 0; i < item.quantity; i++) {
-          // 1. Create lunch_order
-          const orderData: any = {
-            [personField]: personId,
-            order_date: item.date,
-            status: 'pending',
-            category_id: item.categoryId,
-            menu_id: item.menuId,
-            school_id: effectiveSchoolId,
-            base_price: item.price,
-            addons_total: 0,
-            final_price: item.price,
-          };
+        const dateFormatted = format(new Date(item.date + 'T12:00:00'), "d 'de' MMMM", { locale: es });
+        const description = `Almuerzo - ${item.categoryName} - ${dateFormatted}`;
 
-          const { data: insertedOrder, error: orderError } = await supabase
-            .from('lunch_orders')
-            .insert([orderData])
-            .select('id')
-            .single();
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('create_lunch_order_v2', {
+          p_person_type:   userType === 'parent' ? 'student' : 'teacher',
+          p_person_id:     personId,
+          p_order_date:    item.date,
+          p_category_id:   item.categoryId,
+          p_menu_id:       item.menuId,
+          p_school_id:     effectiveSchoolId,
+          p_quantity:      item.quantity,
+          p_base_price:    item.price,
+          p_final_price:   item.price * item.quantity,
+          p_created_by:    userId,
+          p_source:        `unified_calendar_${userType}`,
+          p_category_name: item.categoryName,
+          p_description:   description,
+        });
 
-          if (orderError) {
-            console.error('❌ Error creando lunch_order:', orderError);
-            throw orderError;
+        if (rpcError) {
+          const msg = rpcError.message ?? '';
+          if (msg.includes('LUNCH_DUPLICATE')) {
+            // Idempotente: ya existe el pedido (retry de red)
+            totalOrders++;
+            continue;
           }
-
-          // 2. Create transaction (pending)
-          const dateFormatted = format(new Date(item.date + 'T12:00:00'), "d 'de' MMMM", { locale: es });
-          const description = `Almuerzo - ${item.categoryName} - ${dateFormatted}`;
-
-          // 🎫 Generar ticket_code
-          let ticketCode: string | null = null;
-          try {
-            const { data: ticketNumber, error: ticketErr } = await supabase
-              .rpc('get_next_ticket_number', { p_user_id: userId });
-            if (!ticketErr && ticketNumber) {
-              ticketCode = ticketNumber;
-            }
-          } catch (err) {
-            console.warn('⚠️ No se pudo generar ticket_code:', err);
-          }
-
-          const transactionData: any = {
-            [personField]: personId,
-            type: 'purchase',
-            amount: -Math.abs(item.price),
-            description,
-            payment_status: 'pending',
-            payment_method: null,
-            school_id: effectiveSchoolId,
-            created_by: userId,
-            ticket_code: ticketCode,
-            metadata: {
-              lunch_order_id: insertedOrder.id,
-              source: `unified_calendar_${userType}`,
-              order_date: item.date,
-              menu_name: item.categoryName,
-            },
-            ...BILLING_EXCLUDED,
-          };
-
-          const { error: txError } = await supabase
-            .from('transactions')
-            .insert([transactionData]);
-
-          if (txError) {
-            console.error('❌ Error creando transaction:', txError);
-            // Cancelar pedido recién creado para evitar huérfanos
-            await supabase
-              .from('lunch_orders')
-              .update({
-                is_cancelled: true,
-                status: 'cancelled',
-                cancellation_reason: 'AUTO: transacción de almuerzo fallida en UnifiedLunchCalendar'
-              })
-              .eq('id', insertedOrder.id);
-            throw new Error(
-              'No se pudo registrar la deuda del almuerzo. El pedido fue cancelado automáticamente. Intenta nuevamente.'
-            );
-          }
-
-          totalOrders++;
+          console.error('❌ Error en create_lunch_order_v2:', rpcError);
+          throw new Error(msg || 'No se pudo registrar el pedido. Intenta nuevamente.');
         }
+
+        if (!rpcResult) {
+          throw new Error('No se pudo crear el pedido. Intenta nuevamente.');
+        }
+
+        totalOrders++;
       }
 
       toast({
