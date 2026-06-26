@@ -218,7 +218,7 @@ BEGIN
     SELECT id
       INTO v_rr_id
     FROM   public.recharge_requests
-    WHERE  p_lunch_order_id = ANY(COALESCE(lunch_order_ids, '{}'))
+    WHERE  v_lunch_order_id = ANY(COALESCE(lunch_order_ids, '{}'))
       AND  status = 'pending'
     ORDER BY created_at DESC
     LIMIT 1
