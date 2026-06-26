@@ -244,6 +244,11 @@ export const BillingCollection = ({ section }: { section?: 'cobrar' | 'pagos' | 
   const [historicalDebt, setHistoricalDebt] = useState<{ total: number; count: number } | null>(null);
   const [loadingHistoricalDebt, setLoadingHistoricalDebt] = useState(false);
 
+  // ── Modal: Anular Deuda Pendiente (admin) ──
+  const [showVoidPendingModal, setShowVoidPendingModal] = useState(false);
+  const [voidPendingReason, setVoidPendingReason] = useState('');
+  const [voidingPending, setVoidingPending] = useState(false);
+
   // ── Modal: Anular Almuerzo y Acreditar Billetera ──
   const [showCancelWalletModal, setShowCancelWalletModal] = useState(false);
   const [cancellingWallet, setCancellingWallet] = useState(false);
@@ -2451,6 +2456,54 @@ Si tienes dudas, comunícate con la administración de tu sede.
     }
   };
 
+  // ── ANULAR DEUDA PENDIENTE (admin) ────────────────────────────────────────
+  // Llama al RPC void_pending_debt_from_billing, que valida rol, sede, estado
+  // y SUNAT en la BD antes de cancelar. Nunca hace DELETE.
+  const handleVoidPendingDebt = async () => {
+    if (!selectedTransaction?.id || !user?.id) return;
+    const reasonTrimmed = voidPendingReason.trim();
+    if (reasonTrimmed.length < 15) return;
+
+    setVoidingPending(true);
+    try {
+      const { data, error } = await supabase.rpc('void_pending_debt_from_billing', {
+        p_transaction_id: selectedTransaction.id,
+        p_reason: reasonTrimmed,
+      });
+
+      if (error) throw error;
+
+      setShowVoidPendingModal(false);
+      setShowDetailsModal(false);
+      setShowDebtorDetailModal(false);
+      setVoidPendingReason('');
+
+      toast({
+        title: '✅ Deuda anulada',
+        description: 'La deuda quedó registrada como anulada en auditoría.',
+        duration: 6000,
+      });
+
+      fetchDebtors();
+      emitSync(['debtors', 'balances']);
+    } catch (err: any) {
+      const msg: string = err?.message ?? '';
+      let description = 'No se pudo anular la deuda. Intenta de nuevo.';
+      if (msg.includes('REASON_REQUIRED'))    description = 'El motivo es obligatorio y debe tener al menos 15 caracteres.';
+      else if (msg.includes('FORBIDDEN_ROLE'))   description = 'Tu rol no está autorizado para esta acción.';
+      else if (msg.includes('FORBIDDEN_SCHOOL')) description = 'Esta deuda pertenece a otra sede.';
+      else if (msg.includes('ALREADY_CANCELLED')) description = 'Esta deuda ya estaba anulada.';
+      else if (msg.includes('SUNAT_INTEGRITY'))   description = 'Tiene comprobante en SUNAT. Debe emitir una Nota de Crédito.';
+      else if (msg.includes('INVALID_STATUS'))    description = 'Solo se pueden anular deudas pendientes (no pagadas).';
+      else if (msg.includes('VIRTUAL_DEBT'))      description = 'Las deudas de kiosco agregadas se anulan por consumo individual.';
+      else if (msg)                               description = msg;
+
+      toast({ variant: 'destructive', title: 'Error al anular deuda', description });
+    } finally {
+      setVoidingPending(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Filtros principales — solo visibles en pestaña Cobrar */}
@@ -4287,6 +4340,27 @@ Si tienes dudas, comunícate con la administración de tu sede.
                       >
                         <Eye className="h-4 w-4" />
                       </button>
+                      {/* Botón anular deuda pendiente — solo si no está pagada y no es deuda virtual */}
+                      {(t.payment_status === 'pending' || t.payment_status === 'partial') &&
+                       !t.metadata?.is_kiosk_balance_debt && (
+                        <button
+                          title="Anular esta deuda"
+                          className="shrink-0 p-1.5 rounded-md hover:bg-red-50 hover:shadow-sm transition-all text-red-400 hover:text-red-600"
+                          onClick={() => {
+                            setSelectedTransaction({
+                              ...t,
+                              student_id: t.student_id || selectedDebtorForDetail.student_id,
+                              client_name: selectedDebtorForDetail.client_name,
+                              client_type: selectedDebtorForDetail.client_type,
+                              school_name: selectedDebtorForDetail.school_name,
+                            });
+                            setVoidPendingReason('');
+                            setShowVoidPendingModal(true);
+                          }}
+                        >
+                          <Ban className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -4833,6 +4907,24 @@ Si tienes dudas, comunícate con la administración de tu sede.
                     </Button>
                   )}
 
+                  {/* ── Botón anular deuda pendiente (desde detalle) ──────────────
+                      Visible si la TX es pending/partial y no es deuda virtual.
+                      El RPC valida rol, sede y SUNAT en la BD. */}
+                  {isPending && !selectedTransaction.metadata?.is_kiosk_balance_debt && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-red-300 text-red-700 hover:bg-red-50 h-11"
+                      onClick={() => {
+                        setVoidPendingReason('');
+                        setShowDetailsModal(false);
+                        setShowVoidPendingModal(true);
+                      }}
+                    >
+                      <Ban className="h-4 w-4 mr-2" />
+                      Anular deuda pendiente
+                    </Button>
+                  )}
+
                   {/* Botón PDF */}
                   {isPaid ? (
                     <Button
@@ -5009,6 +5101,122 @@ Si tienes dudas, comunícate con la administración de tu sede.
           studentName={kioskDetailData.studentName}
         />
       )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          MODAL: Anular deuda pendiente desde Cobranzas
+          Llama al RPC void_pending_debt_from_billing.
+          Cubre alumnos, profesores y clientes manuales.
+          No toca pasarela. Motivo validado también en BD (≥ 15 chars).
+          ══════════════════════════════════════════════════════════════════ */}
+      <Dialog
+        open={showVoidPendingModal}
+        onOpenChange={(open) => {
+          if (!voidingPending) {
+            setShowVoidPendingModal(open);
+            if (!open) setVoidPendingReason('');
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Ban className="h-5 w-5" />
+              Anular deuda pendiente
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Confirmación de anulación de deuda pendiente
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Datos de la deuda */}
+            {selectedTransaction && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Cliente</span>
+                  <span className="font-semibold text-gray-900">
+                    {selectedTransaction.client_name ||
+                      selectedTransaction.students?.full_name ||
+                      selectedTransaction.teacher_profiles?.full_name ||
+                      selectedTransaction.manual_client_name ||
+                      '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Monto</span>
+                  <span className="font-bold text-red-700">
+                    S/ {Math.abs(Number(selectedTransaction.amount ?? 0)).toFixed(2)}
+                  </span>
+                </div>
+                {selectedTransaction.description && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-500 shrink-0">Concepto</span>
+                    <span className="text-gray-700 text-right truncate max-w-[200px]">
+                      {selectedTransaction.description}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Advertencia de auditoría */}
+            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">
+                Esta acción quedará <strong>registrada en auditoría</strong> con tu usuario, la fecha y el motivo.
+                La deuda dejará de aparecer en Cobranzas y en el portal del cliente.
+                No se puede deshacer.
+              </p>
+            </div>
+
+            {/* Motivo obligatorio */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">
+                Motivo de anulación <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                rows={3}
+                maxLength={500}
+                placeholder="Ej: Error al registrar el pedido, alumno no asistió ese día..."
+                value={voidPendingReason}
+                onChange={(e) => setVoidPendingReason(e.target.value)}
+                disabled={voidingPending}
+              />
+              <p className={`text-xs ${voidPendingReason.trim().length < 15 ? 'text-red-500' : 'text-gray-400'}`}>
+                {voidPendingReason.trim().length}/500 — mínimo 15 caracteres
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { setShowVoidPendingModal(false); setVoidPendingReason(''); }}
+              disabled={voidingPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={voidingPending || voidPendingReason.trim().length < 15}
+              onClick={handleVoidPendingDebt}
+            >
+              {voidingPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Anulando...
+                </>
+              ) : (
+                <>
+                  <Ban className="h-4 w-4 mr-2" />
+                  Confirmar anulación
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
