@@ -13,6 +13,7 @@ const METHOD_LABELS: Record<string, string> = {
   plin:             'Plin',
   efectivo:         'Efectivo',
   tarjeta:          'Tarjeta',
+  card:             'Tarjeta',
   transferencia:    'Transferencia',
   voucher:          'Comprobante',
   saldo:            'Saldo',
@@ -46,8 +47,10 @@ function TicketRow({ ticket, onDetail }: TicketRowProps) {
       <div className="flex items-center gap-3 min-w-0">
         <Receipt className="h-4 w-4 text-gray-400 shrink-0" />
         <div className="min-w-0">
-          {ticket.ticket_code && (
+          {ticket.ticket_code ? (
             <span className="text-xs font-bold text-indigo-700 block">{ticket.ticket_code}</span>
+          ) : (
+            <span className="text-xs font-bold text-amber-700 block">Sin ticket T-</span>
           )}
           <span className="text-sm text-gray-700 truncate block">{ticket.description || 'Sin descripción'}</span>
         </div>
@@ -87,14 +90,21 @@ export function BitacoraEventRow({ event, onDetail }: Props) {
   };
 
   const isVoucher = event.event_type === 'voucher';
+  const isIzipay  = event.event_type === 'izipay';
 
   const borderColor = isVoucher
     ? 'border-l-green-500'
-    : 'border-l-blue-500';
+    : isIzipay
+      ? 'border-l-violet-500'
+      : 'border-l-blue-500';
 
   const badgeEl = isVoucher ? (
     <Badge variant="outline" className="text-[11px] bg-green-50 text-green-700 border-green-200">
       Voucher del padre
+    </Badge>
+  ) : isIzipay ? (
+    <Badge variant="outline" className="text-[11px] bg-violet-50 text-violet-700 border-violet-200">
+      Pago online IziPay
     </Badge>
   ) : (
     <Badge variant="outline" className="text-[11px] bg-blue-50 text-blue-700 border-blue-200">
@@ -142,8 +152,8 @@ export function BitacoraEventRow({ event, onDetail }: Props) {
           {/* Sede (solo visible si admin_general con varias sedes) */}
           <p className="text-xs text-blue-700 font-medium">{event.school_name}</p>
 
-          {/* Padre (solo vouchers) */}
-          {isVoucher && event.parent_name && (
+          {/* Padre (voucher o IziPay) */}
+          {(isVoucher || isIzipay) && event.parent_name && (
             <p className="text-xs text-gray-500">
               Pagó: <span className="font-medium text-gray-700">{event.parent_name}</span>
               {event.parent_email && (
@@ -152,8 +162,8 @@ export function BitacoraEventRow({ event, onDetail }: Props) {
             </p>
           )}
 
-          {/* Admin cobrador */}
-          {event.collector_name && (
+          {/* Admin cobrador (no aplica a IziPay) */}
+          {!isIzipay && event.collector_name && (
             <p className="text-xs text-gray-500">
               {isVoucher ? 'Aprobó:' : 'Cobró:'}
               <span className="font-medium text-gray-700 ml-1">{event.collector_name}</span>

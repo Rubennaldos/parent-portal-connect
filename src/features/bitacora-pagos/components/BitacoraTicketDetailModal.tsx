@@ -9,7 +9,7 @@ import type { BitacoraTicket, BitacoraTicketDetail, BitacoraEvent } from '../typ
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
 const METHOD_LABELS: Record<string, string> = {
-  yape: 'Yape', plin: 'Plin', efectivo: 'Efectivo', tarjeta: 'Tarjeta',
+  yape: 'Yape', plin: 'Plin', efectivo: 'Efectivo', tarjeta: 'Tarjeta', card: 'Tarjeta',
   transferencia: 'Transferencia', voucher: 'Comprobante del padre',
   saldo: 'Saldo', mixto: 'Mixto', teacher_account: 'Cuenta Profesor',
 };
@@ -104,7 +104,7 @@ export function BitacoraTicketDetailModal({ ticket, event, onClose }: Props) {
                   <Row label="Fecha"
                     value={format(new Date(detail.created_at), "dd/MM/yyyy 'a las' HH:mm", { locale: es })} />
                   <Row label="Descripción" value={detail.description} />
-                  <Row label="Ticket"      value={detail.ticket_code} />
+                  <Row label="Ticket"      value={detail.ticket_code ?? (detail.is_lunch ? 'Sin ticket (almuerzo)' : null)} />
                   <Row label="Estado"      value={
                     detail.payment_status === 'paid' ? '✅ Pagado' :
                     detail.payment_status === 'pending' ? '⏳ Pendiente' : detail.payment_status
@@ -122,8 +122,9 @@ export function BitacoraTicketDetailModal({ ticket, event, onClose }: Props) {
                 </div>
               </section>
 
-              {/* Sección: Quien pagó (solo voucher con padre) */}
-              {(detail.parent_name || event.parent_name) && (
+              {/* Sección: Quien pagó (voucher o IziPay) */}
+              {(event.event_type === 'voucher' || event.event_type === 'izipay') &&
+                (detail.parent_name || event.parent_name) && (
                 <section>
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Quien pagó (padre)</h3>
                   <div className="bg-green-50 rounded-lg p-3">
@@ -133,8 +134,8 @@ export function BitacoraTicketDetailModal({ ticket, event, onClose }: Props) {
                 </section>
               )}
 
-              {/* Sección: Quien cobró / aprobó */}
-              {(detail.collector_name || event.collector_name) && (
+              {/* Sección: Quien cobró / aprobó (no IziPay) */}
+              {event.event_type !== 'izipay' && (detail.collector_name || event.collector_name) && (
                 <section>
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
                     {event.event_type === 'voucher' ? 'Quien aprobó (admin)' : 'Quien cobró (admin)'}
@@ -146,12 +147,24 @@ export function BitacoraTicketDetailModal({ ticket, event, onClose }: Props) {
                 </section>
               )}
 
+              {event.event_type === 'izipay' && (
+                <section>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Canal</h3>
+                  <div className="bg-violet-50 rounded-lg p-3">
+                    <Row label="Pasarela" value="IziPay — pago online del padre" />
+                    <Row label="Ref. IziPay" value={event.operation_number} />
+                  </div>
+                </section>
+              )}
+
               {/* Sección: Medio de pago */}
               <section>
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Medio de pago</h3>
                 <div className="bg-gray-50 rounded-lg p-3">
                   <Row label="Método"       value={methodLabel(detail.payment_method ?? event.payment_method)} />
-                  <Row label="N° operación" value={detail.operation_number ?? event.operation_number} />
+                  {event.event_type !== 'izipay' && (
+                    <Row label="N° operación" value={detail.operation_number ?? event.operation_number} />
+                  )}
                 </div>
               </section>
 

@@ -2,7 +2,7 @@
 // Estos tipos reflejan exactamente lo que devuelven los RPCs de la BD.
 // El frontend NO calcula nada a partir de estos datos; solo los muestra.
 
-export type EventType = 'voucher' | 'admin_group' | 'admin_single';
+export type EventType = 'voucher' | 'izipay' | 'admin_group' | 'admin_single';
 
 /** Una fila de la lista principal: un pago que cubrió N boletas. */
 export interface BitacoraEvent {
