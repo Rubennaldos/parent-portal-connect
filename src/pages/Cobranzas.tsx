@@ -33,6 +33,7 @@ import { PaymentStatistics } from '@/components/admin/PaymentStatistics';
 import { VoucherApproval } from '@/components/billing/VoucherApproval';
 import { InvoicesList } from '@/components/billing/InvoicesList';
 import { BillingReportsTab } from '@/components/billing/reports/BillingReportsTab';
+import { BitacoraLayout }   from '@/features/bitacora-pagos';
 import { PaymentHistory } from '@/components/billing/PaymentHistory';
 
 interface TabPermissions {
@@ -209,9 +210,10 @@ const Cobranzas = () => {
             case 'cobrar_todas_sedes':
             case 'cobrar_personalizado':
               perms.collect = true;
-              perms.vouchers = true; // Admins que cobran también aprueban recargas
-              perms.pagos_realizados = true; // Historial de pagos
-              perms.config_sede = true; // Configuración de su sede
+              perms.vouchers = true;
+              perms.pagos_realizados = true;
+              perms.config_sede = true;
+              perms.reports = true; // Bitácora de pagos acotada a su sede (filtro en SQL)
               break;
             case 'sacar_reportes':
               perms.reports = true;
@@ -704,11 +706,11 @@ const Cobranzas = () => {
                 </div>
               )}
 
-              {/* Reportes Tab — con filtros + exportar Excel */}
+              {/* Reportes Tab — Bitácora de pagos de deuda */}
               {effectiveActiveTab === 'reports' && permissions.reports && (
                 <div className="mt-4 sm:mt-6">
-                  <BillingReportsTab
-                    schools={reportSchools}
+                  <BitacoraLayout
+                    schools={reportSchools.map((s) => ({ id: s.id, name: s.name }))}
                     userSchoolId={reportUserSchoolId}
                     canViewAllSchools={canViewAllSchools}
                   />
