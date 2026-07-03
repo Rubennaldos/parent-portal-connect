@@ -132,13 +132,6 @@ export const PaymentsTab = ({
   // ── Estado para detectar si hay voucher pendiente de tipo debt_payment por estudiante ──
   const [pendingDebtVoucherStudents, setPendingDebtVoucherStudents] = useState<Set<string>>(new Set());
 
-  // ── Billetera interna: toggle "usar saldo a favor" por alumno ──────────────
-  // Map: student_id → true/false (si el padre quiere usar el saldo disponible)
-  const [useWalletByStudent, setUseWalletByStudent] = useState<Map<string, boolean>>(new Map());
-  const getUseWallet = (studentId: string) => useWalletByStudent.get(studentId) ?? false;
-  const toggleWallet = (studentId: string) =>
-    setUseWalletByStudent(prev => new Map(prev).set(studentId, !prev.get(studentId)));
-
   // ── Saldo de Recargas (REC): datos globales desde DB ──
   // Fuente: get_parent_rec_total → view_recharge_ledger (FIFO aprobado)
   // Regla 11.A: el frontend solo muestra; todos los cálculos vienen de la DB.
@@ -1095,23 +1088,6 @@ export const PaymentsTab = ({
                       <Send className="h-2.5 w-2.5" />S/ {studentInReview.toFixed(2)} en revisión
                     </p>
                   )}
-                  {/* Badge de saldo a favor */}
-                  {(debt.wallet_balance || 0) > 0 && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); toggleWallet(debt.student_id); }}
-                      className={`mt-0.5 flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all border ${
-                        getUseWallet(debt.student_id)
-                          ? 'bg-emerald-100 border-emerald-400 text-emerald-800'
-                          : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
-                      }`}
-                      title={getUseWallet(debt.student_id) ? 'Toca para no usar el saldo' : 'Toca para usar tu saldo a favor'}
-                    >
-                      <Wallet className="h-2.5 w-2.5 shrink-0" />
-                      {getUseWallet(debt.student_id)
-                        ? `−S/ ${Math.min(debt.wallet_balance, debt.total_debt).toFixed(2)} aplicado`
-                        : `S/ ${debt.wallet_balance.toFixed(2)} a favor`}
-                    </button>
-                  )}
                 </div>
                 {hasPayableItems && (
                   <div className="flex flex-col items-end gap-0.5">
@@ -1421,12 +1397,6 @@ export const PaymentsTab = ({
             amount: Number(item.amount || 0),
           })),
         ];
-        const walletBalance = selectedDebt.wallet_balance || 0;
-        const useWallet = getUseWallet(selectedDebt.student_id);
-        // Cuánto se descuenta de la billetera: mínimo entre saldo disponible y deuda total
-        const walletToUse = useWallet
-          ? Math.min(walletBalance, totalWithRechargeCart)
-          : 0;
         return (
           <RechargeModal
             isOpen={showPaymentModal}
@@ -1459,8 +1429,7 @@ export const PaymentsTab = ({
             paidTransactionIds={payData.transactionIds}
             breakdownItems={mergedBreakdownItems}
             invoiceType={invoiceType}
-            invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
-            walletAmountToUse={walletToUse}
+            invoiceClientData={invoiceClientData}
             rechargeCartAmount={rechargeCartTotal}
             manualPaymentsDisabled={MANUAL_RECHARGES_DISABLED}
             onSuccess={async () => {
@@ -1531,7 +1500,7 @@ export const PaymentsTab = ({
             combinedStudentIds={combined.allStudentIds}
             rechargeCartAmount={combined.rechargeAmount}
             invoiceType={invoiceType}
-            invoiceClientData={invoiceClientData as unknown as Record<string, unknown> | null}
+            invoiceClientData={invoiceClientData}
             manualPaymentsDisabled={MANUAL_RECHARGES_DISABLED}
           />
         );
