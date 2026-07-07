@@ -14,6 +14,8 @@ import { supabaseConfig } from '@/config/supabase.config';
 import { cn } from '@/lib/utils';
 import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
+import type { InvoiceClientData } from '@/components/billing/InvoiceClientModal';
+import { buildPaymentSessionBilling, getInvoiceBillingGuardError } from '@/lib/paymentSessionBilling';
 import {
   CreditCard,
   Building2,
@@ -99,8 +101,8 @@ interface RechargeModalProps {
   combinedStudentIds?: string[];
   /** Tipo de comprobante solicitado por el padre (boleta/factura) */
   invoiceType?: 'boleta' | 'factura' | null;
-  /** Datos del cliente para emitir boleta/factura */
-  invoiceClientData?: Record<string, unknown> | null;
+  /** Datos del cliente para emitir boleta/factura (mismo shape que InvoiceClientModal) */
+  invoiceClientData?: InvoiceClientData | null;
   /** Monto de billetera interna a descontar (S/ a favor del alumno).
    *  Si > 0, el padre solo sube voucher por (suggestedAmount - walletAmountToUse). */
   walletAmountToUse?: number;
@@ -439,6 +441,19 @@ export function RechargeModal({
       ? (rechargeCartAmount ?? 0)
       : numAmount;
 
+    // Fail-closed: si se pidió Boleta/Factura pero los datos fiscales no
+    // llegaron completos, NO se redirige a la pasarela con un comprobante
+    // "fantasma" que el webhook completaría con datos nulos en silencio.
+    const billingGuardError = getInvoiceBillingGuardError(invoiceType, invoiceClientData);
+    if (billingGuardError) {
+      toast({
+        title: 'Datos del comprobante incompletos',
+        description: billingGuardError,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     // Mostrar overlay ANTES de cualquier await — el padre ve respuesta inmediata
     setIsRedirecting(true);
 
@@ -494,6 +509,11 @@ export function RechargeModal({
       const { data: studentData } = await supabase!
         .from('students').select('school_id').eq('id', studentId).single();
 
+      // Mismo contrato fiscal que ya usa el voucher manual (recharge_requests):
+      // invoice_type siempre se deriva de invoiceClientData.tipo, nunca de un
+      // estado paralelo. Si no se pidió comprobante, ambos quedan en null.
+      const billingFields = buildPaymentSessionBilling(invoiceClientData);
+
       const { data: paymentSession, error: sessionError } = await supabase!
         .from('payment_sessions')
         .insert({
@@ -511,6 +531,7 @@ export function RechargeModal({
           status:            'initiated',
           gateway_status:    'pending',
           expires_at:        new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          ...billingFields,
         })
         .select('id').single();
 

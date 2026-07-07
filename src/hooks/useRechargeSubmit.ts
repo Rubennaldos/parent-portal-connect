@@ -16,6 +16,7 @@ import { useRef, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useVoucherUpload } from './useVoucherUpload';
+import type { InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import {
   checkReferenceCodeDuplicate,
   checkLunchOrderDuplicate,
@@ -41,7 +42,7 @@ export interface RechargeSubmitConfig {
   lunchOrderIds?: string[] | null;
   paidTransactionIds?: string[] | null;
   invoiceType?: 'boleta' | 'factura' | null;
-  invoiceClientData?: Record<string, unknown> | null;
+  invoiceClientData?: InvoiceClientData | null;
   walletAmountToUse?: number;
   suggestedAmount?: number;
   isCombinedPayment?: boolean;
