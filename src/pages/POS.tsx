@@ -166,6 +166,8 @@ interface Student {
   school_id?: string;
   free_account?: boolean;
   kiosk_disabled?: boolean;
+  /** false = alumno desactivado en DB (no opera POS) */
+  is_active?: boolean;
   limit_type?: string;
   daily_limit?: number;
   weekly_limit?: number;
@@ -1409,7 +1411,17 @@ const POS = () => {
     statusColor: string;
     reason?: string;
   }> => {
-    // 0. Kiosco desactivado
+    // 0. Alumno inactivo operativo (autoridad DB)
+    if (student.is_active === false) {
+      return {
+        canPurchase: false,
+        statusText: 'Inactivo',
+        statusColor: 'text-slate-600',
+        reason: 'Este alumno está desactivado. No puede comprar en POS. Sus deudas siguen en Cobranzas.',
+      };
+    }
+
+    // 1. Kiosco desactivado
     if (student.kiosk_disabled) {
       return {
         canPurchase: false,
@@ -1419,7 +1431,7 @@ const POS = () => {
       };
     }
 
-    // 1. Cuenta Libre (modo único actual)
+    // 2. Cuenta Libre (modo único actual)
     const limitBadge = getLimitBadge(student);
     if (limitBadge) {
       return { canPurchase: true, statusText: limitBadge.text, statusColor: limitBadge.color };
@@ -1613,6 +1625,7 @@ const POS = () => {
                 student_balance: student.balance,
                 student_free_account: student.free_account,
                 student_kiosk_disabled: student.kiosk_disabled,
+                student_is_active: student.is_active !== false,
                 student_school_id: student.school_id,
                 card_number: cachedCard.card_number,
                 is_active: true,
@@ -1641,6 +1654,16 @@ const POS = () => {
         return;
       }
 
+      if (holder.holder_type === 'student' && holder.student_is_active === false) {
+        setNfcError('Alumno inactivo');
+        toast({
+          variant: 'destructive',
+          title: 'Alumno inactivo',
+          description: 'Este alumno está desactivado. No puede comprar en POS. Sus deudas siguen en Cobranzas.',
+        });
+        return;
+      }
+
       if (holder.holder_type === 'student') {
         const student: Student = {
           id: holder.student_id,
@@ -1652,6 +1675,7 @@ const POS = () => {
           school_id: holder.student_school_id,
           free_account: holder.student_free_account,
           kiosk_disabled: holder.student_kiosk_disabled,
+          is_active: holder.student_is_active !== false,
         };
         setClientMode('student');
         selectStudent(student);

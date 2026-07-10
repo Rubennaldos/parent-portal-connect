@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
+import { setStudentOperationalStatus } from '@/features/students/services/studentOperationalService';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,7 +13,7 @@ import {
   CreditCard, Wallet, ShieldOff, ShieldCheck,
   TrendingDown, Banknote, RefreshCw, AlertCircle,
   ChevronDown, ChevronUp, X, Clock, CheckCircle2, XCircle,
-  Download,
+  Download, UserX, UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import * as XLSX from 'xlsx';
@@ -25,6 +27,8 @@ interface Student {
   balance: number;
   free_account: boolean | null;
   kiosk_disabled: boolean | null;
+  /** false = inactivo operativo (gris). Autoridad: DB. */
+  is_active: boolean | null;
   limit_type: 'none' | 'daily' | 'weekly' | 'monthly' | null;
   daily_limit: number | null;
   weekly_limit: number | null;
@@ -77,6 +81,7 @@ const LIMIT_LABELS: Record<string, string> = {
 };
 
 export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props) {
+  const { toast } = useToast();
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -84,9 +89,11 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
   const [filterSection, setFilterSection] = useState<string>('all');
   const [filterAccount, setFilterAccount] = useState<'all' | 'free' | 'prepaid'>('all');
   const [filterKiosk, setFilterKiosk] = useState<'all' | 'active' | 'disabled'>('all');
+  const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all');
   const [sortBy, setSortBy] = useState<'name' | 'grade' | 'balance'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showFilters, setShowFilters] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // ── Modal detalle recargas ──
   const [rechargeModalStudent, setRechargeModalStudent] = useState<Student | null>(null);
@@ -233,13 +240,14 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
         'Tipo de Cuenta': isPrepaid ? 'Con Recargas' : 'Cuenta Libre',
         'Saldo Actual (S/)': s.balance || 0,
         'Kiosco': s.kiosk_disabled ? 'Desactivado' : 'Activo',
+        'Estado operativo': s.is_active === false ? 'Inactivo' : 'Activo',
         'Tipo Tope': limit ? limit.label : 'Sin tope',
         'Monto Tope (S/)': limit ? limit.amount : '',
       };
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
-    const colWidths = [30, 10, 10, 30, 30, 16, 16, 14, 16, 14];
+    const colWidths = [30, 10, 10, 30, 30, 16, 16, 14, 14, 16, 14];
     ws['!cols'] = colWidths.map(w => ({ wch: w }));
 
     const wb = XLSX.utils.book_new();
@@ -255,7 +263,7 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
         .from('students')
         .select(`
           id, full_name, grade, section, photo_url,
-          balance, free_account, kiosk_disabled,
+          balance, free_account, kiosk_disabled, is_active,
           limit_type, daily_limit, weekly_limit, monthly_limit,
           school_id,
           parent:profiles!students_parent_id_fkey(full_name, email)
@@ -302,6 +310,8 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
     if (filterAccount === 'prepaid') list = list.filter(s => s.free_account === false);
     if (filterKiosk === 'active')   list = list.filter(s => !s.kiosk_disabled);
     if (filterKiosk === 'disabled') list = list.filter(s => !!s.kiosk_disabled);
+    if (filterActive === 'active')   list = list.filter(s => s.is_active !== false);
+    if (filterActive === 'inactive') list = list.filter(s => s.is_active === false);
 
     list.sort((a, b) => {
       let cmp = 0;
@@ -312,7 +322,46 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
     });
 
     return list;
-  }, [students, search, filterGrade, filterSection, filterAccount, filterKiosk, sortBy, sortDir]);
+  }, [students, search, filterGrade, filterSection, filterAccount, filterKiosk, filterActive, sortBy, sortDir]);
+
+  const toggleOperationalStatus = useCallback(async (student: Student) => {
+    const nextActive = student.is_active === false;
+    const actionLabel = nextActive ? 'reactivar' : 'desactivar';
+    const ok = window.confirm(
+      nextActive
+        ? `¿Reactivar a ${student.full_name}?\n\nVolverá a aparecer en POS, almuerzos y podrá recibir recargas.`
+        : `¿Desactivar a ${student.full_name}?\n\n• No podrá comprar en POS ni pedir almuerzos\n• No podrá recibir recargas nuevas\n• Sus deudas seguirán visibles en Cobranzas\n• Quedará en gris en este directorio`,
+    );
+    if (!ok) return;
+
+    setTogglingId(student.id);
+    try {
+      const result = await setStudentOperationalStatus(
+        student.id,
+        nextActive,
+        nextActive ? 'Reactivado desde Directorio de Alumnos' : 'Desactivado desde Directorio de Alumnos',
+      );
+      if (!result.ok) {
+        toast({
+          variant: 'destructive',
+          title: `No se pudo ${actionLabel}`,
+          description: result.error || 'Error desconocido',
+        });
+        return;
+      }
+      setStudents(prev =>
+        prev.map(s => (s.id === student.id ? { ...s, is_active: nextActive } : s)),
+      );
+      toast({
+        title: nextActive ? 'Alumno reactivado' : 'Alumno desactivado',
+        description: nextActive
+          ? `${student.full_name} vuelve a estar operativo.`
+          : `${student.full_name} quedó inactivo. Deudas siguen en Cobranzas.`,
+      });
+    } finally {
+      setTogglingId(null);
+    }
+  }, [toast]);
 
   // ── Agrupar por grado+sección ──
   const grouped = useMemo(() => {
@@ -404,7 +453,7 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
       {showFilters && (
         <Card className="bg-gray-50 border-gray-200">
           <CardContent className="pt-4 pb-3 px-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {/* Grado */}
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase mb-1 block">Grado</label>
@@ -457,6 +506,19 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                   <option value="disabled">Desactivado</option>
                 </select>
               </div>
+              {/* Estado operativo */}
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase mb-1 block">Estado</label>
+                <select
+                  value={filterActive}
+                  onChange={e => setFilterActive(e.target.value as any)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                >
+                  <option value="all">Todos</option>
+                  <option value="active">Activos</option>
+                  <option value="inactive">Inactivos (gris)</option>
+                </select>
+              </div>
             </div>
             {/* Ordenamiento */}
             <div className="flex gap-2 mt-3 flex-wrap">
@@ -479,9 +541,9 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                 </button>
               ))}
               {/* Limpiar filtros */}
-              {(filterGrade !== 'all' || filterSection !== 'all' || filterAccount !== 'all' || filterKiosk !== 'all' || search) && (
+              {(filterGrade !== 'all' || filterSection !== 'all' || filterAccount !== 'all' || filterKiosk !== 'all' || filterActive !== 'all' || search) && (
                 <button
-                  onClick={() => { setSearch(''); setFilterGrade('all'); setFilterSection('all'); setFilterAccount('all'); setFilterKiosk('all'); }}
+                  onClick={() => { setSearch(''); setFilterGrade('all'); setFilterSection('all'); setFilterAccount('all'); setFilterKiosk('all'); setFilterActive('all'); }}
                   className="ml-auto text-xs text-red-500 hover:text-red-700 font-semibold"
                 >
                   Limpiar filtros ✕
@@ -493,12 +555,13 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
       )}
 
       {/* ── Stats rápidas ── */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {[
           { label: 'Total', val: students.length, color: 'bg-gray-100 text-gray-700' },
           { label: 'Con Recargas', val: students.filter(s => s.free_account === false).length, color: 'bg-blue-100 text-blue-700' },
           { label: 'Con Deuda', val: students.filter(s => hasDebt(s)).length, color: 'bg-red-100 text-red-700' },
           { label: 'Kiosco OFF', val: students.filter(s => s.kiosk_disabled).length, color: 'bg-amber-100 text-amber-700' },
+          { label: 'Inactivos', val: students.filter(s => s.is_active === false).length, color: 'bg-slate-200 text-slate-700' },
         ].map(({ label, val, color }) => (
           <div key={label} className={cn('rounded-xl px-3 py-2 text-center', color)}>
             <p className="text-lg font-black">{val}</p>
@@ -534,12 +597,14 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                 const debt = hasDebt(student);
                 const isPrepaid = student.free_account === false;
                 const isDisabled = !!student.kiosk_disabled;
+                const isInactive = student.is_active === false;
 
                 return (
                   <Card
                     key={student.id}
                     className={cn(
                       'border transition-all hover:shadow-md',
+                      isInactive ? 'border-slate-300 bg-slate-100/80 opacity-70 grayscale' :
                       debt ? 'border-red-200 bg-red-50/30' :
                       isDisabled ? 'border-amber-200 bg-amber-50/20' :
                       'border-gray-200 bg-white'
@@ -548,14 +613,34 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                     <CardContent className="p-3 space-y-3">
                       {/* ── Fila 1: Foto + nombre + badges ── */}
                       <div className="flex items-start gap-3">
-                        <Avatar className="h-11 w-11 shrink-0 ring-2 ring-offset-1 ring-gray-200">
+                        <Avatar className={cn(
+                          'h-11 w-11 shrink-0 ring-2 ring-offset-1',
+                          isInactive ? 'ring-slate-300' : 'ring-gray-200'
+                        )}>
                           <AvatarImage src={student.photo_url || undefined} />
-                          <AvatarFallback className="bg-gradient-to-br from-emerald-400 to-teal-500 text-white text-sm font-bold">
+                          <AvatarFallback className={cn(
+                            'text-white text-sm font-bold',
+                            isInactive
+                              ? 'bg-slate-400'
+                              : 'bg-gradient-to-br from-emerald-400 to-teal-500'
+                          )}>
                             {student.full_name.charAt(0)}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-gray-900 truncate">{student.full_name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className={cn(
+                              'text-sm font-bold truncate',
+                              isInactive ? 'text-slate-500' : 'text-gray-900'
+                            )}>
+                              {student.full_name}
+                            </p>
+                            {isInactive && (
+                              <Badge className="bg-slate-500 text-white text-[9px] font-bold border-0 shrink-0">
+                                Inactivo
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-[11px] text-gray-500">
                             {student.grade}{student.section ? ` — ${student.section}` : ''}
                           </p>
@@ -681,6 +766,30 @@ export default function StudentsDirectory({ schoolId, canViewAllSchools }: Props
                           </span>
                         </div>
                       )}
+
+                      {/* Activar / Desactivar (autoridad: RPC DB) */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={togglingId === student.id}
+                        onClick={() => toggleOperationalStatus(student)}
+                        className={cn(
+                          'w-full h-8 text-xs font-semibold gap-1.5',
+                          isInactive
+                            ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                            : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                        )}
+                      >
+                        {togglingId === student.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : isInactive ? (
+                          <UserCheck className="h-3.5 w-3.5" />
+                        ) : (
+                          <UserX className="h-3.5 w-3.5" />
+                        )}
+                        {isInactive ? 'Reactivar alumno' : 'Desactivar alumno'}
+                      </Button>
                     </CardContent>
                   </Card>
                 );
