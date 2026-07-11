@@ -5,6 +5,10 @@ import { PosConsumptionModal } from '@/components/parent/PosConsumptionModal';
 import { InvoiceClientModal, type InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarHuella } from '@/services/auditService';
+import {
+  isSyntheticLunchDebtId,
+  resolveLunchOrderId,
+} from '@/services/ensureLunchDebtTransactions';
 import { useRole } from '@/hooks/useRole';
 import { useToast } from '@/hooks/use-toast';
 import { useViewAsStore } from '@/stores/viewAsStore';
@@ -2457,8 +2461,9 @@ Si tienes dudas, comunícate con la administración de tu sede.
   };
 
   // ── ANULAR DEUDA PENDIENTE (admin) ────────────────────────────────────────
-  // Llama al RPC void_pending_debt_from_billing, que valida rol, sede, estado
-  // y SUNAT en la BD antes de cancelar. Nunca hace DELETE.
+  // Autoridad en BD:
+  //   · UUID real  → void_pending_debt_from_billing
+  //   · lunch_<uuid> → void_virtual_lunch_debt_from_billing (o delega si ya hay ticket)
   const handleVoidPendingDebt = async () => {
     if (!selectedTransaction?.id || !user?.id) return;
     const reasonTrimmed = voidPendingReason.trim();
@@ -2466,12 +2471,25 @@ Si tienes dudas, comunícate con la administración de tu sede.
 
     setVoidingPending(true);
     try {
-      const { data, error } = await supabase.rpc('void_pending_debt_from_billing', {
-        p_transaction_id: selectedTransaction.id,
-        p_reason: reasonTrimmed,
-      });
+      const txIdRaw = String(selectedTransaction.id);
+      const lunchOrderId =
+        resolveLunchOrderId(txIdRaw)
+        ?? resolveLunchOrderId(selectedTransaction.metadata?.lunch_order_id as string | undefined);
+
+      const { data, error } = isSyntheticLunchDebtId(txIdRaw) && lunchOrderId
+        ? await supabase.rpc('void_virtual_lunch_debt_from_billing', {
+            p_lunch_order_id: lunchOrderId,
+            p_reason: reasonTrimmed,
+          })
+        : await supabase.rpc('void_pending_debt_from_billing', {
+            p_transaction_id: selectedTransaction.id,
+            p_reason: reasonTrimmed,
+          });
 
       if (error) throw error;
+      if (data && typeof data === 'object' && (data as { success?: boolean }).success === false) {
+        throw new Error('La anulación no confirmó éxito en el servidor.');
+      }
 
       setShowVoidPendingModal(false);
       setShowDetailsModal(false);
@@ -2496,6 +2514,7 @@ Si tienes dudas, comunícate con la administración de tu sede.
       else if (msg.includes('SUNAT_INTEGRITY'))   description = 'Tiene comprobante en SUNAT. Debe emitir una Nota de Crédito.';
       else if (msg.includes('INVALID_STATUS'))    description = 'Solo se pueden anular deudas pendientes (no pagadas).';
       else if (msg.includes('VIRTUAL_DEBT'))      description = 'Las deudas de kiosco agregadas se anulan por consumo individual.';
+      else if (msg.includes('NOT_FOUND'))         description = 'No se encontró la deuda o el pedido de almuerzo.';
       else if (msg)                               description = msg;
 
       toast({ variant: 'destructive', title: 'Error al anular deuda', description });

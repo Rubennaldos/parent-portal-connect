@@ -16,6 +16,7 @@ import { YapeLogo } from '@/components/ui/YapeLogo';
 import { PlinLogo } from '@/components/ui/PlinLogo';
 import type { InvoiceClientData } from '@/components/billing/InvoiceClientModal';
 import { buildPaymentSessionBilling, getInvoiceBillingGuardError } from '@/lib/paymentSessionBilling';
+import { ensureRealDebtTransactionIds } from '@/services/ensureLunchDebtTransactions';
 import {
   CreditCard,
   Building2,
@@ -426,24 +427,7 @@ export function RechargeModal({
       return;
     }
 
-    // Calcular qué parte es recarga pura (excedente del carrito).
-    const hasTxIds = Array.isArray(paidTransactionIds) && paidTransactionIds.length > 0;
-    const isDebtOrLunchFlow = requestType === 'debt_payment' || requestType === 'lunch_payment';
-    if (isDebtOrLunchFlow && !hasTxIds) {
-      toast({
-        title: 'No se encontraron deudas para pagar',
-        description: 'Por seguridad, no se puede continuar si no hay tickets/deudas vinculados al pago.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    const surplusToSend = hasTxIds
-      ? (rechargeCartAmount ?? 0)
-      : numAmount;
-
-    // Fail-closed: si se pidió Boleta/Factura pero los datos fiscales no
-    // llegaron completos, NO se redirige a la pasarela con un comprobante
-    // "fantasma" que el webhook completaría con datos nulos en silencio.
+    // Fail-closed fiscal ANTES de materializar / redirigir.
     const billingGuardError = getInvoiceBillingGuardError(invoiceType, invoiceClientData);
     if (billingGuardError) {
       toast({
@@ -454,10 +438,40 @@ export function RechargeModal({
       return;
     }
 
+    const isDebtOrLunchFlow = requestType === 'debt_payment' || requestType === 'lunch_payment';
+
     // Mostrar overlay ANTES de cualquier await — el padre ve respuesta inmediata
     setIsRedirecting(true);
 
     try {
+      // SSOT: la BD materializa lunch_* → UUID reales. El front solo orquesta.
+      let resolvedTxIds = (paidTransactionIds ?? []).filter(
+        (id) => id && !id.startsWith('lunch_') && !id.startsWith('kiosk_balance_'),
+      );
+      if (isDebtOrLunchFlow && Array.isArray(lunchOrderIds) && lunchOrderIds.length > 0) {
+        resolvedTxIds = await ensureRealDebtTransactionIds({
+          studentId,
+          parentId: user.id,
+          paidTransactionIds: resolvedTxIds,
+          lunchOrderIds,
+        });
+      }
+
+      const hasTxIds = resolvedTxIds.length > 0;
+      if (isDebtOrLunchFlow && !hasTxIds) {
+        setIsRedirecting(false);
+        toast({
+          title: 'No se encontraron deudas para pagar',
+          description: 'Por seguridad, no se puede continuar si no hay tickets/deudas vinculados al pago.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const surplusToSend = hasTxIds
+        ? (rechargeCartAmount ?? 0)
+        : numAmount;
+
       // ── AUTORIDAD ÚNICA: fetch directo (no supabase.functions.invoke) ─
       const { data: { session } } = await supabase!.auth.getSession();
       const accessToken = session?.access_token;
@@ -466,7 +480,7 @@ export function RechargeModal({
       const edgeFnUrl = 'https://duxqzozoahvrvqseinji.supabase.co/functions/v1/izipay-create-order';
       const requestBody = {
         studentId:        studentId,
-        paid_tx_ids:      paidTransactionIds ?? [],
+        paid_tx_ids:      resolvedTxIds,
         recharge_surplus: surplusToSend,
         request_type:     requestType ?? 'recharge',
       };
@@ -521,7 +535,7 @@ export function RechargeModal({
           student_id:        studentId,
           school_id:         studentData?.school_id,
           request_type:      requestType ?? 'recharge',
-          debt_tx_ids:       paidTransactionIds ?? [],
+          debt_tx_ids:       resolvedTxIds,
           lunch_order_ids:   lunchOrderIds ?? [],
           gateway_amount:    serverAmount,
           total_debt_amount: serverAmount,
