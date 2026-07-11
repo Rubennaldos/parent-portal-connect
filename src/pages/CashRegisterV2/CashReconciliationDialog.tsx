@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -11,6 +9,11 @@ import { Loader2, Lock, AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CashSession } from '@/types/cashRegisterV2';
+import {
+  closeCashSession,
+  fetchCashDaySummary,
+  type CashDaySummaryAdmin,
+} from '@/features/cash/services/cashSessionService';
 
 interface Props {
   open: boolean;
@@ -18,7 +21,7 @@ interface Props {
   session: CashSession;
   schoolId: string;
   onClosed: () => void;
-  /** Si true: admin ve montos del sistema + comparativa. Si false: cajero hace cierre a ciegas. */
+  /** Admin ve montos del sistema. Operador: cierre ciego (sin totales). */
   isAdmin?: boolean;
 }
 
@@ -34,117 +37,79 @@ export default function CashReconciliationDialog({
   onClosed,
   isAdmin = false,
 }: Props) {
-  const { user } = useAuth();
   const { toast } = useToast();
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Montos del sistema
+  // Solo admin carga montos del sistema (vía RPC; nunca desde el cliente)
   const [systemCash, setSystemCash] = useState(0);
   const [systemTarjeta, setSystemTarjeta] = useState(0);
-  const [digitalInfo, setDigitalInfo] = useState<{ yapePlin: number; transferencia: number }>({ yapePlin: 0, transferencia: 0 });
+  const [digitalInfo, setDigitalInfo] = useState<{ yapePlin: number; transferencia: number }>({
+    yapePlin: 0,
+    transferencia: 0,
+  });
 
-  // Montos declarados por el cajero
   const [declaredCash, setDeclaredCash] = useState('');
   const [declaredTarjeta, setDeclaredTarjeta] = useState('');
-
-  // Justificación (solo si hay descuadre)
   const [justification, setJustification] = useState('');
   const [showJustification, setShowJustification] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setDeclaredCash('');
-      setDeclaredTarjeta('');
-      setJustification('');
-      setShowJustification(false);
-      loadSystemBalances();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+    if (!open) return;
 
-  // ── Vector 3: clasificadores de método de pago ───────────────────────────
-  const CASH_KEYWORDS    = ['efectivo', 'cash', 'money', 'dinero'];
-  const TARJETA_KEYWORDS = ['tarjeta', 'card', 'visa', 'mastercard', 'niubiz', 'pos'];
-  const isCashMethod    = (m: string) => CASH_KEYWORDS.some(kw => m.toLowerCase().trim().includes(kw));
-  const isTarjetaMethod = (m: string) => TARJETA_KEYWORDS.some(kw => m.toLowerCase().trim().includes(kw));
+    setDeclaredCash('');
+    setDeclaredTarjeta('');
+    setJustification('');
+    setShowJustification(false);
+    setSystemCash(0);
+    setSystemTarjeta(0);
+    setDigitalInfo({ yapePlin: 0, transferencia: 0 });
 
-  const loadSystemBalances = async () => {
-    setLoading(true);
-    try {
-      const today = session.session_date;
-
-      // RPC de totales POS + almuerzo
-      const { data: rpcData } = await supabase.rpc('calculate_daily_totals', {
-        p_school_id: schoolId,
-        p_date: today,
-      });
-
-      const d = rpcData || { pos: {}, lunch: {} };
-      const pos   = d.pos   || {};
-      const lunch = d.lunch || {};
-
-      // ── V3 FIX: Ingresos/egresos manuales separados por método ──────────
-      // Se incluye payment_method para NO mezclar Yape manual con efectivo.
-      // Por defecto (sin método registrado) se asume efectivo.
-      const { data: entries } = await supabase
-        .from('cash_manual_entries')
-        .select('entry_type, amount, payment_method')
-        .eq('cash_session_id', session.id);
-
-      const manualIncomeCash = (entries || [])
-        .filter(e => e.entry_type === 'income' && isCashMethod(e.payment_method || 'cash'))
-        .reduce((s, e) => s + e.amount, 0);
-      const manualExpenseCash = (entries || [])
-        .filter(e => e.entry_type === 'expense' && isCashMethod(e.payment_method || 'cash'))
-        .reduce((s, e) => s + e.amount, 0);
-      const manualIncomeTarjeta = (entries || [])
-        .filter(e => e.entry_type === 'income' && isTarjetaMethod(e.payment_method || ''))
-        .reduce((s, e) => s + e.amount, 0);
-
-      // ── Cobranzas aprobadas en efectivo del día ──────────────────────────
-      // Trae todos los métodos y filtra en cliente para cubrir variantes con
-      // espacios o mayúsculas ("Efectivo ", "CASH", etc.)
-      const { data: billingAllPayments } = await supabase
-        .from('recharge_requests')
-        .select('amount, payment_method')
-        .eq('school_id', schoolId)
-        .eq('status', 'approved')
-        .gte('approved_at', `${today}T00:00:00-05:00`)
-        .lt('approved_at',  `${today}T23:59:59-05:00`);
-
-      const billingCashTotal = (billingAllPayments || [])
-        .filter(r => isCashMethod(r.payment_method ?? ''))
-        .reduce((s, r) => s + (r.amount || 0), 0);
-
-      // ── Totales por canal ────────────────────────────────────────────────
-      // systemCash:    SOLO billetes y monedas (no Yape, no transferencia, no tarjeta)
-      // systemTarjeta: SOLO cobros por POS/tarjeta física
-      // digitalInfo:   SOLO digital (Yape, Plin, Transferencia) — solo informativo
-      const cashSales          = safeAdd(pos.cash, lunch.cash, pos.mixed_cash);
-      const tarjetaSales       = safeAdd(pos.card, lunch.card, pos.mixed_card);
-      const yapePlinTotal      = safeAdd(pos.yape, pos.plin, lunch.yape, lunch.plin, pos.mixed_yape);
-      const transferenciaTotal = safeAdd(pos.transferencia, lunch.transferencia);
-
-      setSystemCash(safeAdd(
-        session.initial_cash,
-        cashSales,
-        billingCashTotal,
-        manualIncomeCash,
-        -manualExpenseCash,
-      ));
-      setSystemTarjeta(safeAdd(tarjetaSales, manualIncomeTarjeta));
-      setDigitalInfo({ yapePlin: yapePlinTotal, transferencia: transferenciaTotal });
-    } catch (err) {
-      console.error('[CashReconciliation] Error cargando balances:', err);
-    } finally {
+    // Operador: no consulta totales (cierre ciego real)
+    if (!isAdmin) {
       setLoading(false);
+      return;
     }
-  };
 
-  // V4: parseFloat sobre el valor saneado (coma→punto, sin letras)
-  const declaredCashNum    = parseFloat(declaredCash.replace(',', '.')) || 0;
+    let cancelled = false;
+    const loadAdminBalances = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await fetchCashDaySummary(schoolId, session.session_date);
+        if (cancelled) return;
+        if (error) throw new Error(error);
+        if (!data || data.mode !== 'admin') {
+          throw new Error('No se pudieron cargar los montos del sistema.');
+        }
+        const admin = data as CashDaySummaryAdmin;
+        const bal = admin.computed_balances;
+        setSystemCash(Number(bal?.system_cash ?? 0));
+        setSystemTarjeta(Number(bal?.system_tarjeta ?? 0));
+        setDigitalInfo({
+          yapePlin: Number(bal?.system_yape ?? 0),
+          transferencia: Number(bal?.system_transferencia ?? 0),
+        });
+      } catch (err) {
+        console.error('[CashReconciliation] Error cargando balances admin:', err);
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: err instanceof Error ? err.message : 'No se pudieron cargar los montos.',
+        });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadAdminBalances();
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isAdmin, schoolId, session.session_date]);
+
+  const declaredCashNum = parseFloat(declaredCash.replace(',', '.')) || 0;
   const declaredTarjetaNum = parseFloat(declaredTarjeta.replace(',', '.')) || 0;
   const varianceCash = Number((systemCash - declaredCashNum).toFixed(2));
   const varianceTarjeta = Number((systemTarjeta - declaredTarjetaNum).toFixed(2));
@@ -157,84 +122,70 @@ export default function CashReconciliationDialog({
     return <span className="text-amber-600 font-semibold text-sm">Sobrante S/ {Math.abs(v).toFixed(2)}</span>;
   };
 
-  // ── V4: Limpieza de inputs (coma→punto, caracteres extraños) ───────────────
   const sanitizeAmount = (raw: string): string =>
     raw.replace(',', '.').replace(/[^0-9.]/g, '');
 
   const handleCerrarCaja = async () => {
     if (saving) return;
 
-    // Guard cliente: sesión ya cerrada (doble clic, refresco tardío)
     if (session.status === 'closed') {
       toast({ title: 'Esta caja ya fue cerrada', description: 'No se puede volver a cerrar una caja ya cerrada.' });
       onClose();
       return;
     }
 
-    // Validar inputs numéricos
-    const cashRaw    = sanitizeAmount(declaredCash.trim());
+    const cashRaw = sanitizeAmount(declaredCash.trim());
     const tarjetaRaw = sanitizeAmount(declaredTarjeta.trim());
     if (cashRaw !== '') {
       const v = parseFloat(cashRaw);
       if (isNaN(v) || v < 0) {
-        toast({ variant: 'destructive', title: 'Efectivo inválido', description: 'Ingresa solo números. Usa punto para decimales: ej. 150.50' });
+        toast({
+          variant: 'destructive',
+          title: 'Efectivo inválido',
+          description: 'Ingresa solo números. Usa punto para decimales: ej. 150.50',
+        });
         return;
       }
     }
     if (tarjetaRaw !== '') {
       const v = parseFloat(tarjetaRaw);
       if (isNaN(v) || v < 0) {
-        toast({ variant: 'destructive', title: 'Tarjeta inválida', description: 'Ingresa solo números. Usa punto para decimales: ej. 320.00' });
+        toast({
+          variant: 'destructive',
+          title: 'Tarjeta inválida',
+          description: 'Ingresa solo números. Usa punto para decimales: ej. 320.00',
+        });
         return;
       }
     }
 
-    // Flujo de justificación para admins con descuadre (solo UI, no BD)
     if (isAdmin) {
-      if (hasVariance && !showJustification) { setShowJustification(true); return; }
+      if (hasVariance && !showJustification) {
+        setShowJustification(true);
+        return;
+      }
       if (hasVariance && !justification.trim()) {
-        toast({ variant: 'destructive', title: 'Justificación requerida', description: 'Hay un descuadre. Escribe una justificación antes de cerrar.' });
+        toast({
+          variant: 'destructive',
+          title: 'Justificación requerida',
+          description: 'Hay un descuadre. Escribe una justificación antes de cerrar.',
+        });
         return;
       }
     }
 
-    if (!user) return;
     setSaving(true);
-
     try {
-      // ── Una sola llamada atómica al RPC ───────────────────────────────────
-      // El RPC ejecuta en una única transacción PostgreSQL:
-      //   1. SELECT FOR UPDATE (candado de fila → sin doble cierre)
-      //   2. Verifica status = 'open'
-      //   3. UPSERT cash_reconciliations
-      //   4. UPDATE cash_sessions → 'closed'
-      //   5. INSERT huella_digital_logs
-      // Si cualquier paso falla → rollback completo automático.
-      const reconData = {
-        system_cash:             systemCash,
-        system_yape:             digitalInfo.yapePlin,
-        system_transferencia:    digitalInfo.transferencia,
-        system_tarjeta:          systemTarjeta,
-        system_total:            safeAdd(systemCash, systemTarjeta),
-        physical_cash:           declaredCashNum,
-        physical_tarjeta:        declaredTarjetaNum,
-        physical_total:          safeAdd(declaredCashNum, declaredTarjetaNum),
-        variance_cash:           varianceCash,
-        variance_tarjeta:        varianceTarjeta,
-        variance_total:          varianceTotal,
-        declared_overage:        varianceTotal < 0 ? Math.abs(varianceTotal) : 0,
-        declared_deficit:        varianceTotal > 0 ? varianceTotal : 0,
-        variance_justification:  justification.trim() || null,
-        is_admin:                isAdmin,
-      };
-
-      const { error: rpcError } = await supabase.rpc('execute_cash_reconciliation_atomic', {
-        p_session_id:          session.id,
-        p_reconciliation_data: reconData,
-        p_user_id:             user.id,
+      // Solo montos físicos. La BD calcula system_* y variance_*.
+      const { data, error } = await closeCashSession({
+        sessionId: session.id,
+        physicalCash: declaredCashNum,
+        physicalTarjeta: declaredTarjetaNum,
+        varianceJustification: isAdmin ? justification.trim() || null : null,
       });
 
-      if (rpcError) throw rpcError;
+      if (error) throw new Error(error);
+      if (!data?.ok) throw new Error('No se pudo cerrar la caja.');
 
       toast({
         title: '✅ Caja cerrada exitosamente',
@@ -244,12 +195,10 @@ export default function CashReconciliationDialog({
       });
       onClosed();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[CashReconciliation] Error closing:', err);
+      const msg = err instanceof Error ? err.message : '';
 
-      const msg: string = err?.message ?? '';
-
-      // Error controlado: sesión ya cerrada (detectado por el candado en BD)
       if (msg.includes('SESSION_ALREADY_CLOSED')) {
         toast({
           title: 'Esta caja ya fue cerrada',
@@ -260,22 +209,35 @@ export default function CashReconciliationDialog({
         return;
       }
 
-      // Error controlado: sesión no encontrada
       if (msg.includes('SESSION_NOT_FOUND')) {
-        toast({ variant: 'destructive', title: 'Sesión no encontrada', description: 'La sesión de caja no existe. Recarga la página.' });
+        toast({
+          variant: 'destructive',
+          title: 'Sesión no encontrada',
+          description: 'La sesión de caja no existe. Recarga la página.',
+        });
         return;
       }
 
-      // Error de red
+      if (msg.includes('VARIANCE_JUSTIFICATION_REQUIRED')) {
+        setShowJustification(true);
+        toast({
+          variant: 'destructive',
+          title: 'Justificación requerida',
+          description: 'Hay un descuadre. Escribe una justificación antes de cerrar.',
+        });
+        return;
+      }
+
       const isNetworkError =
         err instanceof TypeError ||
-        msg.includes('fetch') || msg.includes('network') ||
-        msg.includes('Failed') || msg.includes('NetworkError');
+        msg.includes('fetch') ||
+        msg.includes('network') ||
+        msg.includes('Failed') ||
+        msg.includes('NetworkError');
       const friendlyMsg = isNetworkError
         ? 'Error de red: tu cierre no se guardó. Revisa tu conexión e intenta de nuevo.'
         : msg || 'No se pudo cerrar la caja.';
 
-      // El modal NO se cierra — el cajero puede reintentar
       toast({ variant: 'destructive', title: 'Error al cerrar caja', description: friendlyMsg });
     } finally {
       setSaving(false);
@@ -283,12 +245,10 @@ export default function CashReconciliationDialog({
   };
 
   return (
-    // ── V1: onOpenChange solo cierra si NO está guardando ────────────────────
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen && !saving) onClose(); }}>
       <DialogContent
         className="max-w-lg max-h-[95vh] overflow-y-auto"
-        // ── V1: Bloquear cierre accidental por clic fuera o ESC ─────────────
-          aria-describedby={undefined}
+        aria-describedby={undefined}
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
@@ -308,8 +268,6 @@ export default function CashReconciliationDialog({
           </div>
         ) : (
           <div className="space-y-5 mt-2">
-
-            {/* ─── BANNER cierre a ciegas (solo cajero) ─── */}
             {!isAdmin && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2 text-amber-800 text-sm">
                 <EyeOff className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
@@ -320,7 +278,6 @@ export default function CashReconciliationDialog({
               </div>
             )}
 
-            {/* ─── MODO ADMIN: muestra montos del sistema + comparativa ─── */}
             {isAdmin && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
                 <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Montos calculados por el sistema</p>
@@ -345,13 +302,11 @@ export default function CashReconciliationDialog({
               </div>
             )}
 
-            {/* ─── CAMPOS DE ARQUEO (cajero y admin) ─── */}
             <div className="space-y-5">
               <p className="text-sm font-bold text-gray-700">
                 {isAdmin ? 'Montos declarados por el cajero:' : 'Cuenta el dinero y escribe lo que hay:'}
               </p>
 
-              {/* 1. Efectivo — siempre primero y más destacado */}
               <div className={`space-y-2 ${!isAdmin ? 'bg-orange-50 border-2 border-orange-200 rounded-2xl p-4' : ''}`}>
                 <Label className={`font-black ${!isAdmin ? 'text-orange-800 text-lg' : 'text-base text-gray-800'}`}>
                   💵 Efectivo físico en caja
@@ -359,13 +314,11 @@ export default function CashReconciliationDialog({
                 {!isAdmin && (
                   <p className="text-xs text-orange-600">Cuenta todos los billetes y monedas que hay en la caja</p>
                 )}
-                {/* V4: type="text" + inputMode="decimal" para aceptar coma y limpiarla */}
                 <Input
                   type="text"
                   inputMode="decimal"
                   value={declaredCash}
                   onChange={(e) => {
-                    // Reemplazar coma por punto, eliminar caracteres no numéricos
                     const clean = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
                     setDeclaredCash(clean);
                   }}
@@ -376,7 +329,6 @@ export default function CashReconciliationDialog({
                   }`}
                   autoFocus
                 />
-                {/* Comparativa solo para admin */}
                 {isAdmin && declaredCash !== '' && (
                   <div className={`flex justify-between items-center px-3 py-2 rounded-lg text-sm font-medium
                     ${Math.abs(varianceCash) < 0.50 ? 'bg-green-50 text-green-700' : varianceCash > 0 ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
@@ -386,7 +338,6 @@ export default function CashReconciliationDialog({
                 )}
               </div>
 
-              {/* 2. Tarjeta */}
               <div className={`space-y-2 ${!isAdmin ? 'bg-blue-50 border-2 border-blue-200 rounded-2xl p-4' : ''}`}>
                 <Label className={`font-black ${!isAdmin ? 'text-blue-800 text-lg' : 'text-base text-gray-800'}`}>
                   💳 Vouchers POS (tarjetas)
@@ -394,7 +345,6 @@ export default function CashReconciliationDialog({
                 {!isAdmin && (
                   <p className="text-xs text-blue-600">Suma los vouchers impresos del posnet/POS</p>
                 )}
-                {/* V4: mismo tratamiento que efectivo */}
                 <Input
                   type="text"
                   inputMode="decimal"
@@ -409,7 +359,6 @@ export default function CashReconciliationDialog({
                     : 'h-14 text-2xl'
                   }`}
                 />
-                {/* Comparativa solo para admin */}
                 {isAdmin && declaredTarjeta !== '' && (
                   <div className={`flex justify-between items-center px-3 py-2 rounded-lg text-sm font-medium
                     ${Math.abs(varianceTarjeta) < 0.50 ? 'bg-green-50 text-green-700' : varianceTarjeta > 0 ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
@@ -420,7 +369,6 @@ export default function CashReconciliationDialog({
               </div>
             </div>
 
-            {/* ─── Resumen total (admin) ─── */}
             {isAdmin && (declaredCash !== '' || declaredTarjeta !== '') && (
               <div className={`rounded-xl p-4 border-2 ${hasVariance ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}`}>
                 <div className="flex justify-between items-center text-sm font-bold">
@@ -438,15 +386,17 @@ export default function CashReconciliationDialog({
               </div>
             )}
 
-            {/* ─── Confirmación cuadre (cajero) ─── */}
             {!isAdmin && (declaredCash !== '' || declaredTarjeta !== '') && (
               <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-2 text-slate-700 text-sm">
                 <CheckCircle2 className="h-5 w-5 text-slate-500 shrink-0" />
-                <p>Total registrado: <strong>S/ {safeAdd(declaredCashNum, declaredTarjetaNum).toFixed(2)}</strong>. El admin verá el arqueo completo.</p>
+                <p>
+                  Total registrado:{' '}
+                  <strong>S/ {safeAdd(declaredCashNum, declaredTarjetaNum).toFixed(2)}</strong>.
+                  El admin verá el arqueo completo.
+                </p>
               </div>
             )}
 
-            {/* ─── Justificación si hay descuadre (admin) ─── */}
             {isAdmin && showJustification && hasVariance && (
               <div className="space-y-3">
                 <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-2 text-red-800 text-sm">

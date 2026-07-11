@@ -17,6 +17,8 @@ import { es } from 'date-fns/locale';
 import type { CashSession, CashManualEntry, DailySalesTotals } from '@/types/cashRegisterV2';
 import ManualCashEntryModal from './ManualCashEntryModal';
 import InventoryAuditModal from './InventoryAuditModal';
+import { fetchCashSessionsAudit } from '@/features/cash/services/cashSessionService';
+import { CASH_SESSIONS_OPERATIONAL_VIEW } from '@/features/cash/services/cashSessionService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -196,18 +198,15 @@ function CashAuditHistory({ schoolId }: { schoolId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('cash_sessions')
-        .select('id, session_date, status, cashier_name, opened_at, closed_at, initial_cash, system_cash, system_tarjeta, declared_cash, declared_tarjeta, variance_total, variance_justification, opened_by_profile:opened_by(email)')
-        .eq('school_id', schoolId)
-        .order('session_date', { ascending: false })
-        .limit(30);
+      // Montos system_* solo vía RPC admin (columnas sensibles no se exponen al operador)
+      const { data, error } = await fetchCashSessionsAudit(schoolId, 30);
+      if (error) throw new Error(error);
 
       setRows(
-        (data || []).map((r: any) => ({
+        (data as unknown as AuditRow[]).map((r) => ({
           ...r,
-          opened_by_email: r.opened_by_profile?.email ?? '—',
-        }))
+          opened_by_email: r.opened_by_email ?? '—',
+        })),
       );
     } catch (err) {
       console.error('[CashAudit] Error:', err);
@@ -357,6 +356,17 @@ export default function CashDayDashboard({
     if (!schoolId) return;
     setLoading(true);
     try {
+      // ── OPERADOR: cierre ciego — no consultar totales del sistema ──────
+      if (!isAdmin) {
+        setActiveSession(session);
+        // Sentinel truthy para mostrar la tarjeta "Turno en curso" sin montos
+        setSalesTotals({
+          cash: 0, yape: 0, plin: 0, transferencia: 0, tarjeta: 0, mixto: 0, total: 0,
+        });
+        setManualEntries([]);
+        return;
+      }
+
       // ── MODO RANGO / MES o TODAS LAS SEDES ─────────────────────────────
       if (isRangeMode || isAllSchools) {
         // En modo día, usar selectedDate; en modo rango, usar activeStart/activeEnd
@@ -411,7 +421,7 @@ export default function CashDayDashboard({
       let currentSession: CashSession | null;
       if (!isToday) {
         const { data: sess } = await supabase
-          .from('cash_sessions')
+          .from(CASH_SESSIONS_OPERATIONAL_VIEW)
           .select('*')
           .eq('school_id', schoolId)
           .eq('session_date', selectedDate)
@@ -420,13 +430,13 @@ export default function CashDayDashboard({
         let fallbackSess: CashSession | null = null;
         if (!sess) {
           const { data: fb } = await supabase
-            .from('cash_sessions')
+            .from(CASH_SESSIONS_OPERATIONAL_VIEW)
             .select('*')
             .eq('school_id', schoolId)
             .gte('opened_at', `${selectedDate}T00:00:00-05:00`)
             .lt('opened_at',  `${selectedDate}T23:59:59-05:00`)
             .maybeSingle();
-          fallbackSess = fb || null;
+          fallbackSess = (fb as CashSession | null) || null;
         }
 
         currentSession = sess || fallbackSess;
@@ -507,12 +517,13 @@ export default function CashDayDashboard({
     } finally {
       setLoading(false);
     }
-  }, [schoolId, allSchoolIds, session?.id, selectedDate, isToday, isRangeMode, isAllSchools, activeStart, activeEnd]);
+  }, [schoolId, allSchoolIds, session, selectedDate, isToday, isRangeMode, isAllSchools, activeStart, activeEnd, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
   // ── Drill-down: cargar transacciones del método clickeado ─────────────────
   const openDrillDown = useCallback(async (drill: DrillDownState) => {
+    if (!isAdmin) return; // Operador: sin lupa de montos
     setDrillDown(drill);
     setDrillItems([]);
     setDrillLoading(true);
@@ -563,7 +574,7 @@ export default function CashDayDashboard({
     } finally {
       setDrillLoading(false);
     }
-  }, [schoolId, allSchoolIds, selectedDate, isRangeMode, isAllSchools, activeStart, activeEnd]);
+  }, [schoolId, allSchoolIds, selectedDate, isRangeMode, isAllSchools, activeStart, activeEnd, isAdmin]);
 
   // ── Helpers para aplicar rangos ──────────────────────────────────────────
   const applyRange = (start: string, end: string) => {

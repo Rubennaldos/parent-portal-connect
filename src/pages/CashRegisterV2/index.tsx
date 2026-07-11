@@ -12,6 +12,10 @@ import CashOpeningFlow from './CashOpeningFlow';
 import CashDayDashboard from './CashDayDashboard';
 import CashReconciliationDialog from './CashReconciliationDialog';
 import TreasuryTransferFlow from './TreasuryTransferFlow';
+import {
+  ensureCashSessionOpen,
+  fetchTodayCashSession,
+} from '@/features/cash/services/cashSessionService';
 
 interface School { id: string; name: string; }
 
@@ -80,16 +84,10 @@ export default function CashRegisterV2Page() {
     if (!schoolId) return;
     setLoading(true);
     try {
-      // EC-TZ: usar hora Lima para buscar la sesión del día correcto
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-      const { data: sessionData, error } = await supabase
-        .from('cash_sessions')
-        .select('*')
-        .eq('school_id', schoolId)
-        .eq('session_date', today)
-        .maybeSingle();
-      if (error) throw error;
-      setTodaySession(sessionData || null);
+      const { data: sessionData, error } = await fetchTodayCashSession(schoolId, today);
+      if (error) throw new Error(error);
+      setTodaySession((sessionData as CashSession | null) || null);
     } catch (err) {
       console.error('[CashRegisterV2] loadSession error:', err);
     } finally {
@@ -99,62 +97,27 @@ export default function CashRegisterV2Page() {
 
   useEffect(() => { if (schoolId) loadSession(); }, [schoolId, loadSession]);
 
-  /** Abrir / reabrir caja del día (desde el dashboard; misma lógica que POS al reabrir cerrada) */
+  /** Abrir / reabrir caja del día — SSOT en BD (ensure_cash_session_open). */
   const openCashForToday = useCallback(async () => {
-    if (!schoolId || !user?.id) return;
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    if (!schoolId) return;
     try {
-      if (todaySession?.id && todaySession.status === 'closed') {
-        const { error } = await supabase
-          .from('cash_sessions')
-          .update({ status: 'open', closed_at: null, closed_by: null })
-          .eq('id', todaySession.id);
-        if (error) throw error;
-        toast({ title: '✅ Caja abierta', description: 'La sesión de hoy quedó abierta.' });
-        await loadSession();
-        return;
-      }
-      if (!todaySession) {
-        const { error } = await supabase.from('cash_sessions').insert({
-          school_id: schoolId,
-          session_date: today,
-          opened_by: user.id,
-          status: 'open',
-          initial_cash: 0,
-          initial_yape: 0,
-          initial_plin: 0,
-          initial_other: 0,
-        });
-        if (error) {
-          if (error.code === '23505') {
-            const { data: row } = await supabase
-              .from('cash_sessions')
-              .select('id, status')
-              .eq('school_id', schoolId)
-              .eq('session_date', today)
-              .maybeSingle();
-            if (row?.status === 'closed') {
-              await supabase
-                .from('cash_sessions')
-                .update({ status: 'open', closed_at: null, closed_by: null })
-                .eq('id', row.id);
-              toast({ title: '✅ Caja reabierta' });
-            } else {
-              toast({ title: 'Sesión ya registrada', description: 'Actualizando datos…' });
-            }
-            await loadSession();
-            return;
-          }
-          throw error;
-        }
+      const { data, action, error } = await ensureCashSessionOpen(schoolId);
+      if (error) throw new Error(error);
+      if (!data) throw new Error('No se pudo abrir la sesión.');
+
+      if (action === 'already_open') {
+        toast({ title: 'Sesión ya abierta', description: 'Actualizando datos…' });
+      } else if (action === 'reopened') {
+        toast({ title: '✅ Caja reabierta' });
+      } else {
         toast({ title: '✅ Caja abierta', description: 'Sesión del día creada.' });
-        await loadSession();
       }
+      await loadSession();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'No se pudo abrir la caja';
       toast({ variant: 'destructive', title: 'Error', description: msg });
     }
-  }, [schoolId, user?.id, todaySession, loadSession]);
+  }, [schoolId, loadSession, toast]);
 
   // ── Bloqueo por mantenimiento ──────────────────────────────────────────────
 
@@ -306,12 +269,14 @@ export default function CashRegisterV2Page() {
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700"
                     onClick={async () => {
-                      if (!todaySession?.id) return;
-                      const { error } = await supabase
-                        .from('cash_sessions')
-                        .update({ status: 'open', closed_at: null })
-                        .eq('id', todaySession.id);
-                      if (!error) loadSession();
+                      try {
+                        const { error } = await ensureCashSessionOpen(schoolId);
+                        if (error) throw new Error(error);
+                        await loadSession();
+                      } catch (e: unknown) {
+                        const msg = e instanceof Error ? e.message : 'No se pudo reabrir';
+                        toast({ variant: 'destructive', title: 'Error', description: msg });
+                      }
                     }}
                   >
                     🔓 Reabrir Caja

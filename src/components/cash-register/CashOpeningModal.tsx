@@ -7,6 +7,7 @@ import { es } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { ensureCashSessionOpen } from '@/features/cash/services/cashSessionService';
 
 interface Props {
   schoolId: string;
@@ -126,57 +127,21 @@ export function CashOpeningModal({
     isSubmittingRef.current = true;
     setLoading(true);
     try {
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+      const { data: session, action, error } = await ensureCashSessionOpen(schoolId);
+      if (error) throw new Error(error);
+      if (!session) throw new Error('No se pudo obtener la sesión de caja.');
 
-      const { data: existing, error: exErr } = await supabase
-        .from('cash_sessions')
-        .select('id, status')
-        .eq('school_id', schoolId)
-        .eq('session_date', today)
-        .maybeSingle();
-
-      if (exErr && exErr.code !== 'PGRST116') throw exErr;
-
-      if (existing) {
-        if (existing.status === 'open') {
-          toast.success('✅ Caja ya estaba abierta para hoy');
-          onOpened();
-          return;
-        }
-        // Hay fila del día pero CERRADA → reabrir (mismo registro; el POS necesita status open)
-        const { error: upErr } = await supabase
-          .from('cash_sessions')
-          .update({
-            status: 'open',
-            closed_at: null,
-            closed_by: null,
-          })
-          .eq('id', existing.id);
-        if (upErr) throw upErr;
+      if (action === 'already_open') {
+        toast.success('✅ Caja ya estaba abierta para hoy');
+      } else if (action === 'reopened') {
         toast.success('✅ Caja reabierta — puedes vender en el POS');
-        onOpened();
-        return;
+      } else {
+        toast.success('✅ Caja abierta — ¡Buena jornada!');
       }
-
-      const { error } = await supabase
-        .from('cash_sessions')
-        .insert({
-          school_id: schoolId,
-          session_date: today,
-          opened_by: user.id,
-          initial_cash: 0,
-          initial_yape: 0,
-          initial_plin: 0,
-          initial_other: 0,
-          status: 'open',
-        });
-
-      if (error) throw error;
-
-      toast.success('✅ Caja abierta — ¡Buena jornada!');
       onOpened();
-    } catch (error: any) {
-      toast.error('Error al abrir caja: ' + error.message);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Error desconocido';
+      toast.error('Error al abrir caja: ' + msg);
     } finally {
       isSubmittingRef.current = false;
       setLoading(false);

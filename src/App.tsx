@@ -277,13 +277,13 @@ const App = () => (
               }
             />
             
-            {/* Cierre de Caja Legacy (acceso temporal) */}
+            {/* Cierre de Caja Legacy — solo admin (evita fuga de totales al operador) */}
             <Route
               path="/cash-register-legacy"
               element={
-                <PermissionProtectedRoute moduleCode="cash_register">
+                <ProtectedRoute allowedRoles={['admin_general', 'superadmin', 'gestor_unidad']}>
                   <CashRegisterPage />
-                </PermissionProtectedRoute>
+                </ProtectedRoute>
               }
             />
             
