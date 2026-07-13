@@ -76,6 +76,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
   const [paymentType, setPaymentType] = useState<'credit' | 'cash' | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [manualName, setManualName] = useState('');
+  /** Sin Crédito: false = elegir alumno/profesor del sistema; true = cliente externo (nombre libre) */
+  const [isUnregisteredClient, setIsUnregisteredClient] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<LunchCategory | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<LunchMenu | null>(null);
   const [quantity, setQuantity] = useState(1); // 🆕 CANTIDAD DE MENÚS
@@ -122,6 +124,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     setPaymentType(null);
     setSelectedPerson(null);
     setManualName('');
+    setIsUnregisteredClient(false);
     setSelectedCategory(null);
     setSelectedMenu(null);
     setQuantity(1); // 🆕 RESETEAR CANTIDAD
@@ -270,12 +273,12 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     }
   };
 
-  // Paso 2: Cargar personas
+  // Paso 3: Cargar personas (crédito Y sin crédito registrado)
   useEffect(() => {
-    if (step === 3 && paymentType === 'credit' && targetType) {
+    if (step === 3 && targetType && (paymentType === 'credit' || (paymentType === 'cash' && !isUnregisteredClient))) {
       fetchPeople();
     }
-  }, [step, paymentType, targetType]);
+  }, [step, paymentType, targetType, isUnregisteredClient]);
 
   // Paso 4: Cargar categorías (necesita selectedDate)
   useEffect(() => {
@@ -307,10 +310,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     }
   }, [menus, selectedCategory, selectedMenu]);
 
-  // 🆕 NUEVO: Cargar pedidos existentes cuando se selecciona una persona (Step 3)
+  // Pedidos existentes del día (crédito o sin crédito con persona registrada)
   useEffect(() => {
     const fetchExistingOrders = async () => {
-      if (!selectedPerson || !selectedDate || paymentType !== 'credit') {
+      if (!selectedPerson || !selectedDate || isUnregisteredClient) {
         setExistingOrders([]);
         return;
       }
@@ -396,10 +399,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       }
     };
 
-    if (step === 3 && selectedPerson && paymentType === 'credit') {
+    if (step === 3 && selectedPerson && !isUnregisteredClient) {
       fetchExistingOrders();
     }
-  }, [step, selectedPerson, selectedDate, targetType, paymentType]);
+  }, [step, selectedPerson, selectedDate, targetType, paymentType, isUnregisteredClient]);
 
   const fetchPeople = async () => {
     try {
@@ -578,8 +581,28 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
     if (paymentType === 'credit' && !selectedPerson?.id) {
       toast({
         variant: 'destructive',
-        title: '⛔ Alumno no seleccionado',
-        description: 'Debes seleccionar un alumno antes de registrar un pedido con crédito.',
+        title: '⛔ Persona no seleccionada',
+        description: 'Debes seleccionar un alumno o profesor antes de registrar un pedido con crédito.',
+      });
+      return;
+    }
+    if (
+      paymentType === 'cash' &&
+      !isUnregisteredClient &&
+      !selectedPerson?.id
+    ) {
+      toast({
+        variant: 'destructive',
+        title: '⛔ Persona no seleccionada',
+        description: 'Selecciona al alumno/profesor del listado, o marca “Cliente no registrado”.',
+      });
+      return;
+    }
+    if (paymentType === 'cash' && isUnregisteredClient && !manualName.trim()) {
+      toast({
+        variant: 'destructive',
+        title: '⛔ Nombre requerido',
+        description: 'Escribe el nombre del cliente no registrado.',
       });
       return;
     }
@@ -630,7 +653,8 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
 
       const descDateStr = format(new Date(orderDate + 'T00:00:00'), "d 'de' MMMM", { locale: es });
       const qtyLabel    = quantity > 1 ? ` (${quantity}x)` : '';
-      const personLabel = paymentType === 'credit' ? selectedPerson?.full_name ?? '' : manualName;
+      const personLabel = selectedPerson?.full_name
+        ?? (isUnregisteredClient ? manualName.trim() : '');
 
       // ── Construir descripción según modo de pago ─────────────────────────
       const description = paymentType === 'credit'
@@ -641,7 +665,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
       let existingOrderId: string | null   = null;
       let existingOrderQty: number | null  = null;
 
-      if (paymentType === 'credit' && selectedPerson) {
+      if (selectedPerson && !isUnregisteredClient) {
         const personField = targetType === 'students' ? 'student_id' : 'teacher_id';
         const { data: existing } = await supabase
           .from('lunch_orders')
@@ -655,7 +679,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           existingOrderId  = existing.id;
           existingOrderQty = existing.quantity ?? 1;
         }
-      } else if (paymentType === 'cash' && manualName.trim()) {
+      } else if (isUnregisteredClient && manualName.trim()) {
         const { data: existing } = await supabase
           .from('lunch_orders')
           .select('id, quantity')
@@ -670,10 +694,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         }
       }
 
-      // ── Determinar person_type y payment_mode para el RPC ────────────────
-      const personType: string = paymentType === 'credit'
-        ? (targetType === 'students' ? 'student' : 'teacher')
-        : 'manual';
+      // person_type: vinculado al alumno/profesor real, o manual solo si es externo
+      const personType: string =
+        isUnregisteredClient || !selectedPerson
+          ? 'manual'
+          : (targetType === 'students' ? 'student' : 'teacher');
 
       const paymentMode: string = paymentType === 'credit'
         ? 'credit'
@@ -700,10 +725,10 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
           p_created_by:              user.id,
           p_description:             description,
           p_person_type:             personType,
-          p_person_id:               (paymentType === 'credit' && selectedPerson)
+          p_person_id:               personType !== 'manual' && selectedPerson
                                        ? selectedPerson.id
                                        : null,
-          p_manual_name:             paymentType === 'cash' ? manualName.trim() || null : null,
+          p_manual_name:             personType === 'manual' ? manualName.trim() || null : null,
           p_payment_mode:            paymentMode,
           p_payment_method:          (paymentMode === 'paid') ? cashPaymentMethod : null,
           p_operation_number:        opNumber,
@@ -876,7 +901,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               <Button variant="outline" onClick={() => setStep(1)}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Atrás
               </Button>
-              <Button onClick={() => setStep(3)} disabled={!paymentType}>
+              <Button onClick={() => {
+                setIsUnregisteredClient(false);
+                setManualName('');
+                setStep(3);
+              }} disabled={!paymentType}>
                 Siguiente <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </div>
@@ -886,9 +915,37 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
         {/* PASO 3: Seleccionar persona */}
         {step === 3 && (
           <div className="space-y-4 py-4">
-            {paymentType === 'credit' ? (
+            {paymentType === 'cash' && (
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Cliente no registrado</p>
+                  <p className="text-xs text-gray-500">Solo si no está en la lista de alumnos/profesores</p>
+                </div>
+                <Button
+                  type="button"
+                  variant={isUnregisteredClient ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    const next = !isUnregisteredClient;
+                    setIsUnregisteredClient(next);
+                    if (next) {
+                      setSelectedPerson(null);
+                      setExistingOrders([]);
+                    } else {
+                      setManualName('');
+                    }
+                  }}
+                >
+                  {isUnregisteredClient ? 'Activado' : 'Activar'}
+                </Button>
+              </div>
+            )}
+
+            {(paymentType === 'credit' || (paymentType === 'cash' && !isUnregisteredClient)) ? (
               <>
-                <p className="text-center text-gray-600">Selecciona la persona</p>
+                <p className="text-center text-gray-600">
+                  {targetType === 'teachers' ? 'Selecciona al profesor' : 'Selecciona al alumno'}
+                </p>
                 <div className="relative">
                   <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
@@ -920,7 +977,6 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
                   )}
                 </div>
 
-                {/* 🆕 ADVERTENCIA DE PEDIDOS EXISTENTES - AHORA EN STEP 3 */}
                 {selectedPerson && existingOrders.length > 0 && (
                   <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 mt-4 animate-in slide-in-from-top-2">
                     <div className="flex items-start gap-3">
@@ -952,7 +1008,7 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               </>
             ) : (
               <>
-                <p className="text-center text-gray-600">Escribe el nombre</p>
+                <p className="text-center text-gray-600">Escribe el nombre del cliente</p>
                 <div>
                   <Label>Nombre completo</Label>
                   <Input
@@ -970,7 +1026,11 @@ export function PhysicalOrderWizard({ isOpen, onClose, schoolId, selectedDate, o
               </Button>
               <Button
                 onClick={() => setStep(4)}
-                disabled={paymentType === 'credit' ? !selectedPerson : !manualName.trim()}
+                disabled={
+                  paymentType === 'credit' || (paymentType === 'cash' && !isUnregisteredClient)
+                    ? !selectedPerson
+                    : !manualName.trim()
+                }
               >
                 Siguiente <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
