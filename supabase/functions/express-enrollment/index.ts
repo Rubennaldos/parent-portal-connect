@@ -13,6 +13,7 @@ import {
   ERR_EXPRESS_DATABASE_ROLLBACK,
   type AccountMode,
 } from "./rpc.enroll.ts";
+import { corsHeadersJson as corsHeaders } from "../_shared/cors.ts";
 
 const ERR_EXPRESS_UNAUTHORIZED = "ERR_EXPRESS_UNAUTHORIZED";
 const ERR_EXPRESS_INVALID_DNI = "ERR_EXPRESS_INVALID_DNI";
@@ -25,14 +26,6 @@ const ALLOWED_ADMIN_ROLES = new Set([
   "supervisor_red",
   "superadmin",
 ]);
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Content-Type": "application/json",
-};
 
 type ExpressRequest = {
   school_id: string;

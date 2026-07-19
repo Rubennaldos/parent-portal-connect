@@ -38,6 +38,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders as cors } from "../_shared/cors.ts";
 
 // ── Helpers criptográficos ─────────────────────────────────────────────────────
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
@@ -69,12 +70,6 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 // ── Constantes ────────────────────────────────────────────────────────────────
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-gateway-name",
-};
-
 const APPROVED_STATUSES = new Set(["PAID", "AUTHORISED", "CAPTURED"]);
 
 // ── Handler principal ─────────────────────────────────────────────────────────
